@@ -79,6 +79,53 @@ fn upgrade_enum(text: &str) -> Option<String> {
     ))
 }
 
+/// An information register owner of version 27, 29 or 30 -> 33.
+///
+/// Older owners stop before the slots later versions append: version 30
+/// lacks the last two data-history flags, version 29 also the data-history
+/// slot, version 27 also both totals-slice flags; two 8.3.27 corpora dump
+/// them as `false`, `false`, `DontUse`, `false`, `false` (`0` each). Kinds and
+/// generated-type schemas are told by the version, so the register is only
+/// read as one -- and its record-set types indexed -- once upgraded.
+fn upgrade_information_register_owner(text: &str) -> Option<String> {
+    let root_open = text.find('{')?;
+    let (root, _) = members(text, root_open)?;
+    if root.len() != 9 || member(text, &root[0]) != "1" || member(text, &root[2]) != "6" {
+        return None;
+    }
+    let collections = root[3..]
+        .iter()
+        .map(|range| {
+            let compact: String = member(text, range)
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .take(38)
+                .collect();
+            compact.get(1..37).map(str::to_owned)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if !collections
+        .iter()
+        .any(|id| id == "13134202-f60b-11d5-a3c7-0050bae0a776")
+    {
+        return None;
+    }
+    let (owner, owner_close) = members(text, list_open(text, &root[1])?)?;
+    let appended = match (member(text, owner.first()?), owner.len()) {
+        ("30", 37) => ",0,0",
+        ("29", 36) => ",0,0,0",
+        ("27", 34) => ",0,0,0,0,0",
+        _ => return None,
+    };
+    let tag = trimmed(text, &owner[0]);
+    Some(format!(
+        "{}33{}{appended}{}",
+        &text[..tag.start],
+        &text[tag.end..owner_close],
+        &text[owner_close..]
+    ))
+}
+
 fn upgrade_document_journal(text: &str) -> Option<String> {
     let root_open = text.find('{')?;
     let (root, _) = members(text, root_open)?;
@@ -175,6 +222,8 @@ pub(super) fn upgrade_record_by_shape(text: &str, uuid: &str) -> Option<String> 
     // with an older tag (one 8.3.27 corpus, 17 journals, revision-12
     // standard attributes read as they are).
     let upgraded = upgrade_document_journal(text_now).or(upgraded);
+    let text_now = upgraded.as_deref().unwrap_or(text);
+    let upgraded = upgrade_information_register_owner(text_now).or(upgraded);
     let text_now = upgraded.as_deref().unwrap_or(text);
     upgrade_form_record(text_now).or(upgraded)
 }
