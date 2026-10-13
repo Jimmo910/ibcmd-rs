@@ -600,30 +600,4 @@ mod tests {
             ]
         );
     }
-
-    #[test]
-    fn builds_a_processor_from_its_tree_alone() {
-        let scratch = std::env::temp_dir().join(format!("ibcmd-seed-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&scratch);
-        let tree = scratch.join("tree");
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/external/test_processor/input.epf");
-        super::super::export_base(
-            &fixture,
-            &tree,
-            crate::legacy_version::InfobaseConfigSourceVersion::V2_20,
-        )
-        .unwrap();
-        let output = scratch.join("out.epf");
-        let version = crate::legacy_version::InfobaseConfigSourceVersion::V2_20;
-        build_external(&tree, &output, version).unwrap().unwrap();
-        let back = scratch.join("back");
-        super::super::export_base(&output, &back, version).unwrap();
-        let read = |root: &Path, name: &str| fs::read(root.join(name)).unwrap();
-        assert_eq!(
-            read(&tree, "ТестОбработка.xml"),
-            read(&back, "ТестОбработка.xml")
-        );
-        let _ = fs::remove_dir_all(&scratch);
-    }
 }

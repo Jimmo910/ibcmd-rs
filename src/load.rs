@@ -351,7 +351,7 @@ impl OverlayCodec for LoadCodec<'_> {
 
 /// Exports `base` the way `cf export` does (the external-object adapter
 /// first), returning the report.
-pub(super) fn export_base(
+fn export_base(
     base: &Path,
     output_dir: &Path,
     source_version: InfobaseConfigSourceVersion,

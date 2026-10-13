@@ -145,10 +145,19 @@ fn extension_and_both_external_families_refuse_before_either_cf_compiler() {
             let source = scratch.source("Configuration.xml", &metadata(kind, properties));
             for requested_suffix in [suffix, "cf"] {
                 let output = scratch.0.join(format!("blocked.{requested_suffix}"));
+                // `--base-free` builds an external object (#438): this root
+                // names no ObjectId, so the build refuses it; a `.cf` output
+                // for it is refused before.
+                let external = kind != "Configuration";
+                let (code, address) = match (base_free && external, requested_suffix) {
+                    (true, "cf") => ("bootstrap_package_invalid", address),
+                    (true, _) => ("base_free_compile_failed", "ObjectId"),
+                    _ => ("bootstrap_package_not_supported", address),
+                };
                 refusal(
                     bootstrap(&source, &output, base_free, storage),
                     &output,
-                    "bootstrap_package_not_supported",
+                    code,
                     address,
                 );
             }

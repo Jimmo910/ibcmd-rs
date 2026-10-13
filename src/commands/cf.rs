@@ -678,6 +678,9 @@ fn bootstrap(mut args: CfBootstrapArgs) -> Result<CfCommandReport, CfCommandErro
                 | crate::compiler::artifact::PackageIntent::ExternalReport
         )
     {
+        crate::compiler::artifact::validate_output_intent(package.intent, &args.output).map_err(
+            |source| bootstrap_failure(&args, "bootstrap_package_invalid", format!("{source:#}")),
+        )?;
         return bootstrap_external(args);
     }
     if package.intent != crate::compiler::artifact::PackageIntent::Configuration {
