@@ -671,6 +671,15 @@ fn bootstrap(mut args: CfBootstrapArgs) -> Result<CfCommandReport, CfCommandErro
         crate::compiler::artifact::discover_source_package(&args.source_dir).map_err(|source| {
             bootstrap_failure(&args, "bootstrap_package_invalid", format!("{source:#}"))
         })?;
+    if args.base_free
+        && matches!(
+            package.intent,
+            crate::compiler::artifact::PackageIntent::ExternalDataProcessor
+                | crate::compiler::artifact::PackageIntent::ExternalReport
+        )
+    {
+        return bootstrap_external(args);
+    }
     if package.intent != crate::compiler::artifact::PackageIntent::Configuration {
         return Err(bootstrap_failure(
             &args,
@@ -902,6 +911,55 @@ fn bootstrap_base_free(
             bytes_written: publication.write.bytes_written,
             entries_written: publication.write.entries_written,
             entries_validated: publication.validation.entries_validated,
+        }),
+        errors: Vec::new(),
+    }))
+}
+
+/// `.epf`/`.erf` from the external tree alone (issue #438): the compiled
+/// load onto a seed package given the tree's identities
+/// (`crate::load::build_external`), verified by exporting it back.
+fn bootstrap_external(args: CfBootstrapArgs) -> Result<CfCommandReport, CfCommandError> {
+    if args.output.exists() {
+        return Err(bootstrap_failure(
+            &args,
+            "output_exists",
+            format!("`{}` already exists", args.output.display()),
+        ));
+    }
+    let loaded = crate::load::build_external(&args.source_dir, &args.output, args.source_version)
+        .map_err(|error| bootstrap_failure(&args, "base_free_compile_failed", error.to_string()))?
+        .ok_or_else(|| {
+            bootstrap_failure(
+                &args,
+                "bootstrap_package_invalid",
+                "the source holds no external data processor or report root".to_owned(),
+            )
+        })?;
+    let bytes_written = fs::metadata(&args.output)
+        .map(|meta| meta.len())
+        .unwrap_or(0);
+    Ok(CfCommandReport::Bootstrap(CfBootstrapReport {
+        schema_version: REPORT_SCHEMA_VERSION,
+        command: "bootstrap",
+        ok: true,
+        source_dir: display_path(&args.source_dir),
+        output: display_path(&args.output),
+        source_version: args.source_version.as_str(),
+        target_profile: args.target_profile,
+        revision: "external",
+        storage_version: args.storage_version,
+        page_size: args.page_size,
+        reserved: args.reserved,
+        source_files: loaded.applied.len(),
+        metadata_files: 0,
+        asset_files: 0,
+        non_source_files: 0,
+        storage_entries: loaded.compiled_objects.len(),
+        publication: Some(CfBootstrapPublicationReport {
+            bytes_written,
+            entries_written: 0,
+            entries_validated: 0,
         }),
         errors: Vec::new(),
     }))

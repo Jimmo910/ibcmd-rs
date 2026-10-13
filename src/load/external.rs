@@ -70,6 +70,7 @@ pub(crate) fn load_external(
     .context("failed to export the base in the configuration layout")?;
     let keys = keys_by_output(&exported);
     write_foreign_stubs(&scratch.0, &adapted.foreign, source_version)?;
+    write_configuration_stub(&scratch.0, source_version)?;
 
     // The tree's edits, carried into the configuration layout.
     let root = format!("{name}.xml");
@@ -214,6 +215,36 @@ fn write_foreign_stubs(
     Ok(())
 }
 
+/// The configuration root a base-free compile of a new object reads
+/// (`mssql::empty_stage::StageContext::for_objects`): only its uuid and
+/// compatibility mode. An external object has no configuration of its own;
+/// it is compiled as one of the platform its XML dialect names. Never
+/// written over an exported root.
+fn write_configuration_stub(
+    root: &Path,
+    source_version: InfobaseConfigSourceVersion,
+) -> Result<()> {
+    let path = root.join("Configuration.xml");
+    if path.exists() {
+        return Ok(());
+    }
+    let compatibility = if source_version == InfobaseConfigSourceVersion::V2_21 {
+        "Version8_5_1"
+    } else {
+        "Version8_3_27"
+    };
+    let xml = format!(
+        "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<MetaDataObject \
+         xmlns=\"http://v8.1c.ru/8.3/MDClasses\" version=\"{}\">\r\n\
+         \t<Configuration uuid=\"00000000-0000-0000-0000-000000000000\">\r\n\
+         \t\t<Properties>\r\n\t\t\t<Name>External</Name>\r\n\
+         \t\t\t<CompatibilityMode>{compatibility}</CompatibilityMode>\r\n\
+         \t\t</Properties>\r\n\t</Configuration>\r\n</MetaDataObject>",
+        source_version.as_str()
+    );
+    fs::write(&path, xml).context("failed to write the configuration stub")
+}
+
 /// A file of the object's folder with its references back in the
 /// configuration spelling.
 fn internal_bytes(path: &str, bytes: Vec<u8>, main: &header::ExternalMain) -> Vec<u8> {
@@ -298,9 +329,11 @@ fn properties(xml: &str) -> Option<Vec<(String, String)>> {
     let body = &xml[open..close];
     let mut out: Vec<(String, String)> = Vec::new();
     // Every property starts a line at three tabs; its text runs to the next.
+    // A multi-line property's closing tag (`\t\t\t</Synonym>`) continues it.
     let mut starts = body
         .match_indices("\n\t\t\t<")
         .map(|(at, _)| at + 1)
+        .filter(|at| !body[*at..].starts_with("\t\t\t</"))
         .collect::<Vec<_>>();
     starts.push(body.len());
     let lead = &body[..starts[0]];

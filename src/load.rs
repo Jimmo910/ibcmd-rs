@@ -27,6 +27,8 @@ use ibcmd_core::{
 pub(crate) mod compiled;
 mod external;
 pub(crate) mod index;
+mod seed;
+pub use seed::build_external;
 
 pub use index::{archive_versions, write_tree_index};
 
@@ -349,7 +351,7 @@ impl OverlayCodec for LoadCodec<'_> {
 
 /// Exports `base` the way `cf export` does (the external-object adapter
 /// first), returning the report.
-fn export_base(
+pub(super) fn export_base(
     base: &Path,
     output_dir: &Path,
     source_version: InfobaseConfigSourceVersion,

@@ -8936,6 +8936,39 @@ pub(crate) fn format_empty_auto_command_bar(id: &str, name: &str) -> String {
 ///
 /// 1 932 uses across 56 forms, the first member always the literal index, so
 /// `[0]` looks exactly like `{0,<uuid>}` and only the uuid tells them apart.
+/// The data-path steps compiled form bodies walked, when a caller asked for
+/// them: `(segment, parent)`, `parent` the type the segment is a member of --
+/// `meta|<object key>|<section>` for a metadata object (and one of its
+/// tabular sections), or the XML type spelling of a value table or tree. An
+/// external object's `copyinfo` lists them, and 8.3.27.2214 drops every form
+/// `<DataPath>` whose steps it does not list (`load::seed`).
+static DATA_PATH_STEPS: std::sync::Mutex<Option<std::collections::BTreeSet<(String, String)>>> =
+    std::sync::Mutex::new(None);
+
+/// Start recording data-path steps.
+pub(crate) fn record_data_path_steps() {
+    if let Ok(mut steps) = DATA_PATH_STEPS.lock() {
+        *steps = Some(std::collections::BTreeSet::new());
+    }
+}
+
+/// The steps recorded since `record_data_path_steps`; recording stops.
+pub(crate) fn take_data_path_steps() -> std::collections::BTreeSet<(String, String)> {
+    DATA_PATH_STEPS
+        .lock()
+        .ok()
+        .and_then(|mut steps| steps.take())
+        .unwrap_or_default()
+}
+
+fn note_data_path_step(segment: &str, parent: String) {
+    if let Ok(mut steps) = DATA_PATH_STEPS.lock()
+        && let Some(steps) = steps.as_mut()
+    {
+        steps.insert((segment.to_owned(), parent));
+    }
+}
+
 const DATA_PATH_INDEX_UUID: &str = "e67e2953-cebe-4d97-bb93-12b17e6384f8";
 
 /// The marker a column of a `<Columns><AdditionalColumns table="…">` block
@@ -9727,6 +9760,9 @@ fn resolve_data_path_tokens<'a>(
 
             if let Some(column) = column {
                 emitted.push(format!("{{{}}}", column.id));
+                if let Some(parent) = attribute.and_then(|entry| entry.types.first()) {
+                    note_data_path_step(&format!("{{{}}}", column.id), parent.clone());
+                }
                 context = data_path_context_for_types(&column.types);
             } else if let Some(extra) = extra.filter(|_| {
                 !matches!(
@@ -9853,6 +9889,14 @@ fn resolve_data_path_tokens<'a>(
                         let (segment, next) = resolve_metadata_data_path_part(
                             source, &object, &keys, &section, name, extra,
                         )?;
+                        note_data_path_step(
+                            &segment,
+                            format!(
+                                "meta|{}|{}",
+                                keys.first().map(String::as_str).unwrap_or_default(),
+                                section.as_deref().unwrap_or_default()
+                            ),
+                        );
                         emitted.push(segment);
                         context = next;
                     }
