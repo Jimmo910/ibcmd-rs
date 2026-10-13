@@ -20,7 +20,7 @@
 
 use ibcmd_schema::metadata_record_upgrades::{
     ATTRIBUTE_WRAPPER_UPGRADES, LegacyMetadataRecordLayout, enum_owner_upgrade,
-    history_owner_upgrade,
+    history_owner_upgrade, information_register_owner_upgrade,
 };
 use std::ops::Range;
 
@@ -90,7 +90,11 @@ fn upgrade_enum(text: &str) -> Option<String> {
 fn upgrade_information_register_owner(text: &str) -> Option<String> {
     let root_open = text.find('{')?;
     let (root, _) = members(text, root_open)?;
-    if root.len() != 9 || member(text, &root[0]) != "1" || member(text, &root[2]) != "6" {
+    if !LegacyMetadataRecordLayout::information_register_root(
+        member(text, root.first()?),
+        root.len(),
+        member(text, root.get(2)?),
+    ) {
         return None;
     }
     let collections = root[3..]
@@ -106,20 +110,17 @@ fn upgrade_information_register_owner(text: &str) -> Option<String> {
         .collect::<Option<Vec<_>>>()?;
     if !collections
         .iter()
-        .any(|id| id == "13134202-f60b-11d5-a3c7-0050bae0a776")
+        .any(|id| id == LegacyMetadataRecordLayout::INFORMATION_REGISTER_RESOURCES)
     {
         return None;
     }
     let (owner, owner_close) = members(text, list_open(text, &root[1])?)?;
-    let appended = match (member(text, owner.first()?), owner.len()) {
-        ("30", 37) => ",0,0",
-        ("29", 36) => ",0,0,0",
-        ("27", 34) => ",0,0,0,0,0",
-        _ => return None,
-    };
+    let upgrade = information_register_owner_upgrade(member(text, owner.first()?), owner.len())?;
+    let target = upgrade.target_revision;
+    let appended = upgrade.appended_members;
     let tag = trimmed(text, &owner[0]);
     Some(format!(
-        "{}33{}{appended}{}",
+        "{}{target}{}{appended}{}",
         &text[..tag.start],
         &text[tag.end..owner_close],
         &text[owner_close..]
