@@ -529,7 +529,19 @@ fn validate_layout<R: Read + Seek>(
             field: "base_offset",
         });
     }
-    if index.raw_file_header != metadata.raw_file_header() {
+    // Repack writes only live allocations. A source container may have a
+    // nonempty free list after native XML import; its head is an address in
+    // the old physical layout and must become the empty-list sentinel.
+    let mut expected_header = metadata.raw_file_header().to_vec();
+    match metadata.revision() {
+        Revision::Format15 => {
+            expected_header[..4].copy_from_slice(&ibcmd_v8::format15::SENTINEL.to_le_bytes())
+        }
+        Revision::Format16 => {
+            expected_header[..8].copy_from_slice(&ibcmd_v8::format16::SENTINEL.to_le_bytes())
+        }
+    }
+    if index.raw_file_header != expected_header {
         return Err(RepackValidationError::LayoutMismatch {
             field: "file_header",
         });

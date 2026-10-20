@@ -512,12 +512,6 @@ fn build_index<R: Read + Seek>(
         stream_length,
     )?;
     let marker = read_address(&raw_file_header, 0, layout.address_width);
-    if marker != layout.sentinel {
-        return Err(ReaderError::UnexpectedFileMarker {
-            revision: layout.revision,
-            found: marker,
-        });
-    }
     let storage_offset = layout.address_width + 4;
     let storage_version = u32::from_le_bytes(
         raw_file_header[storage_offset..storage_offset + 4]
@@ -535,6 +529,7 @@ fn build_index<R: Read + Seek>(
         pages: 0,
         maximum_pages,
     };
+    index_free_pages(source, stream_length, layout, marker, &mut state)?;
     let toc = index_chain(
         source,
         stream_length,
@@ -638,18 +633,115 @@ fn detect_layout<R: Read + Seek>(
     }
     let first = read_vec_at(source, 0, 4, stream_length)?;
     let marker = u32::from_le_bytes(first.try_into().unwrap());
-    if marker != format15::SENTINEL {
+    if marker != format15::SENTINEL
+        && !matches_free_head(source, stream_length, Layout::format15(), u64::from(marker))?
+    {
         return Err(ReaderError::UnknownSignature { found: marker });
     }
 
     let wide_position = format16::BASE_OFFSET as u64;
     if stream_length >= wide_position + 8 {
         let wide = read_vec_at(source, wide_position, 8, stream_length)?;
-        if u64::from_le_bytes(wide.try_into().unwrap()) == format16::SENTINEL {
+        let marker = u64::from_le_bytes(wide.try_into().unwrap());
+        if marker == format16::SENTINEL
+            || matches_free_head(source, stream_length, Layout::format16(), marker)?
+        {
             return Ok(Layout::format16());
         }
     }
     Ok(Layout::format15())
+}
+
+fn matches_free_head<R: Read + Seek>(
+    source: &mut R,
+    stream_length: u64,
+    layout: Layout,
+    head: u64,
+) -> Result<bool, ReaderError> {
+    if head < layout.file_header_size as u64 {
+        return Ok(false);
+    }
+    let Some(physical) = layout.base_offset.checked_add(head) else {
+        return Ok(false);
+    };
+    let Some(end) = physical.checked_add(layout.block_header_size as u64) else {
+        return Ok(false);
+    };
+    if end > stream_length {
+        return Ok(false);
+    }
+    let toc = layout.base_offset + layout.file_header_size as u64;
+    if read_vec_at(source, toc, 2, stream_length)? != b"\r\n" {
+        return Ok(false);
+    }
+    let raw = read_vec_at(source, physical, layout.block_header_size, stream_length)?;
+    Ok(parse_block_header(&raw, head, layout)
+        .is_ok_and(|fields| fields.data_size == layout.sentinel))
+}
+
+/// Free pages are separate allocations linked through their next field.
+/// They have no logical payload to concatenate. Claim them before the TOC,
+/// so a live/free alias or cycle fails just like an alias of two live rows.
+fn index_free_pages<R: Read + Seek>(
+    source: &mut R,
+    stream_length: u64,
+    layout: Layout,
+    start: u64,
+    state: &mut IndexState,
+) -> Result<(), ReaderError> {
+    let mut address = start;
+    let mut seen = BTreeSet::new();
+    while address != layout.sentinel {
+        if !seen.insert(address) {
+            return Err(ReaderError::Cycle {
+                start_address: start,
+                address,
+            });
+        }
+        let physical =
+            layout
+                .base_offset
+                .checked_add(address)
+                .ok_or(ReaderError::RangeOverflow {
+                    address: layout.base_offset,
+                    length: address,
+                })?;
+        let raw = read_vec_at(source, physical, layout.block_header_size, stream_length)?;
+        let fields = parse_block_header(&raw, address, layout)?;
+        if fields.data_size != layout.sentinel {
+            return Err(ReaderError::InvalidBlockHeader { address });
+        }
+        let length = (layout.block_header_size as u64)
+            .checked_add(fields.page_size)
+            .ok_or(ReaderError::RangeOverflow {
+                address: physical,
+                length: fields.page_size,
+            })?;
+        let end = physical
+            .checked_add(length)
+            .ok_or(ReaderError::RangeOverflow {
+                address: physical,
+                length,
+            })?;
+        if end > stream_length {
+            return Err(ReaderError::RangeOutOfBounds {
+                address: physical,
+                length,
+                stream_length,
+            });
+        }
+        state.claims.ensure_unclaimed(physical, end)?;
+        state.claims.insert_unchecked(physical, end, start);
+        state.pages += 1;
+        if state.pages > state.maximum_pages {
+            return Err(ReaderError::PageCountExceeded {
+                maximum: state.maximum_pages,
+                actual: state.pages,
+            });
+        }
+        address = fields.next_page_address;
+    }
+    Ok(())
 }
 
 fn index_chain<R: Read + Seek>(

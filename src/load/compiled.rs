@@ -141,10 +141,9 @@ pub(crate) fn compile_edit(
     let module_bases = modules
         .iter()
         .filter_map(|edit| match edit {
-            super::Edit::FormBody { key, .. } => base_rows
+            super::Edit::FormBody { key, .. } | super::Edit::Module { key, .. } => base_rows
                 .get(key)
                 .map(|packed| (key.clone(), packed.clone())),
-            super::Edit::Module { .. } => None,
         })
         .collect::<BTreeMap<_, _>>();
     // A path no object owns (an external object's layout, a stray root file)
@@ -286,7 +285,13 @@ pub(crate) fn compile_edit(
             super::Edit::Module { key, text_path } if !rows.contains_key(key) => {
                 let text = super::module_text(edited, text_path)
                     .map_err(|error| anyhow::anyhow!(error))?;
-                rows.insert(key.clone(), crate::mssql::pack_module_text(key, &text)?);
+                let packed = match module_bases.get(key) {
+                    Some(base) => {
+                        crate::module_blob::pack_module_blob_bytes(&text, Some(base), None)?.blob
+                    }
+                    None => crate::mssql::pack_module_text(key, &text)?,
+                };
+                rows.insert(key.clone(), packed);
             }
             super::Edit::FormBody { key, module } if !rows.contains_key(key) => {
                 let text =
@@ -599,6 +604,9 @@ fn with_configinfo(
             kept.push(format!("\"{name}\",{digest}"));
         }
     }
+    // Added keys can precede the original keys. The manifest contract
+    // requires the complete mapping to remain unique and sorted.
+    kept.sort_unstable();
     Ok(format!(
         "{}{{{},{}}}{}",
         &text[..start],

@@ -13,7 +13,8 @@ fn exported_configuration(input: &Path, tag: &str) -> Vec<u8> {
     let run = common::export(input, &out);
     assert!(
         run.status.success(),
-        "{}",
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
         String::from_utf8_lossy(&run.stderr)
     );
     fs::read(out.join("Configuration.xml")).unwrap()
@@ -35,10 +36,14 @@ fn root_case(case: &str) {
     let run = common::export(&dir.join("input.cfe"), &out);
     assert!(
         run.status.success(),
-        "{}",
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
         String::from_utf8_lossy(&run.stderr)
     );
-    for file in ["Configuration.xml", "ConfigDumpInfo.xml"] {
+    // These historical references were dumped by Designer from a database.
+    // Native file-CFE export omits ConfigDumpInfo.xml in both 8.3 and 8.5.
+    assert!(!out.join("ConfigDumpInfo.xml").exists());
+    for file in ["Configuration.xml"] {
         let actual = fs::read(out.join(file)).unwrap_or_default();
         assert_same(&dir.join(file), &actual, &format!("{case} {file}"));
     }
@@ -94,6 +99,18 @@ fn unknown_root_property_degrades_only_the_root() {
     );
     assert_eq!(run.status.code(), Some(2), "{report}");
     assert!(!report.contains("\"export_failed\""), "{report}");
+    let structured: serde_json::Value = serde_json::from_slice(&run.stdout)
+        .or_else(|_| serde_json::from_slice(&run.stderr))
+        .unwrap();
+    let root = structured["export"]["storage"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["logical_name"] == "00000000-0000-0000-0000-000000000014")
+        .unwrap();
+    assert_eq!(root["disposition"], "failed", "{structured}");
+    assert_eq!(root["outputs"], serde_json::json!(["Configuration.xml"]));
+
     assert!(
         report.contains("ffffffff-0000-4000-8000-000000000001"),
         "{report}"
@@ -106,10 +123,9 @@ fn unknown_root_property_degrades_only_the_root() {
 }
 
 #[test]
-fn a_configinfo_that_does_not_match_the_entries_degrades_only_config_dump_info() {
-    // `test_extension` plus one entry its configinfo does not list
-    // (`_onecdec/make_configinfo_mismatch_fixture.py`): ConfigDumpInfo.xml is
-    // not written and `configinfo` is reported failed; the rest still exports.
+fn a_configinfo_that_does_not_match_the_entries_refuses_publication() {
+    // This deliberately corrupt fixture is not a root-degradation case:
+    // integrity failure must reject the whole file before publishing XML.
     let input = common::fixture("configinfo_mismatch/input.cfe");
     let out = common::temp_dir("extension-configinfo-mismatch");
     let run = common::export(&input, &out);
@@ -119,16 +135,12 @@ fn a_configinfo_that_does_not_match_the_entries_degrades_only_config_dump_info()
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(run.status.code(), Some(2), "{report}");
-    assert!(!report.contains("\"export_failed\""), "{report}");
-    assert!(report.contains("ConfigDumpInfo.xml"), "{report}");
-    assert!(!out.join("ConfigDumpInfo.xml").exists());
-    let expected = common::fixture("test_extension/expected");
-    assert_same(
-        &expected.join("Configuration.xml"),
-        &fs::read(out.join("Configuration.xml")).unwrap_or_default(),
-        "configinfo_mismatch",
+    assert!(report.contains("\"export_failed\""), "{report}");
+    assert!(report.contains("CFE manifest"), "{report}");
+    assert!(
+        common::files(&out).is_empty(),
+        "corrupt CFE published files"
     );
-    assert!(out.join("CommonModules").exists());
 }
 
 #[test]
@@ -156,24 +168,32 @@ fn extended_root_modules_export_their_text() {
 }
 
 #[test]
-fn extension_config_dump_info_matches_the_platform() {
-    // An extension keeps no `versions` entry; its `configinfo` lists every
-    // entry with a SHA-1 whose hex is the `configVersion` the platform writes.
+fn extension_file_export_omits_designer_config_dump_info() {
+    // Designer/SQL dumps keep ConfigDumpInfo.xml; native file-CFE export
+    // validates configinfo without publishing that database service file.
     let dir = common::fixture("test_extension");
     let out = common::temp_dir("extension-dump-info");
     let run = common::export(&dir.join("input.cfe"), &out);
     assert!(
         run.status.success(),
-        "{}",
-        String::from_utf8_lossy(&run.stdout)
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
     );
-    let expected = fs::read(dir.join("expected/ConfigDumpInfo.xml")).unwrap();
-    let actual = fs::read(out.join("ConfigDumpInfo.xml")).unwrap_or_default();
+    assert!(dir.join("expected/ConfigDumpInfo.xml").exists());
+    assert!(!out.join("ConfigDumpInfo.xml").exists());
+    let report: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
     assert!(
-        expected == actual,
-        "--- native\n{}\n--- ours\n{}",
-        String::from_utf8_lossy(&expected),
-        String::from_utf8_lossy(&actual)
+        report["export"]["storage"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["logical_name"] == "configinfo"
+                && entry["disposition"] == "supported"
+                && entry["outputs"]
+                    .as_array()
+                    .is_some_and(|outputs| outputs.is_empty())),
+        "{report}"
     );
 }
 

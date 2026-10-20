@@ -202,6 +202,41 @@ impl<'a> BlockReader<'a> {
         Ok(())
     }
 
+    /// Reserve every free page before reading active chains. A free page uses
+    /// the sentinel as its data size; its next field links independent pages,
+    /// rather than continuing a logical payload.
+    pub fn reserve_free_pages(&mut self, start_address: u32) -> Result<(), BlockError> {
+        let mut address = start_address;
+        let mut seen = BTreeSet::new();
+        while address != FORMAT15_SENTINEL {
+            if !seen.insert(address) {
+                return Err(BlockError::Cycle {
+                    start_address: u64::from(start_address),
+                    address: u64::from(address),
+                });
+            }
+            let header = read_header(self.bytes, address)?;
+            if header.data_size != FORMAT15_SENTINEL {
+                return Err(BlockError::InvalidHeader {
+                    address: u64::from(address),
+                });
+            }
+            let length = (FORMAT15_BLOCK_HEADER_SIZE as u64)
+                .checked_add(u64::from(header.page_size))
+                .ok_or(BlockError::RangeOverflow {
+                    address: u64::from(address),
+                    length: u64::from(header.page_size),
+                })?;
+            let length = u32::try_from(length).map_err(|_| BlockError::RangeOverflow {
+                address: u64::from(address),
+                length,
+            })?;
+            self.reserve(address, length)?;
+            address = header.next_page_address;
+        }
+        Ok(())
+    }
+
     pub fn read_chain(&mut self, start_address: u32) -> Result<BlockChain, BlockError> {
         let mut address = start_address;
         let mut seen = BTreeSet::new();
@@ -424,6 +459,35 @@ impl<'a> BlockReader64<'a> {
             end,
             owner: address,
         });
+        Ok(())
+    }
+
+    /// Reserve every free page before reading active chains. A free page uses
+    /// the sentinel as its data size; its next field links independent pages,
+    /// rather than continuing a logical payload.
+    pub fn reserve_free_pages(&mut self, start_address: u64) -> Result<(), BlockError> {
+        let mut address = start_address;
+        let mut seen = BTreeSet::new();
+        while address != FORMAT16_SENTINEL {
+            if !seen.insert(address) {
+                return Err(BlockError::Cycle {
+                    start_address,
+                    address,
+                });
+            }
+            let header = read_header64(self.bytes, address)?;
+            if header.data_size != FORMAT16_SENTINEL {
+                return Err(BlockError::InvalidHeader { address });
+            }
+            let length = (FORMAT16_BLOCK_HEADER_SIZE as u64)
+                .checked_add(header.page_size)
+                .ok_or(BlockError::RangeOverflow {
+                    address,
+                    length: header.page_size,
+                })?;
+            self.reserve(address, length)?;
+            address = header.next_page_address;
+        }
         Ok(())
     }
 

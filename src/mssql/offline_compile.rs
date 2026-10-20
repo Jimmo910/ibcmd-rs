@@ -444,6 +444,139 @@ pub(super) fn requires_adoption_adapter(form_xml: &[u8], metadata_xml: &[u8]) ->
     }
     Ok(false)
 }
+/// Split a direct BaseForm into a complete Form document of its own. Byte
+/// spans keep every inherited namespace and source string intact; the base's
+/// controls must never enter the ordinary parser for the extension's root.
+fn split_form_base_xml(xml: &str) -> Result<Option<(String, String)>> {
+    use quick_xml::events::Event;
+    // The slice reader consumes UTF-8 BOM without adding it to its byte
+    // cursor. Normalize the input used for spans, then preserve own's BOM.
+    let had_bom = xml.starts_with('\u{feff}');
+    let xml = xml.strip_prefix('\u{feff}').unwrap_or(xml);
+    let document = ibcmd_xml::XmlReader::from_slice(xml.as_bytes())
+        .context("adopted Form.xml is malformed")?;
+    if document.root().name().local() != "Form" {
+        // without_adoption also folds standalone Events fragments. They have
+        // no enclosing Form/BaseForm pair; full body validation stays with
+        // the native form writer.
+        return Ok(None);
+    }
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut depth = 0usize;
+    let mut root_open = None::<String>;
+    let mut root_name = None::<String>;
+    let mut root_version = None::<String>;
+    let mut open_base = None::<(usize, usize)>;
+    let mut base_span = None::<(usize, usize, usize, usize)>;
+    loop {
+        let start = usize::try_from(reader.buffer_position())?;
+        let event = reader.read_event()?;
+        let empty = matches!(&event, Event::Empty(_));
+        match event {
+            Event::Start(node) | Event::Empty(node) => {
+                let end = usize::try_from(reader.buffer_position())?;
+                let name = node.local_name();
+                let version = node
+                    .attributes()
+                    .filter_map(|a| a.ok())
+                    .find(|a| a.key.local_name().as_ref() == b"version")
+                    .map(|a| {
+                        a.decode_and_unescape_value(reader.decoder())
+                            .map(|v| v.into_owned())
+                    })
+                    .transpose()?;
+                if depth == 0 {
+                    root_open = Some(xml[start..end].to_owned());
+                    root_name = Some(std::str::from_utf8(node.name().as_ref())?.to_owned());
+                    root_version = version;
+                } else if name.as_ref() == b"BaseForm" {
+                    if depth != 1 || open_base.is_some() || base_span.is_some() {
+                        bail!("BaseForm must occur once as a direct Form child");
+                    }
+                    if let (Some(base), Some(root)) = (version.as_deref(), root_version.as_deref())
+                        && base != root
+                    {
+                        bail!("BaseForm dialect {base} differs from Form dialect {root}");
+                    }
+                    if empty {
+                        base_span = Some((start, end, end, end));
+                    } else {
+                        open_base = Some((start, end));
+                    }
+                }
+                if !empty {
+                    depth += 1;
+                }
+            }
+            Event::End(node) => {
+                if node.local_name().as_ref() == b"BaseForm" {
+                    let (base_start, inner_start) =
+                        open_base.take().context("BaseForm end without start")?;
+                    base_span = Some((
+                        base_start,
+                        usize::try_from(reader.buffer_position())?,
+                        inner_start,
+                        start,
+                    ));
+                }
+                depth = depth.checked_sub(1).context("Form XML depth underflow")?;
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    let Some((start, end, inner_start, inner_end)) = base_span else {
+        return Ok(None);
+    };
+    let root_open = root_open.context("Form opening tag is missing")?;
+    let root_name = root_name.context("Form root name is missing")?;
+    let base = format!("{root_open}{}</{root_name}>", &xml[inner_start..inner_end]);
+    let mut own = xml.to_owned();
+    own.replace_range(start..end, "");
+    if had_bom {
+        own.insert(0, '\u{feff}');
+    }
+    Ok(Some((own, base)))
+}
+
+/// Compile an adopted form and its inherited base entirely from source XML.
+/// The base is a distinct stored form body, not a second batch of root items.
+/// A base has no source module here; the extension's BSL belongs only to own.
+pub(crate) fn compile_adopted_form_body_base_free(
+    form_xml: &[u8],
+    module_text: Option<&[u8]>,
+    source: Option<&MetadataSourceContext>,
+    items_root: Option<&Path>,
+) -> Result<Option<String>> {
+    let xml = std::str::from_utf8(form_xml).context("Form.xml is not UTF-8")?;
+    let Some((_, base_xml)) = split_form_base_xml(xml)? else {
+        return Ok(None);
+    };
+    let (own_xml, call_types) = without_adoption(xml)?;
+    let own = crate::module_blob::compile_native_form_body(
+        own_xml.as_bytes(),
+        module_text,
+        source,
+        items_root,
+    )?;
+    let own = with_call_type_blocks(&own, &call_types);
+    let base = crate::module_blob::compile_native_form_body(
+        base_xml.as_bytes(),
+        None,
+        source,
+        items_root,
+    )?;
+    let trimmed = own.trim_end();
+    let head = trimmed
+        .strip_suffix(",0,0}")
+        .context("compiled adopted form has no ordinary ending")?;
+    let base = base.trim().trim_start_matches('\u{feff}');
+    let result = format!("{head},1,{base},0}}{}", &own[trimmed.len()..]);
+    crate::module_blob::parse_form_body_plain(&result)
+        .context("source-built adopted form does not parse back")?;
+    Ok(Some(result))
+}
+
 /// The body of a form an extension adopts, compiled from its `Form.xml`:
 /// the form without `<BaseForm>` and `callType` compiles as a configuration's
 /// form, its event blocks then take the call types
@@ -519,7 +652,8 @@ type Bindings = Vec<(String, String)>;
 /// into one line under a stand-in handler, and the stand-ins' bindings.
 fn without_adoption(xml: &str) -> Result<(String, std::collections::BTreeMap<String, Bindings>)> {
     ibcmd_xml::XmlReader::from_slice(xml.as_bytes()).context("adopted Form.xml is malformed")?;
-    let has_base = xml.contains("<BaseForm");
+    let split = split_form_base_xml(xml)?;
+    let has_base = split.is_some();
     let mut reader = quick_xml::Reader::from_str(xml);
     loop {
         match reader.read_event()? {
@@ -550,20 +684,7 @@ fn without_adoption(xml: &str) -> Result<(String, std::collections::BTreeMap<Str
             _ => {}
         }
     }
-    let mut own = xml.to_owned();
-    if let Some(start) = own.find("\t<BaseForm") {
-        let line_end = start + own[start..].find('\n').context("<BaseForm> line")? + 1;
-        let end = if own[start..line_end].trim_end().ends_with("/>") {
-            line_end
-        } else {
-            let close = own[start..]
-                .find("</BaseForm>")
-                .context("<BaseForm> is not closed")?;
-            let after = start + close + "</BaseForm>".len();
-            after + own[after..].find('\n').map_or(0, |at| at + 1)
-        };
-        own.replace_range(start..end, "");
-    }
+    let own = split.map_or_else(|| xml.to_owned(), |(own, _)| own);
     let mut stand_ins = std::collections::BTreeMap::new();
     let mut out = String::with_capacity(own.len());
     let mut rest = own.as_str();
@@ -1155,5 +1276,139 @@ mod tests {
             &plain[at.unwrap_or(0).saturating_sub(10)..(at.unwrap_or(0) + 40).min(plain.len())]
         );
         assert!(plain.contains("\"Включить\",2,"), "{plain}");
+    }
+}
+
+#[cfg(test)]
+mod adopted_base_free_tests {
+    use super::*;
+
+    #[test]
+    fn source_base_form_keeps_its_controls_and_module_separate() -> Result<()> {
+        for dialect in ["2.20", "2.21"] {
+            // One line deliberately: BaseForm is structural, not a tab/line
+            // spelling. Reused ids in base and own must stay in separate roots.
+            let xml = format!(
+                r#"<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" version="{dialect}"><AutoCommandBar name="OwnBar" id="-1"/><Events><Event name="OnOpen" callType="After">OwnHandler</Event></Events><ChildItems><LabelField name="OwnLabel" id="1"><ContextMenu name="OwnMenu" id="2"/><ExtendedTooltip name="OwnTip" id="3"/></LabelField></ChildItems><BaseForm version="{dialect}"><AutoCommandBar name="BaseBar" id="-1"/><Events><Event name="OnOpen">BaseHandler</Event></Events><ChildItems><LabelField name="BaseLabel" id="1"><ContextMenu name="BaseMenu" id="2"/><ExtendedTooltip name="BaseTip" id="3"/></LabelField></ChildItems></BaseForm></Form>"#
+            );
+            let body = crate::module_blob::compile_native_form_body(
+                xml.as_bytes(),
+                Some(b"Own module"),
+                None,
+                None,
+            )?;
+            let own = crate::module_blob::parse_form_body_plain(&body)?;
+            assert!(own.layout.contains("OwnLabel"));
+            assert!(!own.layout.contains("BaseLabel"));
+            assert_eq!(own.module_text, "Own module");
+            assert_eq!(own.trailing.get(5).map(|s| s.trim()), Some("1"));
+            let base = crate::module_blob::parse_form_body_plain(
+                own.trailing.get(6).context("missing base body")?,
+            )?;
+            assert!(base.layout.contains("BaseLabel"));
+            assert!(!base.layout.contains("OwnLabel"));
+            assert!(base.module_text.is_empty());
+            assert!(body.contains("OwnHandler"));
+            assert!(!body.contains(STAND_IN));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_base_form_rejects_ambiguous_or_mixed_dialect_bases() {
+        for xml in [
+            r#"<Form version="2.20"><BaseForm version="2.20"/><BaseForm version="2.20"/></Form>"#,
+            r#"<Form version="2.20"><BaseForm version="2.21"/></Form>"#,
+            r#"<Form><BaseForm><BaseForm/></BaseForm></Form>"#,
+        ] {
+            assert!(split_form_base_xml(xml).is_err());
+        }
+        let xml = "<Form><!-- BaseForm --></Form>";
+        assert!(split_form_base_xml(xml).unwrap().is_none());
+    }
+    #[test]
+    fn source_base_form_native_bom_crlf_and_empty_nodes_keep_byte_spans() -> Result<()> {
+        let xml = concat!(
+            "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n",
+            "<Form xmlns=\"http://v8.1c.ru/8.3/xcf/logform\" xmlns:v8=\"http://v8.1c.ru/8.1/data/core\" version=\"2.21\">\r\n",
+            "\t<Title><v8:item><v8:lang>ru</v8:lang><v8:content>Своя &amp; форма</v8:content></v8:item></Title>\r\n",
+            "\t<AutoCommandBar name=\"СвояПанель\" id=\"-1\"/>\r\n",
+            "\t<ChildItems><LabelField name=\"СвояНадпись\" id=\"1\"><ContextMenu name=\"СвоеМеню\" id=\"2\"/><ExtendedTooltip name=\"СвояПодсказка\" id=\"3\"/></LabelField></ChildItems>\r\n",
+            "\t<BaseForm version=\"2.21\">\r\n",
+            "\t\t<AutoCommandBar name=\"БазоваяПанель\" id=\"-1\"/>\r\n",
+            "\t\t<ChildItems><LabelField name=\"БазоваяНадпись\" id=\"1\"><ContextMenu name=\"БазовоеМеню\" id=\"2\"/><ExtendedTooltip name=\"БазоваяПодсказка\" id=\"3\"/></LabelField></ChildItems>\r\n",
+            "\t</BaseForm>\r\n</Form>",
+        );
+        let (own, base) = split_form_base_xml(xml)?.context("native-shaped base is missing")?;
+        assert!(own.starts_with('\u{feff}'));
+        assert!(own.contains("СвояНадпись"));
+        assert!(!own.contains("БазоваяНадпись"));
+        assert!(!own.contains("<BaseForm"));
+        assert!(base.starts_with("<Form "));
+        assert!(base.contains("БазоваяНадпись"));
+        assert!(!base.contains("СвояНадпись"));
+        ibcmd_xml::XmlReader::from_slice(own.as_bytes())?;
+        ibcmd_xml::XmlReader::from_slice(base.as_bytes())?;
+        let body = crate::module_blob::compile_native_form_body(xml.as_bytes(), None, None, None)?;
+        let own = crate::module_blob::parse_form_body_plain(&body)?;
+        assert!(!own.layout.contains("БазоваяНадпись"));
+        let base = crate::module_blob::parse_form_body_plain(
+            own.trailing.get(6).context("base record is missing")?,
+        )?;
+        assert!(base.layout.contains("БазоваяНадпись"));
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "local native source XML via IBCMD_RS_NATIVE_ADOPTED_FORM"]
+    fn local_native_adopted_form_split_preserves_scopes() -> Result<()> {
+        let path = std::path::PathBuf::from(
+            std::env::var_os("IBCMD_RS_NATIVE_ADOPTED_FORM")
+                .context("native XML path is missing")?,
+        );
+        let xml = std::fs::read_to_string(path)?;
+        let (own, base) = split_form_base_xml(&xml)?.context("native BaseForm is missing")?;
+        let original = ibcmd_xml::XmlReader::from_slice(xml.as_bytes())?;
+        let own = ibcmd_xml::XmlReader::from_slice(own.as_bytes())?;
+        let base = ibcmd_xml::XmlReader::from_slice(base.as_bytes())?;
+        fn child_elements(element: &ibcmd_xml::XmlElement) -> Vec<&ibcmd_xml::XmlElement> {
+            element
+                .children()
+                .iter()
+                .filter_map(|n| match n {
+                    ibcmd_xml::XmlNode::Element(e) => Some(e),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        }
+        let original_base = child_elements(original.root())
+            .into_iter()
+            .find(|n| n.name().local() == "BaseForm")
+            .context("original BaseForm is missing")?;
+        let own_names = child_elements(own.root())
+            .iter()
+            .map(|n| n.name().local().to_owned())
+            .collect::<Vec<_>>();
+        let original_names = child_elements(original.root())
+            .iter()
+            .filter(|n| n.name().local() != "BaseForm")
+            .map(|n| n.name().local().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(own_names, original_names);
+        let base_names = child_elements(base.root())
+            .iter()
+            .map(|n| n.name().local().to_owned())
+            .collect::<Vec<_>>();
+        let expected_base_names = child_elements(original_base)
+            .iter()
+            .map(|n| n.name().local().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(base_names, expected_base_names);
+        println!(
+            "native scopes preserved: own {} sections, base {} sections",
+            own_names.len(),
+            base_names.len()
+        );
+        Ok(())
     }
 }

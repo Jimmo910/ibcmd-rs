@@ -91,6 +91,7 @@ pub(crate) struct EmptyStageObject {
 
 /// What every row of a tree needs besides its own XML.
 pub(crate) struct EmptyStageContext {
+    pub extension: bool,
     pub root: PathBuf,
     pub version: String,
     pub facts: ConfigurationFacts,
@@ -144,6 +145,10 @@ impl EmptyStageContext {
             None => source_xml_version_from_bytes(&configuration)?
                 .ok_or_else(|| anyhow!("Configuration.xml declares no source version"))?,
         };
+        let extension = crate::metadata_model::xml::MetadataXml::parse(&configuration)?
+            .object()?
+            .path(&["Properties", "ConfigurationExtensionPurpose"])
+            .is_some();
         let mut facts = configuration_facts(&configuration)?;
         // Body layouts follow the configuration, not the XML dialect: a 2.21
         // tree of an 8.3-compatible configuration stores 8.3 bodies (the
@@ -164,6 +169,7 @@ impl EmptyStageContext {
         let descriptors = DescriptorContext::with_files(root, &version, files)?;
         let module_group = module_group_of(&configuration);
         Ok(Self {
+            extension,
             root: root.to_path_buf(),
             version,
             facts,
@@ -443,9 +449,19 @@ pub(crate) fn prepare_empty_object(
 
     // The descriptor row.
     let started = stage_timing::start();
-    let descriptor =
-        catch(|| compile_descriptor(&properties.kind, path, &xml, &context.descriptors))
-            .and_then(|plain| Ok((deflate_raw(&plain)?, plain)));
+    let descriptor = catch(|| {
+        if context.extension {
+            crate::extension::build::compile_descriptor(
+                &properties.kind,
+                path,
+                &xml,
+                &context.descriptors,
+            )
+        } else {
+            compile_descriptor(&properties.kind, path, &xml, &context.descriptors)
+        }
+    })
+    .and_then(|plain| Ok((deflate_raw(&plain)?, plain)));
     stage_timing::record(started, "descriptor", &kind, &relative);
     match descriptor {
         Ok((blob, plain)) => object.rows.push(EmptyStageRow {

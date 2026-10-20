@@ -1,7 +1,6 @@
-//! Configuration extensions (.cfe). The configuration pipeline exports an
-//! extension as if it were a configuration; this module rewrites that output
-//! into what 8.3.27.2214 dumps for an extension, reading the facts the
-//! pipeline does not know from the extension's own rows.
+//! Configuration extensions (.cfe). File and database exports use the same
+//! adoption-aware source pipeline. The file adapter validates the CFE manifest
+//! and retains its own reference context instead of fetching a base database.
 //!
 //! Every adopted object -- the root included -- carries its adoption in the
 //! header after the comment: `…,"comment",1,N,(property uuid,state)×N,
@@ -15,26 +14,26 @@ pub mod adoption;
 pub mod predefined;
 pub mod root;
 
-use std::{fs, path::Path};
+pub(crate) mod build;
 
-use anyhow::{Context, Result, bail};
-use ibcmd_cf::{
-    archive::PackedCfArchive,
-    export::{StorageExportDisposition, StorageExportEntryReport},
-};
+#[cfg(test)]
+use std::fs;
+use std::path::Path;
+
+use anyhow::Result;
+#[cfg(test)]
+use anyhow::{Context, bail};
+use ibcmd_cf::archive::PackedCfArchive;
+#[cfg(test)]
+use ibcmd_cf::export::{StorageExportDisposition, StorageExportEntryReport};
 
 use crate::{
-    external::brace,
     legacy_version::InfobaseConfigSourceVersion,
-    module_blob::inflate_raw,
     mssql_dump::{self, StorageImageSourceExportReport},
 };
 
-/// The rows the writers read: metadata rows (`<uuid>`) and predefined items
-/// (`<uuid>.1c`); module and form bodies are not kept a second time.
-fn kept_row(name: &str) -> bool {
-    !name.contains('.') || (name.len() == 39 && name.ends_with(".1c"))
-}
+#[cfg(test)]
+use crate::{external::brace, module_blob::inflate_raw};
 
 /// An extension container keeps `configinfo` and no `root`; a configuration
 /// has `root` (and `version`/`versions`), an external object has `root`.
@@ -51,23 +50,25 @@ pub fn export_packed_cf_archive_to_source(
     overwrite: bool,
     source_version: InfobaseConfigSourceVersion,
 ) -> Result<StorageImageSourceExportReport> {
-    // The writers read metadata rows only (`<uuid>`, no suffix): module and
-    // form bodies are not kept a second time.
-    let extension = is_extension(&archive).then(|| {
-        archive
-            .entries()
-            .iter()
-            .filter(|entry| kept_row(entry.name()))
-            .map(|entry| (entry.name().to_owned(), entry.payload().to_vec()))
-            .collect::<Vec<_>>()
-    });
-    let report = mssql_dump::export_packed_cf_archive_to_source(
-        archive,
+    if !is_extension(&archive) {
+        return mssql_dump::export_packed_cf_archive_to_source(
+            archive,
+            output_dir,
+            overwrite,
+            source_version,
+        );
+    }
+    let (_, source_profile, entries) = archive.into_parts();
+    mssql_dump::extension::export_extension_entries_to_source(
+        source_profile.as_str(),
+        entries
+            .into_iter()
+            .map(|entry| entry.into_parts())
+            .collect(),
         output_dir,
         overwrite,
         source_version,
-    )?;
-    finish_extension(report, extension, output_dir, source_version)
+    )
 }
 
 /// [`export_packed_cf_archive_to_source`] for `(name, packed payload)`
@@ -81,44 +82,29 @@ pub fn export_entries_to_source(
     source_version: InfobaseConfigSourceVersion,
 ) -> Result<StorageImageSourceExportReport> {
     let has = |wanted: &str| entries.iter().any(|(name, _)| name == wanted);
-    let extension = (has("configinfo") && !has("root")).then(|| {
-        entries
-            .iter()
-            .filter(|(name, _)| kept_row(name))
-            .cloned()
-            .collect::<Vec<_>>()
-    });
-    let report = mssql_dump::export_packed_entries_to_source(
+    if has("configinfo") && !has("root") {
+        return mssql_dump::extension::export_extension_entries_to_source(
+            source_profile,
+            entries,
+            output_dir,
+            overwrite,
+            source_version,
+        );
+    }
+    mssql_dump::export_packed_entries_to_source(
         source_profile,
         entries,
         output_dir,
         overwrite,
         source_version,
         None,
-    )?;
-    finish_extension(report, extension, output_dir, source_version)
-}
-
-fn finish_extension(
-    mut report: StorageImageSourceExportReport,
-    extension: Option<Vec<(String, Vec<u8>)>>,
-    output_dir: &Path,
-    source_version: InfobaseConfigSourceVersion,
-) -> Result<StorageImageSourceExportReport> {
-    if let Some(entries) = extension {
-        if let Err(error) = finish(&entries, output_dir, source_version) {
-            // What this writer cannot read keeps the pipeline's rendering and
-            // is reported, instead of failing an export that used to succeed.
-            degrade_root(&mut report, &entries, &format!("{error:#}"));
-        }
-        finish_adopted(&entries, output_dir, &mut report)?;
-    }
-    Ok(report)
+    )
 }
 
 /// Rewrites the metadata XML of every adopted object (the root aside). An
 /// object whose adoption names a property no probe has set apart keeps every
 /// property and says so in its report entry.
+#[cfg(test)]
 fn finish_adopted(
     entries: &[(String, Vec<u8>)],
     output_dir: &Path,
@@ -215,6 +201,7 @@ fn finish_adopted(
 
 /// The adopted object `uuid`'s `Ext/Predefined.xml` (beside its metadata XML
 /// at `path`) with each item's `<ExtensionState>` (see `predefined`).
+#[cfg(test)]
 fn finish_predefined(rows: &Rows, uuid: &str, path: &Path) -> Result<()> {
     let predefined = path.with_extension("").join("Ext").join("Predefined.xml");
     let Some(text) = rows.text(&format!("{uuid}.1c")) else {
@@ -231,6 +218,7 @@ fn finish_predefined(rows: &Rows, uuid: &str, path: &Path) -> Result<()> {
         .with_context(|| format!("failed to write {}", predefined.display()))
 }
 
+#[cfg(test)]
 fn recount(storage: &mut ibcmd_cf::export::StorageExportReport) {
     let count = |wanted: StorageExportDisposition| {
         storage
@@ -244,65 +232,15 @@ fn recount(storage: &mut ibcmd_cf::export::StorageExportReport) {
     storage.opaque = count(StorageExportDisposition::Opaque);
     storage.logical_entries = storage.entries.len();
 }
-
-/// Marks the root row's entry failed with `message`.
-fn degrade_root(
-    report: &mut StorageImageSourceExportReport,
-    entries: &[(String, Vec<u8>)],
-    message: &str,
-) {
-    let root = Rows::new(entries).root().map(|(uuid, _)| uuid).ok();
-    let storage = &mut report.storage;
-    let entry = storage
-        .entries
-        .iter_mut()
-        .find(|entry| Some(&entry.logical_key) == root.as_ref());
-    let message = format!("extension writer: {message}");
-    match entry {
-        Some(entry) => {
-            entry.disposition = StorageExportDisposition::Failed;
-            entry.message = Some(message);
-        }
-        None => storage.entries.push(StorageExportEntryReport {
-            logical_name: "Configuration.xml".into(),
-            logical_key: root.unwrap_or_default(),
-            part_count: 1,
-            packed_bytes: 0,
-            disposition: StorageExportDisposition::Failed,
-            outputs: Vec::new(),
-            message: Some(message),
-        }),
-    }
-    recount(storage);
-}
-
-/// Rewrites the pipeline's export of the extension `entries` in
-/// `output_dir`, in the dialect `source_version` (2.20: 8.3.27.2214, 2.21:
-/// 8.5.1.1529, fixtures `v85_extension/*`).
-pub fn finish(
-    entries: &[(String, Vec<u8>)],
-    output_dir: &Path,
-    source_version: InfobaseConfigSourceVersion,
-) -> Result<()> {
-    let rows = Rows::new(entries);
-    let (uuid, text) = rows
-        .root()
-        .context("the extension has no configuration row")?;
-    let path = output_dir.join("Configuration.xml");
-    let xml =
-        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    let rewritten = root::rewrite(&xml, &text, &|object| rows.name(object), source_version)
-        .with_context(|| format!("extension root `{uuid}`"))?;
-    fs::write(&path, rewritten).with_context(|| format!("failed to write {}", path.display()))
-}
-
 /// The container's rows, decoded on demand and found by name through an
 /// index built once (a lookup per row was quadratic on a large extension).
+#[cfg(test)]
 struct Rows<'a> {
     entries: &'a [(String, Vec<u8>)],
     by_name: std::collections::HashMap<String, usize>,
 }
 
+#[cfg(test)]
 impl<'a> Rows<'a> {
     fn new(entries: &'a [(String, Vec<u8>)]) -> Self {
         let mut by_name = std::collections::HashMap::with_capacity(entries.len());

@@ -342,18 +342,24 @@ impl Projector<'_> {
                 seen.insert(tag.to_owned());
                 match multi_values.get(tag) {
                     Some((value, with_check)) => {
-                        // The check value is the object's own value, which the
-                        // converter printed just above.
-                        let own_is_empty = self.lines[index..=child_end]
-                            .iter()
-                            .all(|line| !line.contains("<v8:"));
-                        if *with_check && !own_is_empty {
-                            bail!(
-                                "adopted {element} {}: {tag} keeps a non-empty check value",
-                                header.uuid
-                            );
-                        }
-                        output.extend(self.render_extended(tag, value, &pad(2), *with_check)?);
+                        // The ordinary converter prints the row's checked type.
+                        // Keep its complete type/qualifier body separately from
+                        // the type list the adoption header adds. The header's
+                        // Recorded/Extended state decides whether to keep it,
+                        // including an empty checked type of a DefinedType.
+                        let with_check = *with_check;
+                        let checked = if child_end > index {
+                            &self.lines[index + 1..child_end]
+                        } else {
+                            &[]
+                        };
+                        output.extend(self.render_extended(
+                            tag,
+                            value,
+                            &pad(2),
+                            with_check,
+                            checked,
+                        )?);
                     }
                     None if classify(line) == LineKind::Open
                         && child_end == index + 1
@@ -418,6 +424,7 @@ impl Projector<'_> {
         value: &str,
         pad: &str,
         with_check: bool,
+        checked: &[&str],
     ) -> Result<Vec<String>> {
         const TYPE_DESCRIPTION_CLASS: &str = "f5c65050-3bbb-11d5-b988-0050bae0a95d";
         let indexes = self
@@ -443,9 +450,17 @@ impl Projector<'_> {
         );
         let mut lines = vec![format!("{pad}<{name} xsi:type=\"xr:ExtendedProperty\">")];
         if with_check {
-            lines.push(format!(
-                "{pad}\t<xr:CheckValue xsi:type=\"v8:TypeDescription\"/>"
-            ));
+            if checked.is_empty() {
+                lines.push(format!(
+                    "{pad}\t<xr:CheckValue xsi:type=\"v8:TypeDescription\"/>"
+                ));
+            } else {
+                lines.push(format!(
+                    "{pad}\t<xr:CheckValue xsi:type=\"v8:TypeDescription\">"
+                ));
+                lines.extend(checked.iter().map(|line| format!("\t{line}")));
+                lines.push(format!("{pad}\t</xr:CheckValue>"));
+            }
         }
         lines.push(format!(
             "{pad}\t<xr:ExtendValue xsi:type=\"v8:TypeDescription\">"
@@ -642,6 +657,51 @@ mod tests {
         let object_module = projected.find("<xr:Property>ObjectModule<").unwrap();
         let manager_module = projected.find("<xr:Property>ManagerModule<").unwrap();
         assert!(object_module < manager_module, "{projected}");
+    }
+
+    /// Native 8.3 widened/DefinedType stores Type as Extended (state 3),
+    /// with a nonempty default own type that must not become CheckValue.
+    /// The 8.5 demo's two widened DefinedTypes instead record Type (state 2)
+    /// with an empty own type; native export keeps their empty CheckValue.
+    #[test]
+    fn defined_type_checked_value_follows_adoption_state_in_both_dialects() {
+        const UUID: &str = "e4000000-0000-4000-8000-000000000003";
+        const TYPE: &str = "b1053250-abe6-11d4-9434-004095e12fc7";
+        for dialect in ["2.20", "2.21"] {
+            for (state, own) in [
+                (2, "\t\t\t<Type/>"),
+                (
+                    3,
+                    "\t\t\t<Type>\r\n\t\t\t\t<v8:Type>xs:string</v8:Type>\r\n\t\t\t</Type>",
+                ),
+            ] {
+                let mut adoption = header(UUID, &[EXTENDED_OBJECT, (TYPE, state)]);
+                adoption.added_values.push((
+                    TYPE.to_owned(),
+                    3,
+                    "{\"#\",f5c65050-3bbb-11d5-b988-0050bae0a95d,{\"Pattern\",{\"S\",20,0}}}"
+                        .to_owned(),
+                ));
+                let context = context(adoption);
+                context.note_indexes(&BTreeMap::new(), &BTreeMap::new());
+                let xml = format!(
+                    "<MetaDataObject version=\"{dialect}\">\r\n\t<DefinedType uuid=\"{UUID}\">\r\n\t\t<Properties>\r\n\t\t\t<Name>D</Name>\r\n\t\t\t<Comment/>\r\n{own}\r\n\t\t</Properties>\r\n\t</DefinedType>\r\n</MetaDataObject>"
+                );
+                let projected = project_object_xml(&xml, &context).unwrap();
+                assert_eq!(
+                    projected.contains("<xr:CheckValue xsi:type=\"v8:TypeDescription\"/>"),
+                    state == 2,
+                    "{dialect}, state {state}: {projected}"
+                );
+                assert!(!projected.contains("<xr:CheckValue xsi:type=\"v8:TypeDescription\">"));
+                assert!(projected.contains("<xr:ExtendValue xsi:type=\"v8:TypeDescription\">"));
+                assert!(projected.contains("<v8:Length>20</v8:Length>"));
+                assert!(projected.contains("<xr:State>MultiState</xr:State>"));
+                if state == 3 {
+                    assert!(!projected.contains("<v8:Type>xs:string</v8:Type>\r\n\t\t\t</Type>"));
+                }
+            }
+        }
     }
 
     #[test]

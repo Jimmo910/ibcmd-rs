@@ -20,10 +20,21 @@ fn assert_case(case: &str, input: &str) {
         .expect("run ibcmd-rs");
     assert!(
         run.status.success(),
-        "{case}: {}",
-        String::from_utf8_lossy(&run.stdout)
+        "{case}: {}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
     );
-    let (native, ours) = (common::files(&expected), common::files(Path::new(&out)));
+    let (mut native, ours) = (common::files(&expected), common::files(Path::new(&out)));
+    // Historical references came from Designer/SQL. Native file-CFE export
+    // omits this service file; retain every metadata/body byte comparison.
+    assert!(
+        native.remove("ConfigDumpInfo.xml").is_some(),
+        "{case}: missing Designer reference"
+    );
+    assert!(
+        !ours.contains_key("ConfigDumpInfo.xml"),
+        "{case}: file export wrote database dump info"
+    );
     assert!(!native.is_empty(), "{case}: no native tree");
     let missing: Vec<_> = native
         .keys()

@@ -14,8 +14,9 @@ fn assert_case(case: &str) {
     let run = common::export(&dir.join("input.cfe"), &out);
     assert!(
         run.status.success(),
-        "{}",
-        String::from_utf8_lossy(&run.stdout)
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
     );
     let stdout = String::from_utf8_lossy(&run.stdout);
     assert!(!stdout.contains("are not known"), "{case}: {stdout}");

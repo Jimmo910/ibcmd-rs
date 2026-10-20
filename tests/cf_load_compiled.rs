@@ -83,7 +83,11 @@ fn load_back(
         let _ = fs::remove_file(tree.join("ConfigDumpInfo.xml"));
     }
     let dump_info = fs::read_to_string(back.join("ConfigDumpInfo.xml")).unwrap_or_default();
-    if objects_changed {
+    if ext == "cfe" {
+        // Native file-CFE export has no database dump-info document. The
+        // extension test below validates every new configinfo SHA-1 instead.
+        assert!(!back.join("ConfigDumpInfo.xml").exists());
+    } else if objects_changed {
         fs::remove_file(back.join("ConfigDumpInfo.xml")).unwrap();
     }
     assert_same_but_versions(tree, &back);

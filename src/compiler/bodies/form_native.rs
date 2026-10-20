@@ -2278,18 +2278,20 @@ pub(crate) fn format_graphical_schema_payload(
 
 /// The `{1,…}` payload of a `<PlannerField>`: width and height (`50`, `10`
 /// unless named), the two stretch flags (`1`,`1` on all five Документооборот
-/// 3.0 planner fields), the `<EnableStartDrag>` flag (`0` unless `true`), a
-/// constant, the events and three constants. The five fields of that
-/// configuration reproduce byte for byte.
+/// 3.0 planner fields), the independent `<EnableStartDrag>` and `<EnableDrag>`
+/// flags (`0` unless `true`), the events and three constants. ServiceDesk's
+/// Kanban planner stores both flags as 1; the ordinary corpus leaves both off.
 pub(crate) fn format_planner_payload(
     width: &str,
     height: &str,
     enable_start_drag: bool,
+    enable_drag: bool,
     events: &str,
 ) -> String {
     format!(
-        "{{1,{width},{height},1,1,{drag},0,{events},0,0,0}}",
-        drag = u8::from(enable_start_drag),
+        "{{1,{width},{height},1,1,{start_drag},{drag},{events},0,0,0}}",
+        start_drag = u8::from(enable_start_drag),
+        drag = u8::from(enable_drag),
     )
 }
 
@@ -8440,6 +8442,8 @@ pub(crate) struct NativeRootHead<'a> {
     pub(crate) settings_storage: Option<&'a str>,
     /// `<AutoTitle>`, on unless the form turns it off.
     pub(crate) auto_title: bool,
+    /// Form-wide ReadOnly, stored independently of child control flags.
+    pub(crate) read_only: bool,
     /// Already formatted -- see [`format_russian_title`]. A form that names no
     /// title writes `{1,0}`.
     pub(crate) title: &'a str,
@@ -8468,6 +8472,7 @@ impl Default for NativeRootHead<'_> {
             auto_save_data_in_settings: None,
             settings_storage: None,
             auto_title: true,
+            read_only: false,
             title: "{1,0}",
             group: None,
             child_items_width: None,
@@ -8520,7 +8525,7 @@ pub(crate) fn format_root_head(head: &NativeRootHead<'_>) -> Option<String> {
         u8::from(head.auto_fill_check).to_string(),
         u8::from(head.customizable).to_string(),
         u8::from(head.enabled).to_string(),
-        "0".to_string(),
+        u8::from(head.read_only).to_string(),
         root_code(
             head.command_bar_location,
             &[("None", "0"), ("Auto", "1"), ("Top", "2"), ("Bottom", "3")],
@@ -9098,6 +9103,21 @@ const DATA_PATH_STANDARD_ATTRIBUTES: &[(&str, &str, &str)] = &[
     ("AccumulationRegister", "Period", "-2"),
     ("AccumulationRegister", "LineNumber", "-4"),
     ("AccumulationRegister", "RecordType", "-9"),
+    // Calculation-register record-set markers are shared by direct record-set
+    // attributes and Document.RegisterRecords. Native BSP demo forms and the
+    // exporter's measured table use -3 for LineNumber, not the other register
+    // families' -4; keeping the family in the key avoids cross-family guessing.
+    ("CalculationRegister", "RegistrationPeriod", "-13"),
+    ("CalculationRegister", "ReversingEntry", "-11"),
+    ("CalculationRegister", "Active", "-10"),
+    ("CalculationRegister", "EndOfBasePeriod", "-9"),
+    ("CalculationRegister", "BegOfBasePeriod", "-8"),
+    ("CalculationRegister", "EndOfActionPeriod", "-7"),
+    ("CalculationRegister", "BegOfActionPeriod", "-6"),
+    ("CalculationRegister", "ActionPeriod", "-5"),
+    ("CalculationRegister", "CalculationType", "-4"),
+    ("CalculationRegister", "LineNumber", "-3"),
+    ("CalculationRegister", "Recorder", "-2"),
     ("BusinessProcess", "Number", "-2"),
     ("BusinessProcess", "Date", "-3"),
     // The exporter names `-5` `Ref` on a business process object (64 buttons
@@ -12466,6 +12486,74 @@ mod tests {
         // Without a configuration to read, a dotted path refuses too.
         assert_eq!(
             resolve_form_data_path(&records, None, "ПроводкиСКорреспонденцией.Период"),
+            None
+        );
+    }
+    #[test]
+    fn form_scope_calculation_register_record_set_paths_preserve_family_markers() {
+        let form = form_with(vec![
+            ("Object", attribute("1", &["cfg:DocumentObject.Operation"])),
+            (
+                "Records",
+                attribute("2", &["cfg:CalculationRegisterRecordSet.Payroll"]),
+            ),
+        ]);
+        let configuration = TestConfiguration::new(vec![
+            (
+                "Document.Operation",
+                ConfigurationObject {
+                    uuid: "11111111-1111-4111-8111-111111111111".into(),
+                    class: "Document".into(),
+                    ..ConfigurationObject::default()
+                },
+            ),
+            (
+                "CalculationRegister.Payroll",
+                ConfigurationObject {
+                    uuid: "22222222-2222-4222-8222-222222222222".into(),
+                    class: "CalculationRegister".into(),
+                    ..ConfigurationObject::default()
+                },
+            ),
+        ]);
+        for (member, marker) in [
+            ("RegistrationPeriod", "-13"),
+            ("ReversingEntry", "-11"),
+            ("Active", "-10"),
+            ("EndOfBasePeriod", "-9"),
+            ("BegOfBasePeriod", "-8"),
+            ("EndOfActionPeriod", "-7"),
+            ("BegOfActionPeriod", "-6"),
+            ("ActionPeriod", "-5"),
+            ("CalculationType", "-4"),
+            ("LineNumber", "-3"),
+            ("Recorder", "-2"),
+        ] {
+            assert_eq!(
+                resolve_form_data_path(
+                    &form,
+                    Some(&configuration),
+                    &format!("Object.RegisterRecords.Payroll.{member}")
+                ),
+                Some(format!(
+                    "{{4,{{1}},{{-8}},{{0,22222222-2222-4222-8222-222222222222}},{{{marker}}}}}"
+                )),
+            );
+            assert_eq!(
+                resolve_form_data_path(&form, Some(&configuration), &format!("Records.{member}")),
+                Some(format!("{{2,{{2}},{{{marker}}}}}")),
+            );
+        }
+        assert_eq!(
+            resolve_form_data_path(&form, Some(&configuration), "Records.UnknownMember"),
+            None
+        );
+        assert_eq!(
+            resolve_form_data_path(
+                &form,
+                Some(&configuration),
+                "Object.RegisterRecords.Missing.LineNumber"
+            ),
             None
         );
     }

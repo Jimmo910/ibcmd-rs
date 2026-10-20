@@ -95,9 +95,9 @@ use crate::sql::{ScriptVariables, SqlBackend, SqlExec, SqlOptions, SqlParam, Sql
 pub mod base_free_cf;
 pub mod cf_load_stage;
 mod delta_stage;
-mod empty_stage;
+pub(crate) mod empty_stage;
 pub mod files_stage;
-mod offline_compile;
+pub(crate) mod offline_compile;
 mod override_stage;
 mod patch_refusal;
 mod stage_guard;
@@ -6123,6 +6123,16 @@ fn prepare_configuration_asset_body_rows(
         properties,
         infer_configuration_ext_body_path(xml_path, "Splash.xml"),
         "2",
+    )?);
+    let logo = SourceAssetRegistry
+        .route("Configuration", SourceAssetRole::Logo)
+        .context("Configuration Logo asset route is absent")?;
+    rows.extend(prepare_configuration_ext_picture_body_row(
+        sql,
+        database,
+        properties,
+        infer_configuration_ext_body_path(xml_path, logo.file_name()),
+        logo.suffix().trim_start_matches('.'),
     )?);
     rows.extend(prepare_configuration_raw_deflated_body_row(
         sql,
@@ -16179,6 +16189,42 @@ mod tests {
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prepares_extension_logo_from_source_zip_under_the_module_group() {
+        let root = std::env::temp_dir().join(format!(
+            "ibcmd-extension-logo-no-base-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let body_path = root.join("Ext/Logo.xml");
+        let picture_file = body_path.with_extension("").join("Picture.zip");
+        fs::create_dir_all(picture_file.parent().unwrap()).unwrap();
+        let configuration = root.join("Configuration.xml");
+        fs::write(&configuration,br#"<MetaDataObject><Configuration><InternalInfo><xr:ContainedObject><xr:ClassId>9cd510cd-abfc-11d4-9434-004095e12fc7</xr:ClassId><xr:ObjectId>aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa</xr:ObjectId></xr:ContainedObject></InternalInfo></Configuration></MetaDataObject>"#).unwrap();
+        fs::write(&body_path, sample_ext_picture_xml("Picture.zip")).unwrap();
+        fs::write(&picture_file, b"ZIP-SOURCE-PAYLOAD").unwrap();
+        let properties = test_simple_metadata_properties(
+            "Configuration",
+            "ffffffff-ffff-4fff-ffff-ffffffffffff",
+            "Main",
+        );
+        let rows = super::prepare_configuration_asset_body_rows(
+            &test_sql(),
+            "missing-database",
+            &configuration,
+            &properties,
+            None,
+            &test_compile_axes(),
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].body_id, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa.1");
+        assert_eq!(
+            raw_deflated_first_base64_payload_sha256(&rows[0].blob).unwrap(),
+            hex_sha256(b"ZIP-SOURCE-PAYLOAD")
+        );
         let _ = fs::remove_dir_all(root);
     }
 

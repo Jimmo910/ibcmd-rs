@@ -2954,6 +2954,7 @@ pub fn export_storage_image_to_source(
         overwrite,
         source_version,
         None,
+        true,
     )
 }
 
@@ -3035,6 +3036,7 @@ pub fn export_packed_entries_to_source(
         overwrite,
         source_version,
         foreign,
+        true,
     )
 }
 
@@ -3047,6 +3049,7 @@ fn export_direct_storage_rows_to_source(
     overwrite: bool,
     source_version: InfobaseConfigSourceVersion,
     foreign: Option<&ForeignReferences>,
+    write_dump_info: bool,
 ) -> Result<StorageImageSourceExportReport> {
     prepare_output_dir(output_dir, overwrite)?;
     // Reuses the same eligibility rule the streamed MSSQL pipeline uses
@@ -3079,7 +3082,7 @@ fn export_direct_storage_rows_to_source(
         SourceAssetCompletenessScope::Full,
         true,
         false,
-        config_dump_info_plan.config_dump_info_eligible(),
+        write_dump_info && config_dump_info_plan.config_dump_info_eligible(),
         foreign,
     )?;
     let successful = dumped
@@ -33984,7 +33987,20 @@ fn parse_typed_metadata_properties_from_text(
     let marker_start = text.find(&marker)?;
     let value_types = parse_typed_metadata_value_types_before(text, marker_start, type_index)?;
     if value_types.is_empty() {
-        return None;
+        // An adopted typed object whose extension does not control Type has
+        // no type of its own. Source-only CFE compilation stores the valid
+        // empty Pattern and the projection drops Type. Do not invent the
+        // base object's hidden type, or accept an empty controlled/own type.
+        let context = extension::active()?;
+        let header = context.adopted(uuid)?;
+        if header.properties.iter().any(|(guid, _)| {
+            matches!(
+                extension::properties::meaning("SessionParameter", guid),
+                Some(extension::properties::Meaning::Multi("Type"))
+            )
+        }) {
+            return None;
+        }
     }
 
     // A bare family reference (`cfg:CatalogRef` with no object behind it) is a
@@ -36322,7 +36338,7 @@ const STYLE_BODY_FONT_STYLE_ITEM_KIND: &str = "2";
 /// stays the tiebreaker for an item the configuration's child index does not
 /// carry, so a style read without that index writes exactly what it wrote
 /// before.
-fn extract_style_body_xml(
+pub(crate) fn extract_style_body_xml(
     bytes: &[u8],
     object_refs: &BTreeMap<String, String>,
     configuration_root_child_order: &BTreeMap<String, usize>,
@@ -36523,6 +36539,15 @@ fn standard_style_item_for_code(code: i32) -> Option<(usize, &'static str)> {
         .iter()
         .position(|item_code| *item_code == code)?;
     Some((order, name))
+}
+
+/// The inverse of the style reader's single standard-item table. Keeping the
+/// source writer on this table covers the 8.5 colour/font additions too.
+pub(crate) fn standard_style_item_code_for_name(name: &str) -> Option<i32> {
+    STANDARD_STYLE_ITEM_CODES
+        .iter()
+        .copied()
+        .find(|code| standard_style_item_for_code(*code).is_some_and(|(_, found)| found == name))
 }
 
 const STANDARD_STYLE_ITEM_CODES: &[i32] = &[

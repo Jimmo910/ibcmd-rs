@@ -69,6 +69,10 @@ pub(crate) fn meaning(element: &str, guid: &str) -> Option<Meaning> {
         // The modules and predefined items an adopted object extends
         // (`external/adopted/{catalog_modules,catalog_object_module,
         // document_children,predefined,exchange_plan}`).
+        // Native adopted/predefined and adopted/exchange_plan fixtures:
+        // these states belong to their asset blocks, not scalar properties.
+        ("Catalog", "f440939a-f130-413b-9c9a-2b18c4af69c6") => Block("Predefined"),
+        ("ExchangePlan", "ee705b5d-dd16-46e4-b613-3a7edba5ba84") => Block("Content"),
         ("Catalog", "a637f77f-3840-441d-a1c3-699c8c5cb7e0") => Block("ObjectModule"),
         ("Catalog", "d1b64a2c-8078-4982-8190-8f81aefda192") => Block("ManagerModule"),
         ("Document", "60643a07-120a-4a63-9dba-67369c0f0145") => Property("NumberType"),
@@ -286,4 +290,75 @@ mod tests {
             Some(Meaning::Multi("CommandParameterType"))
         );
     }
+}
+
+/// Inverse of the evidenced property mapping; shared by extension compilation.
+pub(crate) fn guid_for(element: &str, name: &str) -> Option<&'static str> {
+    const IDS: &[&str] = &[
+        "07ddee68-6fc0-4b88-9616-7792446d12b8",
+        "09c412e0-0f30-11d6-a3c7-0050bae0a776",
+        "13134205-f60b-11d5-a3c7-0050bae0a776",
+        "15e3462b-bc9b-40cd-9d9f-dc0922f84560",
+        "161bc4c0-4cc0-4382-a045-f58f25e24783",
+        "1ab4ba03-e4e6-4bf0-93e9-fcc28cc67567",
+        "3035a9db-d6b2-450e-8b22-4430577f8dab",
+        "3245b9fe-57f9-43dc-9c11-030f0617ce16",
+        "32e087ab-1491-49b6-aba7-43571b41ac2b",
+        "36e0f718-e0ba-4369-af8b-aff9a4ad7a35",
+        "37f2fa9d-b276-11d4-9435-004095e12fc7",
+        "37f2fa9e-b276-11d4-9435-004095e12fc7",
+        "37f2fa9f-b276-11d4-9435-004095e12fc7",
+        "3a5cca5c-0675-43df-80ca-2cf5163335f2",
+        "41721fe8-6dcb-4585-9ec2-5577d430cf6b",
+        "436af77a-e846-4084-818b-740a3378518e",
+        "482411f7-457f-4889-a7c9-9adbfb1c7bd4",
+        "490eb6bd-24c4-4943-82aa-d0c4b666861b",
+        "4b2a2bcf-a845-41ba-a03d-05b09a2c6c11",
+        "60643a07-120a-4a63-9dba-67369c0f0145",
+        "6275a02e-96f0-4347-975a-2d661e6a0675",
+        "6a447e3f-d9d7-4c97-a239-87e3fe6d8055",
+        "719346a1-02d5-4311-a141-4d22470a7ac3",
+        "740eb5f6-e214-4e30-aefa-f15bab91c688",
+        "74ce8a02-abd2-46a6-8544-8cfbb4e8c6e0",
+        "7d14f63a-87e8-4188-a28b-02da93f6bcbd",
+        "7dbb2bc7-6bae-4b81-91cb-681317272a0b",
+        "7f676314-716a-4d54-8335-a71a3857b21c",
+        "9595ddd6-e72c-47ad-a156-672db811628c",
+        "9b7bbbae-9771-46f2-9e4d-2489e0ffc702",
+        "9dfcabbf-6a7a-48aa-8721-df5e78b367c6",
+        "9f36fd70-4bf4-47f6-b235-935f73aab43f",
+        "a4a9c1e2-1e54-4c7f-af06-4ca341198fac",
+        "a637f77f-3840-441d-a1c3-699c8c5cb7e0",
+        "a78d9ce3-4e0c-48d5-9863-ae7342eedf94",
+        "a865d4e5-8584-4894-8e49-4b4206f98f5a",
+        "b0ec341d-eede-4bb4-b303-ed50020b4c7f",
+        "b1053250-abe6-11d4-9434-004095e12fc7",
+        "b69601f0-4cf6-11d4-9415-008048da11f9",
+        "bd533460-4001-11d6-a3c7-0050bae0a776",
+        "bf9cc511-eb2a-48b6-a666-7afb78b83f36",
+        "c474bab9-d13a-4fbd-bfb0-9214d6dc2fde",
+        "c6690627-40cf-4741-8719-4e7feb832b84",
+        "c6c6cdec-9de1-431f-b17a-e442eebf86c1",
+        "c6c9689d-2978-42e8-863f-0280c6a85b56",
+        "c9ba86bf-a1e7-440f-9450-adb61f886f88",
+        "cbd1f1ed-72d3-4da3-bd02-c643d9595b7d",
+        "cf4abea3-37b2-11d4-940f-008048da11f9",
+        "d12660a6-7298-4ae2-a332-b95a6459a280",
+        "d1b64a2c-8078-4982-8190-8f81aefda192",
+        "d22e852a-cf8a-4f77-8ccb-3548e7792bea",
+        "d5963243-262e-4398-b4d7-fb16d06484f6",
+        "d98a8e01-7219-41ce-9f23-dada0860b9bf",
+        "da648ef9-2f12-418f-8e2f-8956bc10a66f",
+        "e1e8ea40-0906-11d6-a3c7-0050bae0a776",
+        "e3331ed0-3854-478d-b6b5-4f14acdd6edb",
+        "ee705b5d-dd16-46e4-b613-3a7edba5ba84",
+        "f440939a-f130-413b-9c9a-2b18c4af69c6",
+    ];
+    IDS.iter().copied().find(|id| match meaning(element, id) {
+        Some(Meaning::Property(value) | Meaning::Block(value) | Meaning::Multi(value)) => {
+            value == name
+        }
+        Some(Meaning::ExtendedObject) => name == "ExtendedConfigurationObject",
+        _ => false,
+    })
 }
