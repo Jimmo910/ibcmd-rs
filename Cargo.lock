@@ -604,6 +604,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-filedb"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "libc",
+]
+
+[[package]]
 name = "ibcmd-number-format"
 version = "0.1.0"
 

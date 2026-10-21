@@ -13,6 +13,7 @@ members = [
     "crates/ibcmd-cf",
     "crates/ibcmd-edt",
     "crates/ibcmd-number-format",
+    "crates/ibcmd-filedb",
 ]
 resolver = "3"
 exclude = ["crates/ibcmd-edt/vendor/morph1c"]

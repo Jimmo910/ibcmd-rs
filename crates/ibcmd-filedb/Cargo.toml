@@ -1,0 +1,14 @@
+[package]
+name = "ibcmd-filedb"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+flate2 = "1.1"
