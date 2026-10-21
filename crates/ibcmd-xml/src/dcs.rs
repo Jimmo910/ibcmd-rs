@@ -6449,7 +6449,15 @@ fn reconcile_nil_data_parameter_items(
             && let Some(value_start) = item.find(NIL_VALUE)
         {
             if omit_restricted_item {
-                if item.contains("<dcscor:use>false</dcscor:use>") {
+                // An unused nil value of a restricted parameter sets nothing and
+                // is not published (ЛИМС КОРП, 8.3.27.2214) -- unless it is a
+                // user setting: an item with a `userSettingID` is the place of
+                // one, and the platform keeps it (БСП 3.2 demo, 8.5.1.1150:
+                // `Catalogs/СценарииОбменовДанными/Forms/
+                // НастройкаРасписанияОбменовДанными`, `УзелИнформационнойБазы`).
+                if item.contains("<dcscor:use>false</dcscor:use>")
+                    && !item.contains("<dcsset:userSettingID>")
+                {
                     let line_start = output.rfind('\n').map_or(0, |offset| offset + 1);
                     if output[line_start..]
                         .bytes()
@@ -6498,6 +6506,27 @@ fn reconcile_nil_data_parameter_items(
 #[cfg(test)]
 mod form_data_parameters_reconciliation_tests {
     use super::reconcile_form_list_settings_data_parameters;
+
+    #[test]
+    fn an_unused_restricted_item_that_is_a_user_setting_is_kept() {
+        let item = |user_setting: &str| {
+            format!(
+                "\t<dcsset:dataParameters>\r\n\t\t<dcscor:item xsi:type=\"dcsset:SettingsParameterValue\">\r\n\t\t\t<dcscor:use>false</dcscor:use>\r\n\t\t\t<dcscor:parameter>Узел</dcscor:parameter>\r\n\t\t\t<dcscor:value xsi:nil=\"true\"/>\r\n{user_setting}\t\t</dcscor:item>\r\n\t</dcsset:dataParameters>\r\n"
+            )
+        };
+        let schema = "<schema><Parameter><name>Узел</name><value xsi:nil=\"true\"/><useRestriction>true</useRestriction></Parameter></schema>";
+        let with_id = item(
+            "\t\t\t<dcsset:userSettingID>d02cd8a2-019b-4f18-8b6f-4061464e120d</dcsset:userSettingID>\r\n",
+        );
+        assert_eq!(
+            reconcile_form_list_settings_data_parameters(&with_id, Some(schema)).as_deref(),
+            Some(with_id.as_str())
+        );
+        assert_eq!(
+            reconcile_form_list_settings_data_parameters(&item(""), Some(schema)).as_deref(),
+            Some("\t<dcsset:dataParameters/>\r\n")
+        );
+    }
 
     #[test]
     fn unchanged_fragments_retain_exact_source_bytes() {

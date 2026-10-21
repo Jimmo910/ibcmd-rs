@@ -112,6 +112,15 @@ pub fn run_infobase(args: &[OsString]) -> i32 {
         }
         Ok(Invocation::Export(request)) => run_export(request),
         Ok(Invocation::Import(request)) => run_import(request),
+        // A file infobase is exported and imported; the rest stays the
+        // platform's for now.
+        Ok(Invocation::ImportFiles(request)) if request.common.db_path.is_some() => {
+            refuse_file_infobase()
+        }
+        Ok(Invocation::Apply(request)) if request.common.db_path.is_some() => {
+            refuse_file_infobase()
+        }
+        Ok(Invocation::Save(request)) if request.common.db_path.is_some() => refuse_file_infobase(),
         Ok(Invocation::ImportFiles(request)) => run_import_files(request),
         Ok(Invocation::Apply(request)) => apply::run(request),
         Ok(Invocation::Save(request)) => run_save(request),
@@ -121,6 +130,12 @@ pub fn run_infobase(args: &[OsString]) -> i32 {
         }
     };
     finish(code)
+}
+
+fn refuse_file_infobase() -> i32 {
+    let refusal = Refusal::FileInfobase;
+    print_refusal(&refusal, &program_name());
+    refusal_exit_code(&refusal)
 }
 
 /// `ibcmd server ...` and the platform's other modes: refused.
@@ -183,8 +198,9 @@ pub fn refusal_message(refusal: &Refusal, program: &str) -> (String, bool) {
         ),
         Refusal::UnknownDbms(dbms) => format!("Указанный тип СУБД не поддерживается: '{dbms}'"),
         Refusal::FileInfobase => {
-            "Файловые информационные базы не поддерживаются в этой версии ibcmd-rs: \
-укажите --dbms=MSSQLServer, --db-server и --db-name"
+            "Для файловой информационной базы (--db-path) ibcmd-rs выполняет только \
+config export и config import; эту команду выполните штатным ibcmd или укажите \
+--dbms=MSSQLServer, --db-server и --db-name"
                 .to_string()
         }
         Refusal::ImportArchive(path) => format!(
@@ -304,6 +320,7 @@ pub fn export_args(request: &ExportRequest) -> InfobaseConfigExportArgs {
         format: None,
         platform: common.platform,
         source_version: common.source_version,
+        db_path: common.db_path.clone(),
         dbms: common.dbms.clone(),
         db_server: common.db_server.as_deref().map(sql_server_name),
         db_name: common.db_name.clone(),
@@ -339,6 +356,7 @@ pub fn import_args(request: &ImportRequest) -> InfobaseConfigImportArgs {
         format: None,
         platform: common.platform,
         source_version: common.source_version,
+        db_path: common.db_path.clone(),
         dbms: common.dbms.clone(),
         db_server: common.db_server.as_deref().map(sql_server_name),
         db_name: common.db_name.clone(),

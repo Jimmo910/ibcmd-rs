@@ -101,6 +101,11 @@ pub(crate) mod offline_compile;
 mod override_stage;
 mod patch_refusal;
 mod stage_guard;
+// For the import into a file infobase (`crate::file_infobase`).
+pub(crate) use override_stage::deleted_row as stage_deleted_row;
+pub(crate) use stage_guard::{
+    GuardRequest, StageKind, TreeFiles, verify_staged_state, wanted as stage_guard_wanted,
+};
 mod stage_timing;
 
 pub use override_stage::StageOverrides;

@@ -419,7 +419,8 @@ pub enum Refusal {
     UnsupportedDbms(String),
     /// A DBMS the platform does not know either.
     UnknownDbms(String),
-    /// No `--dbms`: the platform would open a file infobase.
+    /// `--db-path` with a command ibcmd-rs does not run on a file infobase
+    /// yet (only `config export` and `config import` do).
     FileInfobase,
     /// An import from a `.zip`.
     ImportArchive(PathBuf),
@@ -439,6 +440,8 @@ pub enum Refusal {
 pub struct Common {
     /// `--config`/`-c`: the platform ibcmd's configuration file.
     pub native_config: Option<PathBuf>,
+    /// `--db-path`/`--database-path`: a file infobase, in place of a DBMS.
+    pub db_path: Option<PathBuf>,
     pub dbms: Option<String>,
     pub db_server: Option<String>,
     pub db_name: Option<String>,
@@ -1070,8 +1073,20 @@ const KNOWN_DBMS: &[&str] = &["MSSQLServer", "PostgreSQL", "IBMDB2", "OracleData
 fn common(scan: &Scan) -> Result<Common, Refusal> {
     let text = |opt| scan.value(opt).map(str::to_string);
     let path = |opt| scan.value(opt).map(PathBuf::from);
+    // `--db-path` names a file infobase; a DBMS value beside it contradicts it.
     if scan.has(Opt::DbPath) {
-        return Err(Refusal::FileInfobase);
+        for (opt, name) in [
+            (Opt::Dbms, "--dbms"),
+            (Opt::DbServer, "--db-server"),
+            (Opt::DbName, "--db-name"),
+        ] {
+            if scan.has(opt) {
+                return Err(Refusal::Conflict {
+                    first: "--db-path".to_string(),
+                    second: name.to_string(),
+                });
+            }
+        }
     }
     let dbms = match scan.value(Opt::Dbms) {
         Some(value) => {
@@ -1119,6 +1134,7 @@ fn common(scan: &Scan) -> Result<Common, Refusal> {
     }
     Ok(Common {
         native_config: path(Opt::Config),
+        db_path: path(Opt::DbPath),
         dbms,
         db_server: text(Opt::DbServer),
         db_name: text(Opt::DbName),
@@ -1554,14 +1570,25 @@ mod tests {
             parse(&["config", "export", "o"]),
             Ok(Invocation::Export(_))
         ));
-        assert_eq!(
-            parse(&["config", "export", "--db-path=C:\\ib", "o"]),
-            Err(Refusal::FileInfobase)
-        );
-        assert_eq!(
-            parse(&["config", "import", "--database-path", "C:\\ib", "o"]),
-            Err(Refusal::FileInfobase)
-        );
+        // `--db-path` names a file infobase (#375); a DBMS value beside it
+        // contradicts it
+        let request = export(&["config", "export", "--db-path=C:\\ib", "o"]);
+        assert_eq!(request.common.db_path, Some(PathBuf::from("C:\\ib")));
+        let request = import(&["config", "import", "--database-path", "C:\\ib", "o"]);
+        assert_eq!(request.common.db_path, Some(PathBuf::from("C:\\ib")));
+        for (option, name) in [
+            ("--dbms=MSSQLServer", "--dbms"),
+            ("--db-server=s", "--db-server"),
+            ("--db-name=b", "--db-name"),
+        ] {
+            assert_eq!(
+                parse(&["config", "export", "--db-path=C:\\ib", option, "o"]),
+                Err(Refusal::Conflict {
+                    first: "--db-path".to_string(),
+                    second: name.to_string()
+                })
+            );
+        }
         // a database name alone means the server database
         let request = export(&["config", "export", "--db-name=b", "o"]);
         assert_eq!(request.common.dbms, None);
@@ -2060,10 +2087,9 @@ mod tests {
             parse(&["config", "apply", "--dbms=PostgreSQL"]),
             Err(Refusal::UnsupportedDbms("PostgreSQL".to_string()))
         );
-        assert_eq!(
-            parse(&["config", "apply", "--db-path=C:\\ib"]),
-            Err(Refusal::FileInfobase)
-        );
+        // a file infobase is parsed; `super::run_infobase` refuses to apply it
+        let request = apply(&["config", "apply", "--db-path=C:\\ib"]);
+        assert_eq!(request.common.db_path, Some(PathBuf::from("C:\\ib")));
     }
 
     #[test]

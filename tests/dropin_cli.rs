@@ -284,22 +284,31 @@ fn unsupported_options_and_malformed_lines_are_refused() {
         ],
         "Параметры --platform и --source-version нельзя указывать вместе",
     );
-    // no database at all: the platform would open a file infobase; the
-    // export starts and fails on the connection
+    // no database at all: the export starts and fails on the connection
     assert_exit(
         &["infobase", "config", "export", out.arg()],
         FAILED,
-        "файловые информационные базы не поддерживаются",
+        "передайте --db-path",
+    );
+    // a file infobase is exported and imported; the other commands refuse it
+    assert_refused(
+        &["infobase", "config", "apply", "--db-path=C:\\ib"],
+        "выполняет только config export и config import",
     );
     assert_refused(
+        &["infobase", "config", "save", "--db-path=C:\\ib", out.arg()],
+        "выполняет только config export и config import",
+    );
+    assert_malformed(
         &[
             "infobase",
             "config",
             "export",
             "--db-path=C:\\ib",
+            "--dbms=MSSQLServer",
             out.arg(),
         ],
-        "Файловые информационные базы не поддерживаются",
+        "--db-path",
     );
     let archive = out.path().join("tree.zip");
     fs::write(&archive, b"PK").unwrap();

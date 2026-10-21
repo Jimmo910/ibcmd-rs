@@ -258,6 +258,7 @@ fn connect(request: &ApplyRequest) -> Result<(SqlExec, ConfigApplyOptions)> {
         format: None,
         platform: common.platform,
         source_version: common.source_version,
+        db_path: None,
         dbms: common.dbms.as_deref(),
         db_server: server.as_deref(),
         db_name: common.db_name.as_deref(),
