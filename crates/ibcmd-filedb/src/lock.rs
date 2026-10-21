@@ -37,7 +37,11 @@ pub(crate) fn open_locked(path: &Path, mode: Mode) -> Result<File> {
     {
         use std::os::windows::fs::OpenOptionsExt;
         const FILE_SHARE_READ: u32 = 1;
-        options.share_mode(if mode == Mode::Write { 0 } else { FILE_SHARE_READ });
+        options.share_mode(if mode == Mode::Write {
+            0
+        } else {
+            FILE_SHARE_READ
+        });
     }
     let file = match options.open(path) {
         Ok(file) => file,

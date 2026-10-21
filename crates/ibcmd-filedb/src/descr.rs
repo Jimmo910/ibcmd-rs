@@ -245,7 +245,9 @@ fn parse_table(text: &str) -> Result<Table> {
                     .collect::<Option<_>>()
                     .ok_or_else(|| corrupt(format!("Таблица {name}: неверный раздел Files")))?;
                 if numbers.len() != 3 {
-                    return Err(corrupt(format!("Таблица {name}: в разделе Files не три страницы")));
+                    return Err(corrupt(format!(
+                        "Таблица {name}: в разделе Files не три страницы"
+                    )));
                 }
                 files = Some([numbers[0], numbers[1], numbers[2]]);
             }
@@ -317,8 +319,8 @@ pub(crate) fn read_tables(pager: &mut Pager) -> Result<(String, BTreeMap<String,
     for i in 0..count {
         let block = u32::from_le_bytes(head[36 + i * 4..40 + i * 4].try_into().unwrap());
         let text_bytes = blob::read_chain(&data, block, None)?;
-        let text = String::from_utf8(text_bytes)
-            .map_err(|_| corrupt("Описание таблицы не в UTF-8"))?;
+        let text =
+            String::from_utf8(text_bytes).map_err(|_| corrupt("Описание таблицы не в UTF-8"))?;
         let table = parse_table(&text)?;
         tables.insert(table.name.clone(), table);
     }
@@ -337,14 +339,26 @@ mod tests {
         assert_eq!(table.name, "CONFIG");
         assert_eq!(table.fields.len(), 7);
         assert_eq!(table.record_size(), 301);
-        assert_eq!((table.records_page, table.blob_page, table.index_page), (6, 7, 8));
+        assert_eq!(
+            (table.records_page, table.blob_page, table.index_page),
+            (6, 7, 8)
+        );
         assert_eq!(table.index_names, ["BYNAMENO_CONFIG"]);
-        assert_eq!(table.field_offset("PARTNO").unwrap().0, 1 + 258 + 7 + 7 + 3 + 11 + 8);
+        assert_eq!(
+            table.field_offset("PARTNO").unwrap().0,
+            1 + 258 + 7 + 7 + 3 + 11 + 8
+        );
     }
 
     #[test]
     fn malformed_descriptions_fail_closed() {
-        for text in ["", "{", "{\"T\",0,{\"Fields\",{\"A\",\"ZZ\",0,1,0,\"CS\"}},{\"Files\",1,2,3}}", "{\"T\",0}", "{\"T\",0,{\"Files\",1,2}}"] {
+        for text in [
+            "",
+            "{",
+            "{\"T\",0,{\"Fields\",{\"A\",\"ZZ\",0,1,0,\"CS\"}},{\"Files\",1,2,3}}",
+            "{\"T\",0}",
+            "{\"T\",0,{\"Files\",1,2}}",
+        ] {
             assert!(parse_table(text).is_err(), "{text}");
         }
     }

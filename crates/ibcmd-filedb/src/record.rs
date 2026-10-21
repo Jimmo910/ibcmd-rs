@@ -22,7 +22,9 @@ pub(crate) fn unpack_decimal(bytes: &[u8], digits: usize) -> Result<u64> {
         return Err(corrupt("Отрицательное или неверное число в записи"));
     }
     for i in 1..=digits {
-        let byte = *bytes.get(i / 2).ok_or_else(|| corrupt("Число короче описания"))?;
+        let byte = *bytes
+            .get(i / 2)
+            .ok_or_else(|| corrupt("Число короче описания"))?;
         let nibble = if i % 2 == 0 { byte >> 4 } else { byte & 0x0F };
         if nibble > 9 {
             return Err(corrupt("Неверная цифра в числе"));
@@ -41,8 +43,21 @@ pub struct Timestamp(pub [u8; 7]);
 
 impl Timestamp {
     /// From calendar parts; out-of-range parts are refused.
-    pub fn new(year: u32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> Option<Self> {
-        if year > 9999 || !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 59 {
+    pub fn new(
+        year: u32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+    ) -> Option<Self> {
+        if year > 9999
+            || !(1..=12).contains(&month)
+            || !(1..=31).contains(&day)
+            || hour > 23
+            || minute > 59
+            || second > 59
+        {
             return None;
         }
         let digits = format!("{year:04}{month:02}{day:02}{hour:02}{minute:02}{second:02}");
@@ -63,8 +78,15 @@ impl Timestamp {
         let days = (secs / 86_400) as i64;
         let rem = secs % 86_400;
         let (y, m, d) = civil_from_days(days);
-        Timestamp::new(y as u32, m, d, (rem / 3600) as u32, (rem % 3600 / 60) as u32, (rem % 60) as u32)
-            .unwrap_or(Timestamp([0; 7]))
+        Timestamp::new(
+            y as u32,
+            m,
+            d,
+            (rem / 3600) as u32,
+            (rem % 3600 / 60) as u32,
+            (rem % 60) as u32,
+        )
+        .unwrap_or(Timestamp([0; 7]))
     }
 
     pub fn digits(&self) -> String {
@@ -94,8 +116,10 @@ pub(crate) fn decode_var_string(bytes: &[u8], length: usize) -> Result<String> {
         return Err(corrupt("Строка длиннее описания поля"));
     }
     let units: Vec<u16> = bytes[2..2 + count * 2]
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
         .collect();
     String::from_utf16(&units).map_err(|_| corrupt("Строка не в UTF-16"))
 }
@@ -108,8 +132,8 @@ pub(crate) fn encode_var_string(value: &str, length: usize, out: &mut [u8]) -> R
         )));
     }
     out[0..2].copy_from_slice(&(units.len() as u16).to_le_bytes());
-    for pad in out[2..].chunks_exact_mut(2) {
-        pad.copy_from_slice(&[0x20, 0x00]);
+    for pad in out[2..].as_chunks_mut::<2>().0 {
+        *pad = [0x20, 0x00];
     }
     for (i, u) in units.iter().enumerate() {
         out[2 + i * 2..4 + i * 2].copy_from_slice(&u.to_le_bytes());
@@ -129,7 +153,12 @@ mod tests {
         // ATTRIBUTES N(5) takes 3 bytes, DATASIZE N(20) 11.
         assert_eq!(pack_decimal(12345, 5), [0x11, 0x23, 0x45]);
         assert_eq!(pack_decimal(172_797_914, 20).len(), 11);
-        for (v, n) in [(0u64, 5usize), (99_999, 5), (172_797_914, 20), (4_294_967_295, 10)] {
+        for (v, n) in [
+            (0u64, 5usize),
+            (99_999, 5),
+            (172_797_914, 20),
+            (4_294_967_295, 10),
+        ] {
             assert_eq!(unpack_decimal(&pack_decimal(v, n), n).unwrap(), v);
         }
         assert!(unpack_decimal(&[0x00, 0x00, 0x01], 5).is_err());

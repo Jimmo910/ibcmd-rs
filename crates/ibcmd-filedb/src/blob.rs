@@ -53,7 +53,10 @@ pub(crate) fn read_chain(object: &[u8], start: u32, expected: Option<u64>) -> Re
 /// Builds a blob object: values written as consecutive chains from block 1,
 /// then the remaining blocks (up to `min_blocks`, the old object size) chained
 /// as free. Returns the content and, per value, `(first block, length)`.
-pub(crate) fn build(values: &[&[u8]], min_blocks: usize) -> Result<(Vec<u8>, Vec<(u32, u32)>)> {
+/// `(first block, length)` of a value in a blob object; `(0, 0)` for none.
+pub(crate) type BlobRef = (u32, u32);
+
+pub(crate) fn build(values: &[&[u8]], min_blocks: usize) -> Result<(Vec<u8>, Vec<BlobRef>)> {
     let used: usize = values.iter().map(|v| v.len().div_ceil(DATA)).sum();
     let total = (used + 1).max(min_blocks).max(1);
     if total > u32::MAX as usize {
@@ -107,7 +110,10 @@ mod tests {
         assert_eq!(read_chain(&object, 4, Some(250)).unwrap(), b);
         // free head 5 → 6 → … → 9 → 0
         assert_eq!(u32::from_le_bytes(object[0..4].try_into().unwrap()), 5);
-        assert_eq!(u32::from_le_bytes(object[9 * BLOCK..9 * BLOCK + 4].try_into().unwrap()), 0);
+        assert_eq!(
+            u32::from_le_bytes(object[9 * BLOCK..9 * BLOCK + 4].try_into().unwrap()),
+            0
+        );
     }
 
     #[test]

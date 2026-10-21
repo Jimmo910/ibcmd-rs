@@ -141,7 +141,7 @@ pub(crate) fn read_entries(object: &[u8], page_size: usize) -> Result<Vec<(u32, 
 }
 
 fn descriptor(object: &[u8], page_size: usize) -> Result<(u32, usize)> {
-    if object.len() < 2 * page_size || object.len() % page_size != 0 {
+    if object.len() < 2 * page_size || !object.len().is_multiple_of(page_size) {
         return Err(corrupt("Индекс: объект короче заголовка"));
     }
     let desc_page = u32::from_le_bytes(object[4..8].try_into().unwrap()) as usize;
@@ -202,7 +202,11 @@ fn read_leaf(p: &[u8], key_len: usize, count: usize, out: &mut Vec<(u32, Vec<u8>
 /// the descriptor page keep their places; tree pages come from the remaining
 /// pages, the unused ones are chained as free. The result is never shorter
 /// than `old`.
-pub(crate) fn rebuild(old: &[u8], page_size: usize, mut entries: Vec<(u32, Vec<u8>)>) -> Result<Vec<u8>> {
+pub(crate) fn rebuild(
+    old: &[u8],
+    page_size: usize,
+    mut entries: Vec<(u32, Vec<u8>)>,
+) -> Result<Vec<u8>> {
     let (_, key_len) = descriptor(old, page_size)?;
     if key_len != CONFIG_KEY_LEN {
         return Err(Error::Refused(format!(
@@ -217,15 +221,17 @@ pub(crate) fn rebuild(old: &[u8], page_size: usize, mut entries: Vec<(u32, Vec<u
     let desc_page = u32::from_le_bytes(old[4..8].try_into().unwrap()) as usize;
     entries.sort_by(|a, b| a.1.cmp(&b.1));
     if entries.windows(2).any(|w| w[0].1 == w[1].1) {
-        return Err(Error::Refused("Индекс: повторяющийся ключ (имя и номер части)".into()));
+        return Err(Error::Refused(
+            "Индекс: повторяющийся ключ (имя и номер части)".into(),
+        ));
     }
 
     // Leaves are filled to half a page, as the platform's splits leave them:
     // deleting an entry can grow the next one (its shared prefix is lost), so
     // a full leaf would overflow when the platform empties the table.
     let budget = (page_size - LEAF_HEADER) / 2;
-    let mut leaves: Vec<Vec<(u32, Vec<u8>, usize, usize)>> = Vec::new();
-    let mut current: Vec<(u32, Vec<u8>, usize, usize)> = Vec::new();
+    let mut leaves: Vec<Vec<LeafEntry>> = Vec::new();
+    let mut current: Vec<LeafEntry> = Vec::new();
     let mut free = budget;
     // `left` shares bytes only with the significant part of the previous key
     // (`key_len - right` of it): the platform rebuilds keys in a buffer that
@@ -233,7 +239,9 @@ pub(crate) fn rebuild(old: &[u8], page_size: usize, mut entries: Vec<(u32, Vec<u
     // zero bytes of PARTNO) makes it read and write past the buffer.
     let mut prev: Option<(&[u8], usize)> = None;
     for (rec, key) in &entries {
-        let left = prev.map_or(0, |(p, p_right)| common_prefix(p, key).min(key_len - p_right));
+        let left = prev.map_or(0, |(p, p_right)| {
+            common_prefix(p, key).min(key_len - p_right)
+        });
         let right = key.iter().rev().take_while(|b| **b == 0).count();
         let right = right.min(key_len - left);
         let need = ENTRY_BYTES as usize + (key_len - left - right);
@@ -258,20 +266,33 @@ pub(crate) fn rebuild(old: &[u8], page_size: usize, mut entries: Vec<(u32, Vec<u
     let mut pool: Vec<usize> = (1..old_pages).filter(|p| *p != desc_page).collect();
     pool.reverse();
     let mut next_new = old_pages;
-    let mut alloc = || pool.pop().unwrap_or_else(|| {
-        next_new += 1;
-        next_new - 1
-    });
+    let mut alloc = || {
+        pool.pop().unwrap_or_else(|| {
+            next_new += 1;
+            next_new - 1
+        })
+    };
 
     let mut pages: Vec<(usize, Vec<u8>)> = Vec::new();
     let leaf_numbers: Vec<usize> = leaves.iter().map(|_| alloc()).collect();
     let single = leaves.len() == 1;
     let mut level: Vec<(usize, u32, Vec<u8>)> = Vec::new(); // (page, last rec, last key)
     for (i, leaf) in leaves.iter().enumerate() {
-        let prev_page = if i == 0 { NONE } else { leaf_numbers[i - 1] as u32 };
-        let next_page = if i + 1 == leaves.len() { NONE } else { leaf_numbers[i + 1] as u32 };
+        let prev_page = if i == 0 {
+            NONE
+        } else {
+            leaf_numbers[i - 1] as u32
+        };
+        let next_page = if i + 1 == leaves.len() {
+            NONE
+        } else {
+            leaf_numbers[i + 1] as u32
+        };
         let flags = FLAG_LEAF | if single { FLAG_ROOT } else { 0 };
-        pages.push((leaf_numbers[i], leaf_page(page_size, key_len, flags, prev_page, next_page, leaf)));
+        pages.push((
+            leaf_numbers[i],
+            leaf_page(page_size, key_len, flags, prev_page, next_page, leaf),
+        ));
         if let Some(last) = leaf.last() {
             level.push((leaf_numbers[i], last.0, last.1.clone()));
         }
@@ -290,14 +311,19 @@ pub(crate) fn rebuild(old: &[u8], page_size: usize, mut entries: Vec<(u32, Vec<u
             p[0..2].copy_from_slice(&flags.to_le_bytes());
             p[2..4].copy_from_slice(&(group.len() as u16).to_le_bytes());
             let prev_page = if i == 0 { NONE } else { numbers[i - 1] as u32 };
-            let next_page = if i + 1 == groups.len() { NONE } else { numbers[i + 1] as u32 };
+            let next_page = if i + 1 == groups.len() {
+                NONE
+            } else {
+                numbers[i + 1] as u32
+            };
             p[4..8].copy_from_slice(&prev_page.to_le_bytes());
             p[8..12].copy_from_slice(&next_page.to_le_bytes());
             for (k, (child, rec, key)) in group.iter().enumerate() {
                 let at = BRANCH_HEADER + k * (key_len + 8);
                 p[at..at + key_len].copy_from_slice(key);
                 p[at + key_len..at + key_len + 4].copy_from_slice(&rec.to_be_bytes());
-                p[at + key_len + 4..at + key_len + 8].copy_from_slice(&(*child as u32).to_be_bytes());
+                p[at + key_len + 4..at + key_len + 8]
+                    .copy_from_slice(&(*child as u32).to_be_bytes());
             }
             pages.push((numbers[i], p));
             let last = group.last().unwrap();
@@ -312,7 +338,8 @@ pub(crate) fn rebuild(old: &[u8], page_size: usize, mut entries: Vec<(u32, Vec<u
     out[..page_size].copy_from_slice(&old[..page_size]);
     out[desc_page * page_size..(desc_page + 1) * page_size]
         .copy_from_slice(&old[desc_page * page_size..(desc_page + 1) * page_size]);
-    out[desc_page * page_size..desc_page * page_size + 4].copy_from_slice(&(root as u32).to_le_bytes());
+    out[desc_page * page_size..desc_page * page_size + 4]
+        .copy_from_slice(&(root as u32).to_le_bytes());
     for (page, content) in &pages {
         out[page * page_size..(page + 1) * page_size].copy_from_slice(content);
     }
@@ -330,6 +357,9 @@ pub(crate) fn rebuild(old: &[u8], page_size: usize, mut entries: Vec<(u32, Vec<u
     Ok(out)
 }
 
+/// A leaf entry being written: record, key, `left` and `right`.
+type LeafEntry = (u32, Vec<u8>, usize, usize);
+
 fn common_prefix(a: &[u8], b: &[u8]) -> usize {
     a.iter().zip(b).take_while(|(x, y)| x == y).count()
 }
@@ -340,7 +370,7 @@ fn leaf_page(
     flags: u16,
     prev: u32,
     next: u32,
-    entries: &[(u32, Vec<u8>, usize, usize)],
+    entries: &[LeafEntry],
 ) -> Vec<u8> {
     let mut p = vec![0u8; page_size];
     p[0..2].copy_from_slice(&flags.to_le_bytes());
@@ -356,7 +386,9 @@ fn leaf_page(
     p[28..30].copy_from_slice(&ENTRY_BYTES.to_le_bytes());
     let mut end = page_size;
     for (k, (rec, key, left, right)) in entries.iter().enumerate() {
-        let v = (*rec as u64) | ((*left as u64) << REC_BITS) | ((*right as u64) << (REC_BITS + LEFT_BITS as u16));
+        let v = (*rec as u64)
+            | ((*left as u64) << REC_BITS)
+            | ((*right as u64) << (REC_BITS + LEFT_BITS));
         let at = LEAF_HEADER + k * ENTRY_BYTES as usize;
         p[at..at + 8].copy_from_slice(&v.to_le_bytes());
         let stored = &key[*left..key_len - right];
@@ -378,17 +410,31 @@ mod tests {
         let k = config_key("DBNames", 0).unwrap();
         assert_eq!(
             &k[..22],
-            &[0x28, 0x28, 0x28, 0x26, 0x28, 0x32, 0x28, 0x3f, 0x0a, 0x28, 0x3f, 0x16, 0x28, 0x3f, 0x0e, 0x28, 0x3f, 0x1c, 0x01, 0x0b, 0x00, 0x10]
+            &[
+                0x28, 0x28, 0x28, 0x26, 0x28, 0x32, 0x28, 0x3f, 0x0a, 0x28, 0x3f, 0x16, 0x28, 0x3f,
+                0x0e, 0x28, 0x3f, 0x1c, 0x01, 0x0b, 0x00, 0x10
+            ]
         );
         let k = config_key("0012c33d-4e24-47a2-887e-6164d9a5076f.0", 1).unwrap();
         let tail_at = k.iter().position(|b| *b == 0x01).unwrap();
-        assert_eq!(&k[tail_at..tail_at + 9], &[0x01, 0x2a, 0x00, 0x10, 0, 0, 0, 0, 0x10]);
+        assert_eq!(
+            &k[tail_at..tail_at + 9],
+            &[0x01, 0x2a, 0x00, 0x10, 0, 0, 0, 0, 0x10]
+        );
         assert_eq!(k.len(), CONFIG_KEY_LEN);
     }
 
     #[test]
     fn key_order_is_code_point_order() {
-        let names = ["0b6", "5927", "DBNames", "DBNamesVersion-DBNames", "a07b", "ibparams.inf", "log.inf"];
+        let names = [
+            "0b6",
+            "5927",
+            "DBNames",
+            "DBNamesVersion-DBNames",
+            "a07b",
+            "ibparams.inf",
+            "log.inf",
+        ];
         let keys: Vec<Vec<u8>> = names.iter().map(|n| config_key(n, 0).unwrap()).collect();
         assert!(keys.windows(2).all(|w| w[0] < w[1]));
         assert!(config_key("a", 0).unwrap() < config_key("a", 1).unwrap());
@@ -419,7 +465,13 @@ mod tests {
         let ps = 8192;
         for n in [0usize, 1, 50, 3000] {
             let entries: Vec<(u32, Vec<u8>)> = (0..n)
-                .map(|i| (i as u32 + 1, config_key(&format!("{:08x}-row.{}", i * 7919 % 100_003, i % 3), 0).unwrap()))
+                .map(|i| {
+                    (
+                        i as u32 + 1,
+                        config_key(&format!("{:08x}-row.{}", i * 7919 % 100_003, i % 3), 0)
+                            .unwrap(),
+                    )
+                })
                 .collect();
             let obj = rebuild(&empty_index(ps), ps, entries.clone()).unwrap();
             let mut expected = entries;
@@ -434,7 +486,10 @@ mod tests {
         // Native leaves store part 1 after part 0 with left = 93 (the end of
         // part 0's significant bytes), not the 97 bytes the two keys share.
         let name = "a2782760-dd4c-44d2-a785-814d6f610455.0";
-        let entries = vec![(1, config_key(name, 0).unwrap()), (2, config_key(name, 1).unwrap())];
+        let entries = vec![
+            (1, config_key(name, 0).unwrap()),
+            (2, config_key(name, 1).unwrap()),
+        ];
         let obj = rebuild(&empty_index(8192), 8192, entries.clone()).unwrap();
         let leaf = &obj[2 * 8192..3 * 8192];
         let v = u64::from_le_bytes(leaf[LEAF_HEADER + 8..LEAF_HEADER + 16].try_into().unwrap());

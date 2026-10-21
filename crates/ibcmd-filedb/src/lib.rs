@@ -44,14 +44,26 @@ pub const BACKUP_FILE: &str = "1Cv8.1CD.ibcmd-rs.bak";
 const WORK_FILE: &str = "1Cv8.1CD.ibcmd-rs.tmp";
 
 /// The tables a write may replace.
-pub const CONFIG_TABLES: [&str; 6] = ["CONFIG", "CONFIGSAVE", "PARAMS", "FILES", "CONFIGCAS", "CONFIGCASSAVE"];
+pub const CONFIG_TABLES: [&str; 6] = [
+    "CONFIG",
+    "CONFIGSAVE",
+    "PARAMS",
+    "FILES",
+    "CONFIGCAS",
+    "CONFIGCASSAVE",
+];
 
-/// Resolves `--db-path`: a directory holding `1Cv8.1CD`, or the file itself.
+/// Resolves `--db-path`: the directory holding `1Cv8.1CD`, or the file itself
+/// when the path names a `.1CD` file.
 pub fn data_file(db_path: &Path) -> PathBuf {
-    if db_path.is_dir() {
-        db_path.join(DATA_FILE)
-    } else {
+    let names_file = !db_path.is_dir()
+        && db_path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("1cd"));
+    if names_file {
         db_path.to_path_buf()
+    } else {
+        db_path.join(DATA_FILE)
     }
 }
 
@@ -149,7 +161,12 @@ impl FileDb {
         let records = config::read_records(&mut self.pager, &t, false)?;
         let mut expected: Vec<(u32, Vec<u8>)> = records
             .iter()
-            .map(|r| Ok((r.number, index::config_key(&r.row.file_name, r.row.part_no)?)))
+            .map(|r| {
+                Ok((
+                    r.number,
+                    index::config_key(&r.row.file_name, r.row.part_no)?,
+                ))
+            })
             .collect::<Result<_>>()?;
         expected.sort_by(|a, b| a.1.cmp(&b.1));
         let actual = self.index_entries(table)?;
@@ -167,6 +184,15 @@ impl FileDb {
         }
         Ok(actual.len())
     }
+}
+
+/// Fails with [`Error::Busy`] when the platform or another process has the
+/// infobase open, so a write is refused before any work is done for it. The
+/// probe lock is released at once.
+pub fn ensure_closed(db_path: &Path) -> Result<()> {
+    let path = data_file(db_path);
+    drop(lock::open_locked(&path, Mode::Write)?);
+    Ok(())
 }
 
 /// What a write did.
@@ -188,9 +214,15 @@ pub struct ReplaceReport {
 /// index with `rows`, keep the original as [`BACKUP_FILE`] (a hard link when
 /// the file system allows it), rename the copy over the data file. A failure
 /// before the rename leaves the infobase untouched.
-pub fn replace_config_table(db_path: &Path, table: &str, rows: &[ConfigRow]) -> Result<ReplaceReport> {
+pub fn replace_config_table(
+    db_path: &Path,
+    table: &str,
+    rows: &[ConfigRow],
+) -> Result<ReplaceReport> {
     if !CONFIG_TABLES.contains(&table) {
-        return Err(Error::Refused(format!("Запись таблицы {table} не поддерживается")));
+        return Err(Error::Refused(format!(
+            "Запись таблицы {table} не поддерживается"
+        )));
     }
     let path = data_file(db_path);
     let dir = path

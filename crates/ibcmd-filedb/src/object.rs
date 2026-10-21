@@ -53,8 +53,10 @@ impl Object {
         let ps = pager.page_size() as u64;
         let need = len.div_ceil(ps) as usize;
         let direct: Vec<u32> = page[HEADER..]
-            .chunks_exact(4)
-            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| u32::from_le_bytes(*c))
             .collect();
         let mut pages = Vec::with_capacity(need);
         let mut tables = Vec::new();
@@ -77,11 +79,11 @@ impl Object {
                     pager.check_page(table, "Таблица размещения")?;
                     tables.push(table);
                     let list = pager.read_page(table)?;
-                    for chunk in list.chunks_exact(4) {
+                    for chunk in list.as_chunks::<4>().0 {
                         if pages.len() == need {
                             break;
                         }
-                        pages.push(u32::from_le_bytes(chunk.try_into().unwrap()));
+                        pages.push(u32::from_le_bytes(*chunk));
                     }
                 }
             }

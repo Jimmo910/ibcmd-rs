@@ -626,6 +626,7 @@ dependencies = [
  "ibcmd-cf",
  "ibcmd-core",
  "ibcmd-edt",
+ "ibcmd-filedb",
  "ibcmd-schema",
  "ibcmd-v8",
  "ibcmd-xml",

@@ -17,7 +17,9 @@ use crate::error::{Error, Result, corrupt};
 use crate::index;
 use crate::object::Object;
 use crate::pager::Pager;
-use crate::record::{Timestamp, decode_var_string, encode_var_string, pack_decimal, unpack_decimal};
+use crate::record::{
+    Timestamp, decode_var_string, encode_var_string, pack_decimal, unpack_decimal,
+};
 
 /// One stored part of a row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +50,9 @@ pub(crate) fn check_layout(table: &Table) -> Result<()> {
             .fields
             .iter()
             .zip(LAYOUT)
-            .all(|(f, (name, kind, len))| f.name == name && f.kind == kind && f.length == len && !f.nullable);
+            .all(|(f, (name, kind, len))| {
+                f.name == name && f.kind == kind && f.length == len && !f.nullable
+            });
     if !same {
         return Err(Error::Refused(format!(
             "Таблица {} устроена не как таблицы конфигурации (FILENAME … PARTNO)",
@@ -56,7 +60,10 @@ pub(crate) fn check_layout(table: &Table) -> Result<()> {
         )));
     }
     if table.records_page == 0 || table.blob_page == 0 || table.index_page == 0 {
-        return Err(corrupt(format!("Таблица {}: нет объекта записей, blob или индекса", table.name)));
+        return Err(corrupt(format!(
+            "Таблица {}: нет объекта записей, blob или индекса",
+            table.name
+        )));
     }
     Ok(())
 }
@@ -89,7 +96,11 @@ pub(crate) struct RawRecord {
     pub(crate) row: ConfigRow,
 }
 
-pub(crate) fn read_records(pager: &mut Pager, table: &Table, with_binary: bool) -> Result<Vec<RawRecord>> {
+pub(crate) fn read_records(
+    pager: &mut Pager,
+    table: &Table,
+    with_binary: bool,
+) -> Result<Vec<RawRecord>> {
     check_layout(table)?;
     debug_assert_eq!(table.record_size(), RECORD);
     let records = Object::open(pager, table.records_page)?.read_all(pager)?;
@@ -106,7 +117,7 @@ pub(crate) fn read_records(pager: &mut Pager, table: &Table, with_binary: bool) 
         Vec::new()
     };
     let mut out = Vec::new();
-    for (number, rec) in records.chunks_exact(RECORD).enumerate().skip(1) {
+    for (number, rec) in records.as_chunks::<RECORD>().0.iter().enumerate().skip(1) {
         if rec[0] != 0 {
             continue;
         }
@@ -116,7 +127,9 @@ pub(crate) fn read_records(pager: &mut Pager, table: &Table, with_binary: bool) 
         let binary = if with_binary && block != 0 {
             blob::read_chain(&blob_object, block, Some(len as u64))?
         } else if with_binary && len != 0 {
-            return Err(corrupt(format!("Строка {file_name}: длина {len} без первого блока")));
+            return Err(corrupt(format!(
+                "Строка {file_name}: длина {len} без первого блока"
+            )));
         } else {
             Vec::new()
         };
@@ -149,7 +162,10 @@ pub(crate) fn replace(pager: &mut Pager, table: &Table, rows: &[ConfigRow]) -> R
     let mut seen = BTreeMap::new();
     let mut keys = Vec::with_capacity(rows.len());
     for (i, row) in rows.iter().enumerate() {
-        if seen.insert((row.file_name.to_lowercase(), row.part_no), i).is_some() {
+        if seen
+            .insert((row.file_name.to_lowercase(), row.part_no), i)
+            .is_some()
+        {
             return Err(Error::Refused(format!(
                 "Строка {} часть {} повторяется (имена сравниваются без учёта регистра)",
                 row.file_name, row.part_no
@@ -157,7 +173,10 @@ pub(crate) fn replace(pager: &mut Pager, table: &Table, rows: &[ConfigRow]) -> R
         }
         keys.push(index::config_key(&row.file_name, row.part_no)?);
         if row.attributes > 99_999 {
-            return Err(Error::Refused(format!("Строка {}: ATTRIBUTES вне N(5)", row.file_name)));
+            return Err(Error::Refused(format!(
+                "Строка {}: ATTRIBUTES вне N(5)",
+                row.file_name
+            )));
         }
     }
 
@@ -180,7 +199,11 @@ pub(crate) fn replace(pager: &mut Pager, table: &Table, rows: &[ConfigRow]) -> R
         r[PARTNO..RECORD].copy_from_slice(&pack_decimal(row.part_no as u64, 10));
     }
     // Record 0 and the free chain over the unused tail.
-    let first_free = if rows.len() + 1 < total { rows.len() as u32 + 1 } else { 0 };
+    let first_free = if rows.len() + 1 < total {
+        rows.len() as u32 + 1
+    } else {
+        0
+    };
     records[0] = 1;
     records[1..5].copy_from_slice(&first_free.to_le_bytes());
     for n in rows.len() + 1..total {
@@ -208,7 +231,12 @@ pub(crate) fn reindex(pager: &mut Pager, table: &Table) -> Result<()> {
     let records = read_records(pager, table, false)?;
     let entries = records
         .iter()
-        .map(|r| Ok((r.number, index::config_key(&r.row.file_name, r.row.part_no)?)))
+        .map(|r| {
+            Ok((
+                r.number,
+                index::config_key(&r.row.file_name, r.row.part_no)?,
+            ))
+        })
         .collect::<Result<Vec<_>>>()?;
     let mut index_object = Object::open(pager, table.index_page)?;
     let old = index_object.read_all(pager)?;

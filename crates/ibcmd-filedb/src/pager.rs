@@ -116,7 +116,9 @@ impl Pager {
     pub(crate) fn append_page(&mut self) -> Result<u32> {
         let page = self.page_count;
         if page == u32::MAX {
-            return Err(Error::Refused("Файл базы достиг предела числа страниц".into()));
+            return Err(Error::Refused(
+                "Файл базы достиг предела числа страниц".into(),
+            ));
         }
         self.page_count += 1;
         let zero = vec![0u8; self.page_size];
@@ -137,5 +139,4 @@ impl Pager {
         self.file.sync_all()?;
         Ok(())
     }
-
 }
