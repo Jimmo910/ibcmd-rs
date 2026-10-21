@@ -275,11 +275,18 @@ pub fn open_for_write(db_path: &Path) -> Result<WriteSession> {
         let collation = known_collation(&locale)?;
         for table in CONFIG_TABLES {
             if tables.contains_key(table) {
-                verify_index(&mut pager, &tables, table, collation).map_err(|err| {
-                    Error::Refused(format!(
-                        "Индексы базы не совпадают с ключами, которые записал бы ibcmd-rs ({err}); \
+                verify_index(&mut pager, &tables, table, collation).map_err(|err| match err {
+                    // A name whose key is not measured: e.g. the `*_dynupdate_*`
+                    // rows of an unfinished dynamic update (83 characters).
+                    Error::Refused(reason) => Error::Refused(format!(
+                        "В таблице {table} базы есть строка, ключ индекса которой не измерен \
+                         ({reason}); запись не выполняется. Такие строки оставляет, например, \
+                         незавершённое динамическое обновление: завершите его штатной платформой"
+                    )),
+                    other => Error::Refused(format!(
+                        "Индексы базы не совпадают с ключами, которые записал бы ibcmd-rs ({other}); \
                          запись не выполняется"
-                    ))
+                    )),
                 })?;
             }
         }
@@ -400,28 +407,41 @@ impl WriteSession {
         // The table's pages are its own: nothing else would change with them.
         let (pages_before, rows_before, others) = {
             let mut pager = Pager::new(&self.file)?;
-            let mut owners = BTreeMap::<u32, String>::new();
-            let mut claim = |page: u32, owner: &str| -> Result<()> {
-                if let Some(first) = owners.insert(page, owner.to_string()) {
+            // Owner of every page, as an index into `names`: a few bytes a page
+            // whatever the size of the infobase.
+            let mut names = vec![
+                "списку свободных страниц".to_string(),
+                "корневому объекту".to_string(),
+            ];
+            let mut owners = BTreeMap::<u32, u32>::new();
+            let mut claim = |page: u32, owner: u32, names: &[String]| -> Result<()> {
+                if let Some(first) = owners.insert(page, owner) {
                     return Err(Error::Corrupt(format!(
-                        "Страница {page} принадлежит и {first}, и {owner}: запись не выполняется"
+                        "Страница {page} принадлежит и {}, и {}: запись не выполняется",
+                        names[first as usize], names[owner as usize]
                     )));
                 }
                 Ok(())
             };
-            claim(1, "списку свободных страниц")?;
+            claim(1, 0, &names)?;
             for page in object::Object::open(&mut pager, 2)?.owned_pages() {
-                claim(page, "корневому объекту")?;
+                claim(page, 1, &names)?;
             }
+            let mut target_owner = u32::MAX;
             for t in self.tables.values() {
+                let owner = names.len() as u32;
+                names.push(format!("таблице {}", t.name));
+                if t.name == target.name {
+                    target_owner = owner;
+                }
                 for page in config::table_pages(&mut pager, t)? {
-                    claim(page, &format!("таблице {}", t.name))?;
+                    claim(page, owner, &names)?;
                 }
             }
             let rows_before = config::read_records(&mut pager, target, false)?.len();
             let others: BTreeSet<u32> = owners
                 .iter()
-                .filter(|(_, owner)| owner.as_str() != format!("таблице {}", target.name))
+                .filter(|(_, owner)| **owner != target_owner)
                 .map(|(page, _)| *page)
                 .collect();
             (pager.page_count(), rows_before, others)
