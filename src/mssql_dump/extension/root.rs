@@ -69,8 +69,15 @@ pub(crate) fn extension_root_xml(
     let mut adopted_names = Vec::<&'static str>::new();
     let mut states = Vec::<(&'static str, &'static str)>::new();
     let mut asset_members = 0usize;
+    let mut unknown = Vec::new();
     for (guid, state) in &adopted.properties {
-        match meaning("Configuration", guid)? {
+        let Some(meaning) = meaning("Configuration", guid) else {
+            // Keep the fields whose identities are known, but never report
+            // this partial root as a successful, completely decoded object.
+            unknown.push(guid.as_str());
+            continue;
+        };
+        match meaning {
             Meaning::Property(name) => {
                 if *state != STATE_NOT_CONTROLLED {
                     adopted_names.push(name);
@@ -222,15 +229,22 @@ pub(crate) fn extension_root_xml(
         push_optional_simple_property_xml(&mut insert, "ModalityUseMode", Some(modality));
     }
     if controlled("InterfaceCompatibilityMode") {
-        // 8.5 spells the digit `3` of a converted tuple `Version8_5EnableTaxi`
-        // (with `6` in member 62: the one combination on record), 8.3.27 `Taxi`.
-        let interface = match (field(38)?, tuple_8_5_1) {
-            ("0", _) => "Version8_2",
-            ("1", _) => "Version8_2EnableTaxi",
-            ("2", _) => "TaxiEnableVersion8_2",
-            ("3", false) => "Taxi",
-            ("3", true) if field(62)? == "6" => "Version8_5EnableTaxi",
-            _ => return None,
+        // 8.5 reads both stored interface coordinates of a converted tuple;
+        // the 8.3 spelling follows member 38 alone.
+        let interface = if tuple_8_5_1 {
+            // Native V76 stores a pair: (3,3) Taxi, (3,6) 8.5+Taxi,
+            // (2,2) Taxi+8.2. Use the same evidenced authority as CF roots.
+            refs::configuration_v76_interface_mode(text, uuid)
+                .ok()??
+                .xml_name()
+        } else {
+            match field(38)? {
+                "0" => "Version8_2",
+                "1" => "Version8_2EnableTaxi",
+                "2" => "TaxiEnableVersion8_2",
+                "3" => "Taxi",
+                _ => return None,
+            }
         };
         push_optional_simple_property_xml(
             &mut insert,
@@ -264,6 +278,12 @@ pub(crate) fn extension_root_xml(
         xml.insert_str(close, &property_states);
     }
     insert_configuration_root_child_objects_xml(&mut xml, parts.child_objects.as_deref()?);
+    if !unknown.is_empty() {
+        context.note_diagnostic(uuid, format!(
+            "extension root {uuid}: controlled properties {} are not known; only known root properties retained",
+            unknown.join(", ")
+        ));
+    }
     Some(xml)
 }
 

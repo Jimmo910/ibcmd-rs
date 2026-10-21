@@ -95,9 +95,9 @@ use crate::sql::{ScriptVariables, SqlBackend, SqlExec, SqlOptions, SqlParam, Sql
 pub mod base_free_cf;
 pub mod cf_load_stage;
 mod delta_stage;
-mod empty_stage;
+pub(crate) mod empty_stage;
 pub mod files_stage;
-mod offline_compile;
+pub(crate) mod offline_compile;
 mod override_stage;
 mod patch_refusal;
 mod stage_guard;
@@ -6124,6 +6124,16 @@ fn prepare_configuration_asset_body_rows(
         infer_configuration_ext_body_path(xml_path, "Splash.xml"),
         "2",
     )?);
+    let logo = SourceAssetRegistry
+        .route("Configuration", SourceAssetRole::Logo)
+        .context("Configuration Logo asset route is absent")?;
+    rows.extend(prepare_configuration_ext_picture_body_row(
+        sql,
+        database,
+        properties,
+        infer_configuration_ext_body_path(xml_path, logo.file_name()),
+        logo.suffix().trim_start_matches('.'),
+    )?);
     rows.extend(prepare_configuration_raw_deflated_body_row(
         sql,
         database,
@@ -6739,7 +6749,7 @@ fn prepare_form_body_row(
     // An extension's adopted form, compiled offline against its base row
     // (`cf load`): the form, its interceptors' call types, the base form.
     if CF_LOAD_COMPILE.load(std::sync::atomic::Ordering::Relaxed)
-        && !BASE_FREE_STAGE.load(std::sync::atomic::Ordering::Relaxed)
+        && !base_free(sql)
         && offline_compile::requires_adoption_adapter(
             &form_xml,
             &read_stage_source(source, xml_path)?,
@@ -8560,22 +8570,15 @@ fn unqueried_storage_table_stats(table: &str) -> StorageTableManifest {
     }
 }
 
-/// Set by a base-free stage (`mssql-stage-source-objects --base-free`,
-/// `audit-empty-stage`): the target is an empty infobase with no rows to
-/// patch, so every base-row read fails, naming its row, without touching a
-/// database.
-static BASE_FREE_STAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 /// The error text of a base-row read in a base-free stage; the audit reads
 /// the row name back out of it.
 const BASE_FREE_MISSING_ROW: &str = "base-free stage has no base Config row";
 
 /// Whether a writer working through `sql` has no base row to fall back on: a
-/// whole base-free stage (the process-wide flag), or one object compiled base-free
-/// inside a patch stage, which is handed `SqlExec::detached(BASE_FREE_MISSING_ROW)`.
+/// whole base-free stage or one object compiled base-free inside a patch stage.
+/// Both pass `SqlExec::detached(BASE_FREE_MISSING_ROW)` to every body writer.
 fn base_free(sql: &SqlExec) -> bool {
-    BASE_FREE_STAGE.load(std::sync::atomic::Ordering::Relaxed)
-        || sql.detached_reason() == Some(BASE_FREE_MISSING_ROW)
+    sql.detached_reason() == Some(BASE_FREE_MISSING_ROW)
 }
 
 /// Part 0 of one Config row: from the bulk prefetch, the lab row folder, or
@@ -16179,6 +16182,42 @@ mod tests {
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prepares_extension_logo_from_source_zip_under_the_module_group() {
+        let root = std::env::temp_dir().join(format!(
+            "ibcmd-extension-logo-no-base-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let body_path = root.join("Ext/Logo.xml");
+        let picture_file = body_path.with_extension("").join("Picture.zip");
+        fs::create_dir_all(picture_file.parent().unwrap()).unwrap();
+        let configuration = root.join("Configuration.xml");
+        fs::write(&configuration,br#"<MetaDataObject><Configuration><InternalInfo><xr:ContainedObject><xr:ClassId>9cd510cd-abfc-11d4-9434-004095e12fc7</xr:ClassId><xr:ObjectId>aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa</xr:ObjectId></xr:ContainedObject></InternalInfo></Configuration></MetaDataObject>"#).unwrap();
+        fs::write(&body_path, sample_ext_picture_xml("Picture.zip")).unwrap();
+        fs::write(&picture_file, b"ZIP-SOURCE-PAYLOAD").unwrap();
+        let properties = test_simple_metadata_properties(
+            "Configuration",
+            "ffffffff-ffff-4fff-ffff-ffffffffffff",
+            "Main",
+        );
+        let rows = super::prepare_configuration_asset_body_rows(
+            &test_sql(),
+            "missing-database",
+            &configuration,
+            &properties,
+            None,
+            &test_compile_axes(),
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].body_id, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa.1");
+        assert_eq!(
+            raw_deflated_first_base64_payload_sha256(&rows[0].blob).unwrap(),
+            hex_sha256(b"ZIP-SOURCE-PAYLOAD")
+        );
         let _ = fs::remove_dir_all(root);
     }
 

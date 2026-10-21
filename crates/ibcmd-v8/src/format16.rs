@@ -264,14 +264,10 @@ pub(crate) fn parse_at(bytes: &[u8], base_offset: usize) -> Result<Container, Fo
     }
 
     let file_header = read_file_header(primary)?;
-    if file_header.next_page_address != SENTINEL {
-        return Err(Format16Error::UnexpectedFileMarker {
-            found: file_header.next_page_address,
-        });
-    }
 
     let mut block_reader = BlockReader64::new(primary);
     block_reader.reserve(0, FILE_HEADER_SIZE as u64)?;
+    block_reader.reserve_free_pages(file_header.next_page_address)?;
     let toc_chain = block_reader.read_chain(FILE_HEADER_SIZE as u64)?;
     let toc_block = toc_chain.pages[0].header.clone();
     let toc_pages = toc_chain.pages;

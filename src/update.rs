@@ -234,10 +234,19 @@ pub fn update_incrementally(
         index::update_tree_index(tree, input, &index, &new_versions, &[], &[])?;
         return Ok((None, summary));
     }
-    let subset = entries
-        .into_iter()
-        .filter(|(name, _)| !name.contains('.') || changed.contains(name))
-        .collect::<Vec<_>>();
+    // A CFE manifest binds every packed row. Retain the full extension while
+    // decoding into scratch so its graph and digests can be validated; only
+    // the changed outputs below are copied to the indexed source tree.
+    let is_extension = entries.iter().any(|(name, _)| name == "configinfo")
+        && !entries.iter().any(|(name, _)| name == "root");
+    let subset = if is_extension {
+        entries
+    } else {
+        entries
+            .into_iter()
+            .filter(|(name, _)| !name.contains('.') || changed.contains(name))
+            .collect::<Vec<_>>()
+    };
     let report =
         crate::extension::export_entries_to_source(profile, subset, scratch, true, source_version)?;
     // Nothing is written until every changed entry is exported: a failed

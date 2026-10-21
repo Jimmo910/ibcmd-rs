@@ -94,7 +94,13 @@ pub(crate) fn compatibility(context: &DescriptorContext) -> Compat {
         .and_then(|doc| {
             doc.object()
                 .ok()
-                .and_then(|object| object.path(&["Properties", "CompatibilityMode"]))
+                .and_then(|object| {
+                    object
+                        .path(&["Properties", "CompatibilityMode"])
+                        .or_else(|| {
+                            object.path(&["Properties", "ConfigurationExtensionCompatibilityMode"])
+                        })
+                })
                 .and_then(|mode| Compat::parse(&mode.text))
         })
         .unwrap_or(default);
@@ -318,6 +324,14 @@ impl<'a> Obj<'a> {
 
     /// uuid of a metadata object or child object by full name.
     pub fn resolve(&self, reference: &str) -> Result<String> {
+        if let Ok(uuid) = uuid::Uuid::parse_str(
+            reference
+                .trim()
+                .strip_prefix("0:")
+                .unwrap_or(reference.trim()),
+        ) {
+            return Ok(uuid.hyphenated().to_string());
+        }
         self.cx
             .index
             .uuid_of(reference.trim())
@@ -985,6 +999,9 @@ fn element_uuid(element: &Element) -> Result<String> {
 }
 
 fn flag_of(properties: &Element, name: &str) -> Result<Brace> {
+    if crate::metadata_model::absent_on_adopted(properties, name) {
+        return Ok(num(0));
+    }
     let text = properties
         .child_text(name)
         .ok_or_else(|| anyhow!("no <{name}>"))?;
@@ -996,6 +1013,9 @@ fn flag_of(properties: &Element, name: &str) -> Result<Brace> {
 }
 
 fn number_of(properties: &Element, name: &str) -> Result<Brace> {
+    if crate::metadata_model::absent_on_adopted(properties, name) {
+        return Ok(num(0));
+    }
     let text = properties
         .child_text(name)
         .ok_or_else(|| anyhow!("no <{name}>"))?
@@ -1007,6 +1027,12 @@ fn number_of(properties: &Element, name: &str) -> Result<Brace> {
 }
 
 fn code_of(properties: &Element, name: &str, table: &[(&str, i64)]) -> Result<Brace> {
+    if crate::metadata_model::absent_on_adopted(properties, name) {
+        return table
+            .first()
+            .map(|(_, v)| num(*v))
+            .ok_or_else(|| anyhow!("empty code table for {name}"));
+    }
     let text = properties
         .child_text(name)
         .ok_or_else(|| anyhow!("no <{name}>"))?

@@ -651,8 +651,10 @@ pub struct CfBootstrapArgs {
     /// platform); independent from the container revision.
     #[arg(long, value_enum, default_value_t = InfobaseConfigSourceVersion::V2_20, hide = true)]
     pub source_version: InfobaseConfigSourceVersion,
-    /// Exact target platform profile selecting native family layouts.
-    #[arg(long, default_value = "platform-8.3.27.1989")]
+    /// Exact target platform profile selecting native family layouts. When
+    /// omitted, CFE uses the source dialect's platform; --platform selects
+    /// the base-free CF target, otherwise CF defaults to 8.3.27.1989.
+    #[arg(long, default_value = "", hide_default_value = true)]
     pub target_profile: String,
     /// Optional directory with additive experimental JSON profiles.
     #[arg(long)]
