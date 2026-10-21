@@ -13,12 +13,28 @@ fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase")
 }
 
-/// A fresh scratch directory for one test.
-fn scratch(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ibcmd-file-infobase-{tag}"));
+/// A fresh scratch directory for one test, removed on drop.
+struct Scratch(PathBuf);
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn scratch(tag: &str) -> Scratch {
+    let dir =
+        std::env::temp_dir().join(format!("ibcmd-file-infobase-{}-{tag}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    dir
+    Scratch(dir)
 }
 
 /// Unpacks `<name>.1CD.gz` into `<dir>/<name>/1Cv8.1CD`; returns the infobase
@@ -131,7 +147,7 @@ fn the_export_reproduces_the_platforms_export_of_the_file() {
     ok(&export(&db, &out));
     assert_same_tree(&fixtures().join("tiny-xml"), &out, &[]);
     // The data file is read, never written.
-    assert!(!db.join("1Cv8.1CD.ibcmd-rs.bak").exists());
+    assert!(!ibcmd_filedb::backup_file(&db).exists());
 }
 
 #[test]
@@ -141,7 +157,7 @@ fn an_import_into_an_empty_infobase_stages_the_whole_tree() {
     let output = import(&db, &fixtures().join("tiny-xml"));
     ok(&output);
     assert!(
-        db.join("1Cv8.1CD.ibcmd-rs.bak").is_file(),
+        ibcmd_filedb::backup_file(&db).is_file(),
         "the original is kept"
     );
     let mut staged = ibcmd_filedb::FileDb::open(&db).unwrap();
@@ -190,6 +206,35 @@ fn an_import_onto_the_same_configuration_loads_the_edit() {
 }
 
 #[test]
+fn a_russian_infobase_is_imported_with_its_collation() {
+    let dir = scratch("import-ru");
+    let db = infobase(&dir, "ru-empty");
+    ok(&import(&db, &fixtures().join("tiny-xml")));
+    let mut staged = ibcmd_filedb::FileDb::open(&db).unwrap();
+    assert_eq!(staged.locale(), "ru_RU");
+    staged.verify_index("CONFIGSAVE").unwrap();
+    drop(staged);
+    let out = dir.join("xml");
+    ok(&export(&db, &out));
+    assert_same_tree(&fixtures().join("tiny-xml"), &out, &["ConfigDumpInfo.xml"]);
+}
+
+#[test]
+fn an_infobase_in_an_unmeasured_locale_is_not_imported() {
+    let dir = scratch("import-de");
+    let db = infobase(&dir, "de-empty");
+    let before = fs::read(db.join("1Cv8.1CD")).unwrap();
+    let output = import(&db, &fixtures().join("tiny-xml"));
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("de_DE"), "{stderr}");
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+    assert_eq!(fs::read_dir(&db).unwrap().count(), 1);
+    // Reading it is the crate's test (`native_files.rs`): this infobase holds
+    // no configuration, which the export does not publish for any storage.
+}
+
+#[test]
 fn broken_files_fail_closed() {
     let dir = scratch("broken");
     let db = infobase(&dir, "tiny");
@@ -198,11 +243,21 @@ fn broken_files_fail_closed() {
     for (tag, bytes) in [
         ("truncated", whole[..whole.len() / 3].to_vec()),
         ("not-a-1cd", b"PK\x03\x04 not an infobase".to_vec()),
+        ("huge-object", {
+            // The root object's length (page 2, offset 16) far past the file:
+            // refused, not allocated (an allocation that size aborts).
+            let mut bytes = whole.clone();
+            bytes[2 * 8192 + 16..2 * 8192 + 24]
+                .copy_from_slice(&0xFFFF_FFFF_FFFF_FF00u64.to_le_bytes());
+            bytes
+        }),
     ] {
         fs::write(&data, &bytes).unwrap();
         let out = dir.join(format!("xml-{tag}"));
         let output = export(&db, &out);
         assert!(!output.status.success(), "{tag}: the export succeeded");
+        assert!(output.status.code().is_some(), "{tag}: killed by a signal");
+        assert_ne!(output.status.code(), Some(134), "{tag}: aborted");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(!stderr.contains("panicked"), "{tag}: {stderr}");
         let output = import(&db, &fixtures().join("tiny-xml"));
@@ -212,7 +267,7 @@ fn broken_files_fail_closed() {
             bytes,
             "{tag}: the file was changed"
         );
-        assert!(!db.join("1Cv8.1CD.ibcmd-rs.bak").exists(), "{tag}");
+        assert!(!ibcmd_filedb::backup_file(&db).exists(), "{tag}");
     }
     // No infobase in the directory at all.
     let output = export(&dir.join("absent"), &dir.join("xml-absent"));

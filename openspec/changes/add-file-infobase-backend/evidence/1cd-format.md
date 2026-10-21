@@ -166,6 +166,27 @@ The formula reproduces every key of every native index read — 9 938
 characters `0-9 A-Z a-z - . / _` and names of 1 to 43 characters;
 `ibcmd-filedb` refuses any other name rather than guess its key.
 
+### The collation is the infobase's locale
+
+`ibcmd infobase create` takes the locale of the process unless `--locale`
+says otherwise, so a Russian platform creates `ru_RU` infobases; the root
+object holds the locale and the keys follow it. Under `ru_RU` (infobases
+created with `--locale=ru_RU`: empty, the БСП demo, a native import of the
+БСП tree into each):
+
+- a digit is `0x12 + 2d`, a Latin letter `0x27 + 2(l − 'a')` whatever its
+  case (`CAS_GC_Info` and `cas_gc_info` have one key), `-` is `06 10`, `_`
+  `06 0C`, `.` `09`, `/` `0B 67`; no byte separates characters;
+- the secondary byte and `PARTNO` are as under `en_US_POSIX`.
+
+This reproduces all 29 855 keys of the `CONFIG`, `CONFIGSAVE`, `PARAMS` and
+`FILES` indexes of those infobases. A `de_DE` infobase (`--locale=de_DE`) has
+keys neither formula gives. `ibcmd-filedb` therefore writes only `en_US_POSIX`
+and `ru_RU` infobases, and before a write checks every configuration-table
+index of the infobase — keys the platform wrote — against its formula; any
+other locale, or a mismatch, refuses the write. Reading does not use keys and
+works for any locale.
+
 ## Locking
 
 While an infobase is open the platform (8.5.1.1150, Linux) holds a POSIX read

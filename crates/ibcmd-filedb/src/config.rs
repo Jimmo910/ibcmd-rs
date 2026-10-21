@@ -97,7 +97,7 @@ pub(crate) struct RawRecord {
 }
 
 pub(crate) fn read_records(
-    pager: &mut Pager,
+    pager: &mut Pager<'_>,
     table: &Table,
     with_binary: bool,
 ) -> Result<Vec<RawRecord>> {
@@ -151,7 +151,12 @@ pub(crate) fn read_records(
 
 /// Replaces every row of a CONFIG-family table. Everything is computed before
 /// the first write, so a refused key or name changes nothing.
-pub(crate) fn replace(pager: &mut Pager, table: &Table, rows: &[ConfigRow]) -> Result<()> {
+pub(crate) fn replace(
+    pager: &mut Pager<'_>,
+    table: &Table,
+    rows: &[ConfigRow],
+    collation: index::Collation,
+) -> Result<std::collections::BTreeSet<u32>> {
     check_layout(table)?;
     let ps = pager.page_size();
     let mut records_object = Object::open(pager, table.records_page)?;
@@ -171,7 +176,7 @@ pub(crate) fn replace(pager: &mut Pager, table: &Table, rows: &[ConfigRow]) -> R
                 row.file_name, row.part_no
             )));
         }
-        keys.push(index::config_key(&row.file_name, row.part_no)?);
+        keys.push(index::config_key(collation, &row.file_name, row.part_no)?);
         if row.attributes > 99_999 {
             return Err(Error::Refused(format!(
                 "Строка {}: ATTRIBUTES вне N(5)",
@@ -222,11 +227,31 @@ pub(crate) fn replace(pager: &mut Pager, table: &Table, rows: &[ConfigRow]) -> R
     records_object.rewrite(pager, &records)?;
     blob_object.rewrite(pager, &blob_content)?;
     index_object.rewrite(pager, &index_content)?;
-    pager.flush_header()
+    pager.flush_header()?;
+    Ok(records_object
+        .owned_pages()
+        .chain(blob_object.owned_pages())
+        .chain(index_object.owned_pages())
+        .collect())
+}
+
+/// The pages of a table's three objects.
+pub(crate) fn table_pages(pager: &mut Pager<'_>, table: &Table) -> Result<Vec<u32>> {
+    let mut pages = Vec::new();
+    for header in [table.records_page, table.blob_page, table.index_page] {
+        if header != 0 {
+            pages.extend(Object::open(pager, header)?.owned_pages());
+        }
+    }
+    Ok(pages)
 }
 
 /// Rebuilds only the index of a CONFIG-family table from its live records.
-pub(crate) fn reindex(pager: &mut Pager, table: &Table) -> Result<()> {
+pub(crate) fn reindex(
+    pager: &mut Pager<'_>,
+    table: &Table,
+    collation: index::Collation,
+) -> Result<()> {
     check_layout(table)?;
     let records = read_records(pager, table, false)?;
     let entries = records
@@ -234,7 +259,7 @@ pub(crate) fn reindex(pager: &mut Pager, table: &Table) -> Result<()> {
         .map(|r| {
             Ok((
                 r.number,
-                index::config_key(&r.row.file_name, r.row.part_no)?,
+                index::config_key(collation, &r.row.file_name, r.row.part_no)?,
             ))
         })
         .collect::<Result<Vec<_>>>()?;

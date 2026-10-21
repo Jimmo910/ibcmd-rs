@@ -17,7 +17,8 @@
 //!
 //! Keys of the CONFIG-family tables (`FILENAME` NVC(128) case-insensitive,
 //! `PARTNO` N(10)) are 392 bytes: an ICU-style sort key of the file name under
-//! the infobase collation `en_US_POSIX` at secondary strength, then the packed
+//! the infobase collation (`en_US_POSIX` or `ru_RU`, see [`Collation`]) at
+//! secondary strength, then the packed
 //! decimal of `PARTNO`, zero padded. See [`config_key`] for the measured
 //! encoding and its limits.
 
@@ -40,50 +41,85 @@ const LEFT_BITS: u16 = 16;
 const RIGHT_BITS: u16 = 16;
 const ENTRY_BYTES: u16 = 8;
 
-/// Primary weight of one character under `en_US_POSIX`, or `None` outside the
-/// evidenced range. The POSIX tailoring orders printable ASCII by code point;
-/// every weight starts with 0x28, characters 0x21–0x5A take one more byte
-/// (`c - 0x1C`), characters 0x5B–0x7E two (`0x3F`, `c - 0x57`).
-fn primary(c: char) -> Option<&'static [u8]> {
-    static ONE: [[u8; 2]; 0x5B - 0x21] = {
-        let mut t = [[0u8; 2]; 0x5B - 0x21];
-        let mut i = 0;
-        while i < t.len() {
-            t[i] = [0x28, (i + 0x21 - 0x1C) as u8];
-            i += 1;
+/// The collation of an infobase (the locale of its root object), as far as
+/// the keys of configuration-table rows go. Only the measured ones exist: an
+/// infobase in another locale is read, but not written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Collation {
+    /// `en_US_POSIX`: printable ASCII in code-point order, upper case apart.
+    Posix,
+    /// `ru_RU` (the default of a Russian platform): Latin letters without
+    /// case, digits before letters.
+    Russian,
+}
+
+impl Collation {
+    /// The collation of a root-object locale, when it is a measured one.
+    pub fn for_locale(locale: &str) -> Option<Collation> {
+        match locale {
+            "en_US_POSIX" => Some(Collation::Posix),
+            "ru_RU" => Some(Collation::Russian),
+            _ => None,
         }
-        t
-    };
-    static TWO: [[u8; 3]; 0x7F - 0x5B] = {
-        let mut t = [[0u8; 3]; 0x7F - 0x5B];
-        let mut i = 0;
-        while i < t.len() {
-            t[i] = [0x28, 0x3F, (i + 0x5B - 0x57) as u8];
-            i += 1;
-        }
-        t
-    };
-    let code = c as u32;
-    if !verified_char(c) {
-        return None;
     }
-    if (0x21..0x5B).contains(&code) {
-        Some(&ONE[(code - 0x21) as usize])
-    } else {
-        Some(&TWO[(code - 0x5B) as usize])
+
+    pub fn locale(self) -> &'static str {
+        match self {
+            Collation::Posix => "en_US_POSIX",
+            Collation::Russian => "ru_RU",
+        }
+    }
+
+    /// The primary weight bytes of one character, or `None` outside the
+    /// evidenced range.
+    ///
+    /// `en_US_POSIX`: every weight starts with 0x28; characters 0x21–0x5A take
+    /// one more byte (`c - 0x1C`), characters 0x5B–0x7E two (`0x3F`,
+    /// `c - 0x57`).
+    ///
+    /// `ru_RU`: a digit is `0x12 + 2d`, a Latin letter `0x27 + 2(l - 'a')`
+    /// whatever its case; `-` is `06 10`, `_` `06 0C`, `.` `09`, `/` `0B 67`.
+    fn push_primary(self, c: char, key: &mut Vec<u8>) -> bool {
+        if !verified_char(c) {
+            return false;
+        }
+        let code = c as u32;
+        match self {
+            Collation::Posix => {
+                key.push(0x28);
+                if (0x21..0x5B).contains(&code) {
+                    key.push((code - 0x1C) as u8);
+                } else {
+                    key.push(0x3F);
+                    key.push((code - 0x57) as u8);
+                }
+            }
+            Collation::Russian => match c {
+                '0'..='9' => key.push(0x12 + 2 * (code - '0' as u32) as u8),
+                'a'..='z' | 'A'..='Z' => {
+                    key.push(0x27 + 2 * (c.to_ascii_lowercase() as u32 - 'a' as u32) as u8)
+                }
+                '-' => key.extend_from_slice(&[0x06, 0x10]),
+                '_' => key.extend_from_slice(&[0x06, 0x0C]),
+                '.' => key.push(0x09),
+                '/' => key.extend_from_slice(&[0x0B, 0x67]),
+                _ => return false,
+            },
+        }
+        true
     }
 }
 
 /// Characters whose weights were checked byte for byte against native
-/// indexes: digits, Latin letters, `-`, `.`, `/` and `_`. The formula covers
-/// the rest of printable ASCII, but no native key proved it, so the writer
-/// refuses such names instead of guessing.
+/// indexes: digits, Latin letters, `-`, `.`, `/` and `_`. Other characters
+/// are refused instead of guessed.
 fn verified_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '/' | '_')
 }
 
-/// The 392-byte key of a CONFIG-family row.
-pub fn config_key(file_name: &str, part_no: u32) -> Result<Vec<u8>> {
+/// The 392-byte key of a CONFIG-family row: the name's primary weights, `01`,
+/// the secondary weights compressed to `0x04 + length`, `00`, `PARTNO`.
+pub fn config_key(collation: Collation, file_name: &str, part_no: u32) -> Result<Vec<u8>> {
     let count = file_name.chars().count();
     if count == 0 || count > MAX_KEY_NAME {
         return Err(Error::Refused(format!(
@@ -92,12 +128,11 @@ pub fn config_key(file_name: &str, part_no: u32) -> Result<Vec<u8>> {
     }
     let mut key = Vec::with_capacity(CONFIG_KEY_LEN);
     for c in file_name.chars() {
-        let weight = primary(c).ok_or_else(|| {
-            Error::Refused(format!(
+        if !collation.push_primary(c, &mut key) {
+            return Err(Error::Refused(format!(
                 "Имя строки «{file_name}»: символ {c:?} вне проверенной коллации ключа индекса"
-            ))
-        })?;
-        key.extend_from_slice(weight);
+            )));
+        }
     }
     key.push(0x01);
     key.push(0x04 + count as u8);
@@ -164,8 +199,15 @@ fn read_leaf(p: &[u8], key_len: usize, count: usize, out: &mut Vec<(u32, Vec<u8>
     let right_mask = u16_at(20) as u64;
     let rec_bits = u16_at(22) as u32;
     let left_bits = u16_at(24) as u32;
+    let right_bits = u16_at(26) as u32;
     let entry = u16_at(28) as usize;
-    if entry == 0 || entry > 8 || rec_bits + left_bits + u16_at(26) as u32 > 64 {
+    if entry == 0
+        || entry > 8
+        || rec_bits > 32
+        || left_bits > 16
+        || right_bits > 16
+        || rec_bits + left_bits + right_bits > entry as u32 * 8
+    {
         return Err(corrupt("Индекс: неверный заголовок листа"));
     }
     if LEAF_HEADER + count * entry > p.len() {
@@ -407,7 +449,7 @@ mod tests {
     #[test]
     fn keys_of_native_rows_match_the_measured_encoding() {
         // Key heads copied from native 8.5.1.1150 PARAMS/CONFIG indexes.
-        let k = config_key("DBNames", 0).unwrap();
+        let k = config_key(Collation::Posix, "DBNames", 0).unwrap();
         assert_eq!(
             &k[..22],
             &[
@@ -415,7 +457,12 @@ mod tests {
                 0x0e, 0x28, 0x3f, 0x1c, 0x01, 0x0b, 0x00, 0x10
             ]
         );
-        let k = config_key("0012c33d-4e24-47a2-887e-6164d9a5076f.0", 1).unwrap();
+        let k = config_key(
+            Collation::Posix,
+            "0012c33d-4e24-47a2-887e-6164d9a5076f.0",
+            1,
+        )
+        .unwrap();
         let tail_at = k.iter().position(|b| *b == 0x01).unwrap();
         assert_eq!(
             &k[tail_at..tail_at + 9],
@@ -435,17 +482,56 @@ mod tests {
             "ibparams.inf",
             "log.inf",
         ];
-        let keys: Vec<Vec<u8>> = names.iter().map(|n| config_key(n, 0).unwrap()).collect();
+        let keys: Vec<Vec<u8>> = names
+            .iter()
+            .map(|n| config_key(Collation::Posix, n, 0).unwrap())
+            .collect();
         assert!(keys.windows(2).all(|w| w[0] < w[1]));
-        assert!(config_key("a", 0).unwrap() < config_key("a", 1).unwrap());
+        assert!(
+            config_key(Collation::Posix, "a", 0).unwrap()
+                < config_key(Collation::Posix, "a", 1).unwrap()
+        );
+    }
+
+    #[test]
+    fn russian_keys_match_native_ru_ru_keys() {
+        // Key heads from a native 8.5.1.1150 infobase created with --locale=ru_RU.
+        let k = config_key(
+            Collation::Russian,
+            "0012c33d-4e24-47a2-887e-6164d9a5076f.0",
+            0,
+        )
+        .unwrap();
+        let head: Vec<u8> = vec![
+            0x12, 0x12, 0x14, 0x16, 0x2b, 0x18, 0x18, 0x2d, 0x06, 0x10, 0x1a, 0x2f, 0x16, 0x1a,
+            0x06, 0x10,
+        ];
+        assert_eq!(&k[..16], head.as_slice());
+        let k = config_key(Collation::Russian, "CAS_GC_Info", 0).unwrap();
+        assert_eq!(
+            &k[..19],
+            &[
+                0x2b, 0x27, 0x4b, 0x06, 0x0c, 0x33, 0x2b, 0x06, 0x0c, 0x37, 0x41, 0x31, 0x43, 0x01,
+                0x0f, 0x00, 0x10, 0, 0
+            ]
+        );
+        let k = config_key(Collation::Russian, "extd_props_cached/gc.mrk", 0).unwrap();
+        assert!(k.windows(4).any(|w| w == [0x0b, 0x67, 0x33, 0x2b]));
+        // No case at secondary strength.
+        assert_eq!(
+            config_key(Collation::Russian, "DBNames", 0).unwrap(),
+            config_key(Collation::Russian, "dbnames", 0).unwrap()
+        );
+        assert_eq!(Collation::for_locale("ru_RU"), Some(Collation::Russian));
+        assert_eq!(Collation::for_locale("de_DE"), None);
     }
 
     #[test]
     fn unverified_names_are_refused() {
-        assert!(config_key("с кириллицей", 0).is_err());
-        assert!(config_key("with space", 0).is_err());
-        assert!(config_key(&"x".repeat(44), 0).is_err());
-        assert!(config_key("", 0).is_err());
+        assert!(config_key(Collation::Posix, "с кириллицей", 0).is_err());
+        assert!(config_key(Collation::Posix, "with space", 0).is_err());
+        assert!(config_key(Collation::Posix, &"x".repeat(44), 0).is_err());
+        assert!(config_key(Collation::Posix, "", 0).is_err());
     }
 
     fn empty_index(page_size: usize) -> Vec<u8> {
@@ -468,8 +554,12 @@ mod tests {
                 .map(|i| {
                     (
                         i as u32 + 1,
-                        config_key(&format!("{:08x}-row.{}", i * 7919 % 100_003, i % 3), 0)
-                            .unwrap(),
+                        config_key(
+                            Collation::Posix,
+                            &format!("{:08x}-row.{}", i * 7919 % 100_003, i % 3),
+                            0,
+                        )
+                        .unwrap(),
                     )
                 })
                 .collect();
@@ -487,8 +577,8 @@ mod tests {
         // part 0's significant bytes), not the 97 bytes the two keys share.
         let name = "a2782760-dd4c-44d2-a785-814d6f610455.0";
         let entries = vec![
-            (1, config_key(name, 0).unwrap()),
-            (2, config_key(name, 1).unwrap()),
+            (1, config_key(Collation::Posix, name, 0).unwrap()),
+            (2, config_key(Collation::Posix, name, 1).unwrap()),
         ];
         let obj = rebuild(&empty_index(8192), 8192, entries.clone()).unwrap();
         let leaf = &obj[2 * 8192..3 * 8192];
@@ -501,7 +591,7 @@ mod tests {
 
     #[test]
     fn duplicate_keys_are_refused() {
-        let k = config_key("root", 0).unwrap();
+        let k = config_key(Collation::Posix, "root", 0).unwrap();
         assert!(rebuild(&empty_index(8192), 8192, vec![(1, k.clone()), (2, k)]).is_err());
     }
 }

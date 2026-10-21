@@ -64,10 +64,15 @@ pub(crate) fn import(
         })?
     };
 
-    // An open infobase is refused before the tree is compiled; the write
-    // takes its own lock again.
-    ibcmd_filedb::ensure_closed(data_file).map_err(|err| anyhow!("{err}"))?;
-    let target = crate::mssql_dump::file_infobase_config(data_file)?;
+    // The lock is taken before the tree is compiled and held until the stage
+    // is written: an open infobase is refused at once, and nothing changes
+    // CONFIG between the read the stage is built on and the write.
+    let mut session = ibcmd_filedb::open_for_write(data_file).map_err(|err| anyhow!("{err}"))?;
+    let target = crate::mssql_dump::file_infobase_config(
+        session
+            .config_rows("CONFIG")
+            .map_err(|err| anyhow!("{err}"))?,
+    )?;
     let configuration = tree_configuration_uuid(&source_root)?;
     let (base_free, reason) = match args.stage_mode {
         InfobaseImportStageMode::BaseFree => (true, "asked for (--base-free)".to_string()),
@@ -99,11 +104,15 @@ pub(crate) fn import(
             "в CONFIG файловой базы нет конфигурации {configuration}: загрузите дерево без --patch"
         );
     }
+    let crate::mssql_dump::FileInfobaseConfig {
+        published,
+        stored_names,
+    } = target;
 
     let entries = if base_free {
         crate::mssql::base_free_cf::base_free_entries(&source_root, source_version)?
     } else {
-        load_onto_target(&source_root, &target.published, source_version, args)?
+        load_onto_target(&source_root, published, source_version, args)?
     };
     for service in ["root", "version", "versions"] {
         if !entries.contains_key(service) {
@@ -113,8 +122,7 @@ pub(crate) fn import(
 
     // The rows of the target the configuration no longer has: the apply
     // removes what the `deleted` row lists.
-    let deleted = target
-        .stored_names
+    let deleted = stored_names
         .iter()
         .filter(|name| !entries.contains_key(*name))
         .cloned()
@@ -150,7 +158,8 @@ pub(crate) fn import(
         };
 
     let rows = stage_rows(&entries, &deleted)?;
-    let written = ibcmd_filedb::replace_config_table(data_file, "CONFIGSAVE", &rows)
+    let written = session
+        .replace("CONFIGSAVE", &rows)
         .map_err(|err| anyhow!("{err}"))
         .with_context(|| format!("не удалось записать CONFIGSAVE в {}", data_file.display()))?;
 
@@ -168,10 +177,11 @@ pub(crate) fn import(
         stage_mode: if base_free { "base-free" } else { "patch" },
         stage_mode_reason: reason,
         files: Vec::new(),
-        target_config_rows: target.stored_names.len() as i64,
+        target_config_rows: stored_names.len() as i64,
         staged_rows_before: written.rows_before as i64,
         staged_rows_after: written.rows_after as i64,
-        scripts: vec![written.backup],
+        scripts: Vec::new(),
+        backup: Some(written.backup),
         verification,
         overrides: None,
     })
@@ -181,7 +191,7 @@ pub(crate) fn import(
 /// `cf load` loads a tree onto a file: name -> stored bytes of the result.
 fn load_onto_target(
     source_root: &Path,
-    published: &BTreeMap<String, Vec<u8>>,
+    published: BTreeMap<String, Vec<u8>>,
     source_version: InfobaseConfigSourceVersion,
     args: &InfobaseConfigImportArgs,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
@@ -189,12 +199,12 @@ fn load_onto_target(
     let result = (|| {
         let base = scratch.join("target.cf");
         let output = scratch.join("staged.cf");
-        crate::mssql_dump::config_save::write_rows_cf(published.clone(), &base, false)
+        crate::mssql_dump::config_save::write_rows_cf(published, &base, false)
             .context("не удалось собрать .cf из CONFIG файловой базы")?;
         match crate::load::load_onto_base(source_root, &base, &output, source_version) {
             Ok(_) => read_cf_entries(&output),
             // The tree is the target's configuration: the stage is its rows.
-            Err(crate::load::LoadError::NoChanges) => Ok(published.clone()),
+            Err(crate::load::LoadError::NoChanges) => read_cf_entries(&base),
             Err(error) => Err(anyhow!("{error}"))
                 .context("не удалось загрузить дерево поверх конфигурации файловой базы"),
         }

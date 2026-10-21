@@ -60,6 +60,37 @@ ibcmd-rs imports, then the platform applies and exports:
 22 s (into `empty`) and 32 s (into `bsp`, with the `cf load` re-export) for
 ibcmd-rs, the stage guard included; 17 s for the native import into `empty`.
 
+## Russian infobases (`--locale=ru_RU`)
+
+| case | `config apply` | export vs the tree |
+|---|---|---|
+| БСП tree into an empty `ru_RU` infobase | success | identical but `ConfigDumpInfo.xml` |
+| БСП tree into the `ru_RU` БСП infobase | success | identical |
+| edited БСП tree into the `ru_RU` БСП infobase | success | identical but `ConfigDumpInfo.xml` |
+
+Before the collation was known, the review of the change wrote a `ru_RU`
+infobase with `en_US_POSIX` keys: the import reported success, the platform's
+apply then failed with `Файл не обнаружен 'DefAlias/ConfigSave/versions'`, and
+even the platform's own import of that file failed. The write now checks the
+locale and the existing indexes first; a `de_DE` infobase is refused with the
+file untouched.
+
+## Review fixes, checked
+
+- The write lock is taken before `CONFIG` is read and held until
+  `CONFIGSAVE` is in place (the stage is built on what is replaced).
+- The new data file keeps the mode and owner of the original (a test with
+  mode 0640); a write that cannot keep the owner is refused.
+- Every page the write does not own is compared with the original after the
+  write; the table's pages must be its own before it.
+- A corrupted object length is refused before any allocation (a length of
+  `0xFFFFFFFFFFFFFF00` used to abort the process).
+- The work and backup files are named after the data file
+  (`<file>.ibcmd-rs.tmp`, `.bak`); a work file left behind stops the write.
+- A synthetic table of 6 009 rows with 12 MB rows grows the objects to
+  second-level tables and a multi-level index, reads back, and a rewrite with
+  10 rows keeps the size.
+
 ## Locking
 
 - An import into an infobase a standalone server (`ibsrv`) has open is

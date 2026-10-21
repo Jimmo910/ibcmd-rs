@@ -12,7 +12,7 @@ pub(crate) const DATA: usize = 250;
 /// `expected`, the chain must hold exactly that many bytes.
 pub(crate) fn read_chain(object: &[u8], start: u32, expected: Option<u64>) -> Result<Vec<u8>> {
     let blocks = object.len() / BLOCK;
-    let mut out = Vec::with_capacity(expected.unwrap_or(0).min(1 << 30) as usize);
+    let mut out = Vec::with_capacity(expected.unwrap_or(0).min(object.len() as u64) as usize);
     let mut block = start as usize;
     let mut steps = 0usize;
     while block != 0 {

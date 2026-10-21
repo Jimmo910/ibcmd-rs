@@ -38,6 +38,15 @@ native key read. Atomicity is the file system's: the copy is renamed over
 the data file once it has been read back and its index verified, and the
 original stays as a hard link (`1Cv8.1CD.ibcmd-rs.bak`, the last one only).
 
+## Collation
+
+The keys of the configuration tables are sort keys under the infobase's
+locale. Two locales are measured (`en_US_POSIX`, `ru_RU`); a write first
+recomputes the keys of every configuration-table index of the infobase --
+written by the platform -- and refuses unless they all match, so an
+unmeasured collation, or a mistake in a measured one, cannot produce a stage
+the platform cannot find.
+
 ## Locks
 
 POSIX record locks on Unix (whole file: write for an import, read for an

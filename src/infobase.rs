@@ -92,6 +92,9 @@ pub struct InfobaseConfigImportReport {
     pub verification: Option<crate::mssql::StageVerification>,
     /// What a patch stage built from the tree in place of the target's rows.
     pub overrides: Option<crate::mssql::StageOverrides>,
+    /// The copy of a file infobase's data file kept before the write.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup: Option<PathBuf>,
 }
 
 /// The export refuses a directory that already holds files, as the
@@ -631,6 +634,7 @@ pub fn import_config(args: &InfobaseConfigImportArgs) -> Result<InfobaseConfigIm
         scripts: report.scripts,
         verification: report.verification,
         overrides: report.overrides,
+        backup: None,
     })
 }
 

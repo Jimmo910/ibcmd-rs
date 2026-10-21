@@ -26,10 +26,15 @@ drop-in syntax) — asks for both operations without the platform.
   `cf load` loads a tree onto a `.cf` (`crate::load`); plus a `deleted` row
   naming the rows the configuration lost. The stage guard checks the state
   against the tree before anything is written.
-- The write locks the data file, works in a copy, reads the copy back,
-  keeps the original as `1Cv8.1CD.ibcmd-rs.bak` and renames the copy into
-  place. An infobase the platform has open is refused before any work; the
-  platform cannot open one ibcmd-rs is writing.
+- The write locks the data file for the whole import, works in a copy with
+  the original's mode and owner, checks that no page outside the table
+  changed and that the table and its index read back, keeps the original as
+  `<data file>.ibcmd-rs.bak` and renames the copy into place. An infobase the
+  platform has open is refused before any work; the platform cannot open one
+  ibcmd-rs is writing.
+- Index keys follow the infobase's locale: `en_US_POSIX` and `ru_RU` are
+  measured; an infobase in another locale is read but not written, and a
+  write first checks the infobase's own indexes against the formula.
 - The drop-in grammar takes `--db-path`/`--database-path` for `config
   export` and `config import`; it contradicts `--dbms`, `--db-server` and
   `--db-name`. `config apply`, `config save` and `config import files` still

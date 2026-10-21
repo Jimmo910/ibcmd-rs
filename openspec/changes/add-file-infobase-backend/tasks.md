@@ -10,4 +10,6 @@
 - [x] 8. Keep an unused data parameter that is a user setting in form list settings (БСП on 8.5.1.1150).
 - [x] 9. Fixtures written by 8.5.1.1150 and offline tests: the export against the native export, imports read back through the export, broken files.
 - [x] 10. Measure the БСП round trips (`evidence/bsp-8-5-roundtrip-20261021.md`).
-- [ ] 11. Measure ERP УХ and 8.3.27 file infobases (not available on the measuring host).
+- [x] 11. Measure the `ru_RU` collation and write Russian infobases; refuse other locales and indexes that do not match the formula (review).
+- [x] 12. Hold the write lock from the read of `CONFIG` to the write; keep the data file's mode and owner; check page isolation; name work and backup files after the data file; refuse corrupted lengths before allocating (review).
+- [ ] 13. Measure ERP УХ and 8.3.27 file infobases (not available on the measuring host).

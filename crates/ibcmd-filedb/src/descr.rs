@@ -301,7 +301,7 @@ fn parse_field(table: &str, value: &Value) -> Result<Field> {
 }
 
 /// Reads the locale and every table description from the root object.
-pub(crate) fn read_tables(pager: &mut Pager) -> Result<(String, BTreeMap<String, Table>)> {
+pub(crate) fn read_tables(pager: &mut Pager<'_>) -> Result<(String, BTreeMap<String, Table>)> {
     let root = Object::open(pager, 2)?;
     let data = root.read_all(pager)?;
     let head = blob::read_chain(&data, 1, None)?;

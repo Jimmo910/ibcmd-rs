@@ -13,23 +13,53 @@
 //! Page 1 is the free-pages object, page 2 the root object (table list).
 
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 
 use crate::error::{Error, Result, corrupt};
 
 pub(crate) const SIGNATURE: &[u8; 8] = b"1CDBMSV8";
 pub(crate) const VERSION_838: [u8; 4] = [8, 3, 8, 0];
 
-pub(crate) struct Pager {
-    file: File,
+/// What a pager reads and writes: an owned file, or a borrowed one -- a
+/// write session reads through the very descriptor that holds its lock,
+/// since closing any descriptor of the file would drop the process's POSIX
+/// locks on it.
+pub(crate) trait Backing: Read + Write + Seek {
+    fn length(&self) -> io::Result<u64>;
+    fn sync(&mut self) -> io::Result<()>;
+}
+
+impl Backing for File {
+    fn length(&self) -> io::Result<u64> {
+        Ok(self.metadata()?.len())
+    }
+    fn sync(&mut self) -> io::Result<()> {
+        self.flush()?;
+        self.sync_all()
+    }
+}
+
+impl Backing for &File {
+    fn length(&self) -> io::Result<u64> {
+        Ok(self.metadata()?.len())
+    }
+    fn sync(&mut self) -> io::Result<()> {
+        self.flush()?;
+        self.sync_all()
+    }
+}
+
+pub(crate) struct Pager<'a> {
+    file: Box<dyn Backing + 'a>,
     page_size: usize,
     page_count: u32,
     header: Vec<u8>,
 }
 
-impl Pager {
-    pub(crate) fn new(mut file: File) -> Result<Self> {
-        let len = file.metadata()?.len();
+impl<'a> Pager<'a> {
+    pub(crate) fn new(file: impl Backing + 'a) -> Result<Self> {
+        let mut file: Box<dyn Backing + 'a> = Box::new(file);
+        let len = file.length()?;
         let mut head = [0u8; 24];
         file.seek(SeekFrom::Start(0))?;
         file.read_exact(&mut head)
@@ -135,8 +165,7 @@ impl Pager {
     }
 
     pub(crate) fn sync(&mut self) -> Result<()> {
-        self.file.flush()?;
-        self.file.sync_all()?;
+        self.file.sync()?;
         Ok(())
     }
 }

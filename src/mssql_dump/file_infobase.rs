@@ -89,17 +89,11 @@ pub(crate) struct FileInfobaseConfig {
     pub stored_names: BTreeSet<String>,
 }
 
-/// Reads the `CONFIG` table; a table holding the markers of an operation the
-/// platform did not finish is refused, as `config save` refuses it.
-pub(crate) fn file_infobase_config(db_path: &Path) -> Result<FileInfobaseConfig> {
-    let mut db = FileDb::open(db_path)
-        .map_err(|err| anyhow!("{err}"))
-        .with_context(|| format!("не удалось прочитать файловую базу {}", db_path.display()))?;
-    let config = assemble(
-        db.config_rows("CONFIG").map_err(|err| anyhow!("{err}"))?,
-        "CONFIG",
-    )?;
-    drop(db);
+/// The `CONFIG` rows of a file infobase as an import stages over them; a table
+/// holding the markers of an operation the platform did not finish is
+/// refused, as `config save` refuses it.
+pub(crate) fn file_infobase_config(rows: Vec<ConfigRow>) -> Result<FileInfobaseConfig> {
+    let config = assemble(rows, "CONFIG")?;
     super::config_save::refuse_unfinished_operation(config.keys().map(String::as_str))?;
     let stored_names = config.keys().cloned().collect();
     let published = OfflineRows::from_memory(

@@ -37,7 +37,7 @@ fn direct_capacity(page_size: usize) -> usize {
 }
 
 impl Object {
-    pub(crate) fn open(pager: &mut Pager, header_page: u32) -> Result<Object> {
+    pub(crate) fn open(pager: &mut Pager<'_>, header_page: u32) -> Result<Object> {
         pager.check_page(header_page, "Заголовок объекта")?;
         let page = pager.read_page(header_page)?;
         let sig = u16::from_le_bytes([page[0], page[1]]);
@@ -51,7 +51,16 @@ impl Object {
         let length_counter = u32::from_le_bytes(page[8..12].try_into().unwrap());
         let len = u64::from_le_bytes(page[16..24].try_into().unwrap());
         let ps = pager.page_size() as u64;
-        let need = len.div_ceil(ps) as usize;
+        // An object cannot hold more pages than the file has: a corrupted
+        // length is refused before anything is allocated for it.
+        let need = len.div_ceil(ps);
+        if need > pager.page_count() as u64 {
+            return Err(corrupt(format!(
+                "Объект {header_page}: длина {len} больше файла из {} страниц",
+                pager.page_count()
+            )));
+        }
+        let need = need as usize;
         let direct: Vec<u32> = page[HEADER..]
             .as_chunks::<4>()
             .0
@@ -108,7 +117,7 @@ impl Object {
     }
 
     /// Reads `buf.len()` bytes at `offset` of the object.
-    pub(crate) fn read_at(&self, pager: &mut Pager, offset: u64, buf: &mut [u8]) -> Result<()> {
+    pub(crate) fn read_at(&self, pager: &mut Pager<'_>, offset: u64, buf: &mut [u8]) -> Result<()> {
         let end = offset
             .checked_add(buf.len() as u64)
             .filter(|end| *end <= self.len)
@@ -141,7 +150,7 @@ impl Object {
         Ok(())
     }
 
-    pub(crate) fn read_all(&self, pager: &mut Pager) -> Result<Vec<u8>> {
+    pub(crate) fn read_all(&self, pager: &mut Pager<'_>) -> Result<Vec<u8>> {
         let len = usize::try_from(self.len)
             .map_err(|_| corrupt(format!("Объект {} слишком велик", self.header_page)))?;
         let mut buf = vec![0u8; len];
@@ -154,7 +163,7 @@ impl Object {
     /// block chains), as the platform itself does after `config apply`.
     /// Existing data pages are reused in order, missing ones are appended at
     /// the end of the file.
-    pub(crate) fn rewrite(&mut self, pager: &mut Pager, content: &[u8]) -> Result<()> {
+    pub(crate) fn rewrite(&mut self, pager: &mut Pager<'_>, content: &[u8]) -> Result<()> {
         if (content.len() as u64) < self.len {
             return Err(crate::error::Error::Refused(format!(
                 "Внутренняя ошибка: объект {} укорачивается с {} до {} байт",
@@ -184,7 +193,14 @@ impl Object {
         self.write_header(pager)
     }
 
-    fn write_header(&mut self, pager: &mut Pager) -> Result<()> {
+    /// Every page the object owns: its header, second-level and data pages.
+    pub(crate) fn owned_pages(&self) -> impl Iterator<Item = u32> + '_ {
+        std::iter::once(self.header_page)
+            .chain(self.tables.iter().copied())
+            .chain(self.pages.iter().copied())
+    }
+
+    fn write_header(&mut self, pager: &mut Pager<'_>) -> Result<()> {
         let ps = pager.page_size();
         let direct = direct_capacity(ps);
         let need = (self.len.div_ceil(ps as u64)) as usize;

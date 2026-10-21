@@ -67,6 +67,18 @@ writes.
 - **THEN** it refuses at once, saying the infobase is open
 - **AND** the directory holds no backup and no work file
 
+#### Scenario: An infobase in an unmeasured locale
+
+- **GIVEN** a file infobase created with `--locale=de_DE`
+- **WHEN** ibcmd-rs imports a tree into it
+- **THEN** it refuses, naming the locale, and the data file is unchanged
+
+#### Scenario: A Russian infobase
+
+- **GIVEN** a file infobase created with `--locale=ru_RU`
+- **WHEN** ibcmd-rs imports a tree and the platform applies and exports it
+- **THEN** the platform's export is identical to the tree but for `ConfigDumpInfo.xml`
+
 #### Scenario: A row the index cannot key
 
 - **GIVEN** a row whose name holds a character outside the evidenced collation range
