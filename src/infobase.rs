@@ -142,6 +142,8 @@ pub(crate) struct ConnectionRequest<'a> {
     /// `--platform`: its XML format, above everything else.
     pub platform: Option<PlatformSpec>,
     pub source_version: Option<InfobaseConfigSourceVersion>,
+    /// `--db-path`: a file infobase; no DBMS value may come with it.
+    pub db_path: Option<&'a Path>,
     pub dbms: Option<&'a str>,
     pub db_server: Option<&'a str>,
     pub db_name: Option<&'a str>,
@@ -166,6 +168,8 @@ pub(crate) struct ConnectionConfig {
     /// the platform the settings give the database) rather than defaulted:
     /// an import reads an unnamed one off the tree.
     pub xml_version_given: bool,
+    /// The data file of a file infobase (`--db-path`); `None` for a DBMS.
+    pub file_infobase: Option<PathBuf>,
 }
 
 impl ConnectionConfig {
@@ -187,6 +191,7 @@ impl InfobaseConfigExportArgs {
             format: self.format,
             platform: self.platform,
             source_version: self.source_version,
+            db_path: self.db_path.as_deref(),
             dbms: self.dbms.as_deref(),
             db_server: self.db_server.as_deref(),
             db_name: self.db_name.as_deref(),
@@ -211,6 +216,7 @@ impl InfobaseConfigImportArgs {
             format: self.format,
             platform: self.platform,
             source_version: self.source_version,
+            db_path: self.db_path.as_deref(),
             dbms: self.dbms.as_deref(),
             db_server: self.db_server.as_deref(),
             db_name: self.db_name.as_deref(),
@@ -246,6 +252,7 @@ impl InfobaseConfigSaveArgs {
             format: None,
             platform: None,
             source_version: None,
+            db_path: None,
             dbms: self.dbms.as_deref(),
             db_server: self.db_server.as_deref(),
             db_name: self.db_name.as_deref(),
@@ -306,7 +313,11 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
 
 pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigExportReport> {
     let config = resolve_connection(args.connection())?;
-    ensure_mssql(&config.dbms)?;
+    if config.file_infobase.is_none() {
+        ensure_mssql(&config.dbms)?;
+    } else if args.extension.is_some() {
+        bail!("Выгрузка расширений из файловой информационной базы пока не поддерживается");
+    }
     if let Some(extension) = args.extension.as_deref() {
         if args.base.is_some() || args.sync {
             bail!("--base and --sync export the configuration; an extension is exported in full");
@@ -374,7 +385,11 @@ pub(crate) fn export_config_report(
 
     Ok(InfobaseConfigExportReport {
         operation: "infobase config export",
-        backend: "mssql-config-direct",
+        backend: if config.file_infobase.is_some() {
+            "file-infobase-direct"
+        } else {
+            "mssql-config-direct"
+        },
         format: format_name(config.format),
         source_version: source_version.as_str(),
         dbms: config.dbms.clone(),
@@ -501,6 +516,7 @@ fn dump_args(
 ) -> MssqlDumpConfigArgs {
     MssqlDumpConfigArgs {
         rows_dir: None,
+        file_infobase: config.file_infobase.clone(),
         model_export: false,
         legacy_export: false,
         sqlcmd: sqlcmd.map(Path::to_path_buf),
@@ -536,6 +552,9 @@ fn dump_args(
 
 pub fn import_config(args: &InfobaseConfigImportArgs) -> Result<InfobaseConfigImportReport> {
     let config = resolve_connection(args.connection())?;
+    if config.file_infobase.is_some() {
+        return crate::file_infobase::import(&config, args);
+    }
     ensure_mssql(&config.dbms)?;
 
     let mut stage_args = build_import_stage_args(&config, args)?;
@@ -722,6 +741,17 @@ fn resolve_connection_with(
         Some(platform) => adapter_for(platform.xml_version())?,
         None => resolve_legacy_adapter(&settings, request.source_version)?,
     };
+    if let Some(db_path) = request.db_path {
+        return resolve_file_infobase(
+            db_path,
+            &request,
+            native_config,
+            format,
+            legacy_adapter,
+            xml_version_given,
+            &mut defaults,
+        );
+    }
     let dbms = match first_value(request.dbms, settings_value(&settings, "dbms-type")) {
         Some(dbms) => dbms,
         None => defaults
@@ -746,8 +776,8 @@ fn resolve_connection_with(
             .map(|name| name.value)
             .ok_or_else(|| {
                 anyhow!(
-                    "не указано имя базы данных: передайте --dbms=MSSQLServer, --db-server и --db-name \
-                     (файловые информационные базы не поддерживаются в этой версии ibcmd-rs)"
+                    "не указана информационная база: передайте --db-path для файловой базы \
+                     или --dbms=MSSQLServer, --db-server и --db-name"
                 )
             })?,
     };
@@ -771,8 +801,61 @@ fn resolve_connection_with(
         format,
         legacy_adapter,
         xml_version_given,
+        file_infobase: None,
     };
     settle_platform(&mut config, &request, &mut defaults)?;
+    Ok(config)
+}
+
+/// `--db-path`: a file infobase. No DBMS value may come with it; the settings
+/// can still name its platform by the infobase directory (a database entry
+/// without a server, its name a mask of the path).
+fn resolve_file_infobase(
+    db_path: &Path,
+    request: &ConnectionRequest<'_>,
+    native_config: Option<PathBuf>,
+    format: InfobaseConfigFormat,
+    legacy_adapter: MssqlLegacyAdapter,
+    xml_version_given: bool,
+    defaults: &mut Defaults<'_>,
+) -> Result<ConnectionConfig> {
+    for (given, option) in [
+        (request.dbms, "--dbms"),
+        (request.db_server, "--db-server"),
+        (request.db_name, "--db-name"),
+        (request.db_user, "--db-user"),
+    ] {
+        if given.is_some() {
+            bail!(
+                "--db-path задаёт файловую информационную базу: {option} вместе с ним не указывается"
+            );
+        }
+    }
+    let data_file = ibcmd_filedb::data_file(&absolute_path(db_path)?);
+    if !data_file.is_file() {
+        bail!(
+            "Файловая информационная база не найдена: нет файла {}",
+            data_file.display()
+        );
+    }
+    let directory = data_file
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| data_file.clone());
+    let mut config = ConnectionConfig {
+        dbms: "File".to_string(),
+        db_server: String::new(),
+        db_name: directory.display().to_string(),
+        db_user: None,
+        db_pwd: None,
+        password_source: None,
+        native_config,
+        format,
+        legacy_adapter,
+        xml_version_given,
+        file_infobase: Some(data_file),
+    };
+    settle_platform(&mut config, request, defaults)?;
     Ok(config)
 }
 
@@ -1252,6 +1335,7 @@ mod tests {
 
     fn import_args() -> InfobaseConfigImportArgs {
         InfobaseConfigImportArgs {
+            db_path: None,
             settings: None,
             native_config: None,
             format: Some(InfobaseConfigFormat::Xml),
@@ -1327,6 +1411,7 @@ mod tests {
 
     fn export_args(db_name: &str) -> InfobaseConfigExportArgs {
         InfobaseConfigExportArgs {
+            db_path: None,
             settings: None,
             native_config: None,
             format: None,

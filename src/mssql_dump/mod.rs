@@ -979,6 +979,8 @@ mod dynamic_generation;
 pub(crate) mod extension;
 pub(crate) mod extension_types;
 mod fetch;
+mod file_infobase;
+pub(crate) use file_infobase::file_infobase_config;
 mod form;
 mod form_body;
 mod form_extension;
@@ -2203,16 +2205,26 @@ fn dump_config_inner(
         .transpose()?;
     // `--rows-dir`: every Config read of this run comes from the folder and
     // no query reaches a server.
-    let _offline_rows = match &args.rows_dir {
-        Some(dir) => {
+    let _offline_rows = match (&args.rows_dir, &args.file_infobase) {
+        (Some(dir), _) => {
             if args.include_config_save {
                 bail!("--rows-dir reads the Config table only; drop --include-config-save");
             }
             Some(offline_rows::activate(dir)?)
         }
-        None => {
+        // `--file-infobase` (#373): the file infobase's rows, its completed
+        // ConfigSave stage folded in, answer every read the same way.
+        (None, Some(path)) => {
+            if args.include_config_save {
+                bail!(
+                    "--file-infobase publishes the main configuration; drop --include-config-save"
+                );
+            }
+            Some(offline_rows::activate_rows(file_infobase::load(path)?)?)
+        }
+        (None, None) => {
             if args.database.trim().is_empty() {
-                bail!("--database is required unless --rows-dir is given");
+                bail!("--database is required unless --rows-dir or --file-infobase is given");
             }
             None
         }
@@ -2289,6 +2301,8 @@ fn dump_config_inner(
     // `--rows-dir` answers every read from its folder; no login is needed.
     let sql = if args.rows_dir.is_some() {
         crate::sql::SqlExec::detached("--rows-dir reads every row from its folder")
+    } else if args.file_infobase.is_some() {
+        crate::sql::SqlExec::detached("--file-infobase reads every row from the file infobase")
     } else if let Some(sql) = hooks.sql.clone() {
         sql
     } else {

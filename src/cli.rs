@@ -739,6 +739,9 @@ pub struct InfobaseConfigExportArgs {
     pub platform: Option<crate::platform::PlatformSpec>,
     /// Source XML version. 2.20 matches 1C 8.3.27, 2.21 matches 1C 8.5.1. Can also be set in settings.
     pub source_version: Option<InfobaseConfigSourceVersion>,
+    /// `--db-path`: a file infobase (the directory holding 1Cv8.1CD) in place
+    /// of a DBMS connection.
+    pub db_path: Option<PathBuf>,
     /// DBMS type. Only MSSQLServer is supported by the direct exporter.
     pub dbms: Option<String>,
     /// Database server.
@@ -796,6 +799,9 @@ pub struct InfobaseConfigImportArgs {
     /// Source XML version; when neither this nor the settings give one, the
     /// tree's own (`Configuration.xml`) is read.
     pub source_version: Option<InfobaseConfigSourceVersion>,
+    /// `--db-path`: a file infobase (the directory holding 1Cv8.1CD) in place
+    /// of a DBMS connection.
+    pub db_path: Option<PathBuf>,
     /// DBMS type. Only MSSQLServer is supported by the direct importer.
     pub dbms: Option<String>,
     /// Database server.
@@ -1747,6 +1753,11 @@ pub struct MssqlDumpConfigArgs {
     /// server or database is contacted.
     #[arg(long)]
     pub rows_dir: Option<PathBuf>,
+    /// Read the Config table, and a completed import stage in ConfigSave,
+    /// from a file infobase: the directory holding 1Cv8.1CD or the file
+    /// itself. No server or platform is used.
+    #[arg(long, conflicts_with = "rows_dir")]
+    pub file_infobase: Option<PathBuf>,
     /// Write every descriptor through the metadata model (the default for a
     /// full export; kept for scripts that pass it).
     #[arg(long, hide = true, conflicts_with = "legacy_export")]

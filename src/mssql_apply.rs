@@ -223,6 +223,7 @@ fn apply_source_change_inner(
         let report = crate::mssql_dump::dump_config_with_sql(
             &MssqlDumpConfigArgs {
                 rows_dir: None,
+                file_infobase: None,
                 model_export: false,
                 legacy_export: false,
                 sqlcmd: args.sqlcmd.clone(),
