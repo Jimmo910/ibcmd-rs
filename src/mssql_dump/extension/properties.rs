@@ -362,3 +362,25 @@ pub(crate) fn guid_for(element: &str, name: &str) -> Option<&'static str> {
         _ => false,
     })
 }
+
+#[cfg(test)]
+mod inverse_mapping_tests {
+
+    #[test]
+    fn inverse_ids_cover_every_guid_known_to_the_exporter() {
+        // Includes generic property constants and every element-specific match arm.
+        let source = include_str!("properties.rs");
+        let forward = source.split("#[cfg(test)]").next().unwrap();
+        let inverse = source.split("pub(crate) fn guid_for").nth(1).unwrap();
+        let ids = inverse.split("IDS.iter()").next().unwrap();
+        let ids = ids.split('"').collect::<Vec<_>>();
+        for literal in forward.split('"') {
+            if uuid::Uuid::parse_str(literal).is_ok() {
+                assert!(
+                    ids.contains(&literal),
+                    "export-only property GUID {literal}"
+                );
+            }
+        }
+    }
+}

@@ -246,9 +246,7 @@ impl<'a> Field<'a> {
         self.properties.child_text(name).unwrap_or_default().trim()
     }
     fn flag(&self, name: &str) -> Result<Brace> {
-        if self.properties.child(name).is_none()
-            && self.properties.child_text("ObjectBelonging") == Some("Adopted")
-        {
+        if crate::metadata_model::absent_on_adopted(&self.properties, name) {
             return Ok(Brace::flag(false));
         }
         let text = self.properties.child_text(name).ok_or_else(|| {
@@ -261,9 +259,7 @@ impl<'a> Field<'a> {
         Ok(Brace::flag(parse_bool(text.trim())?))
     }
     fn code(&self, name: &str, table: &[(&str, i64)]) -> Result<Brace> {
-        if self.properties.child(name).is_none()
-            && self.properties.child_text("ObjectBelonging") == Some("Adopted")
-        {
+        if crate::metadata_model::absent_on_adopted(&self.properties, name) {
             return table
                 .first()
                 .map(|(_, v)| Brace::num(*v))
@@ -327,17 +323,13 @@ impl<'o, 'a> Props<'o, 'a> {
         })
     }
     fn flag(&self, name: &str) -> Result<Brace> {
-        if self.properties.child(name).is_none()
-            && self.properties.child_text("ObjectBelonging") == Some("Adopted")
-        {
+        if crate::metadata_model::absent_on_adopted(&self.properties, name) {
             return Ok(Brace::flag(false));
         }
         Ok(Brace::flag(self.object.prop_bool(name)?))
     }
     fn code(&self, name: &str, table: &[(&str, i64)]) -> Result<Brace> {
-        if self.properties.child(name).is_none()
-            && self.properties.child_text("ObjectBelonging") == Some("Adopted")
-        {
+        if crate::metadata_model::absent_on_adopted(&self.properties, name) {
             return table
                 .first()
                 .map(|(_, v)| Brace::num(*v))
@@ -346,9 +338,7 @@ impl<'o, 'a> Props<'o, 'a> {
         code(name, self.object.prop_text(name)?.trim(), table)
     }
     fn number(&self, name: &str) -> Result<i64> {
-        if self.properties.child(name).is_none()
-            && self.properties.child_text("ObjectBelonging") == Some("Adopted")
-        {
+        if crate::metadata_model::absent_on_adopted(&self.properties, name) {
             return Ok(0);
         }
         self.object

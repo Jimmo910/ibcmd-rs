@@ -999,9 +999,7 @@ fn element_uuid(element: &Element) -> Result<String> {
 }
 
 fn flag_of(properties: &Element, name: &str) -> Result<Brace> {
-    if properties.child(name).is_none()
-        && properties.child_text("ObjectBelonging") == Some("Adopted")
-    {
+    if crate::metadata_model::absent_on_adopted(properties, name) {
         return Ok(num(0));
     }
     let text = properties
@@ -1015,9 +1013,7 @@ fn flag_of(properties: &Element, name: &str) -> Result<Brace> {
 }
 
 fn number_of(properties: &Element, name: &str) -> Result<Brace> {
-    if properties.child(name).is_none()
-        && properties.child_text("ObjectBelonging") == Some("Adopted")
-    {
+    if crate::metadata_model::absent_on_adopted(properties, name) {
         return Ok(num(0));
     }
     let text = properties
@@ -1031,9 +1027,7 @@ fn number_of(properties: &Element, name: &str) -> Result<Brace> {
 }
 
 fn code_of(properties: &Element, name: &str, table: &[(&str, i64)]) -> Result<Brace> {
-    if properties.child(name).is_none()
-        && properties.child_text("ObjectBelonging") == Some("Adopted")
-    {
+    if crate::metadata_model::absent_on_adopted(properties, name) {
         return table
             .first()
             .map(|(_, v)| num(*v))

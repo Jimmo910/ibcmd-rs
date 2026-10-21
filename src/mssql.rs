@@ -6749,7 +6749,7 @@ fn prepare_form_body_row(
     // An extension's adopted form, compiled offline against its base row
     // (`cf load`): the form, its interceptors' call types, the base form.
     if CF_LOAD_COMPILE.load(std::sync::atomic::Ordering::Relaxed)
-        && !BASE_FREE_STAGE.load(std::sync::atomic::Ordering::Relaxed)
+        && !base_free(sql)
         && offline_compile::requires_adoption_adapter(
             &form_xml,
             &read_stage_source(source, xml_path)?,
@@ -8570,22 +8570,15 @@ fn unqueried_storage_table_stats(table: &str) -> StorageTableManifest {
     }
 }
 
-/// Set by a base-free stage (`mssql-stage-source-objects --base-free`,
-/// `audit-empty-stage`): the target is an empty infobase with no rows to
-/// patch, so every base-row read fails, naming its row, without touching a
-/// database.
-static BASE_FREE_STAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 /// The error text of a base-row read in a base-free stage; the audit reads
 /// the row name back out of it.
 const BASE_FREE_MISSING_ROW: &str = "base-free stage has no base Config row";
 
 /// Whether a writer working through `sql` has no base row to fall back on: a
-/// whole base-free stage (the process-wide flag), or one object compiled base-free
-/// inside a patch stage, which is handed `SqlExec::detached(BASE_FREE_MISSING_ROW)`.
+/// whole base-free stage or one object compiled base-free inside a patch stage.
+/// Both pass `SqlExec::detached(BASE_FREE_MISSING_ROW)` to every body writer.
 fn base_free(sql: &SqlExec) -> bool {
-    BASE_FREE_STAGE.load(std::sync::atomic::Ordering::Relaxed)
-        || sql.detached_reason() == Some(BASE_FREE_MISSING_ROW)
+    sql.detached_reason() == Some(BASE_FREE_MISSING_ROW)
 }
 
 /// Part 0 of one Config row: from the bulk prefetch, the lab row folder, or

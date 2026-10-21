@@ -4,7 +4,7 @@
 //! Every metadata XML of the tree (nested subsystems, recalculations, forms
 //! and templates included) gives its descriptor row through
 //! `metadata_model::compile_descriptor` and its bodies through the loader's
-//! own body writers, run with `BASE_FREE_STAGE` set so that a writer which
+//! own body writers, run with a detached SQL context so that a writer which
 //! would patch a base row fails naming that row instead of querying. The
 //! configuration adds `root`, `version` and a fresh `versions`.
 //!
@@ -25,7 +25,7 @@ use serde::Serialize;
 
 use super::stage_timing;
 use super::{
-    BASE_FREE_MISSING_ROW, BASE_FREE_STAGE, BulkStageRow, GeneratedBlobReport, MetadataBodyFamily,
+    BASE_FREE_MISSING_ROW, BulkStageRow, GeneratedBlobReport, MetadataBodyFamily,
     StageSourceObjectsReport, StagedMetadataBodyReport, StagedMetadataObjectReport,
     StorageTableManifest, build_bulk_stage_prepare_sql, bulk_stage_paths,
     bulk_stage_rows_file_needed, bulk_stage_table_name, command_interface_body_suffix,
@@ -113,8 +113,6 @@ impl EmptyStageContext {
         files: &[(PathBuf, std::sync::Arc<Vec<u8>>)],
         listing: Option<std::sync::Arc<SourceListing>>,
     ) -> Result<Self> {
-        // No base rows exist: every base-row read fails naming its row.
-        BASE_FREE_STAGE.store(true, Ordering::Relaxed);
         // Nor any always-used constant: track A compiles each constant with
         // the flag clear, and a constants set is written against that.
         if crate::module_blob::clear_always_used_constants() {
@@ -654,8 +652,8 @@ impl EmptyStage {
 
 /// The rows of the objects `selected` (descriptor XMLs of the tree) alone,
 /// base-free, against the whole tree's context: objects a container does not
-/// have yet (`offline_compile`, `cf load` of an added object). Sets
-/// `BASE_FREE_STAGE`: no base row is read after it.
+/// have yet (`offline_compile`, `cf load` of an added object). Each object
+/// carries its own detached SQL context; other calls retain their base rows.
 pub(crate) fn prepare_empty_objects(
     root: &Path,
     selected: &[PathBuf],

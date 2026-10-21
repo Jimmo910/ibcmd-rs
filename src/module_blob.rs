@@ -1760,7 +1760,10 @@ pub fn pack_module_blob_bytes(
     info: Option<&[u8]>,
 ) -> Result<PackedModuleBlob> {
     let base_elements = match base_blob {
-        Some(blob) => Some(read_base_elements_from_blob(blob)?),
+        Some(blob) => {
+            let elements = read_base_elements_from_blob(blob)?;
+            elements.contains_key("text").then_some(elements)
+        }
         None => None,
     };
 
@@ -34367,6 +34370,31 @@ mod tests {
             super::unpack_plain_text_module_body(&statement).unwrap(),
             b"\xEF\xBB\xBF  \r\nProcedure Run()\r\nEndProcedure\r\n"
         );
+    }
+
+    #[test]
+    fn closed_module_replacement_discards_closed_info_and_headers() -> anyhow::Result<()> {
+        let text = b"Procedure Run()\r\nEndProcedure\r\n";
+        let mut header = super::make_v8_element_header("info");
+        header[0] = 42;
+        let closed = super::build_module_inner(&[
+            super::V8Element {
+                name: "info".into(),
+                header,
+                data: b"closed-module-info".to_vec(),
+            },
+            super::V8Element {
+                name: "image".into(),
+                header: super::make_v8_element_header("image"),
+                data: vec![1, 2, 3],
+            },
+        ])?;
+        let closed = super::deflate_raw(&closed)?;
+        let replaced = super::pack_module_blob_bytes(text, Some(&closed), None)?;
+        let fresh = super::pack_module_blob_bytes(text, None, None)?;
+        assert_eq!(replaced.blob, fresh.blob);
+        assert_eq!(super::unpack_module_blob_text(&replaced.blob)?, text);
+        Ok(())
     }
 
     #[test]
