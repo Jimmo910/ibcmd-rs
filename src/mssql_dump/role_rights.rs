@@ -853,10 +853,12 @@ pub(super) fn parse_configuration_root_object_rights(
     }
 
     // An older root stores the five window modes and not the analytics
-    // client the platform added later (Монитор `Roles/Пользователь`): the
-    // right it does not carry takes the role's default, as an omitted right
-    // does, and the six then print as when all six are stored. Any other
-    // partial presence stays refused.
+    // client the platform added later: the right it does not carry is the
+    // type's default, `true`, as for all six when none is stored. ЗУП 3.1.18:
+    // 282 such roles, all with `setForNewObjects` false, print it `true`;
+    // Монитор's two (`Roles/Пользователь`) have the flag true, where the
+    // `true` equals the role's default and is not printed. Any other partial
+    // presence stays refused.
     if mode_rights_seen + 1 == CONFIGURATION_MODE_RIGHT_NAMES.len()
         && !entries
             .iter()
@@ -866,7 +868,7 @@ pub(super) fn parse_configuration_root_object_rights(
             if !entries.iter().any(|entry| entry.name == name) {
                 entries.push(RoleRight {
                     name: name.to_string(),
-                    value: set_for_new_objects,
+                    value: true,
                     restrictions: Vec::new(),
                 });
             }
