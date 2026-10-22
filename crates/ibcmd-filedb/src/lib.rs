@@ -559,27 +559,16 @@ impl WriteSession {
         let backup_work = sibling(&self.path, ".ibcmd-rs.bak.new");
         let prepare_backup = || -> Result<()> {
             self.check_binding()?;
-            if fs::hard_link(&self.path, &backup_work).is_ok() {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::MetadataExt;
-                    let original = self.file.metadata()?;
-                    let linked = fs::symlink_metadata(&backup_work)?;
-                    if (original.dev(), original.ino()) != (linked.dev(), linked.ino()) {
-                        return Err(Error::Refused("backup source identity changed".into()));
-                    }
-                }
-            } else {
-                let mut out = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&backup_work)?;
-                let mut original = &self.file;
-                original.seek(SeekFrom::Start(0))?;
-                self.copy_checked(&mut original, &mut out)?;
-                out.sync_all()?;
-            }
-            Ok(())
+            prepare_backup_file(
+                &self.file,
+                &backup_work,
+                || fs::hard_link(&self.path, &backup_work),
+                |out| {
+                    let mut original = &self.file;
+                    original.seek(SeekFrom::Start(0))?;
+                    self.copy_checked(&mut original, out)
+                },
+            )
         };
         if let Err(error) = prepare_backup() {
             let _ = fs::remove_file(&work);
@@ -728,6 +717,48 @@ impl WriteSession {
     }
 }
 
+// A failed fallback copy must not leave this attempt's partial recovery
+// file behind. create_new establishes ownership: a pre-existing file is NEVER
+// removed, truncated or overwritten. The injected operations keep fault tests
+// on the same path as production, including filesystems without hard links.
+fn prepare_backup_file(
+    original: &File,
+    path: &Path,
+    hard_link: impl FnOnce() -> std::io::Result<()>,
+    copy: impl FnOnce(&mut File) -> Result<()>,
+) -> Result<()> {
+    if hard_link().is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let source = original.metadata()?;
+            let linked = fs::symlink_metadata(path)?;
+            if (source.dev(), source.ino()) != (linked.dev(), linked.ino()) {
+                return Err(Error::Refused("backup source identity changed".into()));
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = original;
+        return Ok(());
+    }
+    let mut out = match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(out) => out,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(Error::Refused(format!(
+                "pre-existing backup work file {}; inspect interrupted publication before retrying",
+                path.display()
+            )));
+        }
+        Err(error) => return Err(Error::Io(error)),
+    };
+    let result = copy(&mut out).and_then(|()| Ok(out.sync_all()?));
+    if result.is_err() {
+        drop(out);
+        let _ = fs::remove_file(path);
+    }
+    result
+}
+
 // Two-step publication deliberately has a recoverable partial-success state:
 // if updating backup fails, the new database is published and the old database
 // remains in backup_work. Never silently discard either backup generation.
@@ -805,6 +836,55 @@ pub fn rebuild_config_index_in_place(db_path: &Path, table: &str) -> Result<()> 
 #[cfg(test)]
 mod publication_tests {
     use super::*;
+    #[test]
+    fn failed_backup_copy_cleans_only_owned_file_and_allows_retry() {
+        for cancelled in [false, true] {
+            let dir = std::env::temp_dir().join(format!(
+                "filedb-backup-copy-{}-{cancelled}",
+                std::process::id()
+            ));
+            fs::create_dir(&dir).unwrap();
+            let data = dir.join("data");
+            let backup = dir.join("backup");
+            let pending = dir.join("pending");
+            fs::write(&data, b"original database A").unwrap();
+            fs::write(&backup, b"older backup B").unwrap();
+            let original = File::open(&data).unwrap();
+            let no_link = || Err(std::io::Error::other("injected hard-link unavailable"));
+            let error = prepare_backup_file(&original, &pending, no_link, |out| {
+                out.write_all(b"partial")?;
+                if cancelled {
+                    Err(Error::Refused("injected cancellation".into()))
+                } else {
+                    Err(Error::Io(std::io::Error::other("injected copy EIO")))
+                }
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains("injected"));
+            assert!(!pending.exists());
+            assert_eq!(fs::read(&data).unwrap(), b"original database A");
+            assert_eq!(fs::read(&backup).unwrap(), b"older backup B");
+            prepare_backup_file(&original, &pending, no_link, |out| {
+                Ok(out.write_all(b"original database A")?)
+            })
+            .unwrap();
+            assert_eq!(fs::read(&pending).unwrap(), b"original database A");
+            let error = prepare_backup_file(&original, &pending, no_link, |_| {
+                panic!("must not touch pre-existing file")
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains("pre-existing backup work file"));
+            assert_eq!(fs::read(&pending).unwrap(), b"original database A");
+            let work = dir.join("work");
+            fs::write(&work, b"new database C").unwrap();
+            drop(original);
+            publish_files(&work, &data, &pending, &backup, |a, b| fs::rename(a, b)).unwrap();
+            assert_eq!(fs::read(&data).unwrap(), b"new database C");
+            assert_eq!(fs::read(&backup).unwrap(), b"original database A");
+            assert!(!pending.exists());
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
     #[test]
     fn each_publication_failure_preserves_both_backup_generations() {
         for fail_at in 1..=2 {
