@@ -1307,19 +1307,17 @@ mod tests {
         use std::ffi::OsString;
         use std::os::unix::ffi::OsStringExt;
 
-        let root = unique_test_root("non-utf8");
-        fs::create_dir(&root).unwrap();
         let names = [
             OsString::from_vec(vec![b'n', b'a', b'm', b'e', 0xfe]),
             OsString::from_vec(vec![b'n', b'a', b'm', b'e', 0xff]),
         ];
         assert_ne!(names[0], names[1]);
         for name in &names {
-            fs::write(root.join(name), b"content").unwrap();
+            // This is a lexical path guard. APFS rejects these bytes before
+            // file creation, so exercise raw OsString paths without filesystem IO.
             let error = normalized_relative_path(std::path::Path::new(name)).unwrap_err();
             assert!(error.to_string().contains("non-UTF-8 component"));
         }
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
