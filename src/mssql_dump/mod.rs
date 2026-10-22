@@ -976,6 +976,7 @@ pub mod config_save;
 mod configuration_properties_evidence;
 mod dcs;
 mod dynamic_generation;
+mod empty_configuration;
 pub(crate) mod extension;
 pub(crate) mod extension_types;
 mod fetch;
@@ -4419,6 +4420,36 @@ fn dump_table_rows_streamed(
         fetch_headers_sqlcmd_ms: fetch_headers_ms,
         ..MssqlDumpTimingReport::default()
     };
+    // An infobase right after `infobase create`: no row at all (#469). The
+    // platform exports the default configuration it makes up for it.
+    if headers.is_empty()
+        && main_configuration
+        && generate_config_dump_info
+        && extract_metadata_xml
+        && selected_file_names.is_empty()
+        && incremental.is_none()
+    {
+        let output = match sink {
+            Some(sink) => OutputWriter::from_env_to_sink(sink),
+            None => OutputWriter::from_env().with_existing_folder(output_dir),
+        };
+        empty_configuration::write(&output, output_dir, source_version)?;
+        let (written, _) = output.finish_with_written()?;
+        timings.add_output_write(&written);
+        return Ok(DumpedTable {
+            rows: Vec::new(),
+            failed_rows: Vec::new(),
+            binary_bytes: 0,
+            inflated_rows: 0,
+            module_text_rows: 0,
+            metadata_xml_rows: 0,
+            source_asset_rows: 0,
+            source_assets: SourceAssetCompletenessReport::default(),
+            metadata_root_inventory: RootMetadataInventoryReport::default(),
+            timings,
+            incremental: None,
+        });
+    }
     let prepare_started = Instant::now();
     let prepare_cpu = process_cpu_ms();
     let mut file_names = headers

@@ -655,6 +655,12 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
             .with_context(|| format!("failed to inflate the `{name}` row"))?;
         parse_row(&text).with_context(|| format!("failed to parse the `{name}` row"))
     };
+    // No row at all: the default configuration of an empty infobase
+    // (#469), which keeps no compatibility mode to tell.
+    let table = MssqlConfigurationTableRole::Current.sql_name();
+    if fetch_row_headers(&sql, &args.database, table, &BTreeSet::new())?.is_empty() {
+        return Ok(false);
+    }
     let uuid = crate::metadata_model::root::export::root_configuration_uuid(&read("root")?)?;
     let shape = crate::metadata_model::root::export::stored_shape(&read(&uuid)?)?;
     Ok(shape == crate::metadata_model::root::ConfigurationShape::V76)
