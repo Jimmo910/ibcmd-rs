@@ -4,7 +4,12 @@ Expose the common configuration engine to AI clients through a genuine local MCP
 stdio command, without exposing editor connect/settings overrides to the model.
 The existing editor Content-Length JSON-RPC protocol remains separate.
 
-This first independently reviewable slice supports offline Config row fixtures and read-only disposable native
-file databases through the shared descriptor reader. Import deliberately fails closed. Native filedb staging, per-database
-`agent-write`, live immutable database identity and native roundtrip acceptance
-remain integration gates owned jointly with #382; this slice does not close #386.
+The adapter supports offline Config row fixtures and disposable native file
+infobases through the common descriptor reader. File database import requires
+operator-owned per-database `agent-write=true`, stages through the guarded common
+API and never runs native apply. A published stage invalidates the session.
+
+Issue completion requires reviewed descriptor-relative mutation confinement,
+negative permission/race/cancellation tests, and a genuine MCP module-edit →
+shared staging → external native apply → native export/source roundtrip. A
+functional roundtrip alone does not waive an open security finding.

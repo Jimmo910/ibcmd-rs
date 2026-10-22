@@ -485,7 +485,7 @@ ibcmd-rs cf load F:\src\MyExtension-edit F:\cf\MyExtension-new.cfe --base F:\cf\
 - [openspec/changes](openspec/changes) — спецификации и результаты проверок.
 
 
-### MCP для ИИ-клиентов (#386, чтение)
+### MCP для ИИ-клиентов (#386)
 
 `ibcmd-rs mcp --settings /operator/ibcmd-rs.toml` — отдельный настоящий MCP stdio
 adapter на official rmcp3.6.0. В настройках нужны `[mcp] database = "fixed-id"`
@@ -494,7 +494,13 @@ adapter на official rmcp3.6.0. В настройках нужны `[mcp] datab
 `import`. Export возвращает ограниченные файлы в памяти. Status/compare используют
 общий движок и показывают changed/baseOnly/localOnly для выбранных объектов, включая
 объекты только в source-root. Чтение файлов ограничено дескрипторами Unix; на других
-платформах адаптер отказывает при запуске. Import пока всегда отказывает;
-запись и полный native roundtrip остаются acceptance gate #386. SQL MCP пока
-закрыт. Подробности policy, ограничения и evidence —
+платформах адаптер отказывает при запуске.
+
+Import берёт выбранные `objects` из фиксированного source-root и требует явного
+`agent-write = true` в соответствующем `[[database]]` с `db-path`; без него запись
+запрещена. Tool parameters не могут менять opt-in, базу, settings, сервер или путь.
+Import только создаёт CONFIGSAVE; штатный apply выполняет внешний оператор.
+После публикации ответ содержит `restartRequired: true`: текущая MCP-сессия
+закрывает доступ до перезапуска и нового закрепления identity. SQL и запись в
+rows-dir через MCP закрыты. Подробности policy, ограничения и evidence —
 [OpenSpec MCP](openspec/changes/add-mcp-adapter/design.md).

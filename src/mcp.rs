@@ -38,7 +38,7 @@ const TOOLS: &[(&str, &str)] = &[
     ),
     (
         "import",
-        "Stage selected objects from the fixed source root. Currently unavailable until shared staging integration; always fails closed.",
+        "Stage selected objects from the fixed source root into CONFIGSAVE, only with operator agent-write=true. Does not apply configuration; restart MCP after publication.",
     ),
     (
         "read",
@@ -73,6 +73,8 @@ struct Document {
 }
 
 struct Bound {
+    agent_write: bool,
+    invalidated: AtomicBool,
     settings_path: PathBuf,
     settings_bytes: Vec<u8>,
     policy_path: PathBuf,
@@ -183,7 +185,10 @@ impl Bound {
             .map(|path| fs::canonicalize(ibcmd_filedb::data_file(path)))
             .transpose()?;
         let file_handle = file_path.as_deref().map(open_regular).transpose()?;
+        let agent_write = original.get("agent-write").and_then(toml::Value::as_bool) == Some(true);
         Ok(Self {
+            agent_write,
+            invalidated: AtomicBool::new(false),
             settings_path,
             settings_bytes,
             policy_path,
@@ -198,6 +203,10 @@ impl Bound {
     }
 
     fn authorize(&self) -> Result<()> {
+        ensure!(
+            !self.invalidated.load(Ordering::SeqCst),
+            "MCP stage published; restart required"
+        );
         ensure!(
             bounded_file(&self.settings_path, MAX_RESULT)? == self.settings_bytes,
             "MCP settings changed; restart required"
@@ -250,12 +259,9 @@ impl Bound {
     fn execute(&self, name: &str, args: Args) -> Result<Value> {
         self.authorize()?;
         crate::cancel::check()?;
-        // No request can opt in to writing, or replace the target. The common
-        // staging backend and its database-specific opt-in are an integration gate.
         if name == "import" {
-            bail!(
-                "write_denied: shared agent-authorized staging is not integrated; no changes made"
-            );
+            let plan = self.prepare_import(&args.objects)?;
+            return self.publish_import(plan);
         }
         let before = self.rows_fingerprint()?;
         let (source, rows) = if let Some(path) = &self.file_path {
@@ -337,6 +343,107 @@ impl Bound {
         Ok(result)
     }
 
+    fn authorize_write(&self, consumed: &fs::Metadata) -> Result<()> {
+        self.authorize()?;
+        ensure!(
+            self.agent_write,
+            "write_denied: explicit fixed database agent-write required"
+        );
+        let pinned = self
+            .file_handle
+            .as_ref()
+            .context("write_denied: file database required")?
+            .metadata()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            ensure!(
+                consumed.is_file()
+                    && (consumed.dev(), consumed.ino()) == (pinned.dev(), pinned.ino()),
+                "consumed write target identity mismatch"
+            );
+        }
+        #[cfg(not(unix))]
+        bail!("secure file writes require Unix");
+        ensure!(consumed.len() <= 128 * 1024 * 1024, "file input limit");
+        crate::cancel::check()?;
+        Ok(())
+    }
+
+    fn prepare_import(&self, objects: &[String]) -> Result<crate::file_import::Plan> {
+        self.authorize()?;
+        ensure!(
+            self.agent_write && self.file_path.is_some(),
+            "write_denied: fixed file database opt-in required"
+        );
+        ensure!(
+            !objects.is_empty() && objects.len() <= MAX_OBJECTS,
+            "select 1..32 objects"
+        );
+        // Apply the MCP source budget before the shared backend's own held
+        // source inventory. Revalidate it again in the publication guard.
+        let source = self.snapshot_source()?;
+        let plan = crate::file_import::prepare_guarded_with_source_limits(
+            self.file_path.as_ref().unwrap(),
+            &self.root,
+            &crate::file_import::Selection {
+                objects: objects.to_vec(),
+                ..Default::default()
+            },
+            self.entry.spec,
+            &mut |metadata| self.authorize_write(metadata),
+            crate::file_import::ReadControl {
+                limits: file_read_limits(),
+                check: Arc::new(|| {
+                    crate::cancel::check()
+                        .map_err(|error| ibcmd_filedb::Error::Refused(error.to_string()))
+                }),
+            },
+            crate::mssql_source_change::SourceInventoryLimits {
+                max_files: 100_000,
+                max_file_bytes: 128 * 1024 * 1024,
+                max_total_bytes: 128 * 1024 * 1024,
+            },
+        )?;
+        source.validate(&self.root_handle)?;
+        ensure!(plan.summary().ready, "import has unresolved dependencies");
+        self.authorize()?;
+        Ok(plan)
+    }
+
+    fn publish_import(&self, plan: crate::file_import::Plan) -> Result<Value> {
+        // The actual descriptor is checked before metadata parsing and again
+        // INSIDE the atomic publication callback. Model parameters never enter
+        // target, policy, settings, source root, or opt-in selection.
+        let result = plan.publish_guarded(
+            self.file_path.as_ref().context("file target required")?,
+            &mut |metadata| self.authorize_write(metadata),
+        );
+        match result {
+            Ok(report) => {
+                self.invalidated.store(true, Ordering::SeqCst);
+                Ok(
+                    json!({"status":"staged", "stagePublished":true, "restartRequired":true, "applied":false, "rowsStaged":report.rows_after}),
+                )
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<ibcmd_filedb::Error>()
+                    .is_some_and(|error| {
+                        matches!(error, ibcmd_filedb::Error::Published { .. })
+                    }) =>
+            {
+                self.invalidated.store(true, Ordering::SeqCst);
+                // Publication happened. Never misreport this state as a safe
+                // cancellation/no-op, and never expose recovery filesystem paths.
+                Ok(
+                    json!({"status":"published_recovery_required", "stagePublished":true, "restartRequired":true, "applied":false}),
+                )
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     #[cfg(unix)]
     fn snapshot_file_db(&self) -> Result<BTreeMap<String, Arc<Vec<u8>>>> {
         use std::os::unix::fs::MetadataExt;
@@ -353,18 +460,9 @@ impl Bound {
             "file target identity mismatch"
         );
         ensure!(current.len() <= 128 * 1024 * 1024, "file input limit");
-        let mut db = ibcmd_filedb::FileDb::from_file_with_limits(
-            file,
-            ibcmd_filedb::ReadLimits {
-                max_records: 100_000,
-                max_binary_bytes: 128 * 1024 * 1024,
-                max_object_bytes: 256 * 1024 * 1024,
-            },
-            || {
-                crate::cancel::check()
-                    .map_err(|error| ibcmd_filedb::Error::Refused(error.to_string()))
-            },
-        )
+        let mut db = ibcmd_filedb::FileDb::from_file_with_limits(file, file_read_limits(), || {
+            crate::cancel::check().map_err(|error| ibcmd_filedb::Error::Refused(error.to_string()))
+        })
         .map_err(|_| anyhow::anyhow!("file database unavailable"))?;
         ensure!(
             (db.metadata().dev(), db.metadata().ino()) == (pinned.dev(), pinned.ino()),
@@ -748,7 +846,7 @@ impl ServerHandler for Adapter {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("ibcmd-rs", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Fixed operator-bound read-only database tools. Import is unavailable pending shared agent-authorized staging. status/compare report full selected-object differences including local-only files.")
+            .with_instructions("Fixed operator-bound database tools. Import stages fixed-root objects only with operator agent-write=true; it does not apply. After publication restart MCP. status/compare include local-only files.")
     }
     fn get_tool(&self, name: &str) -> Option<Tool> {
         definitions().into_iter().find(|tool| tool.name == name)
@@ -770,7 +868,7 @@ impl ServerHandler for Adapter {
     ) -> std::result::Result<CallToolResponse, ErrorData> {
         if !TOOLS.iter().any(|(name, _)| *name == request.name) {
             return Err(ErrorData::new(
-                ErrorCode::METHOD_NOT_FOUND,
+                ErrorCode::INVALID_PARAMS,
                 "unknown tool",
                 None,
             ));
@@ -839,21 +937,41 @@ impl ServerHandler for Adapter {
                 work.await
             }
         };
-        if context.ct.is_cancelled() {
+        let published = matches!(&outcome, Ok(Ok(value)) if value.get("stagePublished") == Some(&Value::Bool(true)));
+        if context.ct.is_cancelled() && !published {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
                 "cancelled: no result published",
             )])
             .into());
         }
         let result = match outcome {
-            Ok(Ok(value)) => CallToolResult::success(vec![ContentBlock::text(value.to_string())]),
+            Ok(Ok(value)) => tool_result(value),
             // Never forward backend diagnostics (SQL/user paths/secrets) to a model.
             Ok(Err(_)) => CallToolResult::error(vec![ContentBlock::text(
-                "operation_denied_or_failed: policy, input, target stability or resource limit; import is unavailable",
+                "operation_denied_or_failed: policy, input, target stability or resource limit",
             )]),
             Err(_) => CallToolResult::error(vec![ContentBlock::text("worker_failed")]),
         };
         Ok(result.into())
+    }
+}
+
+fn tool_result(value: Value) -> CallToolResult {
+    let content = vec![ContentBlock::text(value.to_string())];
+    if value.get("status").and_then(Value::as_str) == Some("published_recovery_required") {
+        // Partial success still needs operator recovery; preserve publication
+        // information while setting the MCP execution-error bit.
+        CallToolResult::error(content)
+    } else {
+        CallToolResult::success(content)
+    }
+}
+
+fn file_read_limits() -> ibcmd_filedb::ReadLimits {
+    ibcmd_filedb::ReadLimits {
+        max_records: 100_000,
+        max_binary_bytes: 128 * 1024 * 1024,
+        max_object_bytes: 256 * 1024 * 1024,
     }
 }
 
@@ -956,5 +1074,136 @@ mod source_snapshot_tests {
         fs::write(outside.join("secret"), "outside sentinel").unwrap();
         std::os::unix::fs::symlink(&outside, root.join("Linked")).unwrap();
         assert!(SourceSnapshot::capture(&fs::File::open(&root).unwrap()).is_err());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod import_boundary_tests {
+    use super::*;
+    fn setup() -> (PathBuf, PathBuf, Bound) {
+        let root =
+            std::env::temp_dir().join(format!("mcp-policy-boundary-{}", uuid::Uuid::new_v4()));
+        let db = root.join("db");
+        let source = root.join("source");
+        fs::create_dir_all(&db).unwrap();
+        fs::create_dir_all(&source).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(fixture.join("tiny.1CD.gz")).unwrap())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+        for entry in walkdir::WalkDir::new(fixture.join("tiny-xml"))
+            .into_iter()
+            .map(Result::unwrap)
+            .filter(|e| e.file_type().is_file())
+        {
+            let relative = entry.path().strip_prefix(fixture.join("tiny-xml")).unwrap();
+            let path = source.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::copy(entry.path(), path).unwrap();
+        }
+        let settings = root.join("ibcmd-rs.toml");
+        fs::write(&settings,"[[database]]\nname='demo'\nplatform='8.5.1'\ndb-path='db'\nagent-write=true\n[mcp]\ndatabase='demo'\nsource-root='source'\n").unwrap();
+        let bound = Bound::open(&settings, &settings).unwrap();
+        (root, db, bound)
+    }
+    #[test]
+    fn policy_descriptor_and_source_changes_between_prepare_and_publish_refuse() {
+        // The shared engine activates process-global offline rows. Isolate this
+        // end-to-end unit test from unrelated raw SQL-adapter library tests.
+        // This environment switch exists only in the test binary.
+        if std::env::var_os("IBCMD_MCP_BOUNDARY_TEST_CHILD").is_none() {
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mcp::import_boundary_tests::policy_descriptor_and_source_changes_between_prepare_and_publish_refuse", "--nocapture"])
+                .env("IBCMD_MCP_BOUNDARY_TEST_CHILD", "1")
+                .output().unwrap();
+            assert!(
+                result.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            return;
+        }
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(|| {
+                for change in ["policy", "target", "source", "root-alias"] {
+                    let (root, db, bound) = setup();
+                    let target = db.join("1Cv8.1CD");
+                    let before = fs::read(&target).unwrap();
+                    let module =
+                        root.join("source/CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl");
+                    fs::write(
+                        &module,
+                        fs::read_to_string(&module).unwrap() + "\r\n// prepare boundary edit\r\n",
+                    )
+                    .unwrap();
+                    let plan = bound
+                        .prepare_import(&["CommonModule.ФайловаяБазаПроверка".into()])
+                        .unwrap();
+                    match change {
+                        "policy" => fs::write(
+                            &bound.settings_path,
+                            bound
+                                .settings_bytes
+                                .iter()
+                                .copied()
+                                .chain(b"\n# policy revoked".iter().copied())
+                                .collect::<Vec<_>>(),
+                        )
+                        .unwrap(),
+                        "target" => {
+                            fs::rename(&target, root.join("old.1CD")).unwrap();
+                            fs::write(&target, &before).unwrap();
+                        }
+                        "source" => fs::write(
+                            root.join("source/CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl"),
+                            "// changed after prepare",
+                        )
+                        .unwrap(),
+                        "root-alias" => {
+                            fs::rename(&bound.root, root.join("renamed-source")).unwrap();
+                            std::os::unix::fs::symlink(root.join("renamed-source"), &bound.root)
+                                .unwrap();
+                        }
+                        _ => unreachable!(),
+                    }
+                    assert!(bound.publish_import(plan).is_err(), "accepted {change}");
+                    assert_eq!(
+                        fs::read(&target).unwrap(),
+                        before,
+                        "changed target for {change}"
+                    );
+                    assert!(!ibcmd_filedb::backup_file(&db).exists());
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+    #[test]
+    fn published_recovery_is_an_execution_error_with_publication_information() {
+        let result = tool_result(
+            json!({"status":"published_recovery_required", "stagePublished":true, "restartRequired":true, "applied":false}),
+        );
+        assert_eq!(result.is_error, Some(true));
+        let value: Value =
+            serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(value["stagePublished"], true);
+        assert_eq!(value["restartRequired"], true);
+        assert_eq!(value["applied"], false);
+    }
+    #[test]
+    fn same_bytes_on_different_consumed_descriptor_do_not_authorize_write() {
+        let (root, db, bound) = setup();
+        let other = root.join("other.1CD");
+        fs::copy(db.join("1Cv8.1CD"), &other).unwrap();
+        assert!(
+            bound
+                .authorize_write(&fs::metadata(other).unwrap())
+                .is_err()
+        );
     }
 }

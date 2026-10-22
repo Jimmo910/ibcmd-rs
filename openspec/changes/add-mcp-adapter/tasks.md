@@ -20,10 +20,10 @@
       including repeated CONFIG blob aliases and root/table descriptor aliases.
       19 filedb unit tests + 3 MCP + 6 filedb contracts pass.
       Logs: lab logs/issue-386-budget-lib.log, logs/issue-386-budget-mcp.log.
-- [ ] Integrate #382 guarded staging API: validate consumed descriptor against
+- [x] Integrate #382 guarded staging API: validate consumed descriptor against
       pinned startup identity, recheck operator policy immediately before atomic
       publication, and propagate cancellation before any visible change.
-- [ ] Enforce agent-write per fixed database on every mutation and publication.
+- [x] Enforce agent-write per fixed database on every mutation and publication.
 - [x] Full shared status/compare including local-only paths and selected objects
       absent from the database, with bounded cancellable source snapshots.
       Census revalidation rejects concurrent additions/renames; same-inode
@@ -33,6 +33,22 @@
       filedb all-target Clippy passes with warnings denied.
       Logs: lab logs/issue-386-lib-all-final.log,
       logs/issue-386-full-status-final.log, logs/issue-386-filedb-clippy.log.
-- [ ] Native acceptance: real MCP client edits disposable filedb module; external
+- [x] Native acceptance: real MCP client edits disposable filedb module; external
       test orchestrator runs normal apply; native export matches source bytes.
 - [ ] Parent review before PR creation. No release/merge/issue closure in this slice.
+
+- [x] Actual shared source custody bounds: empty directories, depth, retained final
+      traversal budgets and cancellation; source-onlycommit0c689f35, reviewed.
+- [x] Default staging cancellation-test isolation via dependencyc35280e0.
+- [x] Physical-adapter-policy guard and selftest pass without baseline edits.
+- [x] OpenSpec strict validation passes after delta/scenario formatting.
+- [x] Close new publication P1: held parent descriptor for actual create/link/
+      rename/unlink and cleanup via253dff7f; independent combined review and
+      parent engine review clear; no atomic filesystem CAS claim.
+- [x] Final exact-source gates:4065 root library tests (15 ignored),6 MCP tests
+      with native roundtrip,25 filedb unit+10 filedb integration,25 default
+      editor/staging/filedb regressions,all-targets,strict filedb Clippy,
+      physical-adapter guard+selftest and strict OpenSpec validation.
+- [ ] Parent exact-head MCP policy/confirmation review before enabled-write push
+      or PR. Operator TOML opt-in is the write authorization; model-supplied
+      confirm/settings/target/source/auth overrides are not accepted.

@@ -329,6 +329,13 @@ async fn legacy_initialize_and_modern_discover_are_supported() {
         );
         assert!(info.capabilities.tools.is_some());
         assert_eq!(client.list_all_tools().await.unwrap().len(), 6);
+        let unknown = client
+            .call_tool(CallToolRequestParams::new("unknown_tool"))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(unknown, rmcp::service::ServiceError::McpError(error) if error.code == ErrorCode::INVALID_PARAMS)
+        );
         // Send a genuine MCP cancellation notification through the SDK handle.
         let request = ClientRequest::CallToolRequest(CallToolRequest::new(
             CallToolRequestParams::new("export").with_arguments(
@@ -444,5 +451,286 @@ async fn real_mcp_client_reads_disposable_filedb_without_mutation() {
     fs::rename(&target, root.join("old.1CD")).unwrap();
     fs::write(&target, &bytes).unwrap();
     assert_eq!(call(&client, "tree", json!({})).await.is_error, Some(true));
+    client.cancel().await.unwrap();
+}
+
+fn writable_corpus(opt_in: Option<bool>) -> (PathBuf, PathBuf, PathBuf) {
+    use std::io::Read;
+    let root = std::env::temp_dir().join(format!("ibcmd-mcp-write-{}", uuid::Uuid::new_v4()));
+    let db = root.join("db");
+    let source = root.join("source");
+    fs::create_dir_all(&db).unwrap();
+    fs::create_dir_all(&source).unwrap();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase");
+    let mut bytes = Vec::new();
+    flate2::read::GzDecoder::new(fs::File::open(fixture.join("tiny.1CD.gz")).unwrap())
+        .read_to_end(&mut bytes)
+        .unwrap();
+    fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+    for entry in walkdir::WalkDir::new(fixture.join("tiny-xml"))
+        .into_iter()
+        .map(Result::unwrap)
+        .filter(|e| e.file_type().is_file())
+    {
+        let relative = entry.path().strip_prefix(fixture.join("tiny-xml")).unwrap();
+        let path = source.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::copy(entry.path(), path).unwrap();
+    }
+    let settings = root.join("ibcmd-rs.toml");
+    let opt_in = opt_in
+        .map(|v| format!("agent-write={v}\n"))
+        .unwrap_or_default();
+    fs::write(&settings,format!("[[database]]\nname='demo'\nplatform='8.5.1'\ndb-path='db'\n{opt_in}[mcp]\ndatabase='demo'\nsource-root='source'\n")).unwrap();
+    (root, db, settings)
+}
+async fn start_client(
+    settings: &std::path::Path,
+) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
+    command
+        .arg("mcp")
+        .arg("--settings")
+        .arg(settings)
+        .stderr(Stdio::piped());
+    ().serve(TokioChildProcess::new(command).unwrap())
+        .await
+        .unwrap()
+}
+const WRITE_OBJECT: &str = "CommonModule.ФайловаяБазаПроверка";
+const WRITE_MODULE: &str = "CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl";
+
+#[tokio::test]
+async fn real_mcp_import_requires_fixed_explicit_opt_in_and_rechecks_policy() {
+    for opt_in in [None, Some(false), Some(true)] {
+        let (root, db, settings) = writable_corpus(opt_in);
+        let target = db.join("1Cv8.1CD");
+        let before = fs::read(&target).unwrap();
+        let client = start_client(&settings).await;
+        // An agent cannot set opt-in or redirect to another source, database,
+        // server or settings through otherwise valid import arguments.
+        for key in [
+            "agent-write",
+            "agentWrite",
+            "source-root",
+            "db-path",
+            "database",
+            "server",
+            "settings",
+            "confirm",
+        ] {
+            let mut args = json!({"objects":[WRITE_OBJECT]});
+            args[key] = json!(true);
+            assert_eq!(call(&client, "import", args).await.is_error, Some(true));
+        }
+        if opt_in == Some(true) {
+            // Changes outside the model revoke an already established session.
+            let original = fs::read_to_string(&settings).unwrap();
+            fs::write(
+                &settings,
+                original.replace("agent-write=true", "agent-write=false"),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            call(&client, "import", json!({"objects":[WRITE_OBJECT]}))
+                .await
+                .is_error,
+            Some(true)
+        );
+        assert_eq!(fs::read(&target).unwrap(), before);
+        assert!(!ibcmd_filedb::backup_file(&db).exists());
+        assert!(!root.join("db/1Cv8.1CD.ibcmd-rs.tmp").exists());
+        client.cancel().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn real_mcp_client_stages_module_and_native_orchestrator_applies() {
+    let (root, db, settings) = writable_corpus(Some(true));
+    let target = db.join("1Cv8.1CD");
+    let before = fs::read(&target).unwrap();
+    let source = root.join("source");
+    let module_path = source.join(WRITE_MODULE);
+    let expected =
+        fs::read_to_string(&module_path).unwrap() + "\r\n// MCP issue386 staged module edit\r\n";
+    fs::write(&module_path, &expected).unwrap();
+    let client = start_client(&settings).await;
+    let old = value(&call(&client, "read", json!({"path":WRITE_MODULE})).await);
+    assert_ne!(old["file"]["content"], expected);
+    let staged = value(&call(&client, "import", json!({"objects":[WRITE_OBJECT]})).await);
+    assert_eq!(staged["status"], "staged");
+    assert_eq!(staged["stagePublished"], true);
+    assert_eq!(staged["restartRequired"], true);
+    assert_eq!(staged["applied"], false);
+    assert_eq!(fs::read(ibcmd_filedb::backup_file(&db)).unwrap(), before);
+    assert_ne!(fs::read(&target).unwrap(), before);
+    // Atomic publication replaces the inode: never silently rebind an old session.
+    assert_eq!(call(&client, "tree", json!({})).await.is_error, Some(true));
+    assert_eq!(
+        call(&client, "import", json!({"objects":[WRITE_OBJECT]}))
+            .await
+            .is_error,
+        Some(true)
+    );
+    client.cancel().await.unwrap();
+    let restarted = start_client(&settings).await;
+    assert_eq!(
+        value(&call(&restarted, "read", json!({"path":WRITE_MODULE})).await)["file"]["content"],
+        expected
+    );
+    restarted.cancel().await.unwrap();
+    // Native commands occur ONLY in the external test orchestrator. New lab DB,
+    // data/temp/output paths are under this root; no user DB or ERP fixtures.
+    if let Some(native) = std::env::var_os("IBCMD_MCP_NATIVE") {
+        let output = root.join("native-export");
+        for (operation, destination) in [("apply", None), ("export", Some(&output))] {
+            let mut command = std::process::Command::new(&native);
+            command
+                .arg("infobase")
+                .arg(format!("--db-path={}", db.display()))
+                .arg(format!("--data={}", root.join("native-data").display()))
+                .arg(format!("--temp={}", root.join("native-temp").display()))
+                .args(["config", operation]);
+            if let Some(destination) = destination {
+                command.arg(destination);
+            }
+            let result = command.output().unwrap();
+            fs::write(
+                root.join(format!("native-{operation}.log")),
+                [result.stdout.as_slice(), result.stderr.as_slice()].concat(),
+            )
+            .unwrap();
+            assert!(
+                result.status.success(),
+                "native {operation}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+        assert_eq!(
+            fs::read(output.join(WRITE_MODULE)).unwrap(),
+            expected.as_bytes()
+        );
+        // Compare every source file, not only the edited module. Dump inventory
+        // versions may change; the stored/native inventory is compared separately.
+        for entry in walkdir::WalkDir::new(&source)
+            .into_iter()
+            .map(Result::unwrap)
+            .filter(|e| e.file_type().is_file())
+        {
+            let relative = entry.path().strip_prefix(&source).unwrap();
+            if relative != std::path::Path::new("ConfigDumpInfo.xml") {
+                assert_eq!(
+                    fs::read(entry.path()).unwrap(),
+                    fs::read(output.join(relative)).unwrap(),
+                    "native mismatch: {}",
+                    relative.display()
+                );
+            }
+        }
+        fn inventory(
+            path: &std::path::Path,
+        ) -> std::collections::BTreeMap<String, (String, String)> {
+            use quick_xml::{Reader, events::Event};
+            let bytes = fs::read(path).unwrap();
+            let mut reader = Reader::from_reader(bytes.as_slice());
+            let mut result = std::collections::BTreeMap::new();
+            loop {
+                match reader.read_event().unwrap() {
+                    Event::Start(element) | Event::Empty(element)
+                        if element.name().as_ref() == b"Metadata" =>
+                    {
+                        let attrs = element
+                            .attributes()
+                            .map(|a| {
+                                let a = a.unwrap();
+                                (
+                                    String::from_utf8(a.key.as_ref().to_vec()).unwrap(),
+                                    String::from_utf8(a.value.into_owned()).unwrap(),
+                                )
+                            })
+                            .collect::<std::collections::BTreeMap<_, _>>();
+                        let version = attrs["configVersion"].clone();
+                        assert_eq!(version.len(), 40);
+                        assert!(version.bytes().all(|b| b.is_ascii_hexdigit()));
+                        assert!(
+                            result
+                                .insert(attrs["name"].clone(), (attrs["id"].clone(), version))
+                                .is_none()
+                        );
+                    }
+                    Event::Eof => break,
+                    _ => {}
+                }
+            }
+            assert!(!result.is_empty());
+            result
+        }
+        let baseline = inventory(&source.join("ConfigDumpInfo.xml"));
+        let native = inventory(&output.join("ConfigDumpInfo.xml"));
+        assert_eq!(
+            baseline.keys().collect::<Vec<_>>(),
+            native.keys().collect::<Vec<_>>()
+        );
+        for (name, (id, version)) in &baseline {
+            assert_eq!(id, &native[name].0);
+            if name == &format!("{WRITE_OBJECT}.Module") {
+                assert_ne!(
+                    version, &native[name].1,
+                    "edited module version must change"
+                );
+            } else {
+                assert_eq!(
+                    version, &native[name].1,
+                    "unselected version changed: {name}"
+                );
+            }
+        }
+        eprintln!("MCP native write acceptance evidence: {}", root.display());
+    }
+}
+
+#[tokio::test]
+async fn real_mcp_import_cancellation_before_publication_preserves_target() {
+    let (root, db, settings) = writable_corpus(Some(true));
+    let module = root.join("source").join(WRITE_MODULE);
+    fs::write(
+        &module,
+        fs::read_to_string(&module).unwrap() + "\r\n// cancellable import\r\n",
+    )
+    .unwrap();
+    let target = db.join("1Cv8.1CD");
+    let before = fs::read(&target).unwrap();
+    let client = start_client(&settings).await;
+    let request = ClientRequest::CallToolRequest(CallToolRequest::new(
+        CallToolRequestParams::new("import").with_arguments(
+            json!({"objects":[WRITE_OBJECT]})
+                .as_object()
+                .unwrap()
+                .clone(),
+        ),
+    ));
+    let pending = client
+        .send_cancellable_request(request, rmcp::service::PeerRequestOptions::no_options())
+        .await
+        .unwrap();
+    pending
+        .cancel(Some("cancel before publication".into()))
+        .await
+        .unwrap();
+    // Wait for the cancelled worker to leave bounded admission. A queued second
+    // mutation is never used as a probe, and cancellation is a real SDK message.
+    let mut idle = false;
+    for _ in 0..100 {
+        let result = call(&client, "tree", json!({})).await;
+        if result.is_error == Some(false) {
+            idle = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(idle, "cancelled worker did not return to idle");
+    assert_eq!(fs::read(target).unwrap(), before);
+    assert!(!ibcmd_filedb::backup_file(&db).exists());
     client.cancel().await.unwrap();
 }

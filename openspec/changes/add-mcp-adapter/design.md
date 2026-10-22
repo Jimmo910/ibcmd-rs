@@ -40,8 +40,8 @@ source-root = "/approved/canonical/source"
 Common-file schema from dependency 644684f2: same `[mcp]` fields in ibcmd-rs.toml,
 plus `[[database]] agent-write = true` for one exact fixed target, false by
 default; true forbidden for masks. Adapter must not infer write permission from
-client annotations, tool parameters or a model's confirmation. The current slice
-never writes even if a policy claims permission. Unknown policy fields fail.
+client annotations, tool parameters or a model's confirmation. Import requires
+`db-path`; rows fixtures remain immutable. Unknown policy fields fail.
 
 Every call checks pinned policy bytes, common settings bytes, source root identity
 and offline rows root identity. The selected entry must match the startup bytes,
@@ -86,8 +86,23 @@ renames and replacements cannot silently produce equality. Symlink entries and
 same-inode root aliases are refused. Existing CLI/editor status keeps its lazy
 filesystem reads through the same comparator. This descriptor boundary supports
 Unix; other platforms refuse MCP startup.
-`import` returns an explicit error with no publication. Guarded staging and
-write acceptance remain integration work, not simulated acceptance.
+`import` accepts only selected object names from the fixed source root, with
+explicit `agent-write=true` on the exact operator-selected `[[database]]`.
+Missing/false opt-in, rows fixtures and SQL refuse writes. The shared
+`prepare_guarded_with_source_limits` owns compiled rows and source custody;
+MCP checks exact settings/policy bytes, root and consumed database dev/inode
+before parsing and inside final publication. Database budgets are retained
+across write-reader pagers/hash/copy. Actual source custody enforces128 MiB,
+100000 entries and depth64, including empty directories; its walker avoids
+eager ancestor caching and checks cancellation per entry/64 KiB source chunk.
+
+Import stages CONFIGSAVE only. It returns `status=staged`, `stagePublished=true`,
+`applied=false`, `restartRequired=true`; the old session then refuses every call
+rather than reconnecting implicitly to an atomically replaced inode. A shared
+`Error::Published` maps to `published_recovery_required` with the same restart
+requirement, without disclosing recovery paths or misreporting cancellation.
+Cancellation after the commit point cannot undo publication and is not reported
+as a no-op. Native apply remains an external operator/test-orchestrator action.
 
 
 ## Validation evidence (2026-10-22)
@@ -124,3 +139,51 @@ renames. Independent review found no remaining findings after the census and
 same-inode alias fixes. Logs: lab logs/issue-386-lib-all-final.log,
 logs/issue-386-full-status-final.log, logs/issue-386-filedb-clippy.log,
 logs/issue-386-all-targets-final.log.
+
+## Guarded write integration checkpoint
+
+Shared chain2e651993/a647ca82/01af72a1/7542bc87 is integrated, including prior
+backup preservation, fallback cleanup and bounded database reads. Source control
+fix0c689f35 adds actual custody traversal limits. Test-onlyc35280e0 isolates
+process-global cancellation scopes; MCP boundary tests use a separate test process
+so global offline rows cannot interfere with SQL adapter tests.
+
+Current functional evidence:6 genuine MCP tests pass with a real native
+module-edit/staging/apply/export roundtrip and explicit inventory names/IDs/versions
+audit; missing/false opt-in, override parameters, revoked policy and SDK import
+cancellation refuse without writes.5 adapter unit tests cover published-recovery error semantics, consumed descriptor
+mismatch and policy/target/source/root changes between prepare and publication.
+43 source-custody tests pass (3 ignored);4065 root library tests pass (15 ignored);
+25 filedb unit and10 filedb integration tests pass, including dirfd/fault tests;
+25 staging/editor/filedb tests pass with default invocation. All-targets,
+filedb Clippy warnings-denied, physical-adapter-policy guard+selftest and
+OpenSpec strict validation pass; no baseline expansion was made.
+
+Logs under the external lab:logs/issue-386-candidate-native-mcp.log,
+logs/issue-386-candidate-root-lib.log,logs/issue-386-dirfd-regression.log,
+logs/issue-386-candidate-filedb.log,logs/issue-386-candidate-all-targets.log,
+logs/issue-386-candidate-clippy.log,logs/issue-386-physical-policy-current.log,
+logs/issue-386-physical-policy-current-selftest.log,
+logs/issue-386-openspec-current.log. Native fixture evidence is retained in
+`tmp/ibcmd-mcp-write-ae4797b4-8b79-4016-a4c4-a87589eb7767`; no private ERP was used.
+The [native evidence](evidence/native-8.5.1.md) records the full roundtrip and gate.
+
+The ancestor-rebinding finding is closed by reviewed shared253dff7f
+(integrated asb97a0b9a), followed by behavior-equivalent RAII fix83e0ce8f
+(as946b95eb). Publication/cleanup use one held parent descriptor and relative
+leaf operations; unsupported platforms refuse writes. Independent combined MCP
+review found no new blocker, and parent cleared both engine commits.
+
+This provides held-directory confinement and advisory-lock guarantees, not
+atomic filesystem CAS against a noncooperating same-UID process changing leaf
+entries inside that directory. The operator must protect the database directory
+with OS permissions outside model-controlled source edits. Recovery path strings
+can become stale after an ancestor rename; verify held file identities when
+recovering. A panic may leave `.ibcmd-rs.tmp` or `.ibcmd-rs.bak.new` artifacts
+requiring inspection before retry; RAII releases descriptors/locks and is not a
+universal artifact cleanup mechanism. Exact-head MCP opt-in/target/confirmation
+review by the parent remains a publication gate.
+
+Unknown tool names use protocol error `-32602` rather than method-not-found,
+matching the [official tools error example](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling).
+Both supported lifecycle versions exercise this with an actual SDK client.
