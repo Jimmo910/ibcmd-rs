@@ -167,3 +167,27 @@ fn session_rechecks_public_entry_invariants_before_opening_the_target() {
         assert!(error.to_string().contains("dbPath requires"), "{error:#}");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn descriptor_reader_consumes_the_open_inode_after_path_rebinding() {
+    use std::os::unix::fs::MetadataExt;
+    let dir = scratch();
+    let path = dir.join("original.1CD");
+    let mut bytes = Vec::new();
+    flate2::read::GzDecoder::new(fs::File::open(fixture("tiny.1CD.gz")).unwrap())
+        .read_to_end(&mut bytes)
+        .unwrap();
+    fs::write(&path, bytes).unwrap();
+    let file = fs::File::open(&path).unwrap();
+    let identity = file.metadata().unwrap();
+    fs::rename(&path, dir.join("preserved.1CD")).unwrap();
+    fs::write(&path, b"not a database").unwrap();
+    let mut reader = ibcmd_filedb::FileDb::from_file(file).unwrap();
+    assert_eq!(
+        (reader.metadata().dev(), reader.metadata().ino()),
+        (identity.dev(), identity.ino())
+    );
+    assert!(!reader.config_rows("CONFIG").unwrap().is_empty());
+    assert_eq!(fs::read(&path).unwrap(), b"not a database");
+}
