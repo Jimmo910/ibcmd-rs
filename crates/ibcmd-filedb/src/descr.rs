@@ -49,9 +49,6 @@ impl Value {
     }
 }
 
-pub(crate) fn parse_braces(text: &str) -> Result<Value> {
-    parse_braces_checked(text, &|| Ok(()))
-}
 fn parse_braces_checked(text: &str, check: &dyn Fn() -> Result<()>) -> Result<Value> {
     check()?;
     let chars: Vec<char> = text
@@ -225,6 +222,7 @@ impl Table {
     }
 }
 
+#[cfg(test)]
 fn parse_table(text: &str) -> Result<Table> {
     parse_table_checked(text, &|| Ok(()))
 }

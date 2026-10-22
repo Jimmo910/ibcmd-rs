@@ -10,6 +10,7 @@ pub(crate) const DATA: usize = 250;
 
 /// Reads the chain starting at `start` from a whole blob object. With
 /// `expected`, the chain must hold exactly that many bytes.
+#[cfg(test)]
 pub(crate) fn read_chain(object: &[u8], start: u32, expected: Option<u64>) -> Result<Vec<u8>> {
     read_chain_checked(object, start, expected, &|| Ok(()))
 }
@@ -155,7 +156,7 @@ mod cancellation_tests {
     use super::*;
     #[test]
     fn cancellation_interrupts_a_chain_between_blocks() {
-        let (object, refs) = build(&[&vec![7u8; 1000]], 0).unwrap();
+        let (object, refs) = build(&[&[7u8; 1000]], 0).unwrap();
         let calls = std::cell::Cell::new(0);
         let error = read_chain_checked(&object, refs[0].0, Some(1000), &|| {
             calls.set(calls.get() + 1);

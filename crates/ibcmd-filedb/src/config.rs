@@ -276,7 +276,7 @@ pub(crate) fn reindex(
     pager.flush_header()
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod read_budget_tests {
     use super::*;
     use crate::{FileDb, ReadLimits};
