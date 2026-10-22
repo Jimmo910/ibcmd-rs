@@ -4553,8 +4553,27 @@ fn is_form_metadata_xml(path: &str) -> bool {
 fn is_stage_metadata_xml(path: &str) -> bool {
     is_configuration_metadata_xml(path)
         || is_root_metadata_xml(path)
+        || is_nested_subsystem_xml(path)
         || is_template_metadata_xml(path)
         || is_form_metadata_xml(path)
+}
+
+/// The folder of subsystems, at the root and inside a subsystem.
+const SUBSYSTEMS_FOLDER: &str = "subsystems";
+
+/// A subsystem of a subsystem (`Subsystems/A/Subsystems/B.xml`, any depth):
+/// a metadata object of its own row, which the patch stage compiles like a
+/// root one (#417: an edit of a nested subsystem's content had no entry).
+fn is_nested_subsystem_xml(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_ascii_lowercase();
+    let parts = lower.split('/').collect::<Vec<_>>();
+    lower.ends_with(".xml")
+        && parts.len() >= 4
+        && parts.len() % 2 == 0
+        && parts
+            .iter()
+            .step_by(2)
+            .all(|segment| *segment == SUBSYSTEMS_FOLDER)
 }
 
 fn is_configuration_metadata_xml(path: &str) -> bool {

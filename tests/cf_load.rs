@@ -531,3 +531,73 @@ fn a_tree_left_by_an_interrupted_update_is_refused() {
     assert!(text.contains("interrupted"), "{text}");
     assert!(!out.exists());
 }
+
+fn run_8_5(args: &[&std::ffi::OsStr]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+        .args(args)
+        .args(["--platform", "8.5.1"])
+        .output()
+        .expect("run ibcmd-rs")
+}
+
+/// The content of a subsystem, top-level or nested, is loaded (#417): the
+/// patch of a subsystem's base row kept its old content, and a nested one
+/// had no entry at all.
+#[test]
+fn an_edited_subsystem_content_loads_at_any_depth() {
+    let base = common::fixture("nested_subsystems").join("input.cf");
+    let module = "\t\t\t<Content>\r\n\t\t\t\t<xr:Item xsi:type=\"xr:MDObjectRef\">CommonModule.ФайловаяБазаПроверка</xr:Item>\r\n\t\t\t</Content>\r\n";
+    let empty = "\t\t\t<Content/>\r\n";
+    for (tag, file, from, to) in [
+        (
+            "nested",
+            "Subsystems/Верх/Subsystems/Низ.xml",
+            module,
+            empty,
+        ),
+        ("top", "Subsystems/Верх.xml", empty, module),
+    ] {
+        let tree = common::temp_dir(&format!("load-subsystem-{tag}"));
+        let run = run_8_5(&[
+            "cf".as_ref(),
+            "export".as_ref(),
+            base.as_os_str(),
+            tree.as_os_str(),
+        ]);
+        assert!(
+            run.status.success(),
+            "{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let path = tree.join(file);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains(from), "{tag}: {text}");
+        fs::write(&path, text.replace(from, to)).unwrap();
+
+        let out = fresh_output(&format!("load-subsystem-{tag}-out"), "cf");
+        let run = run_8_5(&[
+            "cf".as_ref(),
+            "load".as_ref(),
+            tree.as_os_str(),
+            out.as_os_str(),
+            "--base".as_ref(),
+            base.as_os_str(),
+        ]);
+        assert!(
+            run.status.success(),
+            "{tag}: {}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let back = common::temp_dir(&format!("load-subsystem-{tag}-back"));
+        let run = run_8_5(&[
+            "cf".as_ref(),
+            "export".as_ref(),
+            out.as_os_str(),
+            back.as_os_str(),
+        ]);
+        assert!(run.status.success());
+        let edited = fs::read(tree.join(file)).unwrap();
+        assert_eq!(fs::read(back.join(file)).unwrap(), edited, "{tag}");
+    }
+}

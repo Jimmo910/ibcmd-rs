@@ -30,6 +30,9 @@ pub struct CompiledContainerRows {
 /// the base has them: a parent whose child objects came or went (the patch of
 /// a base row keeps the base's child lists). Once per process: the compiler
 /// reads its base rows from a process-wide table.
+/// The metadata kind of a subsystem, as its XML names it.
+const SUBSYSTEM_KIND: &str = "Subsystem";
+
 pub fn compile_source_rows_offline(
     source_root: &Path,
     base: std::collections::HashMap<String, Vec<u8>>,
@@ -90,6 +93,14 @@ pub fn compile_source_rows_offline(
         let bytes =
             fs::read(xml).with_context(|| format!("failed to read XML {}", xml.display()))?;
         let properties = parse_simple_metadata_xml_properties(&bytes)?;
+        // A subsystem is compiled whole from its XML: the patch of its base
+        // row keeps the base's content list and does not reach a nested
+        // subsystem (#417: an edited content, top-level or nested, did not
+        // export back), and the base-free compiler writes the БСП's 9 155
+        // files back byte for byte.
+        if properties.kind == SUBSYSTEM_KIND {
+            return Ok(false);
+        }
         let Some(row) = base_rows_for_structure.get(&properties.uuid) else {
             return Ok(false);
         };
