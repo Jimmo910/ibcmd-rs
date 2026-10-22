@@ -37,3 +37,13 @@ The adapter must still supply its own exact startup dev/ino, settings/policy byt
 Each prepare owns a private 0700 scratch directory. A lifecycle guard removes only that runtime-owned directory on success, error, cancellation or unwind; a completed Plan contains verified rows, not persistent copies of the configuration. Deliberately retained native-oracle lab evidence lives elsewhere. An abrupt process termination can still leave owned scratch for operator inspection.
 
 Publication renames the verified new database first, retaining the previous backup until that succeeds. If database publication fails, the original data and old backup remain unchanged. If the following backup publication fails, `ibcmd_filedb::Error::Published { recovery, error }` explicitly reports that the new database IS published; the complete pre-write database remains at `.ibcmd-rs.bak.new`, and the older `.ibcmd-rs.bak` remains unchanged. No destructive rollback is attempted. The caller must report this recovery state and inspect it before retrying. A late cancellation cannot overwrite this outcome. A leftover `.bak.new` blocks subsequent writes. Fault-injection tests cover both rename failures.
+
+For untrusted consumers, `prepare_guarded_with_source_limits` takes an explicit
+`SourceInventoryLimits` alongside retained `ReadControl`. The guarded path also
+limits source directory entries (including empty directories) to `max_files`
+and depth to64, through initial custody and every final revalidation. The walker
+keeps admitted ancestor iterators open to avoid eager directory caching outside
+the entry budget. Source census checks cancellation per entry; original file
+reads and hashing check it per64 KiB chunk. Ordinary editor `prepare` retains
+its existing source admission defaults. These controls do not replace consumer
+policy checks or prove descriptor-relative publication confinement.

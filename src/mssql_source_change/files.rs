@@ -305,6 +305,7 @@ impl OriginalFile {
         retain: bool,
         mut external_hash: Option<&mut Sha256>,
     ) -> Result<([u8; 32], Option<Arc<Vec<u8>>>), SourceChangeError> {
+        crate::cancel::check().map_err(io)?;
         self.root.require_path()?;
         let mut file = self.file.lock().map_err(io)?;
         if stamp(&file, true)? != self.original {
@@ -326,6 +327,7 @@ impl OriginalFile {
         let mut hash = Sha256::new();
         let mut buffer = [0_u8; 64 * 1024];
         loop {
+            crate::cancel::check().map_err(io)?;
             let count = file.read(&mut buffer).map_err(io)?;
             if count == 0 {
                 break;
