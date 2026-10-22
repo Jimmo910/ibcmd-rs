@@ -34,6 +34,92 @@ impl ConfigDumpInfoSnapshot {
             parts: parsed.parts,
         })
     }
+    /// Maps each versioned row to its metadata object, using canonical
+    /// references and root descriptors from this exact inventory. Unmapped rows are explicit; callers
+    /// must not report them unchanged. Configuration uses the editor's root
+    /// name `Configuration`; owned forms/templates retain their full names.
+    pub fn owners(&self) -> NativeVersionOwners {
+        use crate::metadata_model::index::{NESTED_COLLECTIONS, ROOT_COLLECTIONS};
+        let root_kind = |kind: &str| {
+            kind == "Configuration" || ROOT_COLLECTIONS.iter().any(|(_, k)| *k == kind)
+        };
+        let nested_kind = |kind: &str| {
+            kind == "Subsystem"
+                || kind == "Command"
+                || NESTED_COLLECTIONS.iter().any(|(_, k)| *k == kind)
+        };
+        let reference = |name: &str| {
+            let parts = name.split('.').collect::<Vec<_>>();
+            parts.len() >= 2
+                && parts.len() % 2 == 0
+                && root_kind(parts[0])
+                && parts.iter().all(|part| !part.is_empty())
+                && parts[2..].chunks(2).all(|pair| nested_kind(pair[0]))
+        };
+        let roots = self
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.name.split('.').count() == 2
+                    && reference(&entry.name)
+                    && uuid::Uuid::parse_str(&entry.id).is_ok()
+            })
+            .map(|entry| entry.name.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let mut by_id = BTreeMap::new();
+        let mut unmapped_ids = Vec::new();
+        for entry in &self.entries {
+            // A row is the descriptor's canonical reference, or exactly one
+            // role after it. Never climb past a missing/unknown nested kind.
+            // Inline forms may have only a versioned body, no standalone
+            // descriptor entry in ConfigDumpInfo. Their storage row UUID is
+            // not necessarily the metadata object's UUID.
+            let candidate = if entry.name.split('.').count() % 2 == 0 {
+                entry.name.as_str()
+            } else {
+                entry
+                    .name
+                    .rsplit_once('.')
+                    .map(|(owner, _)| owner)
+                    .unwrap_or("")
+            };
+            let root = candidate.split('.').take(2).collect::<Vec<_>>().join(".");
+            if !reference(candidate) || !roots.contains(root.as_str()) {
+                unmapped_ids.push(entry.id.clone());
+                continue;
+            }
+            // Owned Command descriptors live inside the owner's XML, unlike
+            // independently exportable forms/templates. Preserve their native
+            // reference but assign their CommandModule to that editor object.
+            let parts = candidate.split('.').collect::<Vec<_>>();
+            let export_object = if parts.len() > 2 && parts[parts.len() - 2] == "Command" {
+                let without_name = candidate.rsplit_once('.').unwrap().0;
+                without_name.rsplit_once('.').unwrap().0
+            } else {
+                candidate
+            };
+            let normalize = |name: &str| {
+                if name.starts_with("Configuration.") {
+                    "Configuration".to_owned()
+                } else {
+                    name.to_owned()
+                }
+            };
+            by_id.insert(
+                entry.id.clone(),
+                NativeVersionOwner {
+                    object: normalize(export_object),
+                    root: normalize(&root),
+                    native_object: candidate.to_owned(),
+                },
+            );
+        }
+        NativeVersionOwners {
+            by_id,
+            unmapped_ids,
+        }
+    }
+
     /// Native status ignores a reference-only XML dialect header difference.
     /// An ID removal or rename requires a full export; version changes can
     /// occur even when the exported XML bytes are identical.
@@ -85,6 +171,24 @@ impl ConfigDumpInfoSnapshot {
         }
     }
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeVersionOwner {
+    /// Independently exportable/editor object, e.g. Catalog.X.Form.F.
+    /// An inline Command module belongs to its owning descriptor object.
+    pub object: String,
+    /// Exact native owner reference, including inline commands.
+    pub native_object: String,
+    /// Top-level object, e.g. Catalog.X (or Configuration).
+    pub root: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeVersionOwners {
+    pub by_id: BTreeMap<String, NativeVersionOwner>,
+    pub unmapped_ids: Vec<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ChangeKind {

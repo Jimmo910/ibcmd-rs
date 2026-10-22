@@ -101,3 +101,93 @@ fn inventory_reader_refuses_diagnostic_writes_before_reading_any_source() {
     assert!(error.to_string().contains("runtime_journal"));
     assert!(!root.exists());
 }
+
+#[test]
+fn owner_mapping_uses_canonical_descriptors_and_exposes_missing_coverage() {
+    let snapshot = ConfigDumpInfoSnapshot::parse(&tiny()).unwrap();
+    let owners = snapshot.owners();
+    assert!(owners.unmapped_ids.is_empty());
+    assert_eq!(owners.by_id.len(), snapshot.entries.len());
+    let module = owners
+        .by_id
+        .get("6d1c2a0e-1cd0-4f00-9a00-000000000001.0")
+        .unwrap();
+    assert_eq!(module.object, "CommonModule.ФайловаяБазаПроверка");
+    assert_eq!(module.root, module.object);
+    assert_eq!(
+        owners
+            .by_id
+            .get("afb733a6-eae8-418b-b73c-fb9eb581e093")
+            .unwrap()
+            .object,
+        "Configuration"
+    );
+    let orphan=ConfigDumpInfoSnapshot::parse(b"<ConfigDumpInfo><ConfigVersions><Metadata name=\"FutureKind.X.Module\" id=\"00000000-0000-0000-0000-000000000001.0\" configVersion=\"v\"/></ConfigVersions></ConfigDumpInfo>").unwrap();
+    assert_eq!(orphan.owners().unmapped_ids.len(), 1);
+}
+
+#[test]
+#[ignore = "optional private read-only corpus: set IBCMD_RS_NATIVE_STATUS_PRIVATE_XML"]
+fn private_inventory_owner_coverage_is_complete() {
+    let path = std::env::var_os("IBCMD_RS_NATIVE_STATUS_PRIVATE_XML")
+        .expect("explicit private fixture path");
+    let bytes = std::fs::read(path).unwrap();
+    let snapshot = ConfigDumpInfoSnapshot::parse(&bytes).unwrap();
+    let owners = snapshot.owners();
+    println!(
+        "version_entries={} mapped={} unmapped={}",
+        snapshot.entries.len(),
+        owners.by_id.len(),
+        owners.unmapped_ids.len()
+    );
+    assert!(
+        owners.unmapped_ids.is_empty(),
+        "unmapped count={}",
+        owners.unmapped_ids.len()
+    );
+    assert_eq!(owners.by_id.len(), snapshot.entries.len());
+}
+
+#[test]
+fn nested_owner_is_never_silently_collapsed_to_its_root() {
+    let xml=b"<ConfigDumpInfo><ConfigVersions><Metadata name=\"Catalog.X\" id=\"00000000-0000-0000-0000-000000000001\" configVersion=\"v\"/><Metadata name=\"Catalog.X.FutureKind.Y\" id=\"00000000-0000-0000-0000-000000000002\" configVersion=\"v\"/><Metadata name=\"Catalog.X.Form.F.Form\" id=\"00000000-0000-0000-0000-000000000003.0\" configVersion=\"v\"/></ConfigVersions></ConfigDumpInfo>";
+    let owners = ConfigDumpInfoSnapshot::parse(xml).unwrap().owners();
+    assert_eq!(
+        owners.unmapped_ids,
+        vec!["00000000-0000-0000-0000-000000000002"]
+    );
+    // Native inline forms legitimately lack their own descriptor entry.
+    let form = owners
+        .by_id
+        .get("00000000-0000-0000-0000-000000000003.0")
+        .unwrap();
+    assert_eq!(form.object, "Catalog.X.Form.F");
+    assert_eq!(form.root, "Catalog.X");
+}
+
+#[test]
+fn inline_command_module_preserves_native_owner_and_rolls_into_owning_xml() {
+    let xml=b"<ConfigDumpInfo><ConfigVersions><Metadata name=\"Catalog.X\" id=\"00000000-0000-0000-0000-000000000001\" configVersion=\"v\"/><Metadata name=\"Catalog.X.Command.C.CommandModule\" id=\"00000000-0000-0000-0000-000000000002.0\" configVersion=\"v\"/></ConfigVersions></ConfigDumpInfo>";
+    let owners = ConfigDumpInfoSnapshot::parse(xml).unwrap().owners();
+    assert!(owners.unmapped_ids.is_empty());
+    let command = owners
+        .by_id
+        .get("00000000-0000-0000-0000-000000000002.0")
+        .unwrap();
+    assert_eq!(command.object, "Catalog.X");
+    assert_eq!(command.root, "Catalog.X");
+    assert_eq!(command.native_object, "Catalog.X.Command.C");
+}
+
+#[test]
+fn metadata_name_command_is_not_mistaken_for_an_inline_command_kind() {
+    let xml=b"<ConfigDumpInfo><ConfigVersions><Metadata name=\"Catalog.Command\" id=\"00000000-0000-0000-0000-000000000001\" configVersion=\"v\"/><Metadata name=\"Catalog.Command.ObjectModule\" id=\"00000000-0000-0000-0000-000000000001.0\" configVersion=\"v\"/></ConfigVersions></ConfigDumpInfo>";
+    let owners = ConfigDumpInfoSnapshot::parse(xml).unwrap().owners();
+    assert!(owners.unmapped_ids.is_empty());
+    assert!(
+        owners
+            .by_id
+            .values()
+            .all(|owner| owner.object == "Catalog.Command")
+    );
+}
