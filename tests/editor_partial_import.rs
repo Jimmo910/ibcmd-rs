@@ -457,3 +457,106 @@ fn changed_import_uses_native_sync_versions_and_refuses_stale_staging() {
     );
     assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
 }
+
+#[test]
+fn bounded_plan_retains_cancellation_control_for_publish() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let (db, tree) = setup();
+    fs::write(
+        tree.join(MODULE),
+        fs::read_to_string(tree.join(MODULE)).unwrap() + "\r\n// bounded\r\n",
+    )
+    .unwrap();
+    let original = fs::read(db.join("1Cv8.1CD")).unwrap();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let callback = cancelled.clone();
+    let plan = file_import::prepare_guarded_with_limits(
+        &db,
+        &tree,
+        &selected(MODULE),
+        platform::parse_flag("8.5.1").unwrap(),
+        &mut |_| Ok(()),
+        file_import::ReadControl {
+            limits: ibcmd_filedb::ReadLimits {
+                max_records: 1_000_000,
+                max_binary_bytes: 1 << 30,
+                max_object_bytes: 1 << 30,
+            },
+            check: Arc::new(move || {
+                if callback.load(Ordering::SeqCst) {
+                    Err(ibcmd_filedb::Error::Refused("adapter cancelled".into()))
+                } else {
+                    Ok(())
+                }
+            }),
+        },
+    )
+    .unwrap();
+    cancelled.store(true, Ordering::SeqCst);
+    assert!(
+        plan.publish_guarded(&db, &mut |_| Ok(()))
+            .unwrap_err()
+            .to_string()
+            .contains("adapter cancelled")
+    );
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), original);
+}
+
+#[test]
+fn bounded_plan_checks_retained_callback_after_final_operator_guard() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let (db, tree) = setup();
+    fs::write(
+        tree.join(MODULE),
+        fs::read_to_string(tree.join(MODULE)).unwrap() + "\r\n// deadline\r\n",
+    )
+    .unwrap();
+    let original = fs::read(db.join("1Cv8.1CD")).unwrap();
+    fs::write(ibcmd_filedb::backup_file(&db), b"older recovery").unwrap();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let callback = cancelled.clone();
+    let plan = file_import::prepare_guarded_with_limits(
+        &db,
+        &tree,
+        &selected(MODULE),
+        platform::parse_flag("8.5.1").unwrap(),
+        &mut |_| Ok(()),
+        file_import::ReadControl {
+            limits: ibcmd_filedb::ReadLimits {
+                max_records: 1_000_000,
+                max_binary_bytes: 1 << 30,
+                max_object_bytes: 1 << 30,
+            },
+            check: Arc::new(move || {
+                if callback.load(Ordering::SeqCst) {
+                    Err(ibcmd_filedb::Error::Refused("adapter deadline".into()))
+                } else {
+                    Ok(())
+                }
+            }),
+        },
+    )
+    .unwrap();
+    let mut gates = 0;
+    let error = plan
+        .publish_guarded(&db, &mut |_| {
+            gates += 1;
+            if gates == 3 {
+                cancelled.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("adapter deadline"));
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), original);
+    assert_eq!(
+        fs::read(ibcmd_filedb::backup_file(&db)).unwrap(),
+        b"older recovery"
+    );
+}

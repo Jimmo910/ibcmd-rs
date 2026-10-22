@@ -49,24 +49,39 @@ impl Value {
     }
 }
 
-pub(crate) fn parse_braces(text: &str) -> Result<Value> {
-    let chars: Vec<char> = text.chars().collect();
+fn parse_braces_checked(text: &str, check: &dyn Fn() -> Result<()>) -> Result<Value> {
+    check()?;
+    let chars: Vec<char> = text
+        .chars()
+        .map(|ch| {
+            check()?;
+            Ok(ch)
+        })
+        .collect::<Result<_>>()?;
     let mut pos = 0usize;
-    let value = parse_value(&chars, &mut pos, 0)?;
+    let value = parse_value(&chars, &mut pos, 0, check)?;
     Ok(value)
 }
 
-fn skip(chars: &[char], pos: &mut usize) {
+fn skip(chars: &[char], pos: &mut usize, check: &dyn Fn() -> Result<()>) -> Result<()> {
     while *pos < chars.len() && (chars[*pos].is_whitespace() || chars[*pos] == ',') {
+        check()?;
         *pos += 1;
     }
+    Ok(())
 }
 
-fn parse_value(chars: &[char], pos: &mut usize, depth: usize) -> Result<Value> {
+fn parse_value(
+    chars: &[char],
+    pos: &mut usize,
+    depth: usize,
+    check: &dyn Fn() -> Result<()>,
+) -> Result<Value> {
+    check()?;
     if depth > 32 {
         return Err(corrupt("Описание таблицы: слишком глубокая вложенность"));
     }
-    skip(chars, pos);
+    skip(chars, pos, check)?;
     let Some(&c) = chars.get(*pos) else {
         return Err(corrupt("Описание таблицы обрывается"));
     };
@@ -75,13 +90,13 @@ fn parse_value(chars: &[char], pos: &mut usize, depth: usize) -> Result<Value> {
             *pos += 1;
             let mut items = Vec::new();
             loop {
-                skip(chars, pos);
+                skip(chars, pos, check)?;
                 match chars.get(*pos) {
                     Some('}') => {
                         *pos += 1;
                         return Ok(Value::List(items));
                     }
-                    Some(_) => items.push(parse_value(chars, pos, depth + 1)?),
+                    Some(_) => items.push(parse_value(chars, pos, depth + 1, check)?),
                     None => return Err(corrupt("Описание таблицы: нет закрывающей скобки")),
                 }
             }
@@ -90,6 +105,7 @@ fn parse_value(chars: &[char], pos: &mut usize, depth: usize) -> Result<Value> {
             *pos += 1;
             let mut out = String::new();
             loop {
+                check()?;
                 match chars.get(*pos) {
                     Some('"') if chars.get(*pos + 1) == Some(&'"') => {
                         out.push('"');
@@ -113,6 +129,7 @@ fn parse_value(chars: &[char], pos: &mut usize, depth: usize) -> Result<Value> {
                 && !matches!(chars[*pos], ',' | '}' | '{')
                 && !chars[*pos].is_whitespace()
             {
+                check()?;
                 *pos += 1;
             }
             if start == *pos {
@@ -205,8 +222,12 @@ impl Table {
     }
 }
 
+#[cfg(test)]
 fn parse_table(text: &str) -> Result<Table> {
-    let value = parse_braces(text)?;
+    parse_table_checked(text, &|| Ok(()))
+}
+fn parse_table_checked(text: &str, check: &dyn Fn() -> Result<()>) -> Result<Table> {
+    let value = parse_braces_checked(text, check)?;
     let items = value
         .as_list()
         .ok_or_else(|| corrupt("Описание таблицы не список"))?;
@@ -219,6 +240,7 @@ fn parse_table(text: &str) -> Result<Table> {
     let mut index_names = Vec::new();
     let mut files: Option<[u32; 3]> = None;
     for part in items.iter().skip(2) {
+        check()?;
         let Some(list) = part.as_list() else { continue };
         let Some(tag) = list.first().and_then(Value::as_text) else {
             continue;
@@ -300,11 +322,25 @@ fn parse_field(table: &str, value: &Value) -> Result<Field> {
     })
 }
 
+fn read_metadata_chain(data: &[u8], start: u32, pager: &mut Pager<'_>) -> Result<Vec<u8>> {
+    let mut copied = 0u64;
+    let bounded = pager.read_is_bounded();
+    blob::read_chain_accounted(data, start, None, &mut |bytes| {
+        copied = copied
+            .checked_add(bytes)
+            .ok_or_else(|| corrupt("metadata size overflow"))?;
+        if bounded && copied > 1024 * 1024 {
+            return Err(corrupt("table metadata exceeds 1 MiB"));
+        }
+        pager.materialize_object(bytes)
+    })
+}
+
 /// Reads the locale and every table description from the root object.
 pub(crate) fn read_tables(pager: &mut Pager<'_>) -> Result<(String, BTreeMap<String, Table>)> {
     let root = Object::open(pager, 2)?;
     let data = root.read_all(pager)?;
-    let head = blob::read_chain(&data, 1, None)?;
+    let head = read_metadata_chain(&data, 1, pager)?;
     if head.len() < 36 {
         return Err(corrupt("Корневой объект короче заголовка"));
     }
@@ -312,16 +348,21 @@ pub(crate) fn read_tables(pager: &mut Pager<'_>) -> Result<(String, BTreeMap<Str
         .trim_end_matches('\0')
         .to_string();
     let count = u32::from_le_bytes(head[32..36].try_into().unwrap()) as usize;
-    if head.len() < 36 + count * 4 {
+    let end = count
+        .checked_mul(4)
+        .and_then(|bytes| bytes.checked_add(36))
+        .ok_or_else(|| corrupt("table count overflow"))?;
+    if head.len() < end {
         return Err(corrupt("Корневой объект: список таблиц обрывается"));
     }
     let mut tables = BTreeMap::new();
     for i in 0..count {
+        pager.materialize_record(0)?;
         let block = u32::from_le_bytes(head[36 + i * 4..40 + i * 4].try_into().unwrap());
-        let text_bytes = blob::read_chain(&data, block, None)?;
+        let text_bytes = read_metadata_chain(&data, block, pager)?;
         let text =
             String::from_utf8(text_bytes).map_err(|_| corrupt("Описание таблицы не в UTF-8"))?;
-        let table = parse_table(&text)?;
+        let table = parse_table_checked(&text, &|| pager.check_read())?;
         tables.insert(table.name.clone(), table);
     }
     Ok((locale, tables))
@@ -361,5 +402,25 @@ mod tests {
         ] {
             assert!(parse_table(text).is_err(), "{text}");
         }
+    }
+}
+
+#[cfg(test)]
+mod budget_cancellation_tests {
+    use super::*;
+    #[test]
+    fn metadata_parser_observes_cancellation() {
+        let calls = std::cell::Cell::new(0);
+        let error = parse_braces_checked(&format!("{{\"{}\"}}", "x".repeat(10000)), &|| {
+            calls.set(calls.get() + 1);
+            if calls.get() >= 100 {
+                Err(crate::Error::Refused("cancelled".into()))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("cancelled"));
+        assert_eq!(calls.get(), 100);
     }
 }

@@ -24,3 +24,12 @@ Local evidence (not committed database/source artifacts): `logs/issue-382-native
 ## Independent safety review
 
 An independent reviewer examined effective-stage merging, CAS, source custody, cancellation, recovery artifacts and publication guards. Findings about comment text, prior-backup replacement, one-direction inventory validation and final cancellation ordering were fixed with regressions. The reviewer reported no remaining blocking findings in the common staging scope. Tests cover startup inode mismatch, source/target/connection changes, final policy revocation, early/late cancellation, real process exit before publication, stale work refusal, incomplete stage and versions naming absent rows.
+
+
+## Follow-up safety verification
+
+Independent parent review of f02d56d0 found scratch lifetime and backup-generation failure paths. Follow-up fixes own and clean runtime scratch on all normal/error/unwind paths and publish data before replacing the prior backup. Fault injection covers both renames, preserving older backup B and pre-write A recovery data when backup update fails. A distinct published-state error survives late cancellation.
+
+The shared bounded reader from #386 (f2a05c34 plus 9ae75c06 crate changes) now also covers guarded write preflight: identity before descriptor parsing; cumulative metadata/FAT/index/row/blob budgets across fresh pagers; cancellable hashing/copy; retained final callback. Sparse advertised large FAT and repeated row reads have explicit regression tests. Independent follow-up review found no remaining blockers in that API scope. MCP policy/integration remains separate.
+
+Full root lib suite on this external filesystem: 4055 passed, 15 ignored, one existing `source_oracle::tests::distinct_non_utf8_source_names_are_rejected_without_lossy_collision` failed at fixture filename creation with `Illegal byte sequence`. No test was weakened or skipped in source. CI was not started by the fork push (GitHub Actions API returned no runs for f02d56d0); upstream PR checks remain a review/publication gate.
