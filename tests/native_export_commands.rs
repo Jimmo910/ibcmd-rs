@@ -7,6 +7,9 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output},
 };
+// Native failure is -1; POSIX process status retains its low byte.
+const FAILED: i32 = if cfg!(windows) { -1 } else { 255 };
+
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase")
 }
@@ -160,7 +163,7 @@ fn objects_select_only_native_files_and_fail_before_writing_unknown_objects() {
         &["objects"],
         &[opt("out", &absent), "CommonModule.NoSuchLabObject".into()],
     );
-    assert_eq!(output.status.code(), Some(255));
+    assert_eq!(output.status.code(), Some(FAILED));
     assert!(!absent.exists());
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
@@ -211,7 +214,7 @@ fn malformed_status_and_invalid_file_target_match_native_exit_codes() {
     let target = root.join("dir");
     fs::create_dir(&target).unwrap();
     let error = run(&db, &["status"], &[opt("base", &base), opt("out", &target)]);
-    assert_eq!(error.status.code(), Some(255));
+    assert_eq!(error.status.code(), Some(FAILED));
     assert_eq!(error.stderr,"[ERROR] Операция невозможна, при вычислении изменений конфигурации информационной базы относительно ранее сохраненного состояния обнаружены ошибки: Ошибка приемника потока\n".as_bytes());
 }
 
@@ -260,7 +263,7 @@ fn real_native_change_add_delete_rename_matrix_is_byte_exact() {
             &[opt("base", &base), out.clone().into_os_string()],
         );
         if matches!(case, "delete" | "rename") {
-            assert_eq!(output.status.code(), Some(255));
+            assert_eq!(output.status.code(), Some(FAILED));
             assert!(!out.exists());
             assert_eq!(output.stderr,"[ERROR] Операция невозможна, при выполнении экспорта изменений конфигурации в XML обнаружены ошибки: Требуется экспортировать конфигурацию полностью.\n".as_bytes());
         } else {
@@ -276,7 +279,7 @@ fn real_native_change_add_delete_rename_matrix_is_byte_exact() {
         let before = tree(&sync);
         let output = run(&db, &[], &["--sync".into(), sync.clone().into_os_string()]);
         if matches!(case, "delete" | "rename") {
-            assert_eq!(output.status.code(), Some(255));
+            assert_eq!(output.status.code(), Some(FAILED));
             assert_eq!(tree(&sync), before);
         } else {
             ok(&output);
@@ -329,7 +332,7 @@ fn linked_object_output_is_rejected_without_writing_outside_destination() {
         &["objects"],
         &[opt("out", &out), "CommonModule.ФайловаяБазаПроверка".into()],
     );
-    assert_eq!(result.status.code(), Some(255));
+    assert_eq!(result.status.code(), Some(FAILED));
     assert!(tree(&outside).is_empty());
 }
 
@@ -462,12 +465,12 @@ fn empty_published_inventory_matches_native_and_malformed_nonempty_stays_closed(
     );
     let warning = format!(
         "warning: no platform is configured for {}; assuming 8.3.27 (XML 2.20). Name it with --platform, a [[database]] entry or `platform` in ibcmd-rs.toml, or IBCMD_RS_PLATFORM.\n",
-        db.display()
+        fs::canonicalize(&db).unwrap().display()
     );
     assert_eq!(output.stderr, warning.as_bytes());
     let bad = root.join("malformed.1CD");
     fs::write(&bad, b"not a file database").unwrap();
     let output = run(&bad, &["info"], &[]);
-    assert_eq!(output.status.code(), Some(255));
+    assert_eq!(output.status.code(), Some(FAILED));
     assert!(output.stdout.is_empty());
 }
