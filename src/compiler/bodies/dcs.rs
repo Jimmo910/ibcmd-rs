@@ -179,6 +179,16 @@ pub(crate) fn compile_evidenced_dcs_with_resolvers(
             Ok(blob)
         }
         DcsTemplateKind::Schema => {
+            // A 2.21 source spells its settings pictures the 8.5 way; the
+            // platform stores them the 8.3.27 way (and its export, like
+            // ours, writes them back as 8.5 spells them).
+            let stored = std::str::from_utf8(xml)
+                .ok()
+                .map(crate::mssql_dump::with_stored_picture_values)
+                .transpose()
+                .map_err(|error| DcsCodecError::RoundTrip(format!("{error:#}")))?
+                .flatten();
+            let xml = stored.as_deref().map_or(xml, str::as_bytes);
             let (plain, type_index, object_refs) =
                 compile_schema_plain(xml, style_reference_types, types)?;
             let blob = deflate_bytes(&plain)?;

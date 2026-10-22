@@ -976,6 +976,7 @@ pub mod config_save;
 mod configuration_properties_evidence;
 mod dcs;
 mod dcs_2_21;
+pub(crate) use dcs_2_21::with_stored_picture_values;
 mod dynamic_generation;
 pub(crate) mod extension;
 pub(crate) mod extension_types;

@@ -92,9 +92,109 @@ fn picture_reference(name: &str, object_refs: &BTreeMap<String, String>) -> Stri
     }
 }
 
+/// The inverse, for a compiled source in dialect 2.21: every picture value
+/// spelled the 8.5 way back in the spelling the platform stores (`v8ui:`
+/// and the bare name, for a common and a standard picture alike; the БСП
+/// templates its 8.5.1.1529 import of the 8.3.27 XML stored hold 89 such
+/// values in one template and no other spelling). `None` when nothing is
+/// spelled that way. A value of another shape (an inline picture, `Abs`) is
+/// left as written.
+pub(crate) fn with_stored_picture_values(xml: &str) -> Result<Option<String>> {
+    if !xml.contains(READABLE_NS) {
+        return Ok(None);
+    }
+    let mut edits = XmlEdits::new(xml)?;
+    let mut changed = false;
+    for element in 0..edits.elements.len() {
+        let item = &edits.elements[element];
+        if item.tag != VALUE_TAG || item.self_closing {
+            continue;
+        }
+        let open = &xml[item.open_start..];
+        let open = &open[..open.find('>').unwrap_or(open.len())];
+        let Some(prefix) = readable_picture_prefix(open) else {
+            continue;
+        };
+        let lines: Vec<&str> = edits
+            .inner_lines(element)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        let reference = match lines.as_slice() {
+            [reference, transparent]
+                if *transparent
+                    == format!("<{prefix}:LoadTransparent>true</{prefix}:LoadTransparent>") =>
+            {
+                reference
+                    .strip_prefix(&format!("<{prefix}:Ref>"))
+                    .and_then(|rest| rest.strip_suffix(&format!("</{prefix}:Ref>")))
+            }
+            _ => None,
+        };
+        let Some(name) = reference.and_then(|reference| {
+            reference
+                .strip_prefix(COMMON_PICTURE)
+                .or_else(|| reference.strip_prefix(STD_PICTURE))
+        }) else {
+            continue;
+        };
+        edits.replace(
+            element,
+            &format!("<{VALUE_TAG} {PICTURE_TYPE}{REF_ATTRIBUTE}{name}\"/>\r\n"),
+        );
+        changed = true;
+    }
+    if !changed {
+        return Ok(None);
+    }
+    edits.finish().map(Some)
+}
+
+/// The prefix of `open` (a value's start tag) when it declares the readable
+/// namespace under a generated prefix and types the value as its `Picture`.
+fn readable_picture_prefix(open: &str) -> Option<&str> {
+    let declaration = format!("=\"{READABLE_NS}\"");
+    let at = open.find(&declaration)?;
+    let prefix = open[..at].rsplit_once("xmlns:")?.1;
+    open.contains(&format!("xsi:type=\"{prefix}:Picture\""))
+        .then_some(prefix)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_8_5_spelling_is_stored_the_platforms_way() {
+        let refs = BTreeMap::from([(
+            "00000000-0000-0000-0000-000000000001".to_owned(),
+            "CommonPicture.Своя".to_owned(),
+        )]);
+        let stored = "<a>\r\n\
+                      \t<b>\r\n\
+                      \t\t<dcscor:value xsi:type=\"v8ui:Picture\" ref=\"v8ui:Своя\"/>\r\n\
+                      \t</b>\r\n\
+                      \t<dcscor:value xsi:type=\"v8ui:Picture\" ref=\"v8ui:AppearanceCheckBox\"/>\r\n\
+                      </a>";
+        let written = with_8_5_picture_values(stored, &refs).unwrap();
+        assert_eq!(
+            with_stored_picture_values(&written).unwrap().as_deref(),
+            Some(stored)
+        );
+        assert_eq!(with_stored_picture_values(stored).unwrap(), None);
+    }
+
+    #[test]
+    fn an_inline_picture_is_left_as_written() {
+        let xml = "<a>\r\n\
+                   \t<dcscor:value xmlns:d2p1=\"http://v8.1c.ru/8.3/xcf/readable\" xsi:type=\"d2p1:Picture\">\r\n\
+                   \t\t<d2p1:Abs>value.svg</d2p1:Abs>\r\n\
+                   \t\t<d2p1:LoadTransparent>true</d2p1:LoadTransparent>\r\n\
+                   \t</dcscor:value>\r\n\
+                   </a>";
+        assert_eq!(with_stored_picture_values(xml).unwrap(), None);
+    }
 
     #[test]
     fn picture_values_name_their_kind_under_a_depth_prefix() {
