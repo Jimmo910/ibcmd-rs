@@ -80449,3 +80449,13 @@ fn form_root_read_only_uses_its_own_head_flag_and_native_xml_position() {
     unsupported[0] = "99";
     assert_eq!(extract_form_read_only(&unsupported), None);
 }
+
+#[test]
+fn a_label_field_places_its_title_back_colour_after_the_title() {
+    // ERP 2.6.1 exported by 8.5.1.1529: `Title`, `TitleBackColor`,
+    // `EditMode` (`РаботаСРезультатамиОбмена/ОбъектыКПоискуИУстановкеСоответствий`).
+    let order = super::form::xml_2_21_order::child_order("LabelField").unwrap();
+    let at = |name: &str| order.iter().position(|item| *item == name).unwrap();
+    assert!(at("Title") < at("TitleBackColor"));
+    assert!(at("TitleBackColor") < at("EditMode"));
+}

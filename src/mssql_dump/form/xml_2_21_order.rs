@@ -1469,18 +1469,3 @@ pub(in crate::mssql_dump) fn child_order(parent: &str) -> Option<&'static [&'sta
         _ => return None,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_label_field_places_its_title_back_colour_after_the_title() {
-        // ERP 2.6.1 exported by 8.5.1.1529: `Title`, `TitleBackColor`,
-        // `EditMode` (`РаботаСРезультатамиОбмена/ОбъектыКПоискуИУстановкеСоответствий`).
-        let order = child_order("LabelField").unwrap();
-        let at = |name: &str| order.iter().position(|item| *item == name).unwrap();
-        assert!(at("Title") < at("TitleBackColor"));
-        assert!(at("TitleBackColor") < at("EditMode"));
-    }
-}
