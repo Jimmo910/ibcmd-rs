@@ -24,3 +24,17 @@ Measured on native 8.5.1.1592: unchanged status is empty; individual rows are
 `added` / `modified`; removed/renamed reference reports `modified: all`.
 A reference-only XML header change 2.20 -> 2.21 does not count as a native
 version change. This differs from the custom export dialect migration policy.
+
+`ConfigDumpInfoSnapshot::owners()` returns `byId: rowId -> { object, root, nativeObject }`
+using canonical metadata-reference grammar and root descriptors from the same native inventory. Forms and
+templates retain their immediate full name; `root` permits top-level roll-up.
+Inline Command modules map to the object whose XML contains their descriptor;
+`nativeObject` retains the exact Command reference (and every other owner).
+Native inline forms may have only a versioned body in ConfigDumpInfo; storage row IDs must not be treated as metadata UUIDs. The immediate canonical form name is retained even then. No search climbs past an unknown nested kind to a known ancestor. The native Configuration.<name> owner is normalized to the editor root
+`Configuration`. `unmappedIds` is explicit and must prevent an all-green result
+for unsupported/future metadata. Metadata bytes never participate in this map.
+
+Private ERP read-only evidence on native 8.5.1.1592: 105,253 top-level versioned
+entries (214,747 Metadata elements including nested parts), all 105,253 mapped
+by these descriptor/owner rules, zero unmapped. XML bytes and database remain
+private; only aggregate counts are published.
