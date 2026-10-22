@@ -12,7 +12,7 @@ use crate::{
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -160,6 +160,33 @@ fn prepare_locked(
         .files()
         .map(|file| file.path().to_string())
         .collect::<BTreeSet<_>>();
+    // A native export's inventory is the synchronization baseline. A
+    // difference against a newer target is a conflict, not a local edit.
+    let sync = if selection.changed {
+        let local = source.source_bytes("ConfigDumpInfo.xml").context("changed import requires a synchronized ConfigDumpInfo.xml; refresh the export baseline or select files explicitly")?;
+        Some((
+            crate::mssql_dump::incremental::DumpInfo::parse(&local)?,
+            crate::mssql_dump::incremental::DumpInfo::read(&tree.join("ConfigDumpInfo.xml"))?,
+        ))
+    } else {
+        None
+    };
+    let sync_indices = sync.as_ref().map(|(local, current)| {
+        (
+            crate::mssql_dump::incremental::Ownership::new(&local.entries),
+            crate::mssql_dump::incremental::Ownership::new(&current.entries),
+            local
+                .entries
+                .iter()
+                .map(|entry| (entry.id.as_str(), entry))
+                .collect::<BTreeMap<_, _>>(),
+            current
+                .entries
+                .iter()
+                .map(|entry| (entry.id.as_str(), entry))
+                .collect::<BTreeMap<_, _>>(),
+        )
+    });
     let selected = if !selection.files.is_empty() {
         crate::mssql::files_stage::select(source.canonical_root(), &selection.files)?
             .files()
@@ -206,6 +233,24 @@ fn prepare_locked(
         })?;
         let expected = tree.join(&path);
         if *bytes != fs::read(&expected)? {
+            if let Some((old_owner, now_owner, old_entries, now_entries)) = &sync_indices {
+                let old_id = old_owner.exact(&path).or_else(|| old_owner.folder(&path));
+                let now_id = now_owner.exact(&path).or_else(|| now_owner.folder(&path));
+                let unchanged = old_id.zip(now_id).is_some_and(|(a, b)| {
+                    a == b
+                        && old_entries
+                            .get(a)
+                            .zip(now_entries.get(b))
+                            .is_some_and(|(old, now)| {
+                                old.name == now.name && old.config_version == now.config_version
+                            })
+                });
+                if !unchanged {
+                    bail!(
+                        "{path}: target changed since the synchronized export; refresh the baseline or select files explicitly; nothing written"
+                    );
+                }
+            }
             if path == "Configuration.xml" {
                 bail!("changed Configuration.xml requires whole-tree import");
             }
