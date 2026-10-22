@@ -45,6 +45,7 @@ mod mssql_recovery_artifact;
 pub mod mssql_source_change;
 pub mod mssql_worker_switch;
 pub mod mxl_line_provenance;
+pub mod native_export_status;
 pub mod parallel;
 pub mod plan;
 pub mod platform;
