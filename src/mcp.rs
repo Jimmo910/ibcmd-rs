@@ -55,9 +55,9 @@ pub struct McpArgs {
     /// Explicit common ibcmd-rs.toml; no settings discovery.
     #[arg(long)]
     pub settings: PathBuf,
-    /// Separate operator-owned TOML containing [mcp] database and source-root.
+    /// Optional separate policy TOML; defaults to [mcp] in --settings.
     #[arg(long)]
-    pub policy: PathBuf,
+    pub policy: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -95,7 +95,18 @@ impl Bound {
         let policy_path = fs::canonicalize(policy)?;
         let policy_bytes = bounded_file(&policy_path, MAX_RESULT)?;
         ensure!(policy_bytes.len() <= MAX_RESULT, "MCP policy exceeds limit");
-        let document: Document = toml::from_str(std::str::from_utf8(&policy_bytes)?)?;
+        let document: Document = if policy_path == settings_path {
+            let document: toml::Value = toml::from_str(std::str::from_utf8(&policy_bytes)?)?;
+            Document {
+                mcp: document
+                    .get("mcp")
+                    .context("[mcp] policy required")?
+                    .clone()
+                    .try_into()?,
+            }
+        } else {
+            toml::from_str(std::str::from_utf8(&policy_bytes)?)?
+        };
         let settings = Settings::from_sources(&SettingsSources {
             env: &|name| (name == ENV_CONFIG).then(|| settings_path.display().to_string()),
             executable: None,
@@ -626,9 +637,15 @@ pub fn run(args: McpArgs) -> Result<()> {
     #[cfg(not(unix))]
     bail!("secure MCP input snapshots currently require Unix");
     let adapter = Adapter(
-        Arc::new(Bound::open(&args.settings, &args.policy).map_err(|_| {
-            anyhow::anyhow!("MCP startup rejected settings, policy, target or input capability")
-        })?),
+        Arc::new(
+            Bound::open(
+                &args.settings,
+                args.policy.as_deref().unwrap_or(&args.settings),
+            )
+            .map_err(|_| {
+                anyhow::anyhow!("MCP startup rejected settings, policy, target or input capability")
+            })?,
+        ),
         Arc::default(),
         Arc::new(tokio::sync::Semaphore::new(1)),
     );

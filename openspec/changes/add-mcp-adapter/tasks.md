@@ -10,7 +10,10 @@
       export/read parity with cf export; policy/target/traversal/symlink failures.
       `cargo test --test mcp_adapter --test editor_server`: 2 MCP + 6 editor tests pass.
       Log: external lab logs/issue-386-regression.log.
-- [ ] Integrate #382 common settings/filedb session identity and staging API.
+- [x] Integrate READ dependency 644684f2 as ea8097f5; common-file [mcp] supported.
+      5 actual1CD backend + 6 editor + 2 MCP tests pass after integration.
+      Log: external lab logs/issue-386-read-integration-final.log.
+- [ ] Integrate #382 descriptor filedb identity and staging API.
 - [ ] Enforce agent-write per fixed database on every mutation and publication.
 - [ ] Full status/compare including local-only paths through confined snapshots.
 - [ ] Native acceptance: real MCP client edits disposable filedb module; external

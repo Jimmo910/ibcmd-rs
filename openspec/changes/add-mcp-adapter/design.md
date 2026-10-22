@@ -28,7 +28,8 @@ platform = "8.3.27"
 rows-dir = "/approved/canonical/rows"
 ```
 
-Temporary separate policy (avoids racing #382's ownership of the common parser):
+The policy may reside in `[mcp]` of the same `--settings` file (default),
+or an explicit separate `--policy` file:
 
 ```toml
 [mcp]
@@ -36,7 +37,7 @@ database = "demo"
 source-root = "/approved/canonical/source"
 ```
 
-Expected common-file schema after #382: same `[mcp]` fields in ibcmd-rs.toml,
+Common-file schema from dependency 644684f2: same `[mcp]` fields in ibcmd-rs.toml,
 plus `[[database]] agent-write = true` for one exact fixed target, false by
 default; true forbidden for masks. Adapter must not infer write permission from
 client annotations, tool parameters or a model's confirmation. The first slice

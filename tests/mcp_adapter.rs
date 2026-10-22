@@ -214,16 +214,26 @@ impl rmcp::ClientHandler for LegacyClient {
 #[tokio::test]
 async fn legacy_initialize_and_modern_discover_are_supported() {
     use rmcp::service::{ClientLifecycleMode, ClientServiceExt};
-    let (_root, settings, policy) = corpus();
+    let (root, settings, policy) = corpus();
+    let combined = root.join("combined.toml");
+    fs::write(
+        &combined,
+        format!(
+            "{}\n{}",
+            fs::read_to_string(&settings).unwrap(),
+            fs::read_to_string(&policy).unwrap()
+        ),
+    )
+    .unwrap();
     for modern in [false, true] {
         let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
-        command
-            .arg("mcp")
-            .arg("--settings")
-            .arg(&settings)
-            .arg("--policy")
-            .arg(&policy)
-            .stderr(Stdio::piped());
+        command.arg("mcp").arg("--settings");
+        if modern {
+            command.arg(&combined);
+        } else {
+            command.arg(&settings).arg("--policy").arg(&policy);
+        }
+        command.stderr(Stdio::piped());
         let mode = if modern {
             ClientLifecycleMode::Discover {
                 preferred_versions: vec![ProtocolVersion::V_2026_07_28],
