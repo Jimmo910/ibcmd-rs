@@ -687,7 +687,7 @@ fn bootstrap(mut args: CfBootstrapArgs) -> Result<CfCommandReport, CfCommandErro
         crate::compiler::artifact::validate_output_intent(package.intent, &args.output).map_err(
             |source| bootstrap_failure(&args, "bootstrap_package_invalid", format!("{source:#}")),
         )?;
-        return bootstrap_external(args);
+        return bootstrap_external(args, target_unspecified);
     }
     let extension = package.intent == crate::compiler::artifact::PackageIntent::Extension;
     if !extension && package.intent != crate::compiler::artifact::PackageIntent::Configuration {
@@ -1017,10 +1017,16 @@ fn bootstrap_base_free(
     }))
 }
 
+/// The platform whose packages seed an external build (`load::seed`).
+const EXTERNAL_TARGET_PROFILE: &str = "platform-8.3.27.2214";
+
 /// `.epf`/`.erf` from the external tree alone (issue #438): the compiled
 /// load onto a seed package given the tree's identities
 /// (`crate::load::build_external`), verified by exporting it back.
-fn bootstrap_external(mut args: CfBootstrapArgs) -> Result<CfCommandReport, CfCommandError> {
+fn bootstrap_external(
+    mut args: CfBootstrapArgs,
+    target_unspecified: bool,
+) -> Result<CfCommandReport, CfCommandError> {
     // The seeds are 8.3.27.2214 packages and the load keeps their container:
     // nothing else was measured, so nothing else is offered.
     let unmeasured = [
@@ -1029,7 +1035,7 @@ fn bootstrap_external(mut args: CfBootstrapArgs) -> Result<CfCommandReport, CfCo
             "8.5 XML (2.21)",
         ),
         (
-            args.target_profile != DEFAULT_BOOTSTRAP_TARGET_PROFILE,
+            !target_unspecified && args.target_profile != EXTERNAL_TARGET_PROFILE,
             "--target-profile",
         ),
         (args.profile_dir.is_some(), "--profile-dir"),
@@ -1052,7 +1058,7 @@ fn bootstrap_external(mut args: CfBootstrapArgs) -> Result<CfCommandReport, CfCo
             ),
         ));
     }
-    args.target_profile = "platform-8.3.27.2214".to_owned();
+    args.target_profile = EXTERNAL_TARGET_PROFILE.to_owned();
     if args.output.exists() {
         return Err(bootstrap_failure(
             &args,

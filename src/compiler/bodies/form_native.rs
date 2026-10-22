@@ -8948,10 +8948,16 @@ pub(crate) fn format_empty_auto_command_bar(id: &str, name: &str) -> String {
 static DATA_PATH_STEPS: std::sync::Mutex<Option<std::collections::BTreeSet<(String, String)>>> =
     std::sync::Mutex::new(None);
 
+/// Whether a caller records data-path steps: ordinary compiles skip the lock
+/// and the formatting.
+static RECORDING_DATA_PATH_STEPS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Start recording data-path steps.
 pub(crate) fn record_data_path_steps() {
     if let Ok(mut steps) = DATA_PATH_STEPS.lock() {
         *steps = Some(std::collections::BTreeSet::new());
+        RECORDING_DATA_PATH_STEPS.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -8960,15 +8966,23 @@ pub(crate) fn take_data_path_steps() -> std::collections::BTreeSet<(String, Stri
     DATA_PATH_STEPS
         .lock()
         .ok()
-        .and_then(|mut steps| steps.take())
+        .and_then(|mut steps| {
+            RECORDING_DATA_PATH_STEPS.store(false, std::sync::atomic::Ordering::SeqCst);
+            steps.take()
+        })
         .unwrap_or_default()
 }
 
-fn note_data_path_step(segment: &str, parent: String) {
+/// Records the step `step` gives, `(segment, parent)`, when recording.
+fn note_data_path_step(step: impl FnOnce() -> Option<(String, String)>) {
+    if !RECORDING_DATA_PATH_STEPS.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
     if let Ok(mut steps) = DATA_PATH_STEPS.lock()
         && let Some(steps) = steps.as_mut()
+        && let Some(step) = step()
     {
-        steps.insert((segment.to_owned(), parent));
+        steps.insert(step);
     }
 }
 
@@ -9782,9 +9796,10 @@ fn resolve_data_path_tokens<'a>(
 
             if let Some(column) = column {
                 emitted.push(format!("{{{}}}", column.id));
-                if let Some(parent) = attribute.and_then(|entry| entry.types.first()) {
-                    note_data_path_step(&format!("{{{}}}", column.id), parent.clone());
-                }
+                note_data_path_step(|| {
+                    let parent = attribute.and_then(|entry| entry.types.first())?;
+                    Some((format!("{{{}}}", column.id), parent.clone()))
+                });
                 context = data_path_context_for_types(&column.types);
             } else if let Some(extra) = extra.filter(|_| {
                 !matches!(
@@ -9793,9 +9808,10 @@ fn resolve_data_path_tokens<'a>(
                 )
             }) {
                 let segment = format!("{{{},{DATA_PATH_ADDITIONAL_COLUMN_UUID}}}", extra.id);
-                if let Some(parent) = attribute.and_then(|entry| entry.types.first()) {
-                    note_data_path_step(&segment, parent.clone());
-                }
+                note_data_path_step(|| {
+                    let parent = attribute.and_then(|entry| entry.types.first())?;
+                    Some((segment.clone(), parent.clone()))
+                });
                 emitted.push(segment);
                 context = data_path_context_for_types(&extra.types);
             } else {
@@ -9877,7 +9893,9 @@ fn resolve_data_path_tokens<'a>(
                     }
                     DataPathContext::Builtin { members, composer } => {
                         let member = data_path_member(members, name)?;
-                        note_data_path_step(&format!("{{{member}}}"), format!("platform|{name}"));
+                        note_data_path_step(|| {
+                            Some((format!("{{{member}}}"), format!("platform|{name}")))
+                        });
                         emitted.push(format!("{{{member}}}"));
                         context = if composer {
                             DataPathContext::Dcs(data_path_dcs_members(name))
@@ -9887,7 +9905,9 @@ fn resolve_data_path_tokens<'a>(
                     }
                     DataPathContext::Dcs(members) => {
                         let member = data_path_member(members, name)?;
-                        note_data_path_step(&format!("{{{member}}}"), format!("platform|{name}"));
+                        note_data_path_step(|| {
+                            Some((format!("{{{member}}}"), format!("platform|{name}")))
+                        });
                         emitted.push(format!("{{{member}}}"));
                         context = DataPathContext::Dcs(data_path_dcs_members(name));
                     }
@@ -9914,14 +9934,16 @@ fn resolve_data_path_tokens<'a>(
                         let (segment, next) = resolve_metadata_data_path_part(
                             source, &object, &keys, &section, name, extra,
                         )?;
-                        note_data_path_step(
-                            &segment,
-                            format!(
-                                "meta|{}|{}",
-                                keys.first().map(String::as_str).unwrap_or_default(),
-                                section.as_deref().unwrap_or_default()
-                            ),
-                        );
+                        note_data_path_step(|| {
+                            Some((
+                                segment.clone(),
+                                format!(
+                                    "meta|{}|{}",
+                                    keys.first().map(String::as_str).unwrap_or_default(),
+                                    section.as_deref().unwrap_or_default()
+                                ),
+                            ))
+                        });
                         emitted.push(segment);
                         context = next;
                     }

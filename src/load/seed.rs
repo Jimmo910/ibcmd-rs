@@ -393,8 +393,9 @@ fn write_seed(seed: &Seed, target: &Identity, path: &Path) -> Result<()> {
 static BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Builds `output` from the external tree `tree` with no base package:
-/// `Ok(None)` when the tree is not an external object. A failed build leaves
-/// no `output` it created.
+/// `Ok(None)` when the tree is not an external object. The package is built
+/// and verified in a scratch folder and published last, never over an
+/// existing file; a failed build writes no `output`.
 pub fn build_external(
     tree: &Path,
     output: &Path,
@@ -434,28 +435,30 @@ pub fn build_external(
     } else {
         tree.to_path_buf()
     };
-    let scratch = std::env::temp_dir().join(format!(
-        "ibcmd-rs-seed-{}-{}",
-        std::process::id(),
-        target.uuid
-    ));
-    fs::create_dir_all(&scratch).context("failed to create the seed scratch folder")?;
-    let seed_path = scratch.join(if seed.tag == "ExternalReport" {
-        "seed.erf"
-    } else {
-        "seed.epf"
-    });
     let _build = BUILD
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let existed = output.exists();
+    let scratch = std::env::temp_dir().join(format!(
+        "ibcmd-rs-seed-{}-{}-{}",
+        std::process::id(),
+        target.uuid,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos())
+    ));
+    fs::create_dir(&scratch).context("failed to create the seed scratch folder")?;
+    let (seed_path, built) = if seed.tag == "ExternalReport" {
+        (scratch.join("seed.erf"), scratch.join("built.erf"))
+    } else {
+        (scratch.join("seed.epf"), scratch.join("built.epf"))
+    };
     crate::compiler::bodies::form_native::record_data_path_steps();
     let result = write_seed(seed, &target, &seed_path)
         .map_err(super::LoadError::from)
         .and_then(|()| {
-            match super::load_onto_base(&tree_dir, &seed_path, output, source_version) {
+            match super::load_onto_base(&tree_dir, &seed_path, &built, source_version) {
                 // The tree is the seed itself: the rekeyed seed is the package.
-                Err(super::LoadError::NoChanges) => fs::copy(&seed_path, output)
+                Err(super::LoadError::NoChanges) => fs::copy(&seed_path, &built)
                     .map(|_| super::LoadReport::default())
                     .context("failed to write the package")
                     .map_err(super::LoadError::from),
@@ -466,16 +469,18 @@ pub fn build_external(
     let result = result.and_then(|report| {
         let copyinfo = copyinfo_with_steps(&text, seed, &target, &steps)?;
         if copyinfo != EMPTY_COPYINFO {
-            replace_entry(output, "copyinfo", copyinfo.as_bytes(), &scratch)?;
+            replace_entry(&built, "copyinfo", copyinfo.as_bytes(), &scratch)?;
         }
+        publish(&built, output)?;
         Ok(report)
     });
     let _ = fs::remove_dir_all(&scratch);
-    if result.is_err() && !existed {
-        let _ = fs::remove_file(output);
-    }
     result.map(Some)
 }
+
+/// The marker of a value-tree additional column segment
+/// (`form_native::DATA_PATH_ADDITIONAL_COLUMN_UUID`).
+const ADDITIONAL_COLUMN_UUID: &str = "5bdad865-f2c5-434b-8041-ba4aad3b6687";
 
 /// Builtin types whose members a form path steps through by column id.
 const BUILTIN_TYPES: [(&str, &str); 2] = [
@@ -535,41 +540,55 @@ fn copyinfo_with_steps(
     let mut entries = Vec::new();
     let mut unmeasured = BTreeSet::new();
     for (segment, parent) in steps {
-        let type_id = if let Some(section) = parent.strip_prefix(&own) {
-            if section.is_empty() {
-                target.type_id.clone()
-            } else {
-                match sections.get(section) {
-                    Some(type_id) => type_id.clone(),
-                    None => continue,
-                }
-            }
-        } else if let Some((_, uuid)) = BUILTIN_TYPES.iter().find(|(name, _)| name == parent) {
-            (*uuid).to_owned()
-        } else if let Some(member) = parent.strip_prefix("platform|") {
-            // 8.3.27.2214 lists these steps under the platform type's id
-            // (СериализаторMXL of Vanessa Automation: a settings composer's
-            // `Settings.Filter`); the ids are not measured, and without them
-            // the platform would drop the path.
-            unmeasured.insert(member.to_owned());
-            continue;
-        } else {
-            continue;
-        };
         let inner = segment.trim_start_matches('{').trim_end_matches('}');
-        // A value-tree additional column repeats its segment; an own member
-        // has no index.
-        let index = match inner.parse::<i64>() {
-            Ok(number) => number.to_string(),
-            Err(_) if inner.contains(',') && !inner.starts_with("0,") => inner.to_owned(),
-            Err(_) => "-1".to_owned(),
+        // The shapes measured over the Vanessa Automation corpus (631 own
+        // members, 64 value table and tree columns, 22 value-tree additional
+        // columns); any other step is refused, not left for the platform to
+        // drop.
+        let measured = if let Some(section) = parent.strip_prefix(&own) {
+            let type_id = if section.is_empty() {
+                Some(target.type_id.clone())
+            } else {
+                sections.get(section).cloned()
+            };
+            type_id
+                .filter(|_| inner.starts_with("0,"))
+                .map(|type_id| (type_id, "-1".to_owned()))
+        } else if let Some((name, uuid)) = BUILTIN_TYPES.iter().find(|(name, _)| name == parent) {
+            if inner.parse::<i64>().is_ok() {
+                Some(((*uuid).to_owned(), inner.to_owned()))
+            } else if *name == "v8:ValueTree"
+                && inner.ends_with(&format!(",{ADDITIONAL_COLUMN_UUID}"))
+            {
+                // A value-tree additional column repeats its segment.
+                Some(((*uuid).to_owned(), inner.to_owned()))
+            } else {
+                None
+            }
+        } else {
+            None
         };
-        entries.push(format!("{{\r\n{segment},{type_id},\r\n{{{index}}}\r\n}}"));
+        match measured {
+            Some((type_id, index)) => {
+                entries.push(format!("{{\r\n{segment},{type_id},\r\n{{{index}}}\r\n}}"));
+            }
+            // 8.3.27.2214 lists a platform object's members under the
+            // platform type's id (СериализаторMXL of Vanessa Automation: a
+            // settings composer's `Settings.Filter`); those ids are not
+            // measured.
+            None => {
+                unmeasured.insert(match parent.strip_prefix("platform|") {
+                    Some(member) => member.to_owned(),
+                    None => format!("{segment} of {parent}"),
+                });
+            }
+        }
     }
     if !unmeasured.is_empty() {
         bail!(
-            "a form data path steps through a platform object whose copyinfo entry is not \
-             measured -- build it with cf load --base: {}",
+            "a form data path takes a step whose copyinfo entry is not measured (a member \
+             of a platform object, a totals or row-count marker) -- build it with cf load \
+             --base: {}",
             unmeasured.into_iter().collect::<Vec<_>>().join(", ")
         );
     }
@@ -583,7 +602,7 @@ fn copyinfo_with_steps(
     ))
 }
 
-/// `file` with the entry `key` holding `plain`.
+/// `file` with the entry `key` holding `plain`; `scratch` is `file`'s folder.
 fn replace_entry(file: &Path, key: &str, plain: &[u8], scratch: &Path) -> Result<()> {
     let rewritten = scratch.join("rewritten");
     {
@@ -591,7 +610,26 @@ fn replace_entry(file: &Path, key: &str, plain: &[u8], scratch: &Path) -> Result
         let rows = BTreeMap::from([(key.to_owned(), deflate_raw(plain)?)]);
         compiled::write_edit(&archive, rows, &BTreeSet::new(), &rewritten, limits)?;
     }
-    fs::copy(&rewritten, file).context("failed to rewrite the package")?;
+    fs::rename(&rewritten, file).context("failed to rewrite the package")?;
+    Ok(())
+}
+
+/// Copies `built` to `output`, which must not exist; a partial copy is
+/// removed.
+fn publish(built: &Path, output: &Path) -> Result<()> {
+    let mut target = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .with_context(|| format!("failed to create {}", output.display()))?;
+    let copied = fs::File::open(built)
+        .and_then(|mut source| std::io::copy(&mut source, &mut target))
+        .and_then(|_| target.sync_all());
+    if let Err(err) = copied {
+        drop(target);
+        let _ = fs::remove_file(output);
+        return Err(err).with_context(|| format!("failed to write {}", output.display()));
+    }
     Ok(())
 }
 
@@ -651,7 +689,7 @@ mod tests {
     }
 
     #[test]
-    fn copyinfo_lists_own_and_value_table_steps_only() {
+    fn copyinfo_lists_measured_steps_and_refuses_the_rest() {
         let root = "<TabularSection uuid=\"t\"><InternalInfo>\
             <xr:GeneratedType name=\"x\" category=\"TabularSection\">\
             <xr:TypeId>55555555-5555-5555-5555-555555555555</xr:TypeId></xr:GeneratedType>\
@@ -660,7 +698,6 @@ mod tests {
             ("{0,a}".to_owned(), "meta|DataProcessor.Б|".to_owned()),
             ("{0,c}".to_owned(), "meta|DataProcessor.Б|ТЧ".to_owned()),
             ("{2}".to_owned(), "v8:ValueTable".to_owned()),
-            ("{0,f}".to_owned(), "meta|Catalog.Чужой|".to_owned()),
             (
                 "{1,5bdad865-f2c5-434b-8041-ba4aad3b6687}".to_owned(),
                 "v8:ValueTree".to_owned(),
@@ -675,14 +712,25 @@ mod tests {
         assert!(text.contains("{0,a},33333333-3333-3333-3333-333333333333,\r\n{-1}"));
         assert!(text.contains("{0,c},55555555-5555-5555-5555-555555555555,\r\n{-1}"));
         assert!(text.contains("{2},acf6192e-81ca-46ef-93a6-5a6968b78663,\r\n{2}"));
-        assert!(!text.contains("{0,f}"));
         assert_eq!(
             copyinfo_with_steps(root, &PROCESSOR, &target(), &BTreeSet::new()).unwrap(),
             EMPTY_COPYINFO
         );
-        let composer = BTreeSet::from([("{0}".to_owned(), "platform|Settings".to_owned())]);
-        let refused = copyinfo_with_steps(root, &PROCESSOR, &target(), &composer).unwrap_err();
-        assert!(refused.to_string().contains("Settings"));
+        for (segment, parent, named) in [
+            ("{0}", "platform|Settings", "Settings"),
+            ("{0,f}", "meta|Catalog.Чужой|", "Catalog.Чужой"),
+            ("{100000000}", "meta|DataProcessor.Б|ТЧ", "100000000"),
+            ("{0,c}", "meta|DataProcessor.Б|НетТакой", "НетТакой"),
+            (
+                "{1,5bdad865-f2c5-434b-8041-ba4aad3b6687}",
+                "v8:ValueTable",
+                "v8:ValueTable",
+            ),
+        ] {
+            let step = BTreeSet::from([(segment.to_owned(), parent.to_owned())]);
+            let refused = copyinfo_with_steps(root, &PROCESSOR, &target(), &step).unwrap_err();
+            assert!(refused.to_string().contains(named), "{refused}");
+        }
     }
 
     #[test]

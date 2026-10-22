@@ -432,7 +432,7 @@ pub enum CfCommands {
     Export(CfExportArgs),
     /// Apply selected source files to a base CF and publish a new CF offline.
     Overlay(CfOverlayArgs),
-    /// Build a new CF from a complete XML source tree without a base or 1C platform.
+    /// Build a new CF, CFE, EPF or ERF from a complete XML source tree without a base or 1C platform.
     Bootstrap(CfBootstrapArgs),
     /// Overlay the module and form edits of an exported tree onto the file it came from.
     Load(CfLoadArgs),
@@ -636,7 +636,7 @@ pub struct CfLoadArgs {
 pub struct CfBootstrapArgs {
     /// Complete hierarchical XML source directory.
     pub source_dir: PathBuf,
-    /// New CF destination. Existing files are never overwritten.
+    /// New .cf, .cfe, .epf or .erf destination. Existing files are never overwritten.
     pub output: PathBuf,
     /// Platform the XML is for: a release (8.3.27, 8.5.1) or an exact build
     /// (8.3.27.2214, 8.5.1.1150); 8.3.x reads and writes XML 2.20, 8.5.x 2.21.

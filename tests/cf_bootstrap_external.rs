@@ -315,3 +315,43 @@ fn a_reference_to_the_configuration_is_refused_without_output() {
     assert!(report.contains("cfg:CatalogRef.Валюты"), "{report}");
     assert!(!output.exists());
 }
+
+/// A form path through a platform object (a standard period) is refused
+/// after the load, and the refused build leaves no file.
+#[test]
+fn an_unmeasured_form_step_is_refused_without_output() {
+    let scratch = Scratch::new("platform-step");
+    let tree = renamed_tree(
+        "tests/fixtures/external/test_processor/input.epf",
+        &scratch.0,
+        "ТестОбработка",
+        "СПериодом",
+    );
+    let form = tree.join("СПериодом/Forms/Форма/Ext/Form.xml");
+    let text = fs::read_to_string(&form).unwrap();
+    let text = text
+        .replacen(
+            "\t<Attributes>",
+            "\t<ChildItems>\r\n\t\t<InputField name=\"Начало\" id=\"2\">\r\n\
+             \t\t\t<DataPath>Период.StartDate</DataPath>\r\n\
+             \t\t\t<ContextMenu name=\"НачалоКонтекстноеМеню\" id=\"3\"/>\r\n\
+             \t\t\t<ExtendedTooltip name=\"НачалоРасширеннаяПодсказка\" id=\"4\"/>\r\n\
+             \t\t</InputField>\r\n\t</ChildItems>\r\n\t<Attributes>",
+            1,
+        )
+        .replacen(
+            "\t</Attributes>",
+            "\t\t<Attribute name=\"Период\" id=\"5\">\r\n\t\t\t<Type>\r\n\
+             \t\t\t\t<v8:Type>v8:StandardPeriod</v8:Type>\r\n\t\t\t</Type>\r\n\
+             \t\t</Attribute>\r\n\t</Attributes>",
+            1,
+        );
+    fs::write(&form, text).unwrap();
+    let output = scratch.0.join("built.epf");
+    let refused = bootstrap(&tree, &output);
+    let report = String::from_utf8_lossy(&refused.stdout).into_owned()
+        + &String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{report}");
+    assert!(report.contains("StartDate"), "{report}");
+    assert!(!output.exists());
+}
