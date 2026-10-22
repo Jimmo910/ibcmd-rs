@@ -15,8 +15,56 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
+// Owns only a private directory created by this request. No Plan needs the
+// compiled scratch once its verified rows have been materialized.
+struct ImportScratch {
+    path: PathBuf,
+    identity: fs::Metadata,
+}
+impl ImportScratch {
+    fn create() -> Result<Self> {
+        let path =
+            std::env::temp_dir().join(format!("ibcmd-editor-import-{}", uuid::Uuid::new_v4()));
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&path)?;
+        Ok(Self {
+            identity: fs::symlink_metadata(&path)?,
+            path,
+        })
+    }
+    fn join(&self, path: &str) -> PathBuf {
+        self.path.join(path)
+    }
+}
+impl Drop for ImportScratch {
+    fn drop(&mut self) {
+        let _ = &self.identity;
+        let Ok(now) = fs::symlink_metadata(&self.path) else {
+            return;
+        };
+        if !now.is_dir() || now.file_type().is_symlink() {
+            return;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if (now.dev(), now.ino()) != (self.identity.dev(), self.identity.ino()) {
+                return;
+            }
+        }
+        // Runtime-owned temporary data only. remove_dir_all does not follow
+        // child symlinks. Lab oracle evidence has a separate, retained location.
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
 #[derive(Default, Clone, Debug)]
 pub struct Selection {
     pub files: Vec<String>,
@@ -38,12 +86,49 @@ pub struct Preflight {
     pub missing_references: Vec<MissingReference>,
     pub ready: bool,
 }
+/// Optional untrusted-input limits, retained by the plan for publication.
+/// The callback must remain valid for the whole prepare/confirm/publish lifetime.
+#[derive(Clone)]
+pub struct ReadControl {
+    pub limits: ibcmd_filedb::ReadLimits,
+    pub check: Arc<dyn Fn() -> ibcmd_filedb::Result<()> + Send + Sync>,
+}
+impl ReadControl {
+    fn open(
+        &self,
+        target: &Path,
+        guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
+    ) -> Result<ibcmd_filedb::WriteSession> {
+        let check = self.check.clone();
+        Ok(ibcmd_filedb::open_for_write_with_limits(
+            target,
+            self.limits,
+            move || check(),
+            &mut |metadata| {
+                guard(metadata).map_err(|error| ibcmd_filedb::Error::Refused(format!("{error:#}")))
+            },
+        )?)
+    }
+}
+fn open_session(
+    target: &Path,
+    read_control: Option<&ReadControl>,
+    guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
+) -> Result<ibcmd_filedb::WriteSession> {
+    if let Some(control) = read_control {
+        return control.open(target, guard);
+    }
+    let session = ibcmd_filedb::open_for_write(target)?;
+    guard(&session.metadata()?)?;
+    Ok(session)
+}
 /// Contents are private: callers cannot substitute compiled rows or fingerprints.
 pub struct Plan {
     summary: Preflight,
     snapshot: String,
     source: HeldSourceRoot,
     rows: Option<Vec<ibcmd_filedb::ConfigRow>>,
+    read_control: Option<ReadControl>,
 }
 impl Plan {
     pub fn summary(&self) -> &Preflight {
@@ -70,8 +155,7 @@ impl Plan {
             }
             let rows = self.rows.as_ref().ok_or_else(|| anyhow!("unresolved references; confirm dependencies and repeat preflight before importing"))?;
             self.source.require_unchanged()?;
-            let session = ibcmd_filedb::open_for_write(&current)?;
-            guard(&session.metadata()?)?;
+            let session = open_session(&current, self.read_control.as_ref(), guard)?;
             if session.snapshot()? != self.snapshot {
                 bail!("file database changed since import preflight; nothing written");
             }
@@ -83,16 +167,29 @@ impl Plan {
                     .map_err(|error| ibcmd_filedb::Error::Refused(format!("{error:#}")))?;
                 // The source census/policy can take time. Cancellation must be
                 // the final action before the format layer publishes its copy.
+                if let Some(control) = &self.read_control {
+                    (control.check)()?;
+                }
                 crate::cancel::check()
                     .map_err(|error| ibcmd_filedb::Error::Refused(error.to_string()))
             });
             // Preserve the typed cancellation for the RPC layer.
-            if result.is_err() {
-                crate::cancel::check()?;
-            }
-            result.map_err(Into::into)
+            finish_publication(result, || Ok(crate::cancel::check()?))
         })
     }
+}
+
+fn finish_publication(
+    result: ibcmd_filedb::Result<ibcmd_filedb::ReplaceReport>,
+    cancelled: impl FnOnce() -> Result<()>,
+) -> Result<ibcmd_filedb::ReplaceReport> {
+    if matches!(&result, Err(ibcmd_filedb::Error::Published { .. })) {
+        return result.map_err(Into::into);
+    }
+    if result.is_err() {
+        cancelled()?;
+    }
+    result.map_err(Into::into)
 }
 
 pub fn prepare(
@@ -111,7 +208,32 @@ pub fn prepare_guarded(
     platform: PlatformSpec,
     guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
 ) -> Result<Plan> {
-    crate::stored_objects::exclusive(|| prepare_locked(target, source, selection, platform, guard))
+    crate::stored_objects::exclusive(|| {
+        prepare_locked(target, source, selection, platform, guard, None)
+    })
+}
+/// Bounded prepare for untrusted consumers. Identity/policy is checked on the
+/// actual write descriptor before database metadata is parsed. Publication opens
+/// a new bounded session and retains the same callback; final guard still runs
+/// inside the verified-copy publication boundary.
+pub fn prepare_guarded_with_limits(
+    target: &Path,
+    source: &Path,
+    selection: &Selection,
+    platform: PlatformSpec,
+    guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
+    read_control: ReadControl,
+) -> Result<Plan> {
+    crate::stored_objects::exclusive(|| {
+        prepare_locked(
+            target,
+            source,
+            selection,
+            platform,
+            guard,
+            Some(read_control),
+        )
+    })
 }
 fn in_prefix(path: &str, prefix: &str) -> bool {
     path == prefix
@@ -126,6 +248,7 @@ fn prepare_locked(
     selection: &Selection,
     platform: PlatformSpec,
     guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
+    read_control: Option<ReadControl>,
 ) -> Result<Plan> {
     crate::cancel::check()?;
     let modes = usize::from(!selection.files.is_empty())
@@ -136,8 +259,7 @@ fn prepare_locked(
     }
     let source = HeldSourceRoot::open(source, SourceInventoryLimits::default())?;
     let target = fs::canonicalize(ibcmd_filedb::data_file(target)).context("file import target")?;
-    let mut session = ibcmd_filedb::open_for_write(&target)?;
-    guard(&session.metadata()?)?;
+    let mut session = open_session(&target, read_control.as_ref(), guard)?;
     let snapshot = session.snapshot()?;
     let config = session.config_rows("CONFIG")?;
     let saved = session.config_rows("CONFIGSAVE")?;
@@ -145,9 +267,7 @@ fn prepare_locked(
     if effective.published.is_empty() {
         bail!("partial import requires an existing configuration");
     }
-    let scratch =
-        std::env::temp_dir().join(format!("ibcmd-editor-import-{}", uuid::Uuid::new_v4()));
-    fs::create_dir(&scratch)?;
+    let scratch = ImportScratch::create()?;
     let base = scratch.join("base.cf");
     let tree = scratch.join("expected");
     crate::mssql_dump::config_save::write_rows_cf(effective.published, &base, false)?;
@@ -328,7 +448,11 @@ fn prepare_locked(
         bail!("file database changed during preflight; nothing written");
     }
     crate::cancel::check()?;
+    if let Some(control) = &read_control {
+        (control.check)()?;
+    }
     Ok(Plan {
+        read_control,
         summary: Preflight {
             target,
             files: changed,
@@ -411,6 +535,44 @@ fn references(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn published_recovery_error_survives_late_cancellation() {
+        let error = finish_publication(
+            Err(ibcmd_filedb::Error::Published {
+                recovery: PathBuf::from("retained.bak.new"),
+                error: std::io::Error::other("injected backup rename failure"),
+            }),
+            || Err(crate::cancel::Cancelled.into()),
+        )
+        .unwrap_err();
+        assert!(!crate::cancel::is_cancelled(&error));
+        assert!(error.to_string().contains("database was published"));
+        assert!(error.to_string().contains("retained.bak.new"));
+    }
+    #[test]
+    fn owned_scratch_is_removed_on_success_error_and_unwind() {
+        let success = ImportScratch::create().unwrap();
+        let path = success.path.clone();
+        fs::write(success.join("config.cf"), b"owned").unwrap();
+        drop(success);
+        assert!(!path.exists());
+        let error_path = std::sync::Mutex::new(None);
+        let fail = || -> Result<()> {
+            let scratch = ImportScratch::create()?;
+            *error_path.lock().unwrap() = Some(scratch.path.clone());
+            fs::write(scratch.join("config.cf"), b"owned")?;
+            bail!("preflight cancelled");
+        };
+        assert!(fail().is_err());
+        assert!(!error_path.lock().unwrap().as_ref().unwrap().exists());
+        let unwind_path = std::sync::Mutex::new(None);
+        let _ = std::panic::catch_unwind(|| {
+            let scratch = ImportScratch::create().unwrap();
+            *unwind_path.lock().unwrap() = Some(scratch.path.clone());
+            panic!("injected interruption");
+        });
+        assert!(!unwind_path.lock().unwrap().as_ref().unwrap().exists());
+    }
     #[test]
     fn reference_looking_plain_text_is_not_a_dependency() {
         let doc=MetadataXml::parse(br#"<MetaDataObject><Catalog><Properties><Comment>Catalog.DoesNotExist</Comment><Synonym><item><content>Document.AlsoMissing</content></item></Synonym></Properties></Catalog></MetaDataObject>"#).unwrap();

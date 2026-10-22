@@ -156,6 +156,7 @@ impl<'a> Pager<'a> {
     }
 
     pub(crate) fn write_page(&mut self, page: u32, data: &[u8]) -> Result<()> {
+        self.check_read()?;
         debug_assert_eq!(data.len(), self.page_size);
         if page >= self.page_count {
             return Err(corrupt(format!("Запись за пределы файла: страница {page}")));
@@ -169,6 +170,7 @@ impl<'a> Pager<'a> {
     /// Appends a zero page at the end of the file and returns its number.
     /// The header page count is written by [`Pager::flush_header`].
     pub(crate) fn append_page(&mut self) -> Result<u32> {
+        self.check_read()?;
         let page = self.page_count;
         if page == u32::MAX {
             return Err(Error::Refused(

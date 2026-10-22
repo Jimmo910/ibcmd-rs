@@ -12,11 +12,15 @@ pub struct ReadLimits {
     pub max_object_bytes: u64,
 }
 
+#[derive(Clone)]
 pub(crate) struct ReadBudget {
+    state: std::sync::Arc<std::sync::Mutex<Counters>>,
+    check: std::sync::Arc<dyn Fn() -> Result<()> + Send + Sync>,
+}
+struct Counters {
     records: usize,
     binary_bytes: u64,
     object_bytes: u64,
-    check: Box<dyn Fn() -> Result<()> + Send + Sync>,
 }
 impl ReadBudget {
     pub(crate) fn new(
@@ -24,10 +28,12 @@ impl ReadBudget {
         check: impl Fn() -> Result<()> + Send + Sync + 'static,
     ) -> Self {
         Self {
-            records: limits.max_records,
-            binary_bytes: limits.max_binary_bytes,
-            object_bytes: limits.max_object_bytes,
-            check: Box::new(check),
+            state: std::sync::Arc::new(std::sync::Mutex::new(Counters {
+                records: limits.max_records,
+                binary_bytes: limits.max_binary_bytes,
+                object_bytes: limits.max_object_bytes,
+            })),
+            check: std::sync::Arc::new(check),
         }
     }
     pub(crate) fn check(&self) -> Result<()> {
@@ -35,7 +41,11 @@ impl ReadBudget {
     }
     pub(crate) fn object(&mut self, bytes: u64) -> Result<()> {
         self.check()?;
-        self.object_bytes = self
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::Refused("read budget lock poisoned".into()))?;
+        state.object_bytes = state
             .object_bytes
             .checked_sub(bytes)
             .ok_or_else(|| Error::Refused("file database object materialization limit".into()))?;
@@ -43,16 +53,20 @@ impl ReadBudget {
     }
     pub(crate) fn record(&mut self, bytes: u64) -> Result<()> {
         self.check()?;
-        let records = self
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::Refused("read budget lock poisoned".into()))?;
+        let records = state
             .records
             .checked_sub(1)
             .ok_or_else(|| Error::Refused("file database record limit".into()))?;
-        let binary = self
+        let binary = state
             .binary_bytes
             .checked_sub(bytes)
             .ok_or_else(|| Error::Refused("file database binary materialization limit".into()))?;
-        self.records = records;
-        self.binary_bytes = binary;
+        state.records = records;
+        state.binary_bytes = binary;
         Ok(())
     }
 }

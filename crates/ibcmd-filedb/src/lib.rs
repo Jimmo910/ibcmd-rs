@@ -29,7 +29,7 @@ mod record;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 pub use config::ConfigRow;
@@ -239,7 +239,15 @@ fn index_entries(
     let table = config_table(tables, table)?;
     let object = object::Object::open(pager, table.index_page)?;
     let data = object.read_all(pager)?;
-    index::read_entries(&data, pager.page_size())
+    index::read_entries_checked(&data, pager.page_size(), &mut |key_len| {
+        pager.check_read()?;
+        if key_len != 0 {
+            pager.materialize_record(0)?;
+            pager
+                .materialize_object((key_len * 2 + std::mem::size_of::<(u32, Vec<u8>)>()) as u64)?;
+        }
+        Ok(())
+    })
 }
 
 fn verify_index(
@@ -306,6 +314,7 @@ pub struct WriteSession {
     locale: String,
     collation: Collation,
     tables: BTreeMap<String, Table>,
+    read_budget: Option<read_limits::ReadBudget>,
 }
 
 /// Locks the infobase for a write and checks it can be written: the
@@ -313,10 +322,40 @@ pub struct WriteSession {
 /// indexes of its configuration tables -- keys the platform wrote -- are the
 /// keys this crate would write.
 pub fn open_for_write(db_path: &Path) -> Result<WriteSession> {
+    open_for_write_budget(db_path, None, &mut |_| Ok(()))
+}
+
+/// Bounded write-session preflight. The identity guard receives the actual
+/// locked descriptor BEFORE parsing any database descriptors. The budget is
+/// cumulative across metadata, indexes, repeated row reads and copy verification.
+pub fn open_for_write_with_limits(
+    db_path: &Path,
+    limits: ReadLimits,
+    check: impl Fn() -> Result<()> + Send + Sync + 'static,
+    guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
+) -> Result<WriteSession> {
+    check()?;
+    open_for_write_budget(
+        db_path,
+        Some(read_limits::ReadBudget::new(limits, check)),
+        guard,
+    )
+}
+
+fn open_for_write_budget(
+    db_path: &Path,
+    read_budget: Option<read_limits::ReadBudget>,
+    guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
+) -> Result<WriteSession> {
     let path = existing_data_file(db_path)?;
     let file = lock::open_locked(&path, Mode::Write)?;
+    guard(&file.metadata()?)?;
+    if let Some(budget) = &read_budget {
+        budget.check()?;
+    }
     let (locale, tables) = {
         let mut pager = Pager::new(&file)?;
+        pager.set_read_budget(read_budget.clone());
         let (locale, tables) = descr::read_tables(&mut pager)?;
         let collation = known_collation(&locale)?;
         for table in CONFIG_TABLES {
@@ -345,10 +384,34 @@ pub fn open_for_write(db_path: &Path) -> Result<WriteSession> {
         locale,
         collation,
         tables,
+        read_budget,
     })
 }
 
 impl WriteSession {
+    fn pager<'a>(&self, file: &'a File) -> Result<Pager<'a>> {
+        self.check_read()?;
+        let mut pager = Pager::new(file)?;
+        pager.set_read_budget(self.read_budget.clone());
+        Ok(pager)
+    }
+    fn check_read(&self) -> Result<()> {
+        self.read_budget
+            .as_ref()
+            .map_or(Ok(()), |budget| budget.check())
+    }
+    fn copy_checked(&self, source: &mut impl Read, target: &mut impl Write) -> Result<()> {
+        let mut buffer = vec![0; 1 << 20];
+        loop {
+            self.check_read()?;
+            let count = source.read(&mut buffer)?;
+            if count == 0 {
+                return Ok(());
+            }
+            target.write_all(&buffer[..count])?;
+        }
+    }
+
     /// Metadata from the descriptor holding this write lock.
     pub fn metadata(&self) -> std::io::Result<fs::Metadata> {
         self.file.metadata()
@@ -364,13 +427,13 @@ impl WriteSession {
 
     /// Rows of a configuration table, read through the locked descriptor.
     pub fn config_rows(&mut self, table: &str) -> Result<Vec<ConfigRow>> {
-        let mut pager = Pager::new(&self.file)?;
+        let mut pager = self.pager(&self.file)?;
         read_rows(&mut pager, &self.tables, table, true)
     }
 
     /// Row headers of a configuration table, without the binary data.
     pub fn config_headers(&mut self, table: &str) -> Result<Vec<ConfigRow>> {
-        let mut pager = Pager::new(&self.file)?;
+        let mut pager = self.pager(&self.file)?;
         read_rows(&mut pager, &self.tables, table, false)
     }
 
@@ -396,6 +459,7 @@ impl WriteSession {
             file.seek(SeekFrom::Start(0))?;
             let mut buffer = vec![0; 1 << 20];
             loop {
+                self.check_read()?;
                 let n = file.read(&mut buffer)?;
                 if n == 0 {
                     break;
@@ -512,7 +576,7 @@ impl WriteSession {
                     .open(&backup_work)?;
                 let mut original = &self.file;
                 original.seek(SeekFrom::Start(0))?;
-                std::io::copy(&mut original.take(u64::MAX), &mut out)?;
+                self.copy_checked(&mut original, &mut out)?;
                 out.sync_all()?;
             }
             Ok(())
@@ -526,20 +590,19 @@ impl WriteSession {
             let _ = fs::remove_file(&backup_work);
             return Err(error);
         }
-        // Publication boundary: no cancellable work remains between these renames.
-        if let Err(error) = fs::rename(&backup_work, &backup) {
-            let _ = fs::remove_file(&work);
-            let _ = fs::remove_file(&backup_work);
-            return Err(Error::Io(error));
-        }
+        // Publish the database FIRST. Until this succeeds the previous backup
+        // is untouched. A later backup rename failure retains .bak.new (the
+        // complete pre-write database) and the previous .bak; no rollback can
+        // destroy the only recovery generation.
         let WriteSession { path, file, .. } = self;
-        // Windows cannot replace a file that is open; the exclusive handle goes
-        // first there. On Unix the lock is held across the rename.
         #[cfg(windows)]
         drop(file);
-        if let Err(err) = fs::rename(&work, &path) {
-            let _ = fs::remove_file(&work);
-            return Err(Error::Io(err));
+        if let Err(error) =
+            publish_files(&work, &path, &backup_work, &backup, |a, b| fs::rename(a, b))
+        {
+            #[cfg(unix)]
+            drop(file);
+            return Err(error);
         }
         #[cfg(unix)]
         {
@@ -566,12 +629,12 @@ impl WriteSession {
     ) -> Result<ReplaceReport> {
         let mut original = &self.file;
         original.seek(SeekFrom::Start(0))?;
-        std::io::copy(&mut original, copy)?;
+        self.copy_checked(&mut original, copy)?;
         keep_owner_and_mode(&self.file, copy, &self.path)?;
 
         // The table's pages are its own: nothing else would change with them.
         let (pages_before, rows_before, others) = {
-            let mut pager = Pager::new(&self.file)?;
+            let mut pager = self.pager(&self.file)?;
             // Owner of every page, as an index into `names`: a few bytes a page
             // whatever the size of the infobase.
             let mut names = vec![
@@ -612,7 +675,7 @@ impl WriteSession {
             (pager.page_count(), rows_before, others)
         };
 
-        let mut pager = Pager::new(&*copy)?;
+        let mut pager = self.pager(&*copy)?;
         let written_pages = config::replace(&mut pager, target, rows, self.collation)?;
         pager.sync()?;
         let pages_after = pager.page_count();
@@ -624,7 +687,7 @@ impl WriteSession {
         }
 
         // Every page the write did not own is the original's, byte for byte.
-        let mut before = Pager::new(&self.file)?;
+        let mut before = self.pager(&self.file)?;
         let mut a = vec![0u8; pager.page_size()];
         let mut b = vec![0u8; pager.page_size()];
         for page in 1..pages_before {
@@ -663,6 +726,30 @@ impl WriteSession {
             backup: backup.to_path_buf(),
         })
     }
+}
+
+// Two-step publication deliberately has a recoverable partial-success state:
+// if updating backup fails, the new database is published and the old database
+// remains in backup_work. Never silently discard either backup generation.
+fn publish_files(
+    work: &Path,
+    path: &Path,
+    backup_work: &Path,
+    backup: &Path,
+    mut rename: impl FnMut(&Path, &Path) -> std::io::Result<()>,
+) -> Result<()> {
+    if let Err(error) = rename(work, path) {
+        let _ = fs::remove_file(work);
+        let _ = fs::remove_file(backup_work);
+        return Err(Error::Io(error));
+    }
+    if let Err(error) = rename(backup_work, backup) {
+        return Err(Error::Published {
+            recovery: backup_work.to_path_buf(),
+            error,
+        });
+    }
+    Ok(())
 }
 
 /// The new data file gets the original's permissions and, on Unix, its owner
@@ -713,4 +800,50 @@ pub fn rebuild_config_index_in_place(db_path: &Path, table: &str) -> Result<()> 
     let t = config_table(&tables, table)?;
     config::reindex(&mut pager, &t, known_collation(&locale)?)?;
     pager.sync()
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+    #[test]
+    fn each_publication_failure_preserves_both_backup_generations() {
+        for fail_at in 1..=2 {
+            let dir = std::env::temp_dir()
+                .join(format!("filedb-publish-{}-{fail_at}", std::process::id()));
+            fs::create_dir(&dir).unwrap();
+            let data = dir.join("data");
+            let work = dir.join("work");
+            let backup = dir.join("backup");
+            let pending = dir.join("pending");
+            fs::write(&data, b"A").unwrap();
+            fs::write(&backup, b"B").unwrap();
+            fs::write(&work, b"C").unwrap();
+            fs::write(&pending, b"A").unwrap();
+            let mut step = 0;
+            let error = publish_files(&work, &data, &pending, &backup, |a, b| {
+                step += 1;
+                if step == fail_at {
+                    Err(std::io::Error::other("injected EIO"))
+                } else {
+                    fs::rename(a, b)
+                }
+            })
+            .unwrap_err();
+            assert_eq!(fs::read(&backup).unwrap(), b"B");
+            if fail_at == 1 {
+                assert_eq!(fs::read(&data).unwrap(), b"A");
+                assert!(!pending.exists());
+                assert!(!work.exists());
+            } else {
+                assert_eq!(fs::read(&data).unwrap(), b"C");
+                assert_eq!(fs::read(&pending).unwrap(), b"A");
+                assert!(matches!(error, Error::Published { .. }));
+                assert!(error.to_string().contains("database was published"));
+                assert!(!work.exists());
+                // No rollback is attempted: even an unavailable filesystem
+                // cannot erase recovery A or the previous generation B.
+            }
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
 }

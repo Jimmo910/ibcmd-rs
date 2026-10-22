@@ -211,3 +211,95 @@ fn a_corrupted_object_length_is_refused_without_allocating_it() {
     assert!(matches!(FileDb::open(&dir.0), Err(Error::Corrupt(_))));
     assert!(open_for_write(&dir.0).is_err());
 }
+
+#[test]
+fn bounded_write_checks_identity_before_parsing_and_shares_budget_between_reads() {
+    use ibcmd_filedb::{ReadLimits, open_for_write_with_limits};
+    let dir = unpack("tiny");
+    let original = fs::read(dir.0.join("1Cv8.1CD")).unwrap();
+    let limits = ReadLimits {
+        max_records: 100_000,
+        max_binary_bytes: 1 << 30,
+        max_object_bytes: 1 << 30,
+    };
+    fs::write(dir.0.join("1Cv8.1CD"), b"not a database").unwrap();
+    let error = match open_for_write_with_limits(&dir.0, limits, || Ok(()), &mut |_| {
+        Err(Error::Refused("startup identity rejected".into()))
+    }) {
+        Ok(_) => panic!("identity accepted"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("startup identity rejected"));
+    fs::write(dir.0.join("1Cv8.1CD"), &original).unwrap();
+    let bytes: u64 = FileDb::open(&dir.0)
+        .unwrap()
+        .config_rows("CONFIG")
+        .unwrap()
+        .iter()
+        .map(|r| r.binary.len() as u64)
+        .sum();
+    assert!(bytes > 0);
+    let mut session = open_for_write_with_limits(
+        &dir.0,
+        ReadLimits {
+            max_binary_bytes: bytes,
+            ..limits
+        },
+        || Ok(()),
+        &mut |_| Ok(()),
+    )
+    .unwrap();
+    session.config_rows("CONFIG").unwrap();
+    assert!(
+        session
+            .config_rows("CONFIG")
+            .unwrap_err()
+            .to_string()
+            .contains("materialization limit")
+    );
+    assert_eq!(fs::read(dir.0.join("1Cv8.1CD")).unwrap(), original);
+}
+
+#[test]
+fn bounded_write_cancels_snapshot_and_copy_without_publication() {
+    use ibcmd_filedb::{ReadLimits, open_for_write_with_limits};
+    use std::sync::{Arc, atomic::AtomicBool};
+    let dir = unpack("tiny");
+    let original = fs::read(dir.0.join("1Cv8.1CD")).unwrap();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let callback = cancelled.clone();
+    let session = open_for_write_with_limits(
+        &dir.0,
+        ReadLimits {
+            max_records: 1_000_000,
+            max_binary_bytes: 1 << 30,
+            max_object_bytes: 1 << 30,
+        },
+        move || {
+            if callback.load(Ordering::SeqCst) {
+                Err(Error::Refused("budget cancelled".into()))
+            } else {
+                Ok(())
+            }
+        },
+        &mut |_| Ok(()),
+    )
+    .unwrap();
+    cancelled.store(true, Ordering::SeqCst);
+    assert!(
+        session
+            .snapshot()
+            .unwrap_err()
+            .to_string()
+            .contains("budget cancelled")
+    );
+    assert!(
+        session
+            .replace("CONFIGSAVE", &[])
+            .unwrap_err()
+            .to_string()
+            .contains("budget cancelled")
+    );
+    assert_eq!(fs::read(dir.0.join("1Cv8.1CD")).unwrap(), original);
+    assert!(!backup_file(&dir.0).exists());
+}
