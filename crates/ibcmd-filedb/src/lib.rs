@@ -377,46 +377,45 @@ impl WriteSession {
     /// Digest of the locked data file including its filesystem identity.
     /// Suitable for a preflight/commit compare-and-swap token.
     pub fn snapshot(&self) -> Result<String> {
-        use sha2::{Digest, Sha256};
-        self.check_binding()?;
-        let mut hash = Sha256::new();
-        let metadata = self.file.metadata()?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            hash.update(metadata.dev().to_le_bytes());
-            hash.update(metadata.ino().to_le_bytes());
-        }
         #[cfg(not(unix))]
         {
-            // Until handle identity is measured on this OS, refuse this new API.
-            return Err(Error::Refused(
+            Err(Error::Refused(
                 "file import CAS identity is not supported on this OS".into(),
-            ));
+            ))
         }
-        let mut file = &self.file;
-        file.seek(SeekFrom::Start(0))?;
-        let mut buffer = vec![0; 1 << 20];
-        loop {
-            let n = file.read(&mut buffer)?;
-            if n == 0 {
-                break;
+        #[cfg(unix)]
+        {
+            use sha2::{Digest, Sha256};
+            use std::os::unix::fs::MetadataExt;
+            self.check_binding()?;
+            let mut hash = Sha256::new();
+            let metadata = self.file.metadata()?;
+            hash.update(metadata.dev().to_le_bytes());
+            hash.update(metadata.ino().to_le_bytes());
+            let mut file = &self.file;
+            file.seek(SeekFrom::Start(0))?;
+            let mut buffer = vec![0; 1 << 20];
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hash.update(&buffer[..n]);
             }
-            hash.update(&buffer[..n]);
+            self.check_binding()?;
+            Ok(format!("{:x}", hash.finalize()))
         }
-        self.check_binding()?;
-        Ok(format!("{:x}", hash.finalize()))
     }
 
     fn check_binding(&self) -> Result<()> {
         let current = fs::symlink_metadata(&self.path)?;
-        let original = self.file.metadata()?;
         if !current.is_file() || current.file_type().is_symlink() {
             return Err(Error::Refused("file database path was rebound".into()));
         }
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
+            let original = self.file.metadata()?;
             if (current.dev(), current.ino()) != (original.dev(), original.ino()) {
                 return Err(Error::Refused("file database identity changed".into()));
             }

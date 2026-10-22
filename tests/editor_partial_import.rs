@@ -1,4 +1,5 @@
 //! Partial staging never supplies a sparse tree to a full importer.
+#![cfg(unix)]
 use ibcmd_rs::{
     file_import::{self, Selection},
     platform,
@@ -412,4 +413,47 @@ fn cancellation_at_the_final_policy_gate_is_checked_after_long_checks() {
         fs::read(ibcmd_filedb::backup_file(&db)).unwrap(),
         b"old backup"
     );
+}
+
+#[test]
+fn changed_import_uses_native_sync_versions_and_refuses_stale_staging() {
+    let (db, tree) = setup();
+    fs::write(
+        tree.join(MODULE),
+        fs::read_to_string(tree.join(MODULE)).unwrap() + "\r\n// local change\r\n",
+    )
+    .unwrap();
+    let selection = Selection {
+        changed: true,
+        ..Selection::default()
+    };
+    let plan = file_import::prepare(
+        &db,
+        &tree,
+        &selection,
+        platform::parse_flag("8.5.1").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(plan.summary().files, vec![MODULE]);
+    // Publish another staged version after the synchronization baseline.
+    prepare(&db, &tree, MODULE).publish(&db).unwrap();
+    fs::write(
+        tree.join(MODULE),
+        fs::read(fixture().join("tiny-xml").join(MODULE)).unwrap(),
+    )
+    .unwrap();
+    let before = fs::read(db.join("1Cv8.1CD")).unwrap();
+    let error = file_import::prepare(
+        &db,
+        &tree,
+        &selection,
+        platform::parse_flag("8.5.1").unwrap(),
+    )
+    .err()
+    .unwrap();
+    assert!(
+        format!("{error:#}").contains("target changed since the synchronized export"),
+        "{error:#}"
+    );
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
 }
