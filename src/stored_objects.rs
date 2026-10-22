@@ -820,6 +820,7 @@ pub fn normalize_path(path: &str) -> Option<String> {
 /// it read is kept until the database's `versions` row changes.
 pub struct StoredConfiguration {
     source: ConfigSource,
+    rows_snapshot: Option<Arc<BTreeMap<String, Arc<Vec<u8>>>>>,
     platform: PlatformSpec,
     inventory: Option<Inventory>,
     /// By full name, for the inventory's digest.
@@ -831,11 +832,24 @@ impl StoredConfiguration {
     pub fn new(source: ConfigSource, platform: PlatformSpec) -> Self {
         Self {
             source,
+            rows_snapshot: None,
             platform,
             inventory: None,
             exports: HashMap::new(),
             cached_bytes: 0,
         }
+    }
+
+    /// Same engine and offline reader, with caller-confined immutable rows instead
+    /// of reopening source paths. `source` retains the operator's target identity.
+    pub(crate) fn from_rows_snapshot(
+        source: ConfigSource,
+        platform: PlatformSpec,
+        rows: BTreeMap<String, Arc<Vec<u8>>>,
+    ) -> Self {
+        let mut configuration = Self::new(source, platform);
+        configuration.rows_snapshot = Some(Arc::new(rows));
+        configuration
     }
 
     pub fn source(&self) -> &ConfigSource {
@@ -876,6 +890,9 @@ impl StoredConfiguration {
             }
             body(inventory.as_mut().expect("read above"), table)
         };
+        if let Some(rows) = &self.rows_snapshot {
+            return crate::mssql_dump::with_memory_rows_table(rows, run);
+        }
         match source {
             ConfigSource::RowsDir(dir) => with_rows_dir_table(dir, run),
             ConfigSource::Database { sql, database } => with_database_table(sql, database, run),
@@ -1010,6 +1027,7 @@ impl StoredConfiguration {
         dump_config_with(
             &args,
             DumpHooks {
+                rows_snapshot: self.rows_snapshot.clone(),
                 sql,
                 sink: Some(sink.clone()),
             },

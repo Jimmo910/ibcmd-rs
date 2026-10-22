@@ -27,6 +27,7 @@ mssql-live-tests = []
 research-corpus-tests = []
 
 [dependencies]
+rmcp = { version = "=3.6.0", default-features = false, features = ["server", "transport-io"] }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 flate2 = "1.1"
@@ -35,7 +36,7 @@ flate2 = "1.1"
 # Browser lookups for `host\instance`. Windows logins (SSPI) are added below.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tiberius = { version = "0.13", default-features = false, features = ["tds73", "rustls", "sql-browser-tokio"] }
-tokio = { version = "1", default-features = false, features = ["rt", "net", "time"] }
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "sync", "macros", "rt-multi-thread"] }
 tokio-util = { version = "0.7", default-features = false, features = ["compat"] }
 ibcmd-core = { path = "crates/ibcmd-core" }
 ibcmd-cf = { path = "crates/ibcmd-cf" }
@@ -59,6 +60,9 @@ walkdir = "2.5"
 # The database section of native ibcmd's YAML config (`--config`), read by
 # src/settings.rs; the maintained successor of serde_yaml.
 yaml_serde = "0.10"
+
+[dev-dependencies]
+rmcp = { version = "=3.6.0", default-features = false, features = ["client", "transport-child-process"] }
 
 [target.'cfg(unix)'.dependencies]
 # Original source directory-relative NOFOLLOW reads; same pinned fs package.

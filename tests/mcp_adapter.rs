@@ -1,0 +1,270 @@
+//! Real SDK client launches the binary over supported MCP stdio; no native platform.
+use rmcp::{ServiceExt, model::*, transport::TokioChildProcess};
+use serde_json::{Value, json};
+use std::{fs, path::PathBuf, process::Stdio};
+
+fn fixture_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/external")
+}
+fn corpus() -> (PathBuf, PathBuf, PathBuf) {
+    let root = std::env::temp_dir().join(format!("ibcmd-mcp-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join("rows")).unwrap();
+    fs::create_dir_all(root.join("source")).unwrap();
+    let cf = fixture_root().join("home_page/one_column/input.cf");
+    let limits =
+        ibcmd_core::limits::ResourceLimits::for_input_bytes(fs::metadata(&cf).unwrap().len());
+    let profile = ibcmd_core::artifact::StorageProfileId::parse("storage:cf-cli").unwrap();
+    let archive =
+        ibcmd_cf::archive::decode_packed_archive(fs::File::open(cf).unwrap(), limits, profile)
+            .unwrap();
+    for entry in archive.entries() {
+        fs::write(
+            root.join("rows")
+                .join(format!("{}__part0.bin", entry.name())),
+            entry.payload(),
+        )
+        .unwrap();
+    }
+    let settings = root.join("ibcmd-rs.toml");
+    fs::write(
+        &settings,
+        "[[database]]\nname = \"demo\"\nplatform = \"8.3.27\"\nrows-dir = \"rows\"\n",
+    )
+    .unwrap();
+    let policy = root.join("mcp.toml");
+    fs::write(
+        &policy,
+        "[mcp]\ndatabase = \"demo\"\nsource-root = \"source\"\n",
+    )
+    .unwrap();
+    (root, settings, policy)
+}
+async fn call(
+    client: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    name: &str,
+    args: Value,
+) -> CallToolResult {
+    client
+        .call_tool(
+            CallToolRequestParams::new(name.to_owned())
+                .with_arguments(args.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap()
+}
+fn value(result: &CallToolResult) -> Value {
+    assert_eq!(result.is_error, Some(false), "{result:?}");
+    serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap()
+}
+#[tokio::test]
+async fn real_mcp_client_reads_fixed_fixture_and_enforces_policy() {
+    let (root, settings, policy) = corpus();
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
+    command
+        .arg("mcp")
+        .arg("--settings")
+        .arg(&settings)
+        .arg("--policy")
+        .arg(&policy)
+        .stderr(Stdio::piped());
+    let client = ().serve(TokioChildProcess::new(command).unwrap()).await.unwrap();
+    let tools = client.list_all_tools().await.unwrap();
+    assert_eq!(tools.len(), 6);
+    assert!(
+        tools
+            .iter()
+            .all(|t| t.input_schema.get("additionalProperties") == Some(&json!(false)))
+    );
+    let tree = value(&call(&client, "tree", json!({})).await);
+    assert!(!tree["nodes"].as_array().unwrap().is_empty());
+    // Select the configuration itself and prove export/read/compare use the real engine.
+    let exported = value(&call(&client, "export", json!({"objects":["Configuration"]})).await);
+    let files = exported["objects"][0]["files"].as_object().unwrap();
+    assert!(!files.is_empty());
+    let reference = root.join("cli-reference");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+        .args(["cf", "export"])
+        .arg(fixture_root().join("home_page/one_column/input.cf"))
+        .arg(&reference)
+        .args(["--source-version", "2.20", "--overwrite"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for (path, file) in files {
+        assert_eq!(file["encoding"], "utf-8", "fixture should be text: {path}");
+        assert_eq!(
+            fs::read(reference.join(path)).unwrap(),
+            file["content"].as_str().unwrap().as_bytes()
+        );
+        let target = root.join("source").join(path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, file["content"].as_str().unwrap()).unwrap();
+    }
+    let path = files
+        .keys()
+        .find(|path| path.as_str() == "Configuration.xml")
+        .unwrap();
+    let read = value(&call(&client, "read", json!({"path":path})).await);
+    assert_eq!(read["file"], files[path]);
+    for tool in ["status", "compare"] {
+        let comparison = value(&call(&client, tool, json!({"objects":["Configuration"]})).await);
+        assert!(
+            comparison["objects"][0]["files"]
+                .as_object()
+                .unwrap()
+                .values()
+                .all(|file| file["same"] == true)
+        );
+    }
+    fs::write(root.join("source").join(path), "changed").unwrap();
+    let changed = value(&call(&client, "compare", json!({"objects":["Configuration"]})).await);
+    assert_eq!(changed["objects"][0]["files"][path]["same"], false);
+    #[cfg(unix)]
+    {
+        // Source and row symlinks are refused, even if they point inside the root.
+        let original = root.join("source").join(path);
+        let saved = root.join("source").join("saved.xml");
+        fs::rename(&original, &saved).unwrap();
+        std::os::unix::fs::symlink(&saved, &original).unwrap();
+        assert_eq!(
+            call(&client, "compare", json!({"objects":["Configuration"]}))
+                .await
+                .is_error,
+            Some(true)
+        );
+        let row = fs::read_dir(root.join("rows"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let moved = root.join("saved-row.bin");
+        fs::rename(&row, &moved).unwrap();
+        std::os::unix::fs::symlink(&moved, &row).unwrap();
+        assert_eq!(call(&client, "tree", json!({})).await.is_error, Some(true));
+        // Move the symlink to evidence rather than deleting it, then restore input.
+        fs::rename(&row, root.join("row-symlink-evidence")).unwrap();
+        fs::rename(moved, row).unwrap();
+    }
+    for args in [
+        json!({"server":"other"}),
+        json!({"database":"other"}),
+        json!({"settings":"elsewhere"}),
+    ] {
+        assert_eq!(call(&client, "tree", args).await.is_error, Some(true));
+    }
+    for path in [
+        "../secret",
+        "/etc/passwd",
+        "Catalogs/../secret",
+        "Catalogs\\secret",
+        "Catalogs/x:secret",
+    ] {
+        assert_eq!(
+            call(&client, "read", json!({"path":path})).await.is_error,
+            Some(true)
+        );
+    }
+    assert_eq!(
+        call(&client, "import", json!({"objects":["Configuration"]}))
+            .await
+            .is_error,
+        Some(true)
+    );
+    assert!(
+        client
+            .call_tool(CallToolRequestParams::new("unknown"))
+            .await
+            .is_err()
+    );
+    fs::write(
+        &policy,
+        "[mcp]\ndatabase = \"other\"\nsource-root = \"source\"\n",
+    )
+    .unwrap();
+    assert_eq!(call(&client, "tree", json!({})).await.is_error, Some(true));
+    // Restore original policy, then replace the root: identity remains pinned.
+    fs::write(
+        &policy,
+        "[mcp]\ndatabase = \"demo\"\nsource-root = \"source\"\n",
+    )
+    .unwrap();
+    fs::rename(root.join("rows"), root.join("old-rows")).unwrap();
+    fs::create_dir(root.join("rows")).unwrap();
+    assert_eq!(call(&client, "tree", json!({})).await.is_error, Some(true));
+    client.cancel().await.unwrap();
+    // Unique external TMPDIR evidence retained; no cleanup outside Trash.
+}
+
+#[derive(Clone)]
+struct LegacyClient;
+impl rmcp::ClientHandler for LegacyClient {
+    fn get_info(&self) -> ClientConfig {
+        ClientConfig::new(
+            ClientCapabilities::default(),
+            Implementation::new("ibcmd-mcp-test", "1"),
+        )
+        .with_protocol_version(ProtocolVersion::V_2025_11_25)
+    }
+}
+#[tokio::test]
+async fn legacy_initialize_and_modern_discover_are_supported() {
+    use rmcp::service::{ClientLifecycleMode, ClientServiceExt};
+    let (_root, settings, policy) = corpus();
+    for modern in [false, true] {
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
+        command
+            .arg("mcp")
+            .arg("--settings")
+            .arg(&settings)
+            .arg("--policy")
+            .arg(&policy)
+            .stderr(Stdio::piped());
+        let mode = if modern {
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            }
+        } else {
+            ClientLifecycleMode::Initialize
+        };
+        let client = LegacyClient
+            .serve_with_lifecycle(TokioChildProcess::new(command).unwrap(), mode)
+            .await
+            .unwrap();
+        let info = client.peer_info().unwrap();
+        assert_eq!(info.server_info.as_ref().unwrap().name, "ibcmd-rs");
+        assert_eq!(
+            info.protocol_version,
+            if modern {
+                ProtocolVersion::V_2026_07_28
+            } else {
+                ProtocolVersion::V_2025_11_25
+            }
+        );
+        assert!(info.capabilities.tools.is_some());
+        assert_eq!(client.list_all_tools().await.unwrap().len(), 6);
+        // Send a genuine MCP cancellation notification through the SDK handle.
+        let request = ClientRequest::CallToolRequest(CallToolRequest::new(
+            CallToolRequestParams::new("export").with_arguments(
+                json!({"objects":["Configuration"]})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        ));
+        let pending = client
+            .send_cancellable_request(request, rmcp::service::PeerRequestOptions::no_options())
+            .await
+            .unwrap();
+        pending
+            .cancel(Some("integration cancellation".into()))
+            .await
+            .unwrap();
+        assert_eq!(client.list_all_tools().await.unwrap().len(), 6);
+        client.cancel().await.unwrap();
+    }
+}

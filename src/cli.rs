@@ -39,6 +39,8 @@ pub enum Commands {
     /// stdout in Content-Length frames, as a language server; one process per
     /// editor window. Not the platform's `ibcmd server`.
     Serve(ServeArgs),
+    /// Serve MCP tools over local stdio with a fixed operator-owned settings file.
+    Mcp(crate::mcp::McpArgs),
     /// What `serve --stdio` does with the objects of a configuration, from
     /// the command line: its tree, the comparison with a source folder, one
     /// file as the export writes it, the export of selected objects.
