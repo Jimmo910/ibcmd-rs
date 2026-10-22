@@ -40,3 +40,11 @@ No native executable or shell is invoked by production code.
 See version-contract-proposal.md for historical rationale and its implementation
 update, plus evidence/native-integration-20261022.md for real six-state acceptance.
 Parent review/PR gate remains; no complete ERP browser/performance or GUI claims.
+
+The typed ConfigDumpInfo codec is integrated narrowly from #362 30b0461: XML
+grammar, row/part types, escaping and native bytes belong to ibcmd-xml; storage
+extraction and canonical routing remain in the adapter. The b46 snapshot/a5 owner
+APIs and separate SQL main view remain unchanged. Six public native XML captures
+are retained for codec byte-parity tests. Later CLI commands/native_versions mode
+and its empty-CONFIG entry point are outside this integration. Inventory capture
+now belongs to the existing config_dump_info adapter. Policy baseline is unchanged.

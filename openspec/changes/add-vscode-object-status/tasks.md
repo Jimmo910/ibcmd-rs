@@ -5,7 +5,7 @@
 - [x] Folder and pinned Git baseline; explicit external cache, no production shell.
 - [x] Cancellation, generation/stale selection and multi-root invalidation tests.
 - [x] Integrate #382 READ backend 644684f2 and constructor test fix c085fccd.
-- [x] Integrate #362 native helper b46cd919 and additive versioned RPC.
+- [x] Integrate #362 b46/a5 helpers and narrow typed codec port from 30b0461; additive versioned RPC.
 - [x] Native/file/cache/reference domains kept separate; snapshot/reference guards.
 - [x] Shared canonical owner helper a5fdd226; explicit nested rollup; unknown for unsupported roles.
 - [x] Real filedb RPC backward compatibility/fullRequired/bad-reference/read-only test.
