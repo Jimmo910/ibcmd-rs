@@ -691,6 +691,12 @@ pub(super) fn unlisted_entries<'a>(
         .collect())
 }
 
+pub(super) fn validate_effective_inventory(blob: &[u8], names: &BTreeSet<String>) -> Result<()> {
+    let origin = VersionsBlobOrigin::MssqlConfigTable;
+    let versions = without_unstored_nil_versions(parse_versions_blob(blob, origin)?, names);
+    validate_versions_inventory(&versions, names, origin)
+}
+
 fn validate_versions_inventory(
     versions: &[ConfigVersionEntry],
     file_names: &BTreeSet<String>,

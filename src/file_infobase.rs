@@ -41,6 +41,11 @@ pub(crate) fn import(
         .file_infobase
         .as_deref()
         .ok_or_else(|| anyhow!("no file infobase"))?;
+    if !args.path_prefix.is_empty() {
+        bail!(
+            "path-prefix is not supported by whole-tree file import; use the verified editor partial import API"
+        );
+    }
     if !args.files.is_empty() {
         bail!("Частичная загрузка файлов в файловую информационную базу пока не поддерживается");
     }
@@ -229,7 +234,7 @@ fn scratch_dir(args: &InfobaseConfigImportArgs) -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn read_cf_entries(path: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
+pub(crate) fn read_cf_entries(path: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
     let length = bytes.len() as u64;
     let archive = ibcmd_cf::archive::decode_packed_archive(
@@ -254,7 +259,10 @@ fn read_cf_entries(path: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
 /// `CONFIGSAVE` rows: every entry split into parts, then the `deleted` row,
 /// stamped with the current time and no attributes, as the platform's import
 /// writes them.
-fn stage_rows(entries: &BTreeMap<String, Vec<u8>>, deleted: &[String]) -> Result<Vec<ConfigRow>> {
+pub(crate) fn stage_rows(
+    entries: &BTreeMap<String, Vec<u8>>,
+    deleted: &[String],
+) -> Result<Vec<ConfigRow>> {
     let now = Timestamp::now_utc();
     let deleted_row = crate::mssql::stage_deleted_row(deleted)?;
     let mut rows = Vec::with_capacity(entries.len() + 1);
