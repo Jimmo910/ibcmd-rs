@@ -59,6 +59,25 @@ pub(crate) fn open_locked(path: &Path, mode: Mode) -> Result<File> {
     Ok(file)
 }
 
+pub(crate) fn lock_read_descriptor(file: &File) -> Result<()> {
+    #[cfg(unix)]
+    {
+        posix_lock(file, Mode::Read).map_err(|error| match error.raw_os_error() {
+            Some(libc::EAGAIN) | Some(libc::EACCES) => {
+                Error::Busy("file database descriptor is busy".into())
+            }
+            _ => Error::Io(error),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        Err(Error::Refused(
+            "descriptor-based file database reading is not supported on this OS".into(),
+        ))
+    }
+}
+
 #[cfg(unix)]
 #[allow(unsafe_code)]
 fn posix_lock(file: &File, mode: Mode) -> std::io::Result<()> {

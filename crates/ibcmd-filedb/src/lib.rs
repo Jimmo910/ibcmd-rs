@@ -98,6 +98,7 @@ pub struct FileDb {
     pager: Pager<'static>,
     locale: String,
     tables: BTreeMap<String, Table>,
+    metadata: fs::Metadata,
 }
 
 impl FileDb {
@@ -105,12 +106,36 @@ impl FileDb {
     pub fn open(db_path: &Path) -> Result<FileDb> {
         let path = existing_data_file(db_path)?;
         let file = lock::open_locked(&path, Mode::Read)?;
+        Self::from_locked_file(file)
+    }
+
+    /// Reads the caller's exact descriptor, without reopening its pathname.
+    /// On Unix acquires the same read lock as open(). Other OSes are refused
+    /// until descriptor sharing/identity has been measured.
+    pub fn from_file(file: File) -> Result<FileDb> {
+        lock::lock_read_descriptor(&file)?;
+        Self::from_locked_file(file)
+    }
+
+    /// Metadata of the descriptor consumed by the reader, for target identity checks.
+    pub fn metadata(&self) -> &fs::Metadata {
+        &self.metadata
+    }
+
+    fn from_locked_file(file: File) -> Result<FileDb> {
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(Error::Refused(
+                "file database descriptor is not a regular file".into(),
+            ));
+        }
         let mut pager = Pager::new(file)?;
         let (locale, tables) = descr::read_tables(&mut pager)?;
         Ok(FileDb {
             pager,
             locale,
             tables,
+            metadata,
         })
     }
 

@@ -2174,6 +2174,11 @@ pub(crate) fn with_file_db_table<T>(
     read(&ConfigTable::active(&sql, ""))
 }
 
+/// Snapshot the same effective file database view as export, without reopening a path.
+pub(crate) fn file_db_rows_from_reader(db: &mut ibcmd_filedb::FileDb) -> Result<BTreeMap<String, Arc<Vec<u8>>>> {
+    Ok(file_infobase::load_from_reader(db)?.into_rows()?.into_iter().map(|(name,bytes)| (name,Arc::new(bytes))).collect())
+}
+
 /// Runs `read` on the Config table of `database`; the view it installs ends
 /// with it.
 pub(crate) fn with_database_table<T>(

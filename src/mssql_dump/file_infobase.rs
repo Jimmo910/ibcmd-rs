@@ -19,6 +19,11 @@ pub(super) fn load(db_path: &Path) -> Result<OfflineRows> {
     let mut db = FileDb::open(db_path)
         .map_err(|err| anyhow!("{err}"))
         .with_context(|| format!("не удалось прочитать файловую базу {}", db_path.display()))?;
+    load_from_reader(&mut db)
+}
+
+/// Effective rows read only through the caller's already locked descriptor.
+pub(super) fn load_from_reader(db: &mut FileDb) -> Result<OfflineRows> {
     let config = assemble(
         db.config_rows("CONFIG").map_err(|err| anyhow!("{err}"))?,
         "CONFIG",
