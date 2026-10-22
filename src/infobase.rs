@@ -331,10 +331,8 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
 pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigExportReport> {
     let config = resolve_connection(args.connection())?;
     if config.postgres()?.is_some() {
-        if args.extension.is_some() || args.base.is_some() || args.sync {
-            bail!(
-                "a PostgreSQL infobase is exported whole: --extension, --base and --sync are not supported yet"
-            );
+        if args.extension.is_some() {
+            bail!("the export of extensions from PostgreSQL is not supported yet");
         }
     } else if config.file_infobase.is_none() {
         ensure_mssql(&config.dbms)?;

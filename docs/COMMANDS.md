@@ -293,8 +293,8 @@ ibcmd infobase config import --dbms=PostgreSQL --db-server=pg01 --db-name=demo -
   правками дерева, и строку `deleted`. Запись идёт одной транзакцией.
   Применяет загрузку штатный `ibcmd infobase config apply`. Перед записью
   подготовка проверяется выгрузкой (`--no-verify` отключает проверку).
-- Расширения, `--base`/`--sync`, `import files` и остальные команды на
-  PostgreSQL не поддерживаются. Формат и замеры:
+- `--base`/`--sync` работают, как для SQL Server. Расширения, `import files`
+  и остальные команды на PostgreSQL не поддерживаются. Формат и замеры:
   [docs/evidence/postgres-storage-20261022.md](evidence/postgres-storage-20261022.md).
 
 ### Файловые базы
