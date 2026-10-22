@@ -41,8 +41,40 @@ pub(crate) fn import(
         .file_infobase
         .as_deref()
         .ok_or_else(|| anyhow!("no file infobase"))?;
+    let (source_root, source_version) = import_source(config, args)?;
+    // The lock is taken before the tree is compiled and held until the stage
+    // is written: an open infobase is refused at once, and nothing changes
+    // CONFIG between the read the stage is built on and the write.
+    let mut session = ibcmd_filedb::open_for_write(data_file).map_err(|err| anyhow!("{err}"))?;
+    let stage = plan_stage(
+        session
+            .config_rows("CONFIG")
+            .map_err(|err| anyhow!("{err}"))?,
+        &source_root,
+        source_version,
+        args,
+    )?;
+    let written = session
+        .replace("CONFIGSAVE", &stage.rows)
+        .map_err(|err| anyhow!("{err}"))
+        .with_context(|| format!("не удалось записать CONFIGSAVE в {}", data_file.display()))?;
+    Ok(stage.report(
+        config,
+        source_root,
+        source_version,
+        "file-infobase-configsave-stage",
+        (written.rows_before, written.rows_after),
+        Some(written.backup),
+    ))
+}
+
+/// The tree an import reads and the XML version it reads it in.
+pub(crate) fn import_source(
+    config: &ConnectionConfig,
+    args: &InfobaseConfigImportArgs,
+) -> Result<(PathBuf, InfobaseConfigSourceVersion)> {
     if !args.files.is_empty() {
-        bail!("Частичная загрузка файлов в файловую информационную базу пока не поддерживается");
+        bail!("Частичная загрузка файлов в эту информационную базу пока не поддерживается");
     }
     let source_root = absolute_path(&args.source_dir)?;
     if !source_root.is_dir() {
@@ -63,17 +95,31 @@ pub(crate) fn import(
             )
         })?
     };
+    Ok((source_root, source_version))
+}
 
-    // The lock is taken before the tree is compiled and held until the stage
-    // is written: an open infobase is refused at once, and nothing changes
-    // CONFIG between the read the stage is built on and the write.
-    let mut session = ibcmd_filedb::open_for_write(data_file).map_err(|err| anyhow!("{err}"))?;
-    let target = crate::mssql_dump::file_infobase_config(
-        session
-            .config_rows("CONFIG")
-            .map_err(|err| anyhow!("{err}"))?,
-    )?;
-    let configuration = tree_configuration_uuid(&source_root)?;
+/// The `CONFIGSAVE` stage of an import, built over the target's `CONFIG`
+/// rows and checked before anything is written.
+pub(crate) struct Stage {
+    /// The rows to write, parts split, `deleted` last.
+    pub(crate) rows: Vec<ConfigRow>,
+    base_free: bool,
+    reason: String,
+    target_rows: usize,
+    verification: Option<crate::mssql::StageVerification>,
+}
+
+/// Builds the stage of `source_root` over the target's `CONFIG` rows: the
+/// whole configuration compiled from the tree when `CONFIG` holds none of
+/// it, else the tree loaded onto its rows (see the module docs).
+pub(crate) fn plan_stage(
+    config_rows: Vec<ConfigRow>,
+    source_root: &Path,
+    source_version: InfobaseConfigSourceVersion,
+    args: &InfobaseConfigImportArgs,
+) -> Result<Stage> {
+    let target = crate::mssql_dump::file_infobase_config(config_rows)?;
+    let configuration = tree_configuration_uuid(source_root)?;
     let (base_free, reason) = match args.stage_mode {
         InfobaseImportStageMode::BaseFree => (true, "asked for (--base-free)".to_string()),
         InfobaseImportStageMode::Patch => (false, "asked for".to_string()),
@@ -101,7 +147,7 @@ pub(crate) fn import(
     };
     if !base_free && !target.published.contains_key(&configuration) {
         bail!(
-            "в CONFIG файловой базы нет конфигурации {configuration}: загрузите дерево без --patch"
+            "в CONFIG информационной базы нет конфигурации {configuration}: загрузите дерево без --patch"
         );
     }
     let crate::mssql_dump::FileInfobaseConfig {
@@ -110,9 +156,9 @@ pub(crate) fn import(
     } = target;
 
     let entries = if base_free {
-        crate::mssql::base_free_cf::base_free_entries(&source_root, source_version)?
+        crate::mssql::base_free_cf::base_free_entries(source_root, source_version)?
     } else {
-        load_onto_target(&source_root, published, source_version, args)?
+        load_onto_target(source_root, published, source_version, args)?
     };
     for service in ["root", "version", "versions"] {
         if !entries.contains_key(service) {
@@ -144,7 +190,7 @@ pub(crate) fn import(
                     } else {
                         crate::mssql::StageKind::Patch
                     },
-                    source_root: &source_root,
+                    source_root,
                     tree: crate::mssql::TreeFiles::Unlisted,
                     removed: &[],
                     path_prefix: &[],
@@ -157,34 +203,50 @@ pub(crate) fn import(
             None
         };
 
-    let rows = stage_rows(&entries, &deleted)?;
-    let written = session
-        .replace("CONFIGSAVE", &rows)
-        .map_err(|err| anyhow!("{err}"))
-        .with_context(|| format!("не удалось записать CONFIGSAVE в {}", data_file.display()))?;
-
-    Ok(InfobaseConfigImportReport {
-        operation: "infobase config import",
-        backend: "file-infobase-configsave-stage",
-        format: "xml",
-        source_version: Some(source_version.as_str().to_string()),
-        dbms: config.dbms.clone(),
-        db_server: config.db_server.clone(),
-        db_name: config.db_name.clone(),
-        db_user: None,
-        native_config: config.native_config.clone(),
-        source_dir: source_root,
-        stage_mode: if base_free { "base-free" } else { "patch" },
-        stage_mode_reason: reason,
-        files: Vec::new(),
-        target_config_rows: stored_names.len() as i64,
-        staged_rows_before: written.rows_before as i64,
-        staged_rows_after: written.rows_after as i64,
-        scripts: Vec::new(),
-        backup: Some(written.backup),
+    Ok(Stage {
+        rows: stage_rows(&entries, &deleted)?,
+        base_free,
+        reason,
+        target_rows: stored_names.len(),
         verification,
-        overrides: None,
     })
+}
+
+impl Stage {
+    /// What the import did once the stage is written: `rows` is the stage
+    /// table's row count before and after.
+    pub(crate) fn report(
+        self,
+        config: &ConnectionConfig,
+        source_root: PathBuf,
+        source_version: InfobaseConfigSourceVersion,
+        backend: &'static str,
+        rows: (usize, usize),
+        backup: Option<PathBuf>,
+    ) -> InfobaseConfigImportReport {
+        InfobaseConfigImportReport {
+            operation: "infobase config import",
+            backend,
+            format: "xml",
+            source_version: Some(source_version.as_str().to_string()),
+            dbms: config.dbms.clone(),
+            db_server: config.db_server.clone(),
+            db_name: config.db_name.clone(),
+            db_user: config.db_user.clone(),
+            native_config: config.native_config.clone(),
+            source_dir: source_root,
+            stage_mode: if self.base_free { "base-free" } else { "patch" },
+            stage_mode_reason: self.reason,
+            files: Vec::new(),
+            target_config_rows: self.target_rows as i64,
+            staged_rows_before: rows.0 as i64,
+            staged_rows_after: rows.1 as i64,
+            scripts: Vec::new(),
+            backup,
+            verification: self.verification,
+            overrides: None,
+        }
+    }
 }
 
 /// The tree loaded onto the target's rows, through a `.cf` of them as

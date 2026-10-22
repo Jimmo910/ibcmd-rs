@@ -110,8 +110,8 @@ pub fn run_infobase(args: &[OsString]) -> i32 {
             println!("ibcmd-rs {}", env!("CARGO_PKG_VERSION"));
             0
         }
-        // PostgreSQL is exported (#369); the rest stays the platform's.
-        Ok(Invocation::Import(request)) if is_postgres(&request.common) => refuse_postgres(),
+        // PostgreSQL is exported and imported (#369, #370); the rest stays
+        // the platform's.
         Ok(Invocation::ImportFiles(request)) if is_postgres(&request.common) => refuse_postgres(),
         Ok(Invocation::Apply(request)) if is_postgres(&request.common) => refuse_postgres(),
         Ok(Invocation::Save(request)) if is_postgres(&request.common) => refuse_postgres(),

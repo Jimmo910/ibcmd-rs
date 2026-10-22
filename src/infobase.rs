@@ -582,6 +582,9 @@ pub fn import_config(args: &InfobaseConfigImportArgs) -> Result<InfobaseConfigIm
     if config.file_infobase.is_some() {
         return crate::file_infobase::import(&config, args);
     }
+    if config.postgres()?.is_some() {
+        return crate::postgres_infobase::import(&config, args);
+    }
     ensure_mssql(&config.dbms)?;
 
     let mut stage_args = build_import_stage_args(&config, args)?;
