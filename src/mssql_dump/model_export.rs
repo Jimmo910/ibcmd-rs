@@ -617,7 +617,12 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
         (None, Some(path)) => Some(offline_rows::activate_rows(super::file_infobase::load(
             path,
         )?)?),
-        (None, None) => None,
+        (None, None) => match &args.postgres {
+            Some(target) => Some(offline_rows::activate_rows(
+                super::postgres_infobase::load(target, false)?,
+            )?),
+            None => None,
+        },
     };
     let password = sql_password(
         args.sql_user.as_deref(),
@@ -625,8 +630,9 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
         &args.sql_pwd_env,
     );
     // `--rows-dir` answers every read from its folder; no login is needed.
-    let sql = if args.rows_dir.is_some() || args.file_infobase.is_some() {
-        crate::sql::SqlExec::detached("the rows come from a folder or a file infobase")
+    let sql = if args.rows_dir.is_some() || args.file_infobase.is_some() || args.postgres.is_some()
+    {
+        crate::sql::SqlExec::detached("the rows come from a folder, a file infobase or PostgreSQL")
     } else {
         crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
             sqlcmd: args.sqlcmd.as_deref(),

@@ -176,6 +176,20 @@ pub(crate) struct ConnectionConfig {
 }
 
 impl ConnectionConfig {
+    /// The PostgreSQL database of a `--dbms=PostgreSQL` connection (#369).
+    pub(crate) fn postgres(&self) -> Result<Option<crate::sql::postgres::PgTarget>> {
+        if !is_postgres(&self.dbms) {
+            return Ok(None);
+        }
+        crate::sql::postgres::PgTarget::new(
+            &self.db_server,
+            &self.db_name,
+            self.db_user.as_deref(),
+            self.db_pwd.as_deref(),
+        )
+        .map(Some)
+    }
+
     pub(crate) fn legacy_source_version(&self) -> Result<InfobaseConfigSourceVersion> {
         self.legacy_adapter.legacy_selector().ok_or_else(|| {
             anyhow!(
@@ -316,7 +330,13 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
 
 pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigExportReport> {
     let config = resolve_connection(args.connection())?;
-    if config.file_infobase.is_none() {
+    if config.postgres()?.is_some() {
+        if args.extension.is_some() || args.base.is_some() || args.sync {
+            bail!(
+                "a PostgreSQL infobase is exported whole: --extension, --base and --sync are not supported yet"
+            );
+        }
+    } else if config.file_infobase.is_none() {
         ensure_mssql(&config.dbms)?;
     } else if args.extension.is_some() {
         bail!("Выгрузка расширений из файловой информационной базы пока не поддерживается");
@@ -390,6 +410,8 @@ pub(crate) fn export_config_report(
         operation: "infobase config export",
         backend: if config.file_infobase.is_some() {
             "file-infobase-direct"
+        } else if is_postgres(&config.dbms) {
+            "postgres-config-direct"
         } else {
             "mssql-config-direct"
         },
@@ -520,6 +542,8 @@ fn dump_args(
     MssqlDumpConfigArgs {
         rows_dir: None,
         file_infobase: config.file_infobase.clone(),
+        // Checked by the export (`export_config`) before it gets here.
+        postgres: config.postgres().ok().flatten(),
         model_export: false,
         legacy_export: false,
         sqlcmd: sqlcmd.map(Path::to_path_buf),
@@ -790,6 +814,12 @@ fn resolve_connection_with(
         None => defaults.get()?.db_user().map(|user| user.value),
     };
     let (db_pwd, password_source) = match db_user {
+        // A PostgreSQL server may log the user in without one (`trust` in
+        // pg_hba.conf); it asks for a password when it wants one
+        // (`sql::postgres`).
+        Some(_) if is_postgres(&dbms) => {
+            resolve_optional_password(request.db_pwd, &settings, request.db_pwd_env, &mut defaults)?
+        }
         Some(_) => resolve_password(request.db_pwd, &settings, request.db_pwd_env, &mut defaults)?,
         None => (None, None),
     };
@@ -1089,6 +1119,21 @@ fn resolve_password(
     db_pwd_env: &str,
     defaults: &mut Defaults<'_>,
 ) -> Result<(Option<String>, Option<String>)> {
+    match resolve_optional_password(cli_db_pwd, settings, db_pwd_env, defaults)? {
+        (Some(password), source) => Ok((Some(password), source)),
+        (None, _) => bail!(
+            "не указан пароль пользователя сервера СУБД: передайте --db-pwd (--database-password), -W или переменную окружения {db_pwd_env}"
+        ),
+    }
+}
+
+/// The password from the first place that names one, if any does.
+fn resolve_optional_password(
+    cli_db_pwd: Option<&str>,
+    settings: &Option<Value>,
+    db_pwd_env: &str,
+    defaults: &mut Defaults<'_>,
+) -> Result<(Option<String>, Option<String>)> {
     if let Some(value) = cli_db_pwd.filter(|value| !value.is_empty()) {
         return Ok((Some(value.to_string()), Some("--db-pwd".to_string())));
     }
@@ -1102,9 +1147,12 @@ fn resolve_password(
     if let Some(value) = defaults.get()?.db_password() {
         return Ok((Some(value.value), Some(value.source.to_string())));
     }
-    bail!(
-        "не указан пароль пользователя сервера СУБД: передайте --db-pwd (--database-password), -W или переменную окружения {db_pwd_env}"
-    )
+    Ok((None, None))
+}
+
+/// Whether `dbms` names PostgreSQL, as 1C spells it.
+pub(crate) fn is_postgres(dbms: &str) -> bool {
+    dbms.eq_ignore_ascii_case("PostgreSQL")
 }
 
 pub(crate) fn ensure_mssql(dbms: &str) -> Result<()> {

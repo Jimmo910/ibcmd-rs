@@ -980,6 +980,7 @@ pub(crate) mod extension;
 pub(crate) mod extension_types;
 mod fetch;
 mod file_infobase;
+mod postgres_infobase;
 pub(crate) use file_infobase::{FileInfobaseConfig, file_infobase_config};
 mod form;
 mod form_body;
@@ -2222,6 +2223,16 @@ fn dump_config_inner(
             }
             Some(offline_rows::activate_rows(file_infobase::load(path)?)?)
         }
+        // `--dbms=PostgreSQL` (#369): the database's rows, read once.
+        (None, None) if args.postgres.is_some() => {
+            if args.include_config_save {
+                bail!("a PostgreSQL export publishes the main configuration");
+            }
+            let target = args.postgres.as_ref().expect("checked above");
+            Some(offline_rows::activate_rows(postgres_infobase::load(
+                target, false,
+            )?)?)
+        }
         (None, None) => {
             if args.database.trim().is_empty() {
                 bail!("--database is required unless --rows-dir or --file-infobase is given");
@@ -2303,6 +2314,8 @@ fn dump_config_inner(
         crate::sql::SqlExec::detached("--rows-dir reads every row from its folder")
     } else if args.file_infobase.is_some() {
         crate::sql::SqlExec::detached("--file-infobase reads every row from the file infobase")
+    } else if args.postgres.is_some() {
+        crate::sql::SqlExec::detached("every row was read from the PostgreSQL database")
     } else if let Some(sql) = hooks.sql.clone() {
         sql
     } else {

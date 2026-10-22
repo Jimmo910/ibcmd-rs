@@ -253,7 +253,8 @@ fn unsupported_options_and_malformed_lines_are_refused() {
             &format!("Параметр `{name}` команды `infobase config export --extension`"),
         );
     }
-    for dbms in ["PostgreSQL", "IBMDB2", "OracleDatabase"] {
+    // PostgreSQL is exported (#369); the other servers are refused
+    for dbms in ["IBMDB2", "OracleDatabase"] {
         assert_refused(
             &[
                 "infobase",

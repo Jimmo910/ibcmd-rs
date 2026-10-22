@@ -1216,6 +1216,7 @@ fn export_args(
             ConfigSource::Database { .. } => None,
         },
         file_infobase: None,
+        postgres: None,
         model_export: false,
         legacy_export: false,
         output_dir: PathBuf::from(MEMORY_ROOT),

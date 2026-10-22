@@ -46,6 +46,8 @@ ibcmd-edt = { path = "crates/ibcmd-edt" }
 ibcmd-filedb = { path = "crates/ibcmd-filedb" }
 # The process allocator, installed in main.rs.
 mimalloc = "0.1.52"
+# The MD5 password login of the built-in PostgreSQL client (src/sql/postgres.rs).
+md5 = "0.6"
 quick-xml = "0.38"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -925,6 +925,7 @@ mod tests {
             database: "f2_export".to_owned(),
             rows_dir: Some(dir.clone()),
             file_infobase: None,
+            postgres: None,
             model_export: false,
             legacy_export: false,
             output_dir: out.clone(),

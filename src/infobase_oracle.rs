@@ -294,6 +294,7 @@ pub fn roundtrip_config(
     let after_apply_export = export_config_report(
         &ConnectionConfig {
             file_infobase: None,
+            postgres: None,
             dbms: config.dbms.clone(),
             db_server: config.db_server.clone(),
             db_name: target_db.clone(),

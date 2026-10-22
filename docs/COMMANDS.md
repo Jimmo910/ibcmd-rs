@@ -258,7 +258,7 @@ load`) и совпадение её выгрузки с выгрузкой ис�
 | Параметр | Что задаёт |
 |---|---|
 | `--db-path=<каталог>`, `--database-path` | Файловая информационная база: каталог с `1Cv8.1CD` (или сам файл). Только для `config export` и `config import`; вместе с `--dbms`, `--db-server`, `--db-name` не указывается. См. [Файловые базы](#файловые-базы). |
-| `--dbms=MSSQLServer` | Тип СУБД. Из серверных поддерживается только `MSSQLServer`. |
+| `--dbms=MSSQLServer` | Тип СУБД: `MSSQLServer`; для `config export` также `PostgreSQL` (см. [PostgreSQL](#postgresql)). |
 | `--db-server=<сервер>`, `--database-server` | Сервер: `server`, `server\instance`, `server/instance` (как пишет штатный `ibcmd`), `server,port`. По умолчанию — из настроек, иначе `localhost`. |
 | `--db-name=<база>`, `--database-name` | Имя базы данных. |
 | `--db-user=<логин>`, `--database-user` | Логин SQL Server. Без него — вход Windows. |
@@ -272,6 +272,23 @@ load`) и совпадение её выгрузки с выгрузкой ис�
 
 Оба написания имён (`--db-server` и `--database-server`) и обе формы значения
 (`--x=значение` и `--x значение`) равноправны.
+
+### PostgreSQL
+
+`config export` читает конфигурацию базы на PostgreSQL своим клиентом, без
+платформы и без библиотек PostgreSQL:
+
+```
+ibcmd infobase config export --dbms=PostgreSQL --db-server=pg01 --db-name=demo --db-user=postgres /srv/export/demo
+```
+
+- `--db-server`: `host`, `host:port` или `host port=N` (порт по умолчанию 5432).
+- Пароль (`--db-pwd`, `IBCMD_DB_PSW`) нужен, только если его спрашивает сервер:
+  поддерживаются вход без пароля, cleartext, MD5 и SCRAM-SHA-256. TLS нет.
+- Выгружается таблица `config` с законченной подготовкой из `configsave`,
+  как для SQL Server. Расширения, `--base`/`--sync` и остальные команды на
+  PostgreSQL не поддерживаются. Формат и замеры:
+  [docs/evidence/postgres-storage-20261022.md](evidence/postgres-storage-20261022.md).
 
 ### Файловые базы
 
@@ -426,7 +443,8 @@ ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 --db-name=MyBa
   `--extension`, `--sqlcmd`; сохранения `--extension`;
   общие `--pid`, `--remote`;
 - применение, сохранение, `import files` и расширения файловых баз
-  (`--db-path`); СУБД кроме `MSSQLServer`.
+  (`--db-path`); СУБД кроме `MSSQLServer` (у `PostgreSQL` — всё, кроме
+  `config export`).
 
 ### Вывод и коды возврата
 
