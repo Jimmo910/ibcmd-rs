@@ -122,6 +122,11 @@ exports.run = async () => {
     assert.deepEqual(errors, []);
     assert.ok(api.status().includes("pending unknown"), api.status());
     assert.ok(!api.status().includes("disconnected"), api.status());
+    await cfg.update(
+      "statusComparison",
+      "bytes",
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
     // Actual RPC/rows-dir integration, separately from synthetic direction/lifecycle tests.
     const realSource = path.join(f.uri.fsPath, "real-source");
     const realBaseline = path.join(f.uri.fsPath, "real-baseline");
@@ -210,6 +215,11 @@ exports.run = async () => {
     // not native-version parity: native may report version changes with unchanged bytes.
     const nativeRoot = process.env.IBCMD_TEST_FILEDB_ROOT;
     if (nativeRoot) {
+      await cfg.update(
+        "statusComparison",
+        "native",
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
       const filedb = path.join(nativeRoot, "db/1Cv8.1CD");
       const beforeRead = await fs.readFile(filedb);
       await fs.writeFile(
@@ -242,8 +252,8 @@ exports.run = async () => {
       const actual = api.objects();
       const byName = new Map(actual.map((row) => [row.object, row.state]));
       assert.equal(byName.get("CommonModule.ФайловаяБазаПроверка"), "database");
-      assert.equal(byName.get("Configuration"), "file");
-      assert.equal(byName.get("Language.English"), "same");
+      assert.equal(byName.get("Configuration"), "both");
+      assert.equal(byName.get("Language.English"), "database");
       assert.equal(
         api.objectDecoration(
           vscode.Uri.file(
@@ -262,7 +272,7 @@ exports.run = async () => {
               path.join(nativeRoot, "source/Languages/English.xml"),
             ),
           )
-          .tooltip.includes("native-версии не проверены"),
+          .tooltip.includes("Версии БД и локальные файлы"),
       );
       const nativeStatus = await fs.readFile(
         path.join(nativeRoot, "module-status.stdout"),
@@ -273,7 +283,7 @@ exports.run = async () => {
       await fs.writeFile(
         path.join(nativeRoot, "ui-evidence.json"),
         JSON.stringify(
-          { labels: actual, nativeStatus, nativeVersionParity: false },
+          { labels: actual, nativeStatus, nativeVersionParity: true },
           null,
           2,
         ),
@@ -283,8 +293,174 @@ exports.run = async () => {
         beforeRead,
         "UI READ must not mutate the actual filedb",
       );
+      // Same actual native comparison through a pinned Git baseline.
+      const gitSource = path.join(f.uri.fsPath, "native-git-source");
+      await fs.cp(path.join(nativeRoot, "baseline"), gitSource, {
+        recursive: true,
+      });
+      const git = (...args) =>
+        execFileSync("git", ["-C", gitSource, ...args], { stdio: "pipe" });
+      git("init");
+      git("add", ".");
+      git(
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-m",
+        "native baseline",
+      );
+      await fs.appendFile(
+        path.join(gitSource, "Configuration.xml"),
+        "\n<!-- local Git source edit -->\n",
+      );
+      await cfg.update(
+        "sourceDirectory",
+        gitSource,
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "statusGitRef",
+        "HEAD",
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "statusCacheDirectory",
+        path.join(f.uri.fsPath, "native-git-cache"),
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await vscode.commands.executeCommand("ibcmd.select");
+      await vscode.commands.executeCommand("ibcmd.objects.refresh");
+      assert.deepEqual(
+        api.objects(),
+        actual,
+        "Native folder and Git baseline states agree",
+      );
+      assert.deepEqual(
+        await fs.readFile(filedb),
+        beforeRead,
+        "Git native refresh is read-only",
+      );
+      await cfg.update(
+        "statusGitRef",
+        "",
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
       console.log(
-        "Actual filedb READ UI passed; recorded native version/byte divergence, native parity remains BLOCKED.",
+        "Actual filedb native-version UI matches measured module/root/language changes; READ leaves DB bytes unchanged.",
+      );
+    }
+    const sixRoot = process.env.IBCMD_TEST_SIXSTATE_ROOT;
+    if (sixRoot) {
+      const dbFile = path.join(sixRoot, "db/1Cv8.1CD");
+      const before = await fs.readFile(dbFile);
+      await fs.writeFile(
+        path.join(f.uri.fsPath, "ibcmd-rs.toml"),
+        await fs.readFile(path.join(sixRoot, "workspace/ibcmd-rs.toml")),
+      );
+      await cfg.update(
+        "connections",
+        ["issue380-native"],
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "connectionMetadata",
+        {},
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "statusComparison",
+        "native",
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "sourceDirectory",
+        path.join(sixRoot, "source"),
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "statusBaselineDirectory",
+        path.join(sixRoot, "baseline"),
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "statusGitRef",
+        "",
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      vscode.window.showQuickPick = async (items) => (await items)[0];
+      await vscode.commands.executeCommand("ibcmd.select");
+      await vscode.commands.executeCommand("ibcmd.objects.refresh");
+      const expected = JSON.parse(
+        await fs.readFile(path.join(sixRoot, "expected-states.json"), "utf8"),
+      );
+      const labels = api.objects();
+      const actual = new Map(labels.map((row) => [row.object, row.state]));
+      const nativeStatus = await fs.readFile(
+        path.join(sixRoot, "module-status.stdout"),
+        "utf8",
+      );
+      const nativeNames = nativeStatus
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => line.replace(/^modified: /, ""));
+      for (const [object, state] of Object.entries(expected)) {
+        assert.equal(
+          actual.get(object),
+          state,
+          `Actual native six-state ${object}: ${JSON.stringify(labels)}`,
+        );
+        const name = object.slice("CommonModule.".length);
+        const decoration = api.objectDecoration(
+          vscode.Uri.file(
+            path.join(sixRoot, "source/CommonModules", name + ".xml"),
+          ),
+        );
+        assert.ok(decoration, `Explorer decoration for ${object}`);
+        if (["database", "both"].includes(state))
+          assert.ok(
+            nativeNames.includes(object) ||
+              nativeNames.includes(object + ".Module"),
+          );
+        if (["same", "file"].includes(state))
+          assert.ok(
+            !nativeNames.includes(object) &&
+              !nativeNames.includes(object + ".Module"),
+          );
+      }
+      assert.deepEqual(
+        [...new Set(Object.values(expected))].sort(),
+        ["same", "database", "file", "both", "databaseOnly", "fileOnly"].sort(),
+      );
+      await vscode.commands.executeCommand("ibcmd.objects.changedOnly");
+      assert.ok(api.visibleObjects().every((row) => row.state !== "same"));
+      await vscode.commands.executeCommand("ibcmd.objects.changedOnly");
+      assert.deepEqual(
+        await fs.readFile(dbFile),
+        before,
+        "Six-state UI refresh never writes filedb",
+      );
+      await fs.writeFile(
+        path.join(sixRoot, "ui-evidence.json"),
+        JSON.stringify(
+          {
+            labels,
+            nativeStatus,
+            allSixStates: true,
+            nativeVersionParity: true,
+          },
+          null,
+          2,
+        ),
+      );
+      console.log(
+        "Actual native filedb: all SIX UI/Explorer states match independent native version/local file evidence; changed-only and read-only checks passed.",
       );
     }
     // Real extension UI/state machine against a clearly synthetic server, covering failure/races.
@@ -325,6 +501,15 @@ exports.run = async () => {
     const baseline = path.join(f.uri.fsPath, "status-baseline");
     await fs.mkdir(source);
     await fs.mkdir(baseline);
+    await fs.writeFile(
+      path.join(baseline, "ConfigDumpInfo.xml"),
+      "synthetic-native-reference",
+    );
+    await cfg.update(
+      "statusComparison",
+      "native",
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
     for (const name of [
       "Same",
       "Database",
@@ -376,6 +561,16 @@ exports.run = async () => {
     assert.equal(
       api.objectDecoration(vscode.Uri.file(path.join(source, "File.xml"))),
       undefined,
+    );
+    // Even contradictory clean row evidence cannot hide top-level fullRequired.
+    process.env.IBCMD_FAKE_MODE = "status-full";
+    await vscode.commands.executeCommand("ibcmd.select");
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.ok(
+      api
+        .objects()
+        .slice(0, 4)
+        .every((row) => row.state === "unknown"),
     );
     // A cancelled refresh never publishes old clean decorations.
     process.env.IBCMD_FAKE_MODE = "status-slow";

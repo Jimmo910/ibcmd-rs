@@ -121,3 +121,21 @@ After helper delivery:
    refreshes with a DB mutation in between, folder and pinned Git reference.
 6. True Configurator module edit + independent local edit acceptance, then parent
    review and PR gate. Whole-import evidence alone is not GUI acceptance.
+
+## Implementation update after helper b46cd919
+
+The helper is integrated as 9316ae33. The additive `versionBaselineDir` RPC and
+`databaseVersionStatus` fields above are now implemented. Evidence additionally
+carries `databaseSnapshot`, a SHA of the complete native inventory used only for
+freshness; both native-mode requests must agree. Engine reads are bracketed with
+that inventory and reference bytes. Production now selects the versioned adapter
+by default. `statusComparison=bytes` remains an explicit labelled preview.
+
+Native row ownership is narrowed to exact canonical object/row UUID matches,
+root Configuration and measured CommonModule.Module. Other roles are inconclusive,
+with no closest-ancestor fallback. MSSQL native is explicitly gated until its
+byte/tree active view agrees with the shared native main-state helper.
+
+Actual native selected-import all-six-state extension-host and folder/Git evidence
+now passes; see evidence/native-integration-20261022.md. Configurator GUI and broader
+source/role coverage are not claimed by that measurement.

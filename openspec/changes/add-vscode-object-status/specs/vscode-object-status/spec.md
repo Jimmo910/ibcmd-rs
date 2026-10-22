@@ -25,3 +25,7 @@ Unrelated workspace folders SHALL NOT inherit decorations.
 ### Requirement: native acceptance remains explicit
 Rows-dir and synthetic UI evidence SHALL NOT be described as native filedb parity.
 Native acceptance SHALL use the shared backend and measured platform status contract.
+Native mode SHALL NOT silently fall back to byte equality. Unmapped owner coverage
+and incoherent source views SHALL be inconclusive or refused. Native fullRequired
+SHALL be preserved explicitly. Both comparison responses SHALL bind the same
+native snapshot and reference identity.

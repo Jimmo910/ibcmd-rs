@@ -140,7 +140,14 @@ function nativeState(
   changed,
   baseline = "test-baseline",
 ) {
-  return classifyVersioned(current, reference, evidence, changed, baseline);
+  return classifyVersioned(
+    current,
+    reference,
+    evidence,
+    changed,
+    baseline,
+    "test-snapshot",
+  );
 }
 // Measured 8.5.1.1592 whole-import mismatch: metadata versions changed while
 // Configuration/Language exported bytes stayed unchanged. No native parser is duplicated here.
@@ -153,6 +160,7 @@ test("version evidence corrects the observed Language/Configuration byte mismatc
   const evidence = {
     basis: "native-config-version",
     baselineIdentity: "test-baseline",
+    databaseSnapshot: "test-snapshot",
     object: language.object,
     objectVersion: language.version,
     conclusive: true,
@@ -187,6 +195,7 @@ test("native direction combines independent evidence into all six states", () =>
   const e = {
     basis: "native-config-version",
     baselineIdentity: "test-baseline",
+    databaseSnapshot: "test-snapshot",
     object: current.object,
     objectVersion: current.version,
     conclusive: true,
@@ -211,6 +220,7 @@ test("missing, partial, mixed-basis or stale native evidence never becomes clean
   const e = {
     basis: "native-config-version",
     baselineIdentity: "test-baseline",
+    databaseSnapshot: "test-snapshot",
     object: current.object,
     objectVersion: current.version,
     conclusive: true,
@@ -250,13 +260,21 @@ test("version evidence is bound to exact reference object and baseline snapshot"
   const e = {
     basis: "native-config-version",
     baselineIdentity: "reference-A",
+    databaseSnapshot: "test-snapshot",
     object: current.object,
     objectVersion: current.version,
     conclusive: true,
     changed: false,
   };
   assert.equal(
-    classifyVersioned(current, reference, e, false, "reference-A"),
+    classifyVersioned(
+      current,
+      reference,
+      e,
+      false,
+      "reference-A",
+      "test-snapshot",
+    ),
     "same",
   );
   assert.equal(
@@ -266,6 +284,7 @@ test("version evidence is bound to exact reference object and baseline snapshot"
       e,
       false,
       "reference-A",
+      "test-snapshot",
     ),
     "unknown",
   );
@@ -274,4 +293,25 @@ test("version evidence is bound to exact reference object and baseline snapshot"
     "unknown",
   );
   assert.equal(classifyVersioned(current, reference, e, false), "unknown");
+});
+
+test("native snapshot change between source/reference RPC reads is never clean", () => {
+  const current = row("same");
+  const e = {
+    basis: "native-config-version",
+    object: current.object,
+    objectVersion: current.version,
+    baselineIdentity: "baseline",
+    databaseSnapshot: "snapshot-A",
+    conclusive: true,
+    changed: false,
+  };
+  assert.equal(
+    classifyVersioned(current, current, e, false, "baseline", "snapshot-B"),
+    "unknown",
+  );
+  assert.equal(
+    classifyVersioned(current, current, e, false, "baseline"),
+    "unknown",
+  );
 });

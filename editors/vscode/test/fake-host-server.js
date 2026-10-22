@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Synthetic status/lifecycle fixture only. It does not contact a database.
 const fs = require("node:fs");
+const path = require("node:path");
+const { createHash } = require("node:crypto");
 let input = Buffer.alloc(0);
 function send(id, result, error) {
   const body = Buffer.from(
@@ -110,10 +112,33 @@ process.stdin.on("data", (chunk) => {
       ];
       const reply = () =>
         send(m.id, {
+          fullRequired: process.env.IBCMD_FAKE_MODE === "status-full",
           objects: names.map((name, i) => ({
             object: `CommonModule.${name}`,
             status: kinds[i],
             version: "stable-test-version",
+            ...(m.params.versionBaselineDir
+              ? {
+                  databaseVersionStatus: {
+                    basis: "native-config-version",
+                    databaseSnapshot: "stable-native-snapshot",
+                    object: `CommonModule.${name}`,
+                    objectVersion: "stable-test-version",
+                    baselineIdentity: createHash("sha256")
+                      .update(
+                        fs.readFileSync(
+                          path.join(
+                            m.params.versionBaselineDir,
+                            "ConfigDumpInfo.xml",
+                          ),
+                        ),
+                      )
+                      .digest("hex"),
+                    conclusive: true,
+                    changed: [false, true, false, true, false, false][i],
+                  },
+                }
+              : {}),
             changed: kinds[i] === "modified" ? [`${name}.xml`] : [],
             baseOnly: kinds[i] === "notExported" ? [`${name}.xml`] : [],
             localOnly: kinds[i] === "notInBase" ? [`${name}.xml`] : [],

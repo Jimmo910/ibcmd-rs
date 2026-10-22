@@ -31,6 +31,8 @@
 //! views, the platform it noted, `crate::cancel`), so the operations of a
 //! [`StoredConfiguration`] take one lock and run one at a time.
 
+mod version_status;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -198,6 +200,30 @@ pub struct ObjectStatus {
     pub base_only: Vec<String>,
     /// Files of the object the folder holds and the database does not export.
     pub local_only: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database_version_status: Option<DatabaseVersionEvidence>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseVersionEvidence {
+    pub basis: &'static str,
+    pub object: String,
+    pub object_version: Option<String>,
+    pub baseline_identity: String,
+    pub database_snapshot: String,
+    pub conclusive: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionedObjectStatus {
+    pub objects: Vec<ObjectStatus>,
+    pub full_required: bool,
+    pub database_snapshot: String,
+    pub native_changes: Vec<crate::native_export_status::VersionChange>,
 }
 
 /// What an export of one object into a source folder changed there.
@@ -1060,6 +1086,59 @@ impl StoredConfiguration {
         Ok(files)
     }
 
+    /// Native DB-version evidence combined with the existing byte comparison.
+    /// Bracket all reads with the shared native inventory; external mutations
+    /// or a changed reference fail instead of attaching stale native evidence.
+    pub fn status_with_versions(
+        &mut self,
+        names: Option<&[String]>,
+        source_dir: &Path,
+        baseline_dir: &Path,
+        progress: Progress<'_>,
+    ) -> Result<VersionedObjectStatus> {
+        use crate::native_export_status::ConfigDumpInfoSnapshot;
+        if matches!(self.source, ConfigSource::Database { .. }) {
+            bail!(
+                "native version status requires a coherent main configuration view; MSSQL byte/tree view is active configuration"
+            );
+        }
+        let reference_path = baseline_dir.join("ConfigDumpInfo.xml");
+        if !fs::symlink_metadata(&reference_path)?.file_type().is_file() {
+            bail!("native status requires a regular ConfigDumpInfo.xml reference");
+        }
+        let reference_bytes = fs::read(&reference_path)?;
+        let reference = ConfigDumpInfoSnapshot::parse(&reference_bytes)?;
+        let before = self.native_config_dump_info()?;
+        let current = ConfigDumpInfoSnapshot::parse(&before)?;
+        crate::cancel::check()?;
+        let objects = {
+            let _engine = engine();
+            self.all_objects()?
+        };
+        let mut statuses = self.status(names, source_dir, progress)?;
+        crate::cancel::check()?;
+        if self.native_config_dump_info()? != before
+            || fs::read(&reference_path)? != reference_bytes
+        {
+            bail!("configuration or native reference changed during status comparison");
+        }
+        let native = current.compare(&reference);
+        version_status::attach(
+            &objects,
+            &current,
+            &native,
+            &sha256_hex(&reference_bytes),
+            &sha256_hex(&before),
+            &mut statuses,
+        );
+        Ok(VersionedObjectStatus {
+            objects: statuses,
+            full_required: native.full_required,
+            database_snapshot: sha256_hex(&before),
+            native_changes: native.changes,
+        })
+    }
+
     /// What the export writes for the objects, in memory.
     pub fn export(
         &mut self,
@@ -1134,6 +1213,7 @@ impl StoredConfiguration {
                 kind: files.object.kind.clone(),
                 status: StatusKind::Same,
                 version: Some(files.version.clone()),
+                database_version_status: None,
                 changed: Vec::new(),
                 base_only: Vec::new(),
                 local_only: Vec::new(),
@@ -1175,6 +1255,7 @@ impl StoredConfiguration {
                 kind: object.kind,
                 status: StatusKind::NotInBase,
                 version: None,
+                database_version_status: None,
                 changed: Vec::new(),
                 base_only: Vec::new(),
                 local_only: local.into_keys().collect(),

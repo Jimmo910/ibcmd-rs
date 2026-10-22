@@ -12,18 +12,21 @@ export type State =
 export interface Comparison {
   object: string;
   version?: string;
+  databaseVersionStatus?: DatabaseVersionEvidence;
   status: "same" | "modified" | "notExported" | "notInBase";
   changed: string[];
   baseOnly: string[];
   localOnly: string[];
 }
-// Internal adapter contract awaiting the shared #362 server helper. Not a wire API yet.
+// Additive RPC evidence from the shared #362 native-version helper.
 // objectVersion is the existing opaque RPC cache token; it is NOT configVersion or a file hash.
 export interface DatabaseVersionEvidence {
   basis: "native-config-version";
   object: string;
   objectVersion: string;
   baselineIdentity: string;
+  // Digest of the complete native inventory: freshness only, never change classification.
+  databaseSnapshot: string;
   conclusive: boolean;
   changed?: boolean;
 }
@@ -48,6 +51,7 @@ export function classifyVersioned(
   evidence: DatabaseVersionEvidence | undefined,
   fileChanged?: boolean,
   expectedBaselineIdentity?: string,
+  expectedDatabaseSnapshot?: string,
 ): State {
   if (current.status === "notExported") return "databaseOnly";
   if (current.status === "notInBase") return "fileOnly";
@@ -58,6 +62,9 @@ export function classifyVersioned(
     typeof expectedBaselineIdentity !== "string" ||
     expectedBaselineIdentity.length === 0 ||
     evidence.baselineIdentity !== expectedBaselineIdentity ||
+    typeof expectedDatabaseSnapshot !== "string" ||
+    expectedDatabaseSnapshot.length === 0 ||
+    evidence.databaseSnapshot !== expectedDatabaseSnapshot ||
     typeof fileChanged !== "boolean" ||
     evidence.basis !== "native-config-version" ||
     evidence.object !== current.object ||

@@ -127,15 +127,14 @@ code --extensionDevelopmentPath="$PWD" \
 Object trees, export/import/apply UI, VSIX/Marketplace delivery and live SQL
 verification are outside this connection-only candidate.
 
-## Object status preview (#380)
+## Object status (#380)
 
-The Explorer **ibcmd-rs Objects** view is a minimal flat list of object full names,
-not the full metadata browser planned in #379. Select a connection, configure the
-source/baseline for that workspace folder, then run **Refresh Object Status**.
-**Reload Connections and Refresh Status** also refreshes objects after reconnecting.
-The view toolbar toggles **Changed Objects Only** (unknown remains visible).
-The same status decorates source files in Explorer, with the most specific nested
-object taking precedence.
+The Explorer **ibcmd-rs Objects** view is a minimal flat list of full names. Select
+an existing connection, configure the source and reference for that workspace
+folder, then run **Refresh Object Status**. **Reload Connections and Refresh
+Status** also refreshes objects after reconnecting. The toolbar toggles **Changed
+Objects Only**; unknown remains visible. Matching source files receive Explorer
+badges. This does not implement #379's full metadata browser or ERP performance work.
 
 ```json
 {
@@ -144,56 +143,81 @@ object taking precedence.
 }
 ```
 
-The baseline must be a separate, readable export from the last synchronization;
-it is never updated by refresh. Alternatively set `ibcmd.statusGitRef` to a commit,
-branch or tag and `ibcmd.statusCacheDirectory` to an absolute cache folder (in the
-lab, under the external lab root). Git takes precedence over the baseline folder.
-The ref resolves to a fixed tree before reading committed blobs. Only the source
-subtree is materialized, without checkout, hooks, shell or native ibcmd invocation.
-Snapshots are retained for inspection and user-controlled Trash cleanup.
-A Git baseline lacking a tracked export cannot establish a synchronization history.
+The reference is a separate export from the last synchronization, including its
+`ConfigDumpInfo.xml`. Refresh never updates it. Alternatively use
+`ibcmd.statusGitRef` (commit/branch/tag) and an absolute `ibcmd.statusCacheDirectory`
+under the external lab root. Git takes precedence over the reference directory;
+its ref is pinned to one tree before reading committed source blobs. There is no
+checkout, hook, shell or native process in production. Inspectable snapshots are
+retained for user-controlled Trash cleanup.
 
 | Label | Badge | Evidence |
 | --- | --- | --- |
-| Совпадает | = | DB and local both equal baseline |
-| Изменён в базе | Б | DB differs from baseline; local equals baseline |
-| Изменён в файлах | Ф | DB equals baseline; local differs |
-| Изменён в базе и файлах | БФ | Both differ from baseline, including identical concurrent edits |
-| Только в базе | +Б | RPC says object has no local files |
-| Только в файлах | +Ф | RPC says object is absent in DB |
-| Статус неизвестен | ? | No baseline/direction evidence, DB versions changed between comparisons, or incomplete evidence |
+| Совпадает | = | Native DB versions and local files both equal reference |
+| Изменён в базе | Б | Native DB version changed; local files equal reference |
+| Изменён в файлах | Ф | Native DB version unchanged; local files changed |
+| Изменён в базе и файлах | БФ | Native DB version and local files both changed |
+| Только в базе | +Б | DB object has no local files |
+| Только в файлах | +Ф | Local object is absent in DB |
+| Статус неизвестен | ? | Missing/inconclusive/unsupported/stale evidence |
 
-The current RPC compares exported **bytes**. For common objects the client asks
-`objects/status` for source and baseline, verifies the object's DB `version` agrees
-between responses, and compares local/baseline bytes for the union of differing
-paths. Additions/deletions and binary files are included. Missing source/baseline
-folders, symlink paths, unsaved source editors, malformed replies, failed or cancelled
-refresh clear old decorations and show unknown instead of a clean result.
-Connection/configuration/workspace changes invalidate all outstanding status work;
-only the selected workspace folder receives decorations.
+Native mode is the default. It reuses #362's typed ConfigDumpInfo comparison.
+Native version changes are independent of file bytes: importing a configuration
+can restamp Language/Configuration without changing their XML. Local/reference
+bytes are compared separately, including additions, deletions and binary files.
+The server brackets its reads with native snapshots; both client RPC comparisons
+must agree on the object token, complete native snapshot and reference identity.
+These hashes/tokens check freshness; they are never used as native configVersion.
 
-### Acceptance boundary
+Cancellation, RPC failures, malformed replies, changed references/snapshots,
+symlink paths, missing folders and unsaved source editors clear old badges and
+cannot become clean. Connection/configuration/workspace changes invalidate old
+refreshes. A native `fullRequired` response stays explicit and common-object
+change direction becomes unknown rather than unchanged.
 
-This preview is tested on committed `rows-dir` fixtures and a synthetic six-state
-extension-host fixture. It is **not yet native export-status parity**: the existing
-RPC does not expose the `ConfigDumpInfo.xml`/native version comparison. The shared
-#382 READ backend has been integrated from `644684f2`; it does not yet provide write/pending operations. No
-duplicate filedb adapter is provided here.
-Issue #380 remains open until the native #362 version contract is agreed and
-exposed through RPC, and a disposable filedb receives a platform module edit plus a
-separate local file edit with matching measured status in the extension host.
+### Supported scope and remaining gates
 
-Checks: `npm test`, `npm run format:check`, `npm run test:host`; the host test covers
-real rows-dir export/comparison plus explicitly synthetic six states, filter,
-Explorer badges, error clearing, cancellation and selection races. Use a unique
-`TMPDIR` under the lab root for Rust fixture tests: their shared upstream helper
-clears/reuses fixed fixture directory names. Keep preserved scratch artifacts out
-of those names.
+The shared filedb READ backend is integrated from #382 `644684f2`; native helper
+from #362 `b46cd919`. No duplicate backend/parser or production native process is
+provided. Native owner mapping is deliberately narrow: exact canonical objects
+with matching row identity, root Configuration and the measured common-module
+Module role. Unmapped or ambiguous coverage is inconclusive; forms/body rows are
+never silently assigned to a parent. Additional roles need shared mapping evidence.
 
-Actual filedb READ/extension-host evidence after integration is documented in
-`openspec/changes/add-vscode-object-status/evidence/native-read-20261022.md`.
-The measured native-version/byte divergence is a remaining acceptance blocker.
-For an optional prepared native-mutated lab run, set `IBCMD_TEST_FILEDB_ROOT` to
-its disposable run root before `npm run test:host`; this additionally checks actual
-filedb UI badges and records `ui-evidence.json` with `nativeVersionParity: false`.
-The tree description and tooltips explicitly identify this as a byte preview.
+Native MSSQL requests currently fail explicitly: its byte/tree view is active
+configuration while the native helper reads main configuration. A shared coherent
+view must be supplied before enabling that source. For explicit legacy byte-only
+inspection, set `ibcmd.statusComparison` to `bytes`; the UI identifies that mode as
+a preview without native version parity. Native mode never silently falls back.
+
+Actual 8.5.1.1592 filedb acceptance covers all six UI/Explorer states, native
+selected module imports plus independent local edits, folder/Git baseline,
+changed-only filtering, and byte-identical DB after READ. It uses supported release
+profile `8.5.1`; exact build 8.5.1.1592 is not yet in the profile registry.
+This is native command validation, not a Configurator GUI run. Parent review,
+MSSQL/source coverage and any required GUI acceptance remain explicit gates.
+Evidence: `openspec/changes/add-vscode-object-status/evidence/native-integration-20261022.md`.
+
+### Reproduce native acceptance (opt-in)
+
+Keep all paths in the external lab. Existing Rust fixture tests use fixed scratch
+names, so use a dedicated `TMPDIR` for #380. No global extension install is needed.
+After building/testing the binary and generating rows as described above:
+
+```sh
+export IBCMD_TEST_NATIVE_BINARY=/opt/1cv8/8.5.1.1592/ibcmd
+export IBCMD_TEST_ROOT="$LAB/tmp/issue-380-native-acceptance"
+python3 editors/vscode/test/prepare-native-six.py
+export IBCMD_TEST_SIXSTATE_ROOT="$(cat "$IBCMD_TEST_ROOT/native-six-run-path")"
+export IBCMD_TEST_BINARY="$LAB/build/issue-380/debug/ibcmd-rs"
+export IBCMD_TEST_ROWS="$TMPDIR/ibcmd-external-editor-server-protocol/rows/demo"
+export VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code"
+npm run test:host --prefix editors/vscode
+```
+
+The generator creates a unique disposable DB from committed public tiny fixtures.
+Every native command has explicit DB/data/temp paths. It preserves commands,
+stdout/stderr, expected states and source/reference trees; it deletes nothing.
+The host records `ui-evidence.json` and checks that UI reads do not mutate 1CD bytes.
+`IBCMD_TEST_FILEDB_ROOT` optionally adds the separate version-only whole-import
+regression case documented in the historical `native-read-20261022.md` evidence.

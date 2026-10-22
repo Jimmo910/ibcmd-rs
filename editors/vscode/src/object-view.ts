@@ -1,10 +1,12 @@
 import * as vscode from "vscode";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { RpcClient } from "./rpc";
 import {
   candidatePaths,
   classify,
+  classifyVersioned,
   comparisons,
   labels,
   localChanged,
@@ -35,12 +37,14 @@ export class ObjectView
   private abort?: AbortController;
   private roots: { descriptor: string; folder: string; state: State }[] = [];
   private changedOnly = false;
+  private nativeMode = true;
+  private view: vscode.TreeView<Row>;
   private message = "Выберите подключение и обновите статусы";
   constructor(private context: vscode.ExtensionContext) {
-    const view = vscode.window.createTreeView("ibcmd.objects", {
+    const view = (this.view = vscode.window.createTreeView("ibcmd.objects", {
       treeDataProvider: this,
-    });
-    view.description = "Байты экспорта · preview";
+    }));
+    view.description = "Версии БД и локальные файлы";
     context.subscriptions.push(
       view,
       vscode.window.registerFileDecorationProvider(this),
@@ -67,7 +71,7 @@ export class ObjectView
   getTreeItem(row: Row) {
     const item = new vscode.TreeItem(row.object);
     item.description = labels[row.state];
-    item.tooltip = `${row.object}: ${labels[row.state]}. Сравнение байтов экспорта; native-версии не проверены.`;
+    item.tooltip = `${row.object}: ${labels[row.state]}. ${this.nativeMode ? "Версии БД и локальные файлы относительно baseline." : "Сравнение байтов экспорта; native-версии не проверены."}`;
     item.resourceUri = row.uri;
     return item;
   }
@@ -104,7 +108,7 @@ export class ObjectView
     };
     return {
       badge: badges[state],
-      tooltip: `${labels[state]}. Сравнение байтов экспорта; native-версии не проверены.`,
+      tooltip: `${labels[state]}. ${this.nativeMode ? "Версии БД и локальные файлы относительно baseline." : "Сравнение байтов экспорта; native-версии не проверены."}`,
       color: new vscode.ThemeColor(
         state === "same"
           ? "gitDecoration.untrackedResourceForeground"
@@ -123,6 +127,11 @@ export class ObjectView
     const stamp = this.generation.capture();
     const abort = (this.abort = new AbortController());
     const cfg = vscode.workspace.getConfiguration("ibcmd", folder.uri);
+    this.nativeMode =
+      cfg.get<string>("statusComparison", "native") === "native";
+    this.view.description = this.nativeMode
+      ? "Версии БД и локальные файлы"
+      : "Байты экспорта · preview";
     const source = path.resolve(
       folder.uri.fsPath,
       cfg.get<string>("sourceDirectory", "."),
@@ -162,18 +171,46 @@ export class ObjectView
               )
             )
               throw new Error("Save source files before comparing");
-            const current = comparisons(
-              await rpc.request(
-                "objects/status",
-                { infobase, sourceDir: source },
-                abort.signal,
-              ),
+            let baselineIdentity: string | undefined;
+            if (this.nativeMode && baseline) {
+              const info = path.join(baseline, "ConfigDumpInfo.xml");
+              if (!(await fs.lstat(info)).isFile())
+                throw new Error("Native reference must be a regular file");
+              baselineIdentity = createHash("sha256")
+                .update(await fs.readFile(info))
+                .digest("hex");
+            }
+            const response = await rpc.request(
+              "objects/status",
+              {
+                infobase,
+                sourceDir: source,
+                ...(this.nativeMode && baseline
+                  ? { versionBaselineDir: baseline }
+                  : {}),
+              },
+              abort.signal,
             );
+            const current = comparisons(response);
+            if (
+              this.generation.current(stamp) &&
+              !abort.signal.aborted &&
+              this.nativeMode &&
+              response.fullRequired === true
+            )
+              this.view.description =
+                "Требуется полный экспорт · направление неизвестно";
             const reference = baseline
               ? comparisons(
                   await rpc.request(
                     "objects/status",
-                    { infobase, sourceDir: baseline },
+                    {
+                      infobase,
+                      sourceDir: baseline,
+                      ...(this.nativeMode
+                        ? { versionBaselineDir: baseline }
+                        : {}),
+                    },
                     abort.signal,
                   ),
                 )
@@ -217,7 +254,19 @@ export class ObjectView
                 baseline && ref
                   ? await localChanged(source, baseline, row, ref)
                   : undefined;
-              const state = classify(row, ref, changed);
+              const state = this.nativeMode
+                ? classifyVersioned(
+                    row,
+                    ref,
+                    response.fullRequired === true ||
+                      ref?.databaseVersionStatus?.conclusive !== true
+                      ? undefined
+                      : row.databaseVersionStatus,
+                    changed,
+                    baselineIdentity,
+                    ref?.databaseVersionStatus?.databaseSnapshot,
+                  )
+                : classify(row, ref, changed);
               const uri = vscode.Uri.from({
                 scheme: "ibcmd-status",
                 authority: "object",
@@ -244,6 +293,15 @@ export class ObjectView
                   vscode.Uri.file(safePath(source, p)).toString(),
                   state,
                 );
+            }
+            if (baselineIdentity && baseline) {
+              const after = createHash("sha256")
+                .update(
+                  await fs.readFile(path.join(baseline, "ConfigDumpInfo.xml")),
+                )
+                .digest("hex");
+              if (after !== baselineIdentity)
+                throw new Error("Reference changed during refresh");
             }
             if (!this.generation.current(stamp) || abort.signal.aborted) return;
             this.rows = rows;

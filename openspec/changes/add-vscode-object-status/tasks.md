@@ -1,15 +1,18 @@
 # Tasks
 
-- [x] Reuse #378 transport/connection lifecycle and existing four-state objects RPC.
-- [x] Pure six-state classification, byte baseline comparison and unknown state.
-- [x] Minimal flat object view, Explorer ownership decorations, changed-only filter.
-- [x] Folder and pinned Git-tree baseline; explicit external cache directory.
-- [x] Cancellation, stale selection/refresh invalidation and scoped file decorations.
-- [x] Unit tests and extension-host six-state/error/cancellation/selection checks.
-- [x] Independent review; DB-version race and unrelated Git submodule findings fixed.
-- [ ] Final parent review of reviewable UI commit/API.
-- [x] Integrate shared #382 READ filedb backend 644684f2 (local cherry-pick 020b88fe); no duplicate implementation.
-- [x] Prepare dormant pure native-evidence adapter and exact contract proposal/regression tests for measured byte/version mismatch.
-- [ ] Agree #362 native ConfigDumpInfo/version helper and RPC contract through parent.
-- [ ] Disposable native filedb platform/local edits and measured extension-host parity.
-- [ ] Complete issue acceptance and create PR only after parent review.
+- [x] Reuse #378 connection/transport lifecycle; integrate scoped LF fix c094b326.
+- [x] Six-state UI/Explorer labels, unknown, minimal list, filter and refresh.
+- [x] Folder and pinned Git baseline; explicit external cache, no production shell.
+- [x] Cancellation, generation/stale selection and multi-root invalidation tests.
+- [x] Integrate #382 READ backend 644684f2 and constructor test fix c085fccd.
+- [x] Integrate #362 native helper b46cd919 and additive versioned RPC.
+- [x] Native/file/cache/reference domains kept separate; snapshot/reference guards.
+- [x] Conservative exact owner mapping; unknown for unsupported roles; MSSQL gate.
+- [x] Real filedb RPC backward compatibility/fullRequired/bad-reference/read-only test.
+- [x] Native selected-import real filedb all-six-state UI/Explorer/filter acceptance.
+- [x] Actual native folder/Git parity; original version-only mismatch corrected.
+- [x] Independent review and relevant local checks.
+- [ ] Parent review of final native integration and remaining scope gates.
+- [ ] Shared coherent MSSQL main byte/tree view and additional native owner roles.
+- [ ] Configurator GUI validation if required by final acceptance interpretation.
+- [ ] PR only after parent gate; issue remains open until that decision.

@@ -359,6 +359,7 @@ struct StatusParams {
     infobase: String,
     source_dir: PathBuf,
     objects: Option<Vec<String>>,
+    version_baseline_dir: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -593,6 +594,20 @@ impl State {
     fn status(&mut self, id: &Value, params: StatusParams) -> Result<Value, RpcError> {
         let progress = self.progress(id);
         let session = self.session(&params.infobase)?;
+        if let Some(baseline) = params.version_baseline_dir {
+            return serde_json::to_value(
+                session
+                    .configuration
+                    .status_with_versions(
+                        params.objects.as_deref(),
+                        &params.source_dir,
+                        &baseline,
+                        &progress,
+                    )
+                    .map_err(failure)?,
+            )
+            .map_err(|error| failure(error.into()));
+        }
         let statuses = session
             .configuration
             .status(params.objects.as_deref(), &params.source_dir, &progress)
