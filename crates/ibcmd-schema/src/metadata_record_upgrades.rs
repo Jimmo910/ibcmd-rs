@@ -7,6 +7,27 @@ pub struct OwnerRecordUpgrade {
     pub appended_members: &'static str,
 }
 
+/// An information register owner of version 27, 29 or 30 -> 33: older
+/// owners stop before the slots later versions append (version 30 lacks the
+/// last two data-history flags, version 29 also the data-history slot,
+/// version 27 also both totals-slice flags); two 8.3.27 corpora dump them as
+/// `false`, `false`, `DontUse`, `false`, `false` (`0` each).
+pub fn information_register_owner_upgrade(
+    revision: &str,
+    members: usize,
+) -> Option<OwnerRecordUpgrade> {
+    let appended_members = match (revision, members) {
+        ("30", 37) => ",0,0",
+        ("29", 36) => ",0,0,0",
+        ("27", 34) => ",0,0,0,0,0",
+        _ => return None,
+    };
+    Some(OwnerRecordUpgrade {
+        target_revision: "33",
+        appended_members,
+    })
+}
+
 pub fn enum_owner_upgrade(revision: &str, members: usize) -> Option<OwnerRecordUpgrade> {
     let appended_members = match (revision, members) {
         ("19", 20) => ",0",
@@ -103,6 +124,12 @@ impl AttributeWrapperUpgrade {
 pub struct LegacyMetadataRecordLayout;
 impl LegacyMetadataRecordLayout {
     pub const ENUM_KIND: &'static str = "Enum";
+    /// The resource collection class every information register root holds.
+    pub const INFORMATION_REGISTER_RESOURCES: &'static str = "13134202-f60b-11d5-a3c7-0050bae0a776";
+    /// An information register root: `{1,<owner>,6,<six collections>}`.
+    pub fn information_register_root(tag: &str, members: usize, collection_count: &str) -> bool {
+        tag == "1" && members == 9 && collection_count == "6"
+    }
     pub fn ordinary_root(tag: &str) -> bool {
         tag == "1"
     }
@@ -173,6 +200,16 @@ mod tests {
     fn unknown_or_wrong_arity_does_not_gain_an_upgrade() {
         assert!(enum_owner_upgrade("19", 19).is_none());
         assert!(history_owner_upgrade("46", 54).is_none());
+        assert_eq!(
+            information_register_owner_upgrade("29", 36)
+                .unwrap()
+                .appended_members,
+            ",0,0,0"
+        );
+        assert!(information_register_owner_upgrade("29", 37).is_none());
+        assert!(LegacyMetadataRecordLayout::information_register_root(
+            "1", 9, "6"
+        ));
         assert!(history_owner_upgrade("999", 53).is_none());
         assert_eq!(
             history_owner_upgrade("46", 53).unwrap().target_revision,
