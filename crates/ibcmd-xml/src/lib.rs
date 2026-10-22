@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod config_dump_info;
 pub mod dcs;
 pub mod dcs_schema;
 pub mod dcs_storage;

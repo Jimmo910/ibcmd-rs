@@ -970,9 +970,8 @@ mod characteristics {
 mod additional_indexes;
 pub mod cas;
 mod command_interface;
-mod export_inventory;
-pub use export_inventory::read_config_dump_info;
-pub(crate) use export_inventory::read_config_dump_info_with_sql;
+pub use config_dump_info::read_config_dump_info;
+pub(crate) use config_dump_info::read_config_dump_info_with_sql;
 mod config_dump_info;
 mod config_rows;
 pub mod config_save;
@@ -4469,8 +4468,8 @@ fn dump_table_rows_streamed(
     if headers.is_empty() && sink.as_ref().is_some_and(|sink| sink.inventory_only()) {
         let output = OutputWriter::from_env_to_sink(sink.unwrap());
         output.write(
-            &output_dir.join("ConfigDumpInfo.xml"),
-            config_dump_info::empty_config_dump_info(source_version),
+            &output_dir.join(incremental::CONFIG_DUMP_INFO),
+            config_dump_info::empty_config_dump_info(source_version)?,
         )?;
         output.finish()?;
         return Ok(DumpedTable {
@@ -5554,11 +5553,11 @@ fn dump_table_rows_streamed(
             sql,
             database,
             table,
-            &BTreeSet::from(["versions".to_owned()]),
+            &BTreeSet::from([STAGE_INVENTORY_ROW.to_owned()]),
             false,
         )?
         .into_iter()
-        .find(|row| row.file_name == "versions" && row.part_no == 0)
+        .find(|row| row.file_name == STAGE_INVENTORY_ROW && row.part_no == 0)
         .ok_or_else(|| anyhow!("full Config export has no versions row"))?;
         let output = OutputWriter::from_env_to_sink(sink.unwrap());
         write_config_dump_info(
