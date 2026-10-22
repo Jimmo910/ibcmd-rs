@@ -8,7 +8,7 @@
 - [x] Unit tests and extension-host six-state/error/cancellation/selection checks.
 - [x] Independent review; DB-version race and unrelated Git submodule findings fixed.
 - [ ] Final parent review of reviewable UI commit/API.
-- [ ] Integrate shared #382 real filedb backend (no duplicate implementation).
+- [x] Integrate shared #382 READ filedb backend 644684f2 (local cherry-pick 020b88fe); no duplicate implementation.
 - [ ] Agree #362 native ConfigDumpInfo/version semantics through parent.
 - [ ] Disposable native filedb platform/local edits and measured extension-host parity.
 - [ ] Complete issue acceptance and create PR only after parent review.

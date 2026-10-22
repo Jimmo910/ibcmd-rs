@@ -206,6 +206,80 @@ exports.run = async () => {
     await vscode.commands.executeCommand("ibcmd.forgetPassword");
     assert.deepEqual(errors, []);
     assert.ok(api.status().includes("ibcmd-rs"));
+    // Opt-in actual native-mutated filedb READ smoke. This records byte-preview evidence,
+    // not native-version parity: native may report version changes with unchanged bytes.
+    const nativeRoot = process.env.IBCMD_TEST_FILEDB_ROOT;
+    if (nativeRoot) {
+      await fs.writeFile(
+        path.join(f.uri.fsPath, "ibcmd-rs.toml"),
+        await fs.readFile(path.join(nativeRoot, "workspace/ibcmd-rs.toml")),
+      );
+      await cfg.update(
+        "connections",
+        ["issue380-native"],
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "connectionMetadata",
+        {},
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "sourceDirectory",
+        path.join(nativeRoot, "source"),
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "statusBaselineDirectory",
+        path.join(nativeRoot, "baseline"),
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      vscode.window.showQuickPick = async (items) => (await items)[0];
+      await vscode.commands.executeCommand("ibcmd.select");
+      await vscode.commands.executeCommand("ibcmd.objects.refresh");
+      const actual = api.objects();
+      const byName = new Map(actual.map((row) => [row.object, row.state]));
+      assert.equal(byName.get("CommonModule.ФайловаяБазаПроверка"), "database");
+      assert.equal(byName.get("Configuration"), "file");
+      assert.equal(byName.get("Language.English"), "same");
+      assert.equal(
+        api.objectDecoration(
+          vscode.Uri.file(
+            path.join(
+              nativeRoot,
+              "source/CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl",
+            ),
+          ),
+        ).badge,
+        "Б",
+      );
+      assert.ok(
+        api
+          .objectDecoration(
+            vscode.Uri.file(
+              path.join(nativeRoot, "source/Languages/English.xml"),
+            ),
+          )
+          .tooltip.includes("native-версии не проверены"),
+      );
+      const nativeStatus = await fs.readFile(
+        path.join(nativeRoot, "module-status.stdout"),
+        "utf8",
+      );
+      assert.ok(nativeStatus.includes("modified: Language.English"));
+      assert.ok(nativeStatus.includes("modified: Configuration.Configuration"));
+      await fs.writeFile(
+        path.join(nativeRoot, "ui-evidence.json"),
+        JSON.stringify(
+          { labels: actual, nativeStatus, nativeVersionParity: false },
+          null,
+          2,
+        ),
+      );
+      console.log(
+        "Actual filedb READ UI passed; recorded native version/byte divergence, native parity remains BLOCKED.",
+      );
+    }
     // Real extension UI/state machine against a clearly synthetic server, covering failure/races.
     const fake = path.join(__dirname, "fake-host-server.js");
     await fs.chmod(fake, 0o755);

@@ -37,8 +37,12 @@ export class ObjectView
   private changedOnly = false;
   private message = "Выберите подключение и обновите статусы";
   constructor(private context: vscode.ExtensionContext) {
+    const view = vscode.window.createTreeView("ibcmd.objects", {
+      treeDataProvider: this,
+    });
+    view.description = "Байты экспорта · preview";
     context.subscriptions.push(
-      vscode.window.registerTreeDataProvider("ibcmd.objects", this),
+      view,
       vscode.window.registerFileDecorationProvider(this),
       this,
     );
@@ -63,7 +67,7 @@ export class ObjectView
   getTreeItem(row: Row) {
     const item = new vscode.TreeItem(row.object);
     item.description = labels[row.state];
-    item.tooltip = `${row.object}: ${labels[row.state]}`;
+    item.tooltip = `${row.object}: ${labels[row.state]}. Сравнение байтов экспорта; native-версии не проверены.`;
     item.resourceUri = row.uri;
     return item;
   }
@@ -100,7 +104,7 @@ export class ObjectView
     };
     return {
       badge: badges[state],
-      tooltip: labels[state],
+      tooltip: `${labels[state]}. Сравнение байтов экспорта; native-версии не проверены.`,
       color: new vscode.ThemeColor(
         state === "same"
           ? "gitDecoration.untrackedResourceForeground"

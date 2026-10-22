@@ -176,10 +176,11 @@ only the selected workspace folder receives decorations.
 
 This preview is tested on committed `rows-dir` fixtures and a synthetic six-state
 extension-host fixture. It is **not yet native export-status parity**: the existing
-RPC does not expose the `ConfigDumpInfo.xml`/native version comparison, and real
-filedb integration is owned by #382. No duplicate filedb adapter is provided here.
-Issue #380 remains open until the shared backend is integrated, the native #362
-contract is agreed, and a disposable filedb receives a platform module edit plus a
+RPC does not expose the `ConfigDumpInfo.xml`/native version comparison. The shared
+#382 READ backend has been integrated from `644684f2`; it does not yet provide write/pending operations. No
+duplicate filedb adapter is provided here.
+Issue #380 remains open until the native #362 version contract is agreed and
+exposed through RPC, and a disposable filedb receives a platform module edit plus a
 separate local file edit with matching measured status in the extension host.
 
 Checks: `npm test`, `npm run format:check`, `npm run test:host`; the host test covers
@@ -188,3 +189,11 @@ Explorer badges, error clearing, cancellation and selection races. Use a unique
 `TMPDIR` under the lab root for Rust fixture tests: their shared upstream helper
 clears/reuses fixed fixture directory names. Keep preserved scratch artifacts out
 of those names.
+
+Actual filedb READ/extension-host evidence after integration is documented in
+`openspec/changes/add-vscode-object-status/evidence/native-read-20261022.md`.
+The measured native-version/byte divergence is a remaining acceptance blocker.
+For an optional prepared native-mutated lab run, set `IBCMD_TEST_FILEDB_ROOT` to
+its disposable run root before `npm run test:host`; this additionally checks actual
+filedb UI badges and records `ui-evidence.json` with `nativeVersionParity: false`.
+The tree description and tooltips explicitly identify this as a byte preview.
