@@ -1,7 +1,7 @@
 //! Local MCP adapter. Transport/lifecycle belongs to rmcp; configuration operations
 //! belong to the shared stored_objects engine. No native platform process is run.
 use crate::{
-    server::infobases::{self, Entry, Login, Session},
+    server::infobases::{self, Entry},
     settings::{ENV_CONFIG, Settings, SettingsSources},
     stored_objects,
 };
@@ -78,7 +78,8 @@ struct Bound {
     policy_path: PathBuf,
     policy_bytes: Vec<u8>,
     rows_handle: Option<fs::File>,
-    settings: Settings,
+    file_handle: Option<fs::File>,
+    file_path: Option<PathBuf>,
     entry: Entry,
     root: PathBuf,
     root_handle: fs::File,
@@ -124,8 +125,8 @@ impl Bound {
             .context("MCP database must name a configured fixed entry")?;
         ensure!(!entry.mask, "MCP database masks are forbidden");
         ensure!(
-            entry.rows_dir.is_some() && entry.server.is_none(),
-            "only offline rows supported until live identity integration"
+            (entry.rows_dir.is_some() || entry.db_path.is_some()) && entry.server.is_none(),
+            "only local rows or file databases supported"
         );
         // The common parser reads files itself. Bind its selected entry to the
         // exact initial bytes too, so a transient settings substitution cannot
@@ -143,13 +144,19 @@ impl Bound {
         ensure!(matches.len() == 1, "database must have one exact binding");
         let original = matches[0];
         ensure!(original.get("server").is_none(), "offline target required");
-        let original_rows = original
-            .get("rows-dir")
+        let key = if entry.db_path.is_some() {
+            "db-path"
+        } else {
+            "rows-dir"
+        };
+        let original_path = original
+            .get(key)
             .and_then(toml::Value::as_str)
-            .context("rows-dir required")?;
-        let original_rows = settings_path.parent().unwrap().join(original_rows);
+            .context("local target path required")?;
+        let original_path = settings_path.parent().unwrap().join(original_path);
+        let selected_path = entry.db_path.as_deref().or(entry.rows_dir.as_deref());
         ensure!(
-            entry.rows_dir.as_deref() == Some(original_rows.as_path()),
+            selected_path == Some(original_path.as_path()),
             "settings identity changed during parse"
         );
         ensure!(
@@ -170,13 +177,20 @@ impl Bound {
         ensure!(root.is_dir(), "MCP source root must be a directory");
         let root_handle = fs::File::open(&root)?;
         let rows_handle = entry.rows_dir.as_ref().map(fs::File::open).transpose()?;
+        let file_path = entry
+            .db_path
+            .as_ref()
+            .map(|path| fs::canonicalize(ibcmd_filedb::data_file(path)))
+            .transpose()?;
+        let file_handle = file_path.as_deref().map(open_regular).transpose()?;
         Ok(Self {
             settings_path,
             settings_bytes,
             policy_path,
             policy_bytes,
             rows_handle,
-            settings,
+            file_handle,
+            file_path,
             entry,
             root,
             root_handle,
@@ -205,6 +219,15 @@ impl Bound {
                     "MCP target identity changed; restart required"
                 );
             }
+            if let (Some(handle), Some(path)) = (&self.file_handle, &self.file_path) {
+                let pinned = handle.metadata()?;
+                let current = fs::symlink_metadata(path)?;
+                ensure!(
+                    current.is_file()
+                        && (pinned.dev(), pinned.ino()) == (current.dev(), current.ino()),
+                    "MCP file database identity changed; restart required"
+                );
+            }
             let pinned = self.root_handle.metadata()?;
             let current = fs::metadata(&self.root)?;
             ensure!(
@@ -226,21 +249,27 @@ impl Bound {
                 "write_denied: shared agent-authorized staging is not integrated; no changes made"
             );
         }
-        ensure!(
-            self.rows_handle.is_some(),
-            "live target identity API not integrated"
-        );
         let before = self.rows_fingerprint()?;
-        let rows = self.snapshot_rows()?;
-        // A fresh engine view on every call avoids retaining stale inventory after
-        // another client stages/applies changes. Auth comes only from operator env.
-        let mut session = Session::open(&self.entry, None, Login::default(), &self.settings)?;
-        session.configuration = stored_objects::StoredConfiguration::from_rows_snapshot(
-            session.configuration.source().clone(),
-            session.entry.spec,
-            rows,
-        );
-        let config = &mut session.configuration;
+        let (source, rows) = if let Some(path) = &self.file_path {
+            (
+                stored_objects::ConfigSource::FileDb(path.clone()),
+                self.snapshot_file_db()?,
+            )
+        } else {
+            (
+                stored_objects::ConfigSource::RowsDir(
+                    self.entry
+                        .rows_dir
+                        .clone()
+                        .context("rows source required")?,
+                ),
+                self.snapshot_rows()?,
+            )
+        };
+        // Each request uses one immutable locked snapshot, never a cached view
+        // or a fresh path-based database open after authorization.
+        let mut config =
+            stored_objects::StoredConfiguration::from_rows_snapshot(source, self.entry.spec, rows);
         let result = match name {
             "tree" => json!({"nodes": config.children(args.node.as_deref())?}),
             "read" => {
@@ -288,6 +317,46 @@ impl Bound {
             "output_limit: select fewer objects"
         );
         Ok(result)
+    }
+
+    #[cfg(unix)]
+    fn snapshot_file_db(&self) -> Result<BTreeMap<String, Arc<Vec<u8>>>> {
+        use std::os::unix::fs::MetadataExt;
+        let path = self.file_path.as_ref().context("file target required")?;
+        let file = open_regular(path)?;
+        let current = file.metadata()?;
+        let pinned = self
+            .file_handle
+            .as_ref()
+            .context("file identity required")?
+            .metadata()?;
+        ensure!(
+            (current.dev(), current.ino()) == (pinned.dev(), pinned.ino()),
+            "file target identity mismatch"
+        );
+        ensure!(current.len() <= 128 * 1024 * 1024, "file input limit");
+        let mut db = ibcmd_filedb::FileDb::from_file(file)
+            .map_err(|_| anyhow::anyhow!("file database unavailable"))?;
+        ensure!(
+            (db.metadata().dev(), db.metadata().ino()) == (pinned.dev(), pinned.ino()),
+            "consumed target identity mismatch"
+        );
+        crate::cancel::check()?;
+        let rows = crate::mssql_dump::file_db_rows_from_reader(&mut db)?;
+        ensure!(
+            rows.len() <= 100_000
+                && rows
+                    .values()
+                    .try_fold(0usize, |total, row| total.checked_add(row.len()))
+                    .is_some_and(|total| total <= 128 * 1024 * 1024),
+            "file rows limit"
+        );
+        crate::cancel::check()?;
+        Ok(rows)
+    }
+    #[cfg(not(unix))]
+    fn snapshot_file_db(&self) -> Result<BTreeMap<String, Arc<Vec<u8>>>> {
+        bail!("secure file snapshots require Unix")
     }
 
     #[cfg(unix)]
@@ -595,11 +664,9 @@ impl ServerHandler for Adapter {
     }
 }
 
-fn bounded_file(path: &Path, limit: usize) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
+fn open_regular(path: &Path) -> Result<fs::File> {
     #[cfg(unix)]
     let file = {
-        // openat supplies the portable platform flags; do not block on FIFOs.
         let fd = rustix::fs::open(
             path,
             rustix::fs::OFlags::RDONLY
@@ -612,11 +679,14 @@ fn bounded_file(path: &Path, limit: usize) -> Result<Vec<u8>> {
     };
     #[cfg(not(unix))]
     let file = fs::File::open(path)?;
-    ensure!(
-        file.metadata()?.is_file(),
-        "policy/settings must be ordinary files"
-    );
-    file.take((limit + 1) as u64).read_to_end(&mut bytes)?;
+    ensure!(file.metadata()?.is_file(), "input must be an ordinary file");
+    Ok(file)
+}
+fn bounded_file(path: &Path, limit: usize) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    open_regular(path)?
+        .take((limit + 1) as u64)
+        .read_to_end(&mut bytes)?;
     ensure!(bytes.len() <= limit, "file input limit");
     Ok(bytes)
 }

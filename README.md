@@ -481,3 +481,16 @@ ibcmd-rs cf load F:\src\MyExtension-edit F:\cf\MyExtension-new.cfe --base F:\cf\
 - [scripts/empty-load](scripts/empty-load) — скрипты проверки загрузки в пустую
   базу; [scripts/timing](scripts/timing) — замеры против штатного `ibcmd`.
 - [openspec/changes](openspec/changes) — спецификации и результаты проверок.
+
+
+### MCP для ИИ-клиентов (#386, чтение)
+
+`ibcmd-rs mcp --settings /operator/ibcmd-rs.toml` — отдельный настоящий MCP stdio
+adapter на official rmcp3.6.0. В настройках нужны `[mcp] database = "fixed-id"`
+и `source-root = "/approved/source"`; база задаётся фиксированным `[[database]]`
+с `rows-dir` либо `db-path`. Tools: `tree`, `read`, `export`, `status`, `compare`,
+`import`. Export возвращает ограниченные файлы в памяти. Status/compare сейчас
+сравнивают только пути, присутствующие в экспорте. Import пока всегда отказывает;
+запись и полный native roundtrip остаются acceptance gate #386. SQL MCP пока
+закрыт. Подробности policy, ограничения и evidence —
+[OpenSpec MCP](openspec/changes/add-mcp-adapter/design.md).

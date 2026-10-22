@@ -278,3 +278,104 @@ async fn legacy_initialize_and_modern_discover_are_supported() {
         client.cancel().await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn real_mcp_client_reads_disposable_filedb_without_mutation() {
+    use std::io::Read;
+    let root = std::env::temp_dir().join(format!("ibcmd-mcp-filedb-{}", uuid::Uuid::new_v4()));
+    let db = root.join("db");
+    fs::create_dir_all(&db).unwrap();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase");
+    let mut bytes = Vec::new();
+    flate2::read::GzDecoder::new(fs::File::open(fixture.join("tiny.1CD.gz")).unwrap())
+        .read_to_end(&mut bytes)
+        .unwrap();
+    let target = db.join("1Cv8.1CD");
+    fs::write(&target, &bytes).unwrap();
+    let settings = root.join("ibcmd-rs.toml");
+    fs::write(&settings, format!("[[database]]\nname='demo'\nplatform='8.5.1'\ndb-path='db'\nagent-write=false\n[mcp]\ndatabase='demo'\nsource-root='{}'\n",fixture.join("tiny-xml").display())).unwrap();
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
+    command
+        .arg("mcp")
+        .arg("--settings")
+        .arg(&settings)
+        .stderr(Stdio::piped());
+    let client = ().serve(TokioChildProcess::new(command).unwrap()).await.unwrap();
+    assert!(
+        !value(&call(&client, "tree", json!({})).await)["nodes"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let module = "CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl";
+    let result = value(&call(&client, "read", json!({"path":module})).await);
+    let source = fs::read(fixture.join("tiny-xml").join(module)).unwrap();
+    assert_eq!(
+        result["file"]["content"].as_str().unwrap().as_bytes(),
+        source
+    );
+    let exported = value(
+        &call(
+            &client,
+            "export",
+            json!({"objects":["CommonModule.ФайловаяБазаПроверка"]}),
+        )
+        .await,
+    );
+    assert_eq!(
+        exported["objects"][0]["files"][module]["content"],
+        result["file"]["content"]
+    );
+    let comparison = value(
+        &call(
+            &client,
+            "compare",
+            json!({"objects":["CommonModule.ФайловаяБазаПроверка"]}),
+        )
+        .await,
+    );
+    assert!(
+        comparison["objects"][0]["files"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|file| file["same"] == true)
+    );
+    assert_eq!(
+        call(
+            &client,
+            "import",
+            json!({"objects":["CommonModule.ФайловаяБазаПроверка"]})
+        )
+        .await
+        .is_error,
+        Some(true)
+    );
+    assert_eq!(fs::read(&target).unwrap(), bytes);
+    assert!(!ibcmd_filedb::backup_file(&db).exists());
+    // Optional native oracle is only in this external test orchestrator, never
+    // the production Rust adapter. All native state remains under this test root.
+    if let Some(native) = std::env::var_os("IBCMD_MCP_NATIVE") {
+        let native_out = root.join("native-export");
+        let output = std::process::Command::new(native)
+            .arg("infobase")
+            .arg(format!("--db-path={}", db.display()))
+            .arg(format!("--data={}", root.join("native-data").display()))
+            .arg(format!("--temp={}", root.join("native-temp").display()))
+            .args(["config", "export"])
+            .arg(&native_out)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "native export: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fs::read(native_out.join(module)).unwrap(), source);
+    }
+    // Replacement under the same path cannot silently reconnect this session.
+    fs::rename(&target, root.join("old.1CD")).unwrap();
+    fs::write(&target, &bytes).unwrap();
+    assert_eq!(call(&client, "tree", json!({})).await.is_error, Some(true));
+    client.cancel().await.unwrap();
+}

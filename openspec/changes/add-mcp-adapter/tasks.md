@@ -13,7 +13,13 @@
 - [x] Integrate READ dependency 644684f2 as ea8097f5; common-file [mcp] supported.
       5 actual1CD backend + 6 editor + 2 MCP tests pass after integration.
       Log: external lab logs/issue-386-read-integration-final.log.
-- [ ] Integrate #382 descriptor filedb identity and staging API.
+- [x] Integrate descriptor READ571e6a13 as7c911837; genuine MCP reads disposable
+      filedb module/export/compare without mutation; native8.5.1.1592 re-export
+      matches module source. 3 MCP + 6 editor + 6 filedb tests pass.
+- [ ] Bounded/cancellable shared filedb materialization before blob expansion.
+- [ ] Integrate #382 guarded staging API: validate consumed descriptor against
+      pinned startup identity, recheck operator policy immediately before atomic
+      publication, and propagate cancellation before any visible change.
 - [ ] Enforce agent-write per fixed database on every mutation and publication.
 - [ ] Full status/compare including local-only paths through confined snapshots.
 - [ ] Native acceptance: real MCP client edits disposable filedb module; external
