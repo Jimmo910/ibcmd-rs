@@ -82,26 +82,24 @@ fn detect_by<'a>(find: impl Fn(&str) -> Option<&'a [u8]>) -> Result<Option<Exter
     header::parse_main(main_uuid, &main_text)
 }
 
-/// The platform's `AnyIBRef` type id, which a dump made in the configuration
-/// infobase writes `cfg:AnyRef` for an external object (corpus: 17 of 17;
-/// only an empty infobase keeps `AnyIBRef`).
-const ANY_REF_TYPE_ID: &str = "280f5f0e-9c8a-49cc-bf6d-4d296cc17a63";
-
 /// Configuration references an external object carries in `copyinfo`, in the
 /// spelling the pipeline indexes use.
+///
+/// The `AnyIBRef` type set is deliberately not named here: which spelling the
+/// export writes is the dump's compatibility mode's answer
+/// (`mssql_dump::respell_any_ib_ref_by_compatibility`), and an object exported
+/// on its own carries no mode at all. Forcing `cfg:AnyRef` here made the file
+/// route disagree with the platform, whose own `config export --file` of
+/// `Обработка все типы` writes `cfg:AnyIBRef`; the infobase route keeps
+/// `cfg:AnyRef` through the mode the configuration's own row carries.
 pub fn foreign_references(
     info: &copyinfo::CopyInfo,
     main: &ExternalMain,
 ) -> mssql_dump::ForeignReferences {
-    let mut types: Vec<(String, String, String)> = copyinfo::resolve(info)
+    let types: Vec<(String, String, String)> = copyinfo::resolve(info)
         .into_iter()
         .map(|t| (t.type_id, format!("cfg:{}", t.name), t.category.to_owned()))
         .collect();
-    types.push((
-        ANY_REF_TYPE_ID.into(),
-        "cfg:AnyRef".into(),
-        "TypeSet".into(),
-    ));
     let mut objects = copyinfo::object_references(info);
     // Help links name the object itself by its main uuid, which the adapter
     // moved to the object id; renamed to the external spelling on output.
@@ -461,14 +459,18 @@ mod tests {
         );
     }
 
+    /// The any-reference type set is not spelled here: a file exported on its
+    /// own has no compatibility mode to spell it with, and the built-in table's
+    /// own name (`cfg:AnyIBRef`) is what the platform writes in that case.
     #[test]
-    fn any_ib_ref_is_written_as_any_ref() {
+    fn the_any_reference_spelling_is_left_to_the_compatibility_mode() {
         let foreign = foreign_references(&copyinfo::CopyInfo::default(), &sample_main());
-        assert!(foreign.types.contains(&(
-            "280f5f0e-9c8a-49cc-bf6d-4d296cc17a63".to_owned(),
-            "cfg:AnyRef".to_owned(),
-            "TypeSet".to_owned()
-        )));
+        assert!(
+            foreign
+                .types
+                .iter()
+                .all(|(type_id, _, _)| type_id != "280f5f0e-9c8a-49cc-bf6d-4d296cc17a63")
+        );
     }
 
     #[test]

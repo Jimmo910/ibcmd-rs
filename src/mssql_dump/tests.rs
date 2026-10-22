@@ -74683,8 +74683,8 @@ fn a_root_bound_platform_type_name_is_one_fact_for_every_reader() {
     // document root the writer uses the root prefix and declares nothing, and
     // both the `MDClasses` root and the `logform` root bind `cfg`, `v8` and
     // `v8ui`. Census of the eight stand corpora: 1 520 `<v8:Type>` elements
-    // spell one of the six names below and not one of them carries an inline
-    // `xmlns`. So all three readers must answer the same for all six.
+    // spell one of the names below and not one of them carries an inline
+    // `xmlns`. So all three readers must answer the same for every one.
     for (identifier, reference) in ROOT_BOUND_PLATFORM_TYPE_REFERENCES {
         assert_eq!(builtin_type_reference(identifier), Some(*reference));
         assert_eq!(form_builtin_type_reference(identifier), Some(*reference));
@@ -77321,6 +77321,64 @@ fn renders_form_planner_settings_items_zero_to_platform_proven_xml() {
             "../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/items-zero-settings.xml"
         ),
     );
+}
+
+/// A form saved by an older platform (8.3.26) stores its period as
+/// `{1,<begin>,<end>,1,{1,<begin>,<end>}}` -- the flag and the replacement
+/// period behind it -- where 8.3.27 stores `{1,<begin>,<end>,0}`. The platform
+/// still writes `<pl:period><pl:begin>,<pl:end>` from the first two members and
+/// drops the rest.
+///
+/// Evidence: `Обработка все типы` `epf`, DataProcessor attribute `Реквизит69`
+/// (`{1,20261014000000,20261014235959,1,{1,00010101000000,00010101000000}}`).
+/// Its native `ibcmd.exe config export` writes
+/// `<pl:period><pl:begin>2026-10-14T00:00:00</pl:begin>` +
+/// `<pl:end>2026-10-14T23:59:59</pl:end>`, so the five-member record decodes to
+/// exactly what the four-member control decodes to.
+#[test]
+fn reads_the_replacement_period_an_older_platform_stores_behind_the_flag() {
+    let raw = include_str!(
+        "../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/control.txt"
+    );
+    let native = include_str!(
+        "../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/control-settings.xml"
+    );
+    let replaced = raw.replace(
+        "{1,20150217000000,20150217235959,0}",
+        "{1,20150217000000,20150217235959,1,{1,00010101000000,00010101000000}}",
+    );
+    assert_ne!(
+        replaced, raw,
+        "the control fixture must carry the four-member period"
+    );
+    assert_platform_proven_form_planner_settings(&replaced, native);
+}
+
+/// The replacement-period record is only admitted for the flag the older
+/// platform writes. A flag of `0` with a record behind it, or a record that is
+/// not a period, stays unproven and the block is refused rather than rendered
+/// from members the platform never reads.
+#[test]
+fn refuses_a_five_member_period_that_is_not_the_older_platform_record() {
+    let raw = include_str!(
+        "../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/control.txt"
+    );
+    for replacement in [
+        "{1,20150217000000,20150217235959,0,{1,00010101000000,00010101000000}}",
+        "{1,20150217000000,20150217235959,1,{1,00010101000000}}",
+        "{1,20150217000000,20150217235959,1,{2,00010101000000,00010101000000}}",
+        "{1,20150217000000,20150217235959,1,{1,00010101000000,0001010100000}}",
+    ] {
+        let replaced = raw.replace("{1,20150217000000,20150217235959,0}", replacement);
+        assert_ne!(
+            replaced, raw,
+            "the control fixture must carry the four-member period"
+        );
+        assert!(
+            parse_and_render_form_planner_settings_for_test(&replaced).is_none(),
+            "unproven period `{replacement}` must not decode into a planner block"
+        );
+    }
 }
 
 /// Evidence: fixture `form-graphical-scheme-settings`. Two of its ten pairs are
