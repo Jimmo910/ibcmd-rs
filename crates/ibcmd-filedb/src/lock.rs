@@ -59,6 +59,16 @@ pub(crate) fn open_locked(path: &Path, mode: Mode) -> Result<File> {
     Ok(file)
 }
 
+#[cfg(unix)]
+pub(crate) fn lock_write_descriptor(file: &File) -> Result<()> {
+    posix_lock(file, Mode::Write).map_err(|error| match error.raw_os_error() {
+        Some(libc::EAGAIN) | Some(libc::EACCES) => {
+            Error::Busy("file database descriptor is busy".into())
+        }
+        _ => Error::Io(error),
+    })
+}
+
 pub(crate) fn lock_read_descriptor(file: &File) -> Result<()> {
     #[cfg(unix)]
     {

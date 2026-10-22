@@ -150,6 +150,7 @@ fn the_export_reproduces_the_platforms_export_of_the_file() {
     assert!(!ibcmd_filedb::backup_file(&db).exists());
 }
 
+#[cfg(unix)]
 #[test]
 fn an_import_into_an_empty_infobase_stages_the_whole_tree() {
     let dir = scratch("import-empty");
@@ -178,6 +179,7 @@ fn an_import_into_an_empty_infobase_stages_the_whole_tree() {
     assert_same_tree(&fixtures().join("tiny-xml"), &out, &["ConfigDumpInfo.xml"]);
 }
 
+#[cfg(unix)]
 #[test]
 fn an_import_onto_the_same_configuration_loads_the_edit() {
     let dir = scratch("import-patch");
@@ -205,6 +207,7 @@ fn an_import_onto_the_same_configuration_loads_the_edit() {
     assert_same_tree(&tree, &out, &["ConfigDumpInfo.xml"]);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_russian_infobase_is_imported_with_its_collation() {
     let dir = scratch("import-ru");
@@ -227,7 +230,10 @@ fn an_infobase_in_an_unmeasured_locale_is_not_imported() {
     let output = import(&db, &fixtures().join("tiny-xml"));
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
+    #[cfg(unix)]
     assert!(stderr.contains("de_DE"), "{stderr}");
+    #[cfg(not(unix))]
+    assert!(stderr.contains("not supported on this OS"), "{stderr}");
     assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
     assert_eq!(fs::read_dir(&db).unwrap().count(), 1);
     // Reading it is the crate's test (`native_files.rs`): this infobase holds

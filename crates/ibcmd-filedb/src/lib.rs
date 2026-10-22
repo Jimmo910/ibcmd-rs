@@ -25,10 +25,11 @@ mod object;
 mod pager;
 mod read_limits;
 mod record;
+mod write_paths;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -315,6 +316,7 @@ pub struct WriteSession {
     collation: Collation,
     tables: BTreeMap<String, Table>,
     read_budget: Option<read_limits::ReadBudget>,
+    paths: write_paths::WritePaths,
 }
 
 /// Locks the infobase for a write and checks it can be written: the
@@ -348,7 +350,8 @@ fn open_for_write_budget(
     guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
 ) -> Result<WriteSession> {
     let path = existing_data_file(db_path)?;
-    let file = lock::open_locked(&path, Mode::Write)?;
+    let paths = write_paths::WritePaths::open(&path)?;
+    let file = paths.open_locked(&path)?;
     guard(&file.metadata()?)?;
     if let Some(budget) = &read_budget {
         budget.check()?;
@@ -385,6 +388,7 @@ fn open_for_write_budget(
         collation,
         tables,
         read_budget,
+        paths,
     })
 }
 
@@ -438,7 +442,8 @@ impl WriteSession {
     }
 
     /// Digest of the locked data file including its filesystem identity.
-    /// Suitable for a preflight/commit compare-and-swap token.
+    /// A preflight revalidation fingerprint under the advisory lock. This is
+    /// not an atomic filesystem CAS against noncooperating leaf-entry writers.
     pub fn snapshot(&self) -> Result<String> {
         #[cfg(not(unix))]
         {
@@ -472,19 +477,7 @@ impl WriteSession {
     }
 
     fn check_binding(&self) -> Result<()> {
-        let current = fs::symlink_metadata(&self.path)?;
-        if !current.is_file() || current.file_type().is_symlink() {
-            return Err(Error::Refused("file database path was rebound".into()));
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            let original = self.file.metadata()?;
-            if (current.dev(), current.ino()) != (original.dev(), original.ino()) {
-                return Err(Error::Refused("file database identity changed".into()));
-            }
-        }
-        Ok(())
+        self.paths.require_binding(&self.path, &self.file)
     }
 
     /// Replaces every row of a configuration table and ends the session.
@@ -528,12 +521,7 @@ impl WriteSession {
         let target = config_table(&self.tables, table)?;
         let work = sibling(&self.path, WORK_SUFFIX);
         let backup = sibling(&self.path, BACKUP_SUFFIX);
-        let mut copy = match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&work)
-        {
+        let mut copy = match self.paths.create_new(&work, true) {
             Ok(file) => file,
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
                 return Err(Error::Refused(format!(
@@ -549,10 +537,11 @@ impl WriteSession {
             Ok(report) => report,
             Err(err) => {
                 drop(copy);
-                let _ = fs::remove_file(&work);
+                let _ = self.paths.remove(&work);
                 return Err(err);
             }
         };
+        #[cfg(not(unix))]
         drop(copy);
         // Prepare recovery data without replacing an existing backup. Rejection
         // or interruption before the final check preserves both published files.
@@ -560,9 +549,10 @@ impl WriteSession {
         let prepare_backup = || -> Result<()> {
             self.check_binding()?;
             prepare_backup_file(
+                &self.paths,
                 &self.file,
                 &backup_work,
-                || fs::hard_link(&self.path, &backup_work),
+                || self.paths.hard_link(&self.path, &backup_work),
                 |out| {
                     let mut original = &self.file;
                     original.seek(SeekFrom::Start(0))?;
@@ -571,41 +561,38 @@ impl WriteSession {
             )
         };
         if let Err(error) = prepare_backup() {
-            let _ = fs::remove_file(&work);
+            let _ = self.paths.remove(&work);
             return Err(error);
         }
-        if let Err(error) = check(&self.file.metadata()?).and_then(|()| self.check_binding()) {
-            let _ = fs::remove_file(&work);
-            let _ = fs::remove_file(&backup_work);
+        if let Err(error) = check(&self.file.metadata()?).and_then(|()| {
+            self.check_binding()?;
+            #[cfg(unix)]
+            self.paths.require_leaf(&work, &copy)?;
+            Ok(())
+        }) {
+            let _ = self.paths.remove(&work);
+            let _ = self.paths.remove(&backup_work);
             return Err(error);
         }
         // Publish the database FIRST. Until this succeeds the previous backup
         // is untouched. A later backup rename failure retains .bak.new (the
         // complete pre-write database) and the previous .bak; no rollback can
         // destroy the only recovery generation.
-        let WriteSession { path, file, .. } = self;
+        let WriteSession {
+            path, file, paths, ..
+        } = self;
         #[cfg(windows)]
         drop(file);
-        if let Err(error) =
-            publish_files(&work, &path, &backup_work, &backup, |a, b| fs::rename(a, b))
-        {
+        if let Err(error) = publish_files(&paths, &work, &path, &backup_work, &backup, |a, b| {
+            paths.rename(a, b)
+        }) {
             #[cfg(unix)]
             drop(file);
             return Err(error);
         }
+        paths.sync();
         #[cfg(unix)]
-        {
-            if let Some(dir) = path.parent()
-                && let Ok(d) = File::open(if dir.as_os_str().is_empty() {
-                    Path::new(".")
-                } else {
-                    dir
-                })
-            {
-                let _ = d.sync_all();
-            }
-            drop(file);
-        }
+        drop(file);
         Ok(report)
     }
 
@@ -722,26 +709,17 @@ impl WriteSession {
 // removed, truncated or overwritten. The injected operations keep fault tests
 // on the same path as production, including filesystems without hard links.
 fn prepare_backup_file(
+    paths: &write_paths::WritePaths,
     original: &File,
     path: &Path,
     hard_link: impl FnOnce() -> std::io::Result<()>,
     copy: impl FnOnce(&mut File) -> Result<()>,
 ) -> Result<()> {
     if hard_link().is_ok() {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            let source = original.metadata()?;
-            let linked = fs::symlink_metadata(path)?;
-            if (source.dev(), source.ino()) != (linked.dev(), linked.ino()) {
-                return Err(Error::Refused("backup source identity changed".into()));
-            }
-        }
-        #[cfg(not(unix))]
-        let _ = original;
+        paths.require_leaf(path, original)?;
         return Ok(());
     }
-    let mut out = match OpenOptions::new().write(true).create_new(true).open(path) {
+    let mut out = match paths.create_new(path, false) {
         Ok(out) => out,
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             return Err(Error::Refused(format!(
@@ -754,7 +732,7 @@ fn prepare_backup_file(
     let result = copy(&mut out).and_then(|()| Ok(out.sync_all()?));
     if result.is_err() {
         drop(out);
-        let _ = fs::remove_file(path);
+        let _ = paths.remove(path);
     }
     result
 }
@@ -763,6 +741,7 @@ fn prepare_backup_file(
 // if updating backup fails, the new database is published and the old database
 // remains in backup_work. Never silently discard either backup generation.
 fn publish_files(
+    paths: &write_paths::WritePaths,
     work: &Path,
     path: &Path,
     backup_work: &Path,
@@ -770,8 +749,8 @@ fn publish_files(
     mut rename: impl FnMut(&Path, &Path) -> std::io::Result<()>,
 ) -> Result<()> {
     if let Err(error) = rename(work, path) {
-        let _ = fs::remove_file(work);
-        let _ = fs::remove_file(backup_work);
+        let _ = paths.remove(work);
+        let _ = paths.remove(backup_work);
         return Err(Error::Io(error));
     }
     if let Err(error) = rename(backup_work, backup) {
@@ -833,7 +812,7 @@ pub fn rebuild_config_index_in_place(db_path: &Path, table: &str) -> Result<()> 
     pager.sync()
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod publication_tests {
     use super::*;
     #[test]
@@ -850,8 +829,9 @@ mod publication_tests {
             fs::write(&data, b"original database A").unwrap();
             fs::write(&backup, b"older backup B").unwrap();
             let original = File::open(&data).unwrap();
+            let paths = write_paths::WritePaths::open(&data).unwrap();
             let no_link = || Err(std::io::Error::other("injected hard-link unavailable"));
-            let error = prepare_backup_file(&original, &pending, no_link, |out| {
+            let error = prepare_backup_file(&paths, &original, &pending, no_link, |out| {
                 out.write_all(b"partial")?;
                 if cancelled {
                     Err(Error::Refused("injected cancellation".into()))
@@ -864,12 +844,12 @@ mod publication_tests {
             assert!(!pending.exists());
             assert_eq!(fs::read(&data).unwrap(), b"original database A");
             assert_eq!(fs::read(&backup).unwrap(), b"older backup B");
-            prepare_backup_file(&original, &pending, no_link, |out| {
+            prepare_backup_file(&paths, &original, &pending, no_link, |out| {
                 Ok(out.write_all(b"original database A")?)
             })
             .unwrap();
             assert_eq!(fs::read(&pending).unwrap(), b"original database A");
-            let error = prepare_backup_file(&original, &pending, no_link, |_| {
+            let error = prepare_backup_file(&paths, &original, &pending, no_link, |_| {
                 panic!("must not touch pre-existing file")
             })
             .unwrap_err();
@@ -878,7 +858,10 @@ mod publication_tests {
             let work = dir.join("work");
             fs::write(&work, b"new database C").unwrap();
             drop(original);
-            publish_files(&work, &data, &pending, &backup, |a, b| fs::rename(a, b)).unwrap();
+            publish_files(&paths, &work, &data, &pending, &backup, |a, b| {
+                fs::rename(a, b)
+            })
+            .unwrap();
             assert_eq!(fs::read(&data).unwrap(), b"new database C");
             assert_eq!(fs::read(&backup).unwrap(), b"original database A");
             assert!(!pending.exists());
@@ -899,8 +882,9 @@ mod publication_tests {
             fs::write(&backup, b"B").unwrap();
             fs::write(&work, b"C").unwrap();
             fs::write(&pending, b"A").unwrap();
+            let paths = write_paths::WritePaths::open(&data).unwrap();
             let mut step = 0;
-            let error = publish_files(&work, &data, &pending, &backup, |a, b| {
+            let error = publish_files(&paths, &work, &data, &pending, &backup, |a, b| {
                 step += 1;
                 if step == fail_at {
                     Err(std::io::Error::other("injected EIO"))
