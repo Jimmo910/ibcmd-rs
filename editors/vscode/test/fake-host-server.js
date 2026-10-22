@@ -66,6 +66,63 @@ process.stdin.on("data", (chunk) => {
       else reply();
       continue;
     }
+    if (m.method === "tree/children") {
+      send(m.id, {
+        nodes: [
+          "Same",
+          "Database",
+          "File",
+          "Both",
+          "DatabaseOnly",
+          "FileOnly",
+        ].map((name) => ({
+          id: `CommonModule.${name}`,
+          fullName: `CommonModule.${name}`,
+          path: `${name}.xml`,
+          hasChildren: false,
+        })),
+      });
+      continue;
+    }
+    if (m.method === "objects/status") {
+      if (process.env.IBCMD_FAKE_MODE === "status-error") {
+        send(m.id, null, { code: -32014, message: "private status error" });
+        continue;
+      }
+      const baseline = m.params.sourceDir.endsWith("status-baseline");
+      const kinds = baseline
+        ? ["same", "modified", "same", "modified", "same", "notInBase"]
+        : [
+            "same",
+            "modified",
+            "modified",
+            "modified",
+            "notExported",
+            "notInBase",
+          ];
+      const names = [
+        "Same",
+        "Database",
+        "File",
+        "Both",
+        "DatabaseOnly",
+        "FileOnly",
+      ];
+      const reply = () =>
+        send(m.id, {
+          objects: names.map((name, i) => ({
+            object: `CommonModule.${name}`,
+            status: kinds[i],
+            version: "stable-test-version",
+            changed: kinds[i] === "modified" ? [`${name}.xml`] : [],
+            baseOnly: kinds[i] === "notExported" ? [`${name}.xml`] : [],
+            localOnly: kinds[i] === "notInBase" ? [`${name}.xml`] : [],
+          })),
+        });
+      if (process.env.IBCMD_FAKE_MODE === "status-slow") setTimeout(reply, 250);
+      else reply();
+      continue;
+    }
     if (m.method === "config/pending") {
       if (process.env.IBCMD_FAKE_MODE === "crash") process.exit(9);
       if (process.env.IBCMD_FAKE_MODE === "error") {

@@ -20,6 +20,8 @@ exports.run = async () => {
   ])
     assert.ok(all.includes(`ibcmd.${c}`));
   const f = vscode.workspace.workspaceFolders[0];
+  const folderPick = vscode.window.showWorkspaceFolderPick;
+  vscode.window.showWorkspaceFolderPick = async () => f;
   const cfg = vscode.workspace.getConfiguration("ibcmd", f.uri);
   await cfg.update(
     "executable",
@@ -120,6 +122,87 @@ exports.run = async () => {
     assert.deepEqual(errors, []);
     assert.ok(api.status().includes("pending unknown"), api.status());
     assert.ok(!api.status().includes("disconnected"), api.status());
+    // Actual RPC/rows-dir integration, separately from synthetic direction/lifecycle tests.
+    const realSource = path.join(f.uri.fsPath, "real-source");
+    const realBaseline = path.join(f.uri.fsPath, "real-baseline");
+    await fs.mkdir(realSource);
+    const cli = (...args) =>
+      JSON.parse(
+        execFileSync(process.env.IBCMD_TEST_BINARY, args, {
+          cwd: f.uri.fsPath,
+          encoding: "utf8",
+        }),
+      );
+    const inventory = cli(
+      "objects",
+      "status",
+      "--platform",
+      "8.3.27",
+      "--rows-dir",
+      rows,
+      "--source-dir",
+      realSource,
+    ).objects;
+    const args = [
+      "objects",
+      "export",
+      "--platform",
+      "8.3.27",
+      "--rows-dir",
+      rows,
+      "--target-dir",
+      realSource,
+    ];
+    for (const object of inventory) args.push("--object", object.object);
+    cli(...args);
+    await fs.cp(realSource, realBaseline, { recursive: true });
+    await cfg.update(
+      "sourceDirectory",
+      realSource,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    await cfg.update(
+      "statusBaselineDirectory",
+      realBaseline,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    await vscode.commands.executeCommand("ibcmd.select");
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.equal(api.objects().length, inventory.length);
+    assert.ok(
+      api.objects().every((r) => r.state === "same"),
+      JSON.stringify(api.objects()),
+    );
+    const missing = path.join(f.uri.fsPath, "missing-export");
+    await fs.mkdir(missing);
+    const fileList = cli(
+      "objects",
+      "status",
+      "--platform",
+      "8.3.27",
+      "--rows-dir",
+      rows,
+      "--source-dir",
+      missing,
+    ).objects;
+    const module = fileList
+      .flatMap((r) => r.baseOnly)
+      .find((p) => p.endsWith(".bsl"));
+    assert.ok(module, "Committed demo fixture has a module");
+    await fs.appendFile(
+      path.join(realSource, module),
+      "\n// local #380 test\n",
+    );
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.ok(
+      api.objects().some((r) => r.state === "file"),
+      JSON.stringify(api.objects()),
+    );
+    assert.equal(
+      api.objectDecoration(vscode.Uri.file(path.join(realSource, module)))
+        .badge,
+      "Ф",
+    );
     await vscode.commands.executeCommand("ibcmd.forgetPassword");
     assert.deepEqual(errors, []);
     assert.ok(api.status().includes("ibcmd-rs"));
@@ -156,6 +239,100 @@ exports.run = async () => {
       assert.ok(api.status().includes(expected), `${mode}: ${api.status()}`);
       assert.ok(api.status().includes("8.5.1"), api.status());
     }
+    // #380: real extension host and UI providers against explicitly synthetic six-state RPC.
+    const source = path.join(f.uri.fsPath, "status-source");
+    const baseline = path.join(f.uri.fsPath, "status-baseline");
+    await fs.mkdir(source);
+    await fs.mkdir(baseline);
+    for (const name of [
+      "Same",
+      "Database",
+      "File",
+      "Both",
+      "DatabaseOnly",
+      "FileOnly",
+    ]) {
+      await fs.writeFile(path.join(baseline, `${name}.xml`), "baseline");
+      await fs.writeFile(
+        path.join(source, `${name}.xml`),
+        ["File", "Both"].includes(name) ? "local" : "baseline",
+      );
+    }
+    await cfg.update(
+      "sourceDirectory",
+      source,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    await cfg.update(
+      "statusBaselineDirectory",
+      baseline,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    process.env.IBCMD_FAKE_MODE = "status";
+    await vscode.commands.executeCommand("ibcmd.select");
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.deepEqual(
+      api.objects().map((r) => r.state),
+      ["same", "database", "file", "both", "databaseOnly", "fileOnly"],
+    );
+    assert.equal(
+      api.objectDecoration(vscode.Uri.file(path.join(source, "File.xml")))
+        .badge,
+      "Ф",
+    );
+    assert.equal(
+      api.objectDecoration(vscode.Uri.file(path.join(baseline, "File.xml"))),
+      undefined,
+    );
+    await vscode.commands.executeCommand("ibcmd.objects.changedOnly");
+    assert.equal(api.visibleObjects().length, 5);
+    await vscode.commands.executeCommand("ibcmd.objects.changedOnly");
+    assert.equal(api.visibleObjects().length, 6);
+    process.env.IBCMD_FAKE_MODE = "status-error";
+    await vscode.commands.executeCommand("ibcmd.select");
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.deepEqual(api.objects(), []);
+    assert.equal(
+      api.objectDecoration(vscode.Uri.file(path.join(source, "File.xml"))),
+      undefined,
+    );
+    // A cancelled refresh never publishes old clean decorations.
+    process.env.IBCMD_FAKE_MODE = "status-slow";
+    await vscode.commands.executeCommand("ibcmd.select");
+    const progress = vscode.window.withProgress;
+    vscode.window.withProgress = async (_, run) =>
+      run(
+        {},
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: (cb) => {
+            const timer = setTimeout(cb, 20);
+            return { dispose: () => clearTimeout(timer) };
+          },
+        },
+      );
+    try {
+      await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    } finally {
+      vscode.window.withProgress = progress;
+    }
+    assert.deepEqual(api.objects(), []);
+    const stale = vscode.commands.executeCommand("ibcmd.objects.refresh");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    pick = "fake/b";
+    process.env.IBCMD_FAKE_MODE = "status";
+    await vscode.commands.executeCommand("ibcmd.select");
+    await stale;
+    assert.deepEqual(api.objects(), []);
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.equal(api.objects().length, 6);
+    // No status leaks into a sibling workspace root, including identical relative paths.
+    const sibling = path.join(path.dirname(f.uri.fsPath), "sibling");
+    await fs.mkdir(sibling, { recursive: true });
+    assert.equal(
+      api.objectDecoration(vscode.Uri.file(path.join(sibling, "File.xml"))),
+      undefined,
+    );
     process.env.IBCMD_FAKE_MODE = "slow";
     pick = "fake/a";
     const slow = vscode.commands.executeCommand("ibcmd.select");
@@ -207,12 +384,75 @@ exports.run = async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     assert.equal(alive, false, "The stale list process was disposed");
+    // Switch to another real workspace folder, then remove it without changing the first root.
+    const sf = vscode.workspace.workspaceFolders.find(
+      (w) => w.uri.fsPath === sibling,
+    );
+    assert.ok(sf);
+    const siblingSource = path.join(sibling, "status-source");
+    await fs.cp(source, siblingSource, { recursive: true });
+    const scfg = vscode.workspace.getConfiguration("ibcmd", sf.uri);
+    await scfg.update(
+      "connections",
+      ["fake/b"],
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    await scfg.update(
+      "connectionMetadata",
+      { "fake/b": { auth: "windows" } },
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    await scfg.update(
+      "sourceDirectory",
+      siblingSource,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    await scfg.update(
+      "statusBaselineDirectory",
+      baseline,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    vscode.window.showWorkspaceFolderPick = async () => sf;
+    await vscode.commands.executeCommand("ibcmd.select");
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.equal(api.objects().length, 6);
+    assert.equal(
+      api.objectDecoration(vscode.Uri.file(path.join(source, "File.xml"))),
+      undefined,
+    );
+    assert.equal(
+      api.objectDecoration(
+        vscode.Uri.file(path.join(siblingSource, "File.xml")),
+      ).badge,
+      "Ф",
+    );
+    const changed = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        sub.dispose();
+        reject(new Error("Workspace removal event timed out"));
+      }, 5000);
+      const sub = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        clearTimeout(timer);
+        sub.dispose();
+        resolve();
+      });
+    });
+    assert.equal(vscode.workspace.updateWorkspaceFolders(sf.index, 1), true);
+    await changed;
+    assert.deepEqual(api.objects(), []);
+    assert.equal(
+      api.objectDecoration(
+        vscode.Uri.file(path.join(siblingSource, "File.xml")),
+      ),
+      undefined,
+    );
     delete process.env.IBCMD_FAKE_LIST_GATE;
     delete process.env.IBCMD_FAKE_MODE;
     console.log(
-      "Extension host: activation, Add/Edit, workspace metadata/bindings, SecretStorage save/delete flow, and real settings show passed.",
+      "Extension host: connection lifecycle, real rows-dir object comparison/local file edit, synthetic six states, Explorer/filter, cancellation/stale selection and multi-root removal passed.",
     );
   } finally {
+    vscode.window.showWorkspaceFolderPick = folderPick;
     vscode.window.showInputBox = input;
     vscode.window.showQuickPick = quick;
     vscode.window.showInformationMessage = info;

@@ -1,0 +1,133 @@
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
+const path = require("node:path");
+const os = require("node:os");
+const { execFileSync } = require("node:child_process");
+const {
+  classify,
+  comparisons,
+  localChanged,
+  safePath,
+} = require("../out/object-status");
+const { gitBaseline } = require("../out/git-baseline");
+const row = (status, changed = []) => ({
+  object: "CommonModule.Test",
+  version: "stable-version",
+  status,
+  changed,
+  baseOnly: [],
+  localOnly: [],
+});
+test("six directional states, including identical concurrent edits", () => {
+  assert.equal(classify(row("same"), row("same"), false), "same");
+  assert.equal(classify(row("modified"), row("modified"), false), "database");
+  assert.equal(classify(row("modified"), row("same"), true), "file");
+  assert.equal(classify(row("modified"), row("modified"), true), "both");
+  assert.equal(classify(row("same"), row("modified"), true), "both");
+  assert.equal(classify(row("notExported")), "databaseOnly");
+  assert.equal(classify(row("notInBase")), "fileOnly");
+  assert.equal(
+    classify(row("same"), { ...row("same"), version: "different" }, false),
+    "unknown",
+  );
+  assert.equal(
+    classify({ ...row("same"), version: undefined }, row("same"), false),
+    "unknown",
+  );
+  assert.equal(classify(row("same")), "unknown");
+  assert.equal(classify(row("modified")), "unknown");
+});
+test("malformed or future RPC status never becomes clean", () => {
+  assert.equal(
+    classify(
+      { ...row("same"), version: 1 },
+      { ...row("same"), version: 1 },
+      false,
+    ),
+    "unknown",
+  );
+  for (const value of [
+    {},
+    { objects: [{}] },
+    { objects: [row("unknown")] },
+    { objects: [row("same"), row("same")] },
+  ])
+    assert.throws(() => comparisons(value));
+  for (const p of ["../secret", "/secret", "a/../../secret", "a\\b"])
+    assert.throws(() => safePath("/tmp/source", p));
+});
+test("byte baseline handles binary changes, missing files and symlinks honestly", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "status-380-"));
+  const a = path.join(root, "a"),
+    b = path.join(root, "b");
+  await fs.mkdir(a);
+  await fs.mkdir(b);
+  await fs.writeFile(path.join(a, "module"), Buffer.from([0, 255]));
+  await fs.writeFile(path.join(b, "module"), Buffer.from([0, 255]));
+  const current = row("modified", ["module"]),
+    base = row("modified", ["module"]);
+  assert.equal(await localChanged(a, b, current, base), false);
+  await fs.writeFile(path.join(a, "module"), Buffer.from([1, 255]));
+  assert.equal(await localChanged(a, b, current, base), true);
+  assert.equal(await localChanged(a, b, row("same"), base), true);
+  await fs.symlink(path.join(b, "module"), path.join(a, "link"));
+  await assert.rejects(
+    localChanged(a, b, row("modified", ["link"]), base),
+    /Symlink/,
+  );
+});
+test("Git baseline uses committed bytes and source subtree, rejects missing ref and cancellation", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "git-status-380-"));
+  const repo = path.join(root, "repo"),
+    cache = path.join(root, "cache");
+  await fs.mkdir(repo);
+  await fs.mkdir(path.join(repo, "src"));
+  const git = (...args) =>
+    execFileSync("git", ["-C", repo, ...args], { stdio: "pipe" });
+  git("init");
+  await fs.writeFile(path.join(repo, "src", "module"), "baseline");
+  git("add", ".");
+  git(
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.invalid",
+    "commit",
+    "-m",
+    "baseline",
+  );
+  const commit = git("rev-parse", "HEAD").toString().trim();
+  git(
+    "update-index",
+    "--add",
+    "--cacheinfo",
+    `160000,${commit},unrelated-submodule`,
+  );
+  git(
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.invalid",
+    "commit",
+    "-m",
+    "unrelated submodule",
+  );
+  await fs.writeFile(path.join(repo, "src", "module"), "local");
+  const snapshot = await gitBaseline(
+    path.join(repo, "src"),
+    "HEAD",
+    cache,
+    new AbortController().signal,
+  );
+  assert.equal(
+    await fs.readFile(path.join(snapshot, "module"), "utf8"),
+    "baseline",
+  );
+  await assert.rejects(
+    gitBaseline(repo, "missing", cache, new AbortController().signal),
+  );
+  const abort = new AbortController();
+  abort.abort();
+  await assert.rejects(gitBaseline(repo, "HEAD", cache, abort.signal));
+});

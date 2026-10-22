@@ -4,6 +4,8 @@ import { RpcClient, RpcError } from "./rpc";
 import { Database, editConfig, idOf, snapshot, saveConfig } from "./config";
 import { Base, Metadata, Generation, pendingText } from "./status";
 
+import { ObjectView } from "./object-view";
+
 export function secretKey(folder: string, id: string, user: string): string {
   return `ibcmd:${JSON.stringify([folder, id, user])}`;
 }
@@ -17,6 +19,7 @@ export async function activate(context: vscode.ExtensionContext) {
   status.text = "$(database) ibcmd-rs";
   status.show();
   context.subscriptions.push(status);
+  const objects = new ObjectView(context);
   let client: RpcClient | undefined;
   let folder: vscode.WorkspaceFolder | undefined;
   let selected: Base | undefined;
@@ -95,6 +98,7 @@ export async function activate(context: vscode.ExtensionContext) {
     )?.base;
   }
   async function switchTo(f: vscode.WorkspaceFolder, b: Base) {
+    objects.clear();
     const stamp = generation.next();
     const previous = client;
     client = undefined;
@@ -145,6 +149,7 @@ export async function activate(context: vscode.ExtensionContext) {
       rpc = await start(f, () => {
         if (generation.current(stamp)) {
           generation.next();
+          objects.clear();
           status.text = `$(warning) ${label(f, b)} · ${b.platform} · disconnected · pending unknown`;
         }
       });
@@ -209,6 +214,14 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   }
   const commands: Record<string, () => Promise<void>> = {
+    "ibcmd.objects.refresh": async () => {
+      if (client && folder && selected)
+        await objects.refresh(client, folder, selected.id);
+      else objects.clear("Выберите подключение перед обновлением");
+    },
+    "ibcmd.objects.changedOnly": async () => {
+      objects.toggle();
+    },
     "ibcmd.select": async () => {
       const f = await chooseFolder();
       if (!f) return;
@@ -270,7 +283,11 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         if (!current()) return;
         const b = bases.find((b) => b.id === id);
-        if (b && bound(f).includes(id)) await switchTo(f, b);
+        if (b && bound(f).includes(id)) {
+          await switchTo(f, b);
+          if (folder === f && selected?.id === id && client)
+            await objects.refresh(client, f, id);
+        }
       } else await commands["ibcmd.select"]();
     },
     "ibcmd.forgetPassword": async () => {
@@ -285,6 +302,7 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   };
   async function invalidate() {
+    objects.clear();
     const stamp = generation.next();
     const old = client;
     client = undefined;
@@ -499,7 +517,12 @@ export async function activate(context: vscode.ExtensionContext) {
       void client?.dispose();
     },
   });
-  return { status: () => status.text };
+  return {
+    status: () => status.text,
+    objects: () => objects.snapshot(),
+    visibleObjects: () => objects.getChildren(),
+    objectDecoration: (uri: vscode.Uri) => objects.provideFileDecoration(uri),
+  };
 }
 import { readConfig } from "./config";
 function readLocal(text: string, id: string | undefined) {

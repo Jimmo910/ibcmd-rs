@@ -126,3 +126,65 @@ code --extensionDevelopmentPath="$PWD" \
 
 Object trees, export/import/apply UI, VSIX/Marketplace delivery and live SQL
 verification are outside this connection-only candidate.
+
+## Object status preview (#380)
+
+The Explorer **ibcmd-rs Objects** view is a minimal flat list of object full names,
+not the full metadata browser planned in #379. Select a connection, configure the
+source/baseline for that workspace folder, then run **Refresh Object Status**.
+**Reload Connections and Refresh Status** also refreshes objects after reconnecting.
+The view toolbar toggles **Changed Objects Only** (unknown remains visible).
+The same status decorates source files in Explorer, with the most specific nested
+object taking precedence.
+
+```json
+{
+  "ibcmd.sourceDirectory": "src",
+  "ibcmd.statusBaselineDirectory": "/external/reference-export"
+}
+```
+
+The baseline must be a separate, readable export from the last synchronization;
+it is never updated by refresh. Alternatively set `ibcmd.statusGitRef` to a commit,
+branch or tag and `ibcmd.statusCacheDirectory` to an absolute cache folder (in the
+lab, under the external lab root). Git takes precedence over the baseline folder.
+The ref resolves to a fixed tree before reading committed blobs. Only the source
+subtree is materialized, without checkout, hooks, shell or native ibcmd invocation.
+Snapshots are retained for inspection and user-controlled Trash cleanup.
+A Git baseline lacking a tracked export cannot establish a synchronization history.
+
+| Label | Badge | Evidence |
+| --- | --- | --- |
+| Совпадает | = | DB and local both equal baseline |
+| Изменён в базе | Б | DB differs from baseline; local equals baseline |
+| Изменён в файлах | Ф | DB equals baseline; local differs |
+| Изменён в базе и файлах | БФ | Both differ from baseline, including identical concurrent edits |
+| Только в базе | +Б | RPC says object has no local files |
+| Только в файлах | +Ф | RPC says object is absent in DB |
+| Статус неизвестен | ? | No baseline/direction evidence, DB versions changed between comparisons, or incomplete evidence |
+
+The current RPC compares exported **bytes**. For common objects the client asks
+`objects/status` for source and baseline, verifies the object's DB `version` agrees
+between responses, and compares local/baseline bytes for the union of differing
+paths. Additions/deletions and binary files are included. Missing source/baseline
+folders, symlink paths, unsaved source editors, malformed replies, failed or cancelled
+refresh clear old decorations and show unknown instead of a clean result.
+Connection/configuration/workspace changes invalidate all outstanding status work;
+only the selected workspace folder receives decorations.
+
+### Acceptance boundary
+
+This preview is tested on committed `rows-dir` fixtures and a synthetic six-state
+extension-host fixture. It is **not yet native export-status parity**: the existing
+RPC does not expose the `ConfigDumpInfo.xml`/native version comparison, and real
+filedb integration is owned by #382. No duplicate filedb adapter is provided here.
+Issue #380 remains open until the shared backend is integrated, the native #362
+contract is agreed, and a disposable filedb receives a platform module edit plus a
+separate local file edit with matching measured status in the extension host.
+
+Checks: `npm test`, `npm run format:check`, `npm run test:host`; the host test covers
+real rows-dir export/comparison plus explicitly synthetic six states, filter,
+Explorer badges, error clearing, cancellation and selection races. Use a unique
+`TMPDIR` under the lab root for Rust fixture tests: their shared upstream helper
+clears/reuses fixed fixture directory names. Keep preserved scratch artifacts out
+of those names.
