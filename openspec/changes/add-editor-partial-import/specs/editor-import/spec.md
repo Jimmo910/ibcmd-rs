@@ -1,14 +1,41 @@
-# Contract
+## ADDED Requirements
 
-- Settings `[[database]].db-path` and RPC `initialize.infobases[].dbPath` designate a real file infobase (directory or data file). Settings paths resolve relative to the settings file. Responses use `source: "file-db"` and `dbPath`. Existing MSSQL entries remain compatible; rows-dir stays read-only. Reject conflicting source selectors, server+file selectors and masked file entries before connecting.
-- A selected import must never feed a sparse source tree to the whole-tree importer. Under an exclusive lock, read CONFIG and CONFIGSAVE, reject incomplete stages, construct the effective configuration, export a complete baseline, overlay only approved existing selected paths, compile and verify the complete expected result, then atomically publish CONFIGSAVE.
-- Preserve unselected effective objects and previous staged changes. Reject new/deleted/unsupported changes before database publication. Preserve lock, CAS, verified-copy and backup protections. Cancellation is checked before publication.
-- Preflight resolves object/file selections, validates references against the effective target plus the selected set, and suggests missing source dependencies. Adding dependencies requires explicit confirmation. Binding/connection identity and target/source fingerprints must still match at commit.
-- Client shows selected import and changed import actions, reports errors, confirms dependencies, and never spawns the native platform. Apply UI belongs to #384. Native acceptance orchestration uses new lab databases only.
+### Requirement: Explicit file database connections
+The editor MUST accept an exact file database through TOML `db-path` or RPC `dbPath`, resolve TOML-relative paths against their settings file, and reject conflicting source selectors or masks. Existing SQL entries MUST remain compatible and rows-dir MUST remain read-only.
 
-## Scenarios
+#### Scenario: Conflicting selectors fail before opening
+- **WHEN** a connection specifies both a server and a file database
+- **THEN** connection validation refuses before opening or writing a target
 
-1. Invalid/conflicting connection selectors fail before opening a target or writing files.
-2. Existing module/form selection stages only approved changes; unrelated objects and earlier staging survive.
-3. Unsupported metadata additions, unresolved references, stale selection, cancellation, interrupted stage and CAS mismatch leave the target byte-identical.
-4. Native apply and native export on a synthetic document fixture reproduce the expected selected edits and unchanged neighbour.
+### Requirement: Verified complete effective staging
+Selected import MUST read locked CONFIG and CONFIGSAVE, construct the complete effective configuration, overlay only approved existing files, compile and verify the full expected tree, and preserve unselected objects and earlier staging. It MUST refuse unsupported additions/deletions, incomplete stages and unresolved references before publication.
+
+#### Scenario: Existing module and form selection
+- **WHEN** the user selects edits to an existing module and document form
+- **THEN** the prepared stage contains those edits and retains unrelated effective objects and previous staged changes
+
+#### Scenario: Unsupported or stale input
+- **WHEN** selection introduces unsupported new metadata or the source/target/connection changes after preparation
+- **THEN** publication is refused and the database remains unchanged
+
+### Requirement: Confined guarded publication and recovery
+The writer MUST retain its actual locked descriptor, revalidate identity/content and source state, check policy/cancellation at the final publication boundary, verify its work copy, and preserve recovery generations. Supported filesystem mutations MUST be relative to a retained parent-directory descriptor; unsupported platforms MUST refuse writes. These checks MUST NOT be described as unconditional atomic filesystem CAS against a malicious same-UID leaf-entry writer.
+
+#### Scenario: Parent replacement after final guard
+- **WHEN** an ancestor is renamed and replaced after the final check
+- **THEN** publication and cleanup remain confined to the original held directory and do not mutate the replacement directory
+
+#### Scenario: Backup update fails after publication
+- **WHEN** the database rename succeeds and the subsequent backup rename fails
+- **THEN** the result explicitly reports published data and retained recovery generations, without being overwritten by late cancellation
+
+### Requirement: Confirmed editor import workflow
+The client MUST expose selected and changed import, validate references, suggest dependencies, require separate consent before expanding scope and before publication, and refuse stale or dirty selections. Changed import MUST require a synchronized inventory baseline. The production client MUST invoke only Rust RPC, with native apply outside this workflow.
+
+#### Scenario: Dependency confirmation is declined
+- **WHEN** required source dependencies are suggested and the user declines
+- **THEN** no expanded import is published
+
+#### Scenario: Synthetic native acceptance
+- **WHEN** selected module and form edits are staged on a new synthetic supported file database and applied/exported by the native platform in test orchestration
+- **THEN** the expected selected source files and unchanged neighbour are reproduced, with inventory versions audited separately
