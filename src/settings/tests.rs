@@ -122,6 +122,8 @@ fn an_entry_without_a_server_matches_every_server() {
         platform: crate::platform::parse("8.5.1").unwrap(),
         line: 1,
         rows_dir: None,
+        db_path: None,
+        agent_write: false,
     };
     let any = binding(None);
     assert!(any.matches(target(Some("sql01"), "bsp_1").unwrap()));
