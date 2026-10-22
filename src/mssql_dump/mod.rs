@@ -2146,6 +2146,17 @@ pub(crate) fn with_rows_dir_table<T>(
     read(&ConfigTable::active(&sql, ""))
 }
 
+/// Reads a real file infobase through the same effective CONFIG/CONFIGSAVE view as export.
+pub(crate) fn with_file_db_table<T>(
+    path: &Path,
+    read: impl FnOnce(&ConfigTable<'_>) -> Result<T>,
+) -> Result<T> {
+    let _active = offline_rows::activate_rows(file_infobase::load(path)?)?;
+    let _views = dynamic_generation::StorageViewScope::begin("");
+    let sql = crate::sql::SqlExec::detached("a file infobase answers every read itself");
+    read(&ConfigTable::active(&sql, ""))
+}
+
 /// Runs `read` on the Config table of `database`; the view it installs ends
 /// with it.
 pub(crate) fn with_database_table<T>(

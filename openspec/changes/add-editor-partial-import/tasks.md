@@ -1,0 +1,7 @@
+- [ ] Shared file database source with backward compatible settings and RPC schema
+- [ ] Fail-before-write regression tests
+- [ ] Locked effective-stage partial import and verification
+- [ ] Reference preflight, dependency confirmation, stale/cancel checks
+- [ ] Editor actions and focused client tests
+- [ ] Native module + document form apply/export acceptance
+- [ ] Independent review, identity/secret checks, commits and approved tracking

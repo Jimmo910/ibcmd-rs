@@ -72,6 +72,8 @@ pub enum ConfigSource {
     /// A folder of `<FileName>__part<N>.bin` files: `mssql-dump-config
     /// --rows-dir`. Read-only, and it holds no ConfigSave.
     RowsDir(PathBuf),
+    /// A real file infobase; reads include its complete CONFIGSAVE stage.
+    FileDb(PathBuf),
     /// A SQL Server database, through a handle whose connections are kept
     /// between operations.
     Database { sql: SqlExec, database: String },
@@ -82,7 +84,7 @@ impl ConfigSource {
     /// as `mssql-dump-config --rows-dir` without `--database`).
     fn database(&self) -> &str {
         match self {
-            Self::RowsDir(_) => "",
+            Self::RowsDir(_) | Self::FileDb(_) => "",
             Self::Database { database, .. } => database,
         }
     }
@@ -878,6 +880,7 @@ impl StoredConfiguration {
         };
         match source {
             ConfigSource::RowsDir(dir) => with_rows_dir_table(dir, run),
+            ConfigSource::FileDb(path) => crate::mssql_dump::with_file_db_table(path, run),
             ConfigSource::Database { sql, database } => with_database_table(sql, database, run),
         }
     }
@@ -1003,7 +1006,7 @@ impl StoredConfiguration {
             files: Mutex::new(BTreeMap::new()),
         });
         let sql = match &self.source {
-            ConfigSource::RowsDir(_) => None,
+            ConfigSource::RowsDir(_) | ConfigSource::FileDb(_) => None,
             ConfigSource::Database { sql, .. } => Some(sql.clone()),
         };
         crate::platform::note_export_platform(self.platform);
@@ -1213,9 +1216,12 @@ fn export_args(
         database: source.database().to_string(),
         rows_dir: match source {
             ConfigSource::RowsDir(dir) => Some(dir.clone()),
-            ConfigSource::Database { .. } => None,
+            ConfigSource::Database { .. } | ConfigSource::FileDb(_) => None,
         },
-        file_infobase: None,
+        file_infobase: match source {
+            ConfigSource::FileDb(path) => Some(path.clone()),
+            _ => None,
+        },
         model_export: false,
         legacy_export: false,
         output_dir: PathBuf::from(MEMORY_ROOT),
