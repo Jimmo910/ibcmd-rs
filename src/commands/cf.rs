@@ -677,13 +677,25 @@ fn bootstrap(mut args: CfBootstrapArgs) -> Result<CfCommandReport, CfCommandErro
         crate::compiler::artifact::discover_source_package(&args.source_dir).map_err(|source| {
             bootstrap_failure(&args, "bootstrap_package_invalid", format!("{source:#}"))
         })?;
+    if args.base_free
+        && matches!(
+            package.intent,
+            crate::compiler::artifact::PackageIntent::ExternalDataProcessor
+                | crate::compiler::artifact::PackageIntent::ExternalReport
+        )
+    {
+        crate::compiler::artifact::validate_output_intent(package.intent, &args.output).map_err(
+            |source| bootstrap_failure(&args, "bootstrap_package_invalid", format!("{source:#}")),
+        )?;
+        return bootstrap_external(args, target_unspecified);
+    }
     let extension = package.intent == crate::compiler::artifact::PackageIntent::Extension;
     if !extension && package.intent != crate::compiler::artifact::PackageIntent::Configuration {
         return Err(bootstrap_failure(
             &args,
             "bootstrap_package_not_supported",
             format!(
-                "{:?} source `{}` requires its own base-free package builder; EPF/ERF builders are not implemented yet; refusing ordinary CF publication",
+                "{:?} source `{}` is built by `cf bootstrap --base-free --platform 8.3.27` (.epf/.erf); refusing ordinary CF publication",
                 package.intent,
                 package.root_xml.display(),
             ),
@@ -1000,6 +1012,93 @@ fn bootstrap_base_free(
             bytes_written: publication.write.bytes_written,
             entries_written: publication.write.entries_written,
             entries_validated: publication.validation.entries_validated,
+        }),
+        errors: Vec::new(),
+    }))
+}
+
+/// The platform whose packages seed an external build (`load::seed`).
+const EXTERNAL_TARGET_PROFILE: &str = "platform-8.3.27.2214";
+
+/// `.epf`/`.erf` from the external tree alone (issue #438): the compiled
+/// load onto a seed package given the tree's identities
+/// (`crate::load::build_external`), verified by exporting it back.
+fn bootstrap_external(
+    mut args: CfBootstrapArgs,
+    target_unspecified: bool,
+) -> Result<CfCommandReport, CfCommandError> {
+    // The seeds are 8.3.27.2214 packages and the load keeps their container:
+    // nothing else was measured, so nothing else is offered.
+    let unmeasured = [
+        (
+            args.source_version != crate::legacy_version::InfobaseConfigSourceVersion::V2_20,
+            "8.5 XML (2.21)",
+        ),
+        (
+            !target_unspecified && args.target_profile != EXTERNAL_TARGET_PROFILE,
+            "--target-profile",
+        ),
+        (args.profile_dir.is_some(), "--profile-dir"),
+        (args.revision != CfRevision::Format16, "--revision"),
+        (args.storage_version != 5, "--storage-version"),
+        (args.page_size.is_some(), "--page-size"),
+        (args.reserved != 0, "--reserved"),
+    ]
+    .into_iter()
+    .filter_map(|(given, option)| given.then_some(option))
+    .collect::<Vec<_>>();
+    if !unmeasured.is_empty() {
+        return Err(bootstrap_failure(
+            &args,
+            "bootstrap_option_not_supported",
+            format!(
+                "an .epf/.erf is built from XML 2.20 into the container 8.3.27.2214 writes; \
+                 not supported for external objects: {}",
+                unmeasured.join(", ")
+            ),
+        ));
+    }
+    args.target_profile = EXTERNAL_TARGET_PROFILE.to_owned();
+    if args.output.exists() {
+        return Err(bootstrap_failure(
+            &args,
+            "output_exists",
+            format!("`{}` already exists", args.output.display()),
+        ));
+    }
+    let loaded = crate::load::build_external(&args.source_dir, &args.output, args.source_version)
+        .map_err(|error| bootstrap_failure(&args, "base_free_compile_failed", error.to_string()))?
+        .ok_or_else(|| {
+            bootstrap_failure(
+                &args,
+                "bootstrap_package_invalid",
+                "the source holds no external data processor or report root".to_owned(),
+            )
+        })?;
+    let bytes_written = fs::metadata(&args.output)
+        .map(|meta| meta.len())
+        .unwrap_or(0);
+    Ok(CfCommandReport::Bootstrap(CfBootstrapReport {
+        schema_version: REPORT_SCHEMA_VERSION,
+        command: "bootstrap",
+        ok: true,
+        source_dir: display_path(&args.source_dir),
+        output: display_path(&args.output),
+        source_version: args.source_version.as_str(),
+        target_profile: args.target_profile,
+        revision: "external",
+        storage_version: args.storage_version,
+        page_size: args.page_size,
+        reserved: args.reserved,
+        source_files: loaded.applied.len(),
+        metadata_files: 0,
+        asset_files: 0,
+        non_source_files: 0,
+        storage_entries: loaded.compiled_objects.len(),
+        publication: Some(CfBootstrapPublicationReport {
+            bytes_written,
+            entries_written: 0,
+            entries_validated: 0,
         }),
         errors: Vec::new(),
     }))

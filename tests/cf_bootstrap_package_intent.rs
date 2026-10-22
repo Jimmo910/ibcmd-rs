@@ -145,23 +145,25 @@ fn incomplete_extension_and_external_families_are_never_published_as_cf() {
             let source = scratch.source("Configuration.xml", &metadata(kind, properties));
             for requested_suffix in [suffix, "cf"] {
                 let output = scratch.0.join(format!("blocked.{requested_suffix}"));
+                // An extension goes to the extension compiler, which refuses
+                // this root for its missing compatibility mode. `--base-free`
+                // builds an external object (#438) into the container
+                // 8.3.27.2214 writes, so it refuses another storage version.
+                // A `.cf` output for either is refused before.
+                let external = kind != "Configuration";
+                let (code, address) = match (external, base_free, requested_suffix) {
+                    (_, _, "cf") if !external || base_free => {
+                        ("bootstrap_package_invalid", address)
+                    }
+                    (false, _, _) => ("extension_compile_failed", "CompatibilityMode"),
+                    (true, true, _) => ("bootstrap_option_not_supported", "--storage-version"),
+                    _ => ("bootstrap_package_not_supported", address),
+                };
                 refusal(
                     bootstrap(&source, &output, base_free, storage),
                     &output,
-                    if kind == "Configuration" {
-                        if requested_suffix == "cf" {
-                            "bootstrap_package_invalid"
-                        } else {
-                            "extension_compile_failed"
-                        }
-                    } else {
-                        "bootstrap_package_not_supported"
-                    },
-                    if kind == "Configuration" && requested_suffix != "cf" {
-                        "CompatibilityMode"
-                    } else {
-                        address
-                    },
+                    code,
+                    address,
                 );
             }
         }

@@ -27,6 +27,8 @@ use ibcmd_core::{
 pub(crate) mod compiled;
 mod external;
 pub(crate) mod index;
+mod seed;
+pub use seed::build_external;
 
 pub use index::{archive_versions, write_tree_index};
 
