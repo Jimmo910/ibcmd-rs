@@ -133,6 +133,48 @@ test("Git baseline uses committed bytes and source subtree, rejects missing ref 
   await assert.rejects(gitBaseline(repo, "HEAD", cache, abort.signal));
 });
 
+test("Git baseline uses Git prefix through directory aliases and spaces", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "git-alias-380-"));
+  const repo = path.join(root, "repo"),
+    alias = path.join(root, "alias"),
+    cache = path.join(root, "cache");
+  await fs.mkdir(path.join(repo, "src with spaces"), { recursive: true });
+  const git = (...args) => execFileSync("git", ["-C", repo, ...args]);
+  git("init", "--quiet");
+  await fs.writeFile(path.join(repo, "src with spaces", "module"), "committed");
+  git("add", ".");
+  git(
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.invalid",
+    "commit",
+    "--quiet",
+    "-m",
+    "baseline",
+  );
+  // A directory alias reproduces Git/Node path spelling differences on every OS.
+  // Windows junctions need no symlink privilege, unlike directory symlinks.
+  await fs.symlink(repo, alias, "junction");
+  await fs.writeFile(path.join(repo, "src with spaces", "module"), "local");
+  const snapshot = await gitBaseline(
+    path.join(alias, "src with spaces"),
+    "HEAD",
+    cache,
+    new AbortController().signal,
+  );
+  assert.equal(
+    await fs.readFile(path.join(snapshot, "module"), "utf8"),
+    "committed",
+  );
+  const bare = path.join(root, "bare");
+  execFileSync("git", ["init", "--bare", "--quiet", bare]);
+  await assert.rejects(
+    gitBaseline(bare, "HEAD", cache, new AbortController().signal),
+    /outside Git worktree/,
+  );
+});
+
 function nativeState(
   current,
   reference,

@@ -20,10 +20,20 @@ export async function gitBaseline(
         maxBuffer: 64 * 1024 * 1024,
       })
     ).stdout;
-  const root = (await git("rev-parse", "--show-toplevel")).toString().trim();
-  const prefix = path.relative(root, source).split(path.sep).join("/");
-  if (prefix.startsWith(".."))
-    throw new Error("Source is outside Git repository");
+  if (
+    (await git("rev-parse", "--is-inside-work-tree")).toString().trim() !==
+    "true"
+  )
+    throw new Error("Source is outside Git worktree");
+  // Git and Node can spell the same Windows directory differently (8.3 aliases,
+  // junctions). Ask Git for its own repository-relative prefix instead of comparing paths.
+  const rawPrefix = (await git("rev-parse", "--show-prefix"))
+    .toString()
+    .replace(/\r?\n$/, "");
+  if (rawPrefix && !rawPrefix.endsWith("/"))
+    throw new Error("Invalid Git source prefix");
+  const prefix = rawPrefix.slice(0, -1);
+  if (prefix) safePath(cache, prefix);
   const tree = (
     await git("rev-parse", "--verify", "--end-of-options", `${ref}^{tree}`)
   )
