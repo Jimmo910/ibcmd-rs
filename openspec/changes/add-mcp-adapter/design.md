@@ -75,11 +75,19 @@ Backend error details are redacted from tool content; research environment
 filesystem overrides are refused at startup.
 
 `tree` lists children; `read` returns one exported file; `export` returns selected
-files in memory as UTF-8/base64. `status` and `compare` currently report equality
-for exported paths only and explicitly label `comparisonScope=exported-files-only`.
-They do not establish complete object equality when local-only paths exist.
-`import` returns an explicit error with no publication. Full shared status
-semantics and staging are integration work, not simulated acceptance.
+files in memory as UTF-8/base64. `status` and `compare` use the shared object
+comparator over a confined source snapshot and return `ObjectStatus` entries
+with changed/baseOnly/localOnly paths and `comparisonScope=selected-objects`.
+Explicitly selected objects absent from the database can report local-only
+files. The snapshot caps traversal at 64 levels, 100000 entries and128 MiB;
+reads check cancellation and file stability in64 KiB chunks. A descriptor-based
+file/directory census is revalidated after comparison so concurrent additions,
+renames and replacements cannot silently produce equality. Symlink entries and
+same-inode root aliases are refused. Existing CLI/editor status keeps its lazy
+filesystem reads through the same comparator. This descriptor boundary supports
+Unix; other platforms refuse MCP startup.
+`import` returns an explicit error with no publication. Guarded staging and
+write acceptance remain integration work, not simulated acceptance.
 
 
 ## Validation evidence (2026-10-22)
@@ -107,3 +115,12 @@ strict policy fields. Descriptor filedb review confirms consumed identity and
 snapshot routing; malformed-file materialization was subsequently closed with constructor/row
 budget tests and cancellation checks, including malformed native-fixture copies
 with repeated blob and descriptor aliases.
+
+Further regression evidence:4056 root library tests passed (15 ignored),19
+filedb unit tests passed, all targets checked, and filedb all-target Clippy passed
+with warnings denied. Real MCP tests cover changed/base-only/local-only and
+not-in-base objects; deterministic census tests cover concurrent additions and
+renames. Independent review found no remaining findings after the census and
+same-inode alias fixes. Logs: lab logs/issue-386-lib-all-final.log,
+logs/issue-386-full-status-final.log, logs/issue-386-filedb-clippy.log,
+logs/issue-386-all-targets-final.log.

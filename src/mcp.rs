@@ -30,7 +30,7 @@ const TOOLS: &[(&str, &str)] = &[
     ),
     (
         "status",
-        "Compare selected database objects with the fixed source root; reports per-file equality.",
+        "Compare selected database objects with the fixed source root; reports changed, baseOnly and localOnly paths, including selected objects absent from the base.",
     ),
     (
         "export",
@@ -46,7 +46,7 @@ const TOOLS: &[(&str, &str)] = &[
     ),
     (
         "compare",
-        "Compare selected database objects against the fixed source root, without publishing changes.",
+        "Compare selected objects with the fixed source root, including local-only files and objects; same result schema as status.",
     ),
 ];
 
@@ -223,15 +223,23 @@ impl Bound {
                 let pinned = handle.metadata()?;
                 let current = fs::symlink_metadata(path)?;
                 ensure!(
+                    fs::canonicalize(path)? == *path,
+                    "file database pathname alias changed"
+                );
+                ensure!(
                     current.is_file()
                         && (pinned.dev(), pinned.ino()) == (current.dev(), current.ino()),
                     "MCP file database identity changed; restart required"
                 );
             }
             let pinned = self.root_handle.metadata()?;
-            let current = fs::metadata(&self.root)?;
+            let current = fs::symlink_metadata(&self.root)?;
             ensure!(
-                (pinned.dev(), pinned.ino()) == (current.dev(), current.ino()),
+                fs::canonicalize(&self.root)? == self.root,
+                "source root pathname alias changed"
+            );
+            ensure!(
+                current.is_dir() && (pinned.dev(), pinned.ino()) == (current.dev(), current.ino()),
                 "MCP source root changed; restart required"
             );
         }
@@ -270,6 +278,7 @@ impl Bound {
         // or a fresh path-based database open after authorization.
         let mut config =
             stored_objects::StoredConfiguration::from_rows_snapshot(source, self.entry.spec, rows);
+        let mut source_snapshot = None;
         let result = match name {
             "tree" => json!({"nodes": config.children(args.node.as_deref())?}),
             "read" => {
@@ -278,7 +287,18 @@ impl Bound {
                 let (object, path) = config.read_file(&path)?;
                 json!({"path":path, "version":object.version, "file": object.files.get(&path).map(|bytes| encoded(bytes)).transpose()?})
             }
-            "export" | "compare" | "status" => {
+            "status" | "compare" => {
+                ensure!(
+                    !args.objects.is_empty() && args.objects.len() <= MAX_OBJECTS,
+                    "select 1..32 objects"
+                );
+                let source = self.snapshot_source()?;
+                let statuses =
+                    config.status_snapshot(&args.objects, &source.files, &|_, _, _| {})?;
+                source_snapshot = Some(source);
+                json!({"objects": statuses, "comparisonScope":"selected-objects"})
+            }
+            "export" => {
                 ensure!(
                     !args.objects.is_empty() && args.objects.len() <= MAX_OBJECTS,
                     "select 1..32 objects"
@@ -292,20 +312,18 @@ impl Bound {
                         crate::cancel::check()?;
                         used = used.checked_add(bytes.len()).context("output limit")?;
                         ensure!(used <= MAX_RESULT / 2, "output_limit: select fewer objects");
-                        let value = if name == "export" {
-                            encoded(bytes)?
-                        } else {
-                            let local = self.read_local(path)?;
-                            json!({"exists":local.is_some(), "same":local.as_deref() == Some(bytes.as_slice())})
-                        };
+                        let value = encoded(bytes)?;
                         files.insert(path.clone(), value);
                     }
                     output.push(json!({"object":object.object.full_name,"version":object.version,"files":files}));
                 }
-                json!({"objects":output, "comparisonScope":"exported-files-only"})
+                json!({"objects":output})
             }
             _ => bail!("unknown tool"),
         };
+        if let Some(snapshot) = source_snapshot {
+            snapshot.validate(&self.root_handle)?;
+        }
         self.authorize()?;
         ensure!(
             before == self.rows_fingerprint()?,
@@ -440,9 +458,13 @@ impl Bound {
             "rows root must be canonical and contain no symlink aliases"
         );
         let mut digest = Sha256::new();
-        let mut entries = fs::read_dir(root)?.collect::<std::io::Result<Vec<_>>>()?;
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(root)? {
+            crate::cancel::check()?;
+            ensure!(entries.len() < 100_000, "rows input limit");
+            entries.push(entry?);
+        }
         entries.sort_by_key(|entry| entry.file_name());
-        ensure!(entries.len() <= 100_000, "rows input limit");
         for entry in entries {
             let metadata = fs::symlink_metadata(entry.path())?;
             ensure!(
@@ -462,29 +484,196 @@ impl Bound {
     }
 
     #[cfg(unix)]
-    fn read_local(&self, path: &str) -> Result<Option<Vec<u8>>> {
-        read_confined(&self.root_handle, path, MAX_RESULT)
+    fn snapshot_source(&self) -> Result<SourceSnapshot> {
+        SourceSnapshot::capture(&self.root_handle)
     }
-
     #[cfg(not(unix))]
-    fn read_local(&self, _path: &str) -> Result<Option<Vec<u8>>> {
-        bail!("secure source reads are currently supported on Unix only")
+    fn snapshot_source(&self) -> Result<SourceSnapshot> {
+        bail!("secure source snapshots require Unix")
+    }
+}
+
+struct SourceSnapshot {
+    files: BTreeMap<String, Vec<u8>>,
+    #[cfg(unix)]
+    stamps: BTreeMap<String, FileStamp>,
+}
+#[cfg(unix)]
+#[derive(PartialEq, Eq)]
+struct FileStamp {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+    directory: bool,
+}
+#[cfg(unix)]
+impl FileStamp {
+    fn of(metadata: &fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            len: metadata.len(),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+            directory: metadata.is_dir(),
+        }
+    }
+}
+#[cfg(unix)]
+impl SourceSnapshot {
+    fn capture(root: &fs::File) -> Result<Self> {
+        let mut snapshot = Self {
+            files: BTreeMap::new(),
+            stamps: BTreeMap::new(),
+        };
+        walk_source(root, "", 0, &mut snapshot, &mut 0, &mut 0)?;
+        snapshot.validate(root)?;
+        Ok(snapshot)
+    }
+    fn validate(&self, root: &fs::File) -> Result<()> {
+        for (path, stamp) in &self.stamps {
+            crate::cancel::check()?;
+            let file = if path.is_empty() {
+                root.try_clone()?
+            } else {
+                open_confined(root, path)?.context("source entry disappeared")?
+            };
+            ensure!(
+                FileStamp::of(&file.metadata()?) == *stamp,
+                "source census changed; retry required"
+            );
+        }
+        Ok(())
+    }
+}
+#[cfg(not(unix))]
+impl SourceSnapshot {
+    fn validate(&self, _: &fs::File) -> Result<()> {
+        bail!("secure source snapshots require Unix")
     }
 }
 
 #[cfg(unix)]
+fn walk_source(
+    directory: &fs::File,
+    prefix: &str,
+    depth: usize,
+    snapshot: &mut SourceSnapshot,
+    entries: &mut usize,
+    used: &mut usize,
+) -> Result<()> {
+    use rustix::fs::{Dir, Mode, OFlags, openat};
+    ensure!(depth <= 64, "source directory depth limit");
+    let before = FileStamp::of(&directory.metadata()?);
+    for entry in Dir::read_from(directory)? {
+        crate::cancel::check()?;
+        let entry = entry?;
+        let name = entry.file_name().to_str()?;
+        // Match common status: dot files and folders are not source objects.
+        if name == "." || name == ".." {
+            continue;
+        }
+        *entries += 1;
+        ensure!(*entries <= 100_000, "source entry count limit");
+        if name.starts_with('.') {
+            continue;
+        }
+        let path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        validate_relative(&path)?;
+        let fd = openat(
+            directory,
+            name,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        let file = fs::File::from(fd);
+        let metadata = file.metadata()?;
+        if metadata.is_dir() {
+            walk_source(&file, &path, depth + 1, snapshot, entries, used)?;
+        } else {
+            ensure!(
+                metadata.is_file(),
+                "source must contain ordinary files/directories only"
+            );
+            let remaining = (128usize * 1024 * 1024)
+                .checked_sub(*used)
+                .context("source input limit")?;
+            let bytes = read_bounded_data(&file, remaining)?;
+            *used = used
+                .checked_add(bytes.len())
+                .context("source input limit")?;
+            snapshot
+                .stamps
+                .insert(path.clone(), FileStamp::of(&metadata));
+            snapshot.files.insert(path, bytes);
+        }
+    }
+    ensure!(
+        FileStamp::of(&directory.metadata()?) == before,
+        "source directory changed during enumeration"
+    );
+    snapshot.stamps.insert(prefix.to_string(), before);
+    Ok(())
+}
+
+fn read_bounded_data(mut file: &fs::File, limit: usize) -> Result<Vec<u8>> {
+    let before = file.metadata()?;
+    ensure!(
+        before.is_file() && before.len() <= limit as u64,
+        "input limit or special file"
+    );
+    let mut bytes = Vec::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        crate::cancel::check()?;
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        ensure!(count <= limit.saturating_sub(bytes.len()), "input limit");
+        bytes.extend_from_slice(&buffer[..count]);
+    }
+    let after = file.metadata()?;
+    #[cfg(unix)]
+    ensure!(
+        FileStamp::of(&before) == FileStamp::of(&after),
+        "source changed while reading"
+    );
+    #[cfg(not(unix))]
+    ensure!(
+        before.len() == after.len() && before.modified()? == after.modified()?,
+        "source changed while reading"
+    );
+    Ok(bytes)
+}
+
+#[cfg(unix)]
 fn read_confined(root: &fs::File, path: &str, limit: usize) -> Result<Option<Vec<u8>>> {
+    Ok(open_confined(root, path)?
+        .map(|file| read_bounded_data(&file, limit))
+        .transpose()?)
+}
+
+#[cfg(unix)]
+fn open_confined(root: &fs::File, path: &str) -> Result<Option<fs::File>> {
     use rustix::fs::{Mode, OFlags, openat};
     validate_relative(path)?;
     let mut directory = root.try_clone()?;
     let components = Path::new(path).components().collect::<Vec<_>>();
     for (index, component) in components.iter().enumerate() {
-        let last = index + 1 == components.len();
+        crate::cancel::check()?;
         let flags = OFlags::RDONLY
             | OFlags::NOFOLLOW
             | OFlags::CLOEXEC
             | OFlags::NONBLOCK
-            | if last {
+            | if index + 1 == components.len() {
                 OFlags::empty()
             } else {
                 OFlags::DIRECTORY
@@ -496,14 +685,7 @@ fn read_confined(root: &fs::File, path: &str, limit: usize) -> Result<Option<Vec
         };
         directory = fs::File::from(fd);
     }
-    ensure!(
-        directory.metadata()?.is_file(),
-        "input must be an ordinary file"
-    );
-    let mut bytes = Vec::new();
-    directory.take((limit + 1) as u64).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= limit, "input limit");
-    Ok(Some(bytes))
+    Ok(Some(directory))
 }
 
 fn validate_relative(path: &str) -> Result<()> {
@@ -566,7 +748,7 @@ impl ServerHandler for Adapter {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("ibcmd-rs", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Fixed operator-bound read-only database tools. Import is unavailable pending shared agent-authorized staging. status/compare compare exported files only.")
+            .with_instructions("Fixed operator-bound read-only database tools. Import is unavailable pending shared agent-authorized staging. status/compare report full selected-object differences including local-only files.")
     }
     fn get_tool(&self, name: &str) -> Option<Tool> {
         definitions().into_iter().find(|tool| tool.name == name)
@@ -743,4 +925,36 @@ pub fn run(args: McpArgs) -> Result<()> {
         service.waiting().await?;
         Ok(())
     })
+}
+
+#[cfg(all(test, unix))]
+mod source_snapshot_tests {
+    use super::*;
+    fn scratch_root() -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("ibcmd-source-census-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        root
+    }
+    #[test]
+    fn additions_and_renames_invalidate_the_snapshot() {
+        let root = scratch_root();
+        fs::create_dir(root.join("Ext")).unwrap();
+        fs::write(root.join("Ext/Existing.bsl"), "same").unwrap();
+        let handle = fs::File::open(&root).unwrap();
+        let snapshot = SourceSnapshot::capture(&handle).unwrap();
+        fs::write(root.join("Ext/New.bsl"), "new local-only module").unwrap();
+        assert!(snapshot.validate(&handle).is_err());
+        let snapshot = SourceSnapshot::capture(&handle).unwrap();
+        fs::rename(root.join("Ext/Existing.bsl"), root.join("Ext/Renamed.bsl")).unwrap();
+        assert!(snapshot.validate(&handle).is_err());
+    }
+    #[test]
+    fn outside_root_symlinks_are_refused() {
+        let root = scratch_root();
+        let outside = scratch_root();
+        fs::write(outside.join("secret"), "outside sentinel").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("Linked")).unwrap();
+        assert!(SourceSnapshot::capture(&fs::File::open(&root).unwrap()).is_err());
+    }
 }

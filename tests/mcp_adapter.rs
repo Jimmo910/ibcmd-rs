@@ -1,4 +1,6 @@
 //! Real SDK client launches the binary over supported MCP stdio; no native platform.
+//! Current descriptor capability boundary is Unix-only.
+#![cfg(unix)]
 use rmcp::{ServiceExt, model::*, transport::TokioChildProcess};
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf, process::Stdio};
@@ -112,17 +114,74 @@ async fn real_mcp_client_reads_fixed_fixture_and_enforces_policy() {
     assert_eq!(read["file"], files[path]);
     for tool in ["status", "compare"] {
         let comparison = value(&call(&client, tool, json!({"objects":["Configuration"]})).await);
-        assert!(
-            comparison["objects"][0]["files"]
-                .as_object()
-                .unwrap()
-                .values()
-                .all(|file| file["same"] == true)
-        );
+        assert_eq!(comparison["comparisonScope"], "selected-objects");
+        assert_eq!(comparison["objects"][0]["status"], "same");
+        for field in ["changed", "baseOnly", "localOnly"] {
+            assert_eq!(comparison["objects"][0][field], json!([]));
+        }
     }
+    let extra = "Ext/LocalOnly.bsl";
+    fs::create_dir_all(root.join("source/Ext")).unwrap();
+    fs::write(root.join("source").join(extra), "extra source file").unwrap();
+    let local_only = value(&call(&client, "status", json!({"objects":["Configuration"]})).await);
+    assert_eq!(local_only["objects"][0]["status"], "modified");
+    assert!(
+        local_only["objects"][0]["localOnly"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(extra))
+    );
+    fs::rename(
+        root.join("source").join(extra),
+        root.join("local-only-evidence.bsl"),
+    )
+    .unwrap();
+    fs::rename(
+        root.join("source").join(path),
+        root.join("missing-evidence.xml"),
+    )
+    .unwrap();
+    let missing = value(&call(&client, "compare", json!({"objects":["Configuration"]})).await);
+    assert!(
+        missing["objects"][0]["baseOnly"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(path))
+    );
+    fs::rename(
+        root.join("missing-evidence.xml"),
+        root.join("source").join(path),
+    )
+    .unwrap();
     fs::write(root.join("source").join(path), "changed").unwrap();
     let changed = value(&call(&client, "compare", json!({"objects":["Configuration"]})).await);
-    assert_eq!(changed["objects"][0]["files"][path]["same"], false);
+    assert!(
+        changed["objects"][0]["changed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(path))
+    );
+    fs::create_dir_all(root.join("source/CommonModules/OnlyLocal/Ext")).unwrap();
+    fs::write(root.join("source/CommonModules/OnlyLocal.xml"), "<local />").unwrap();
+    fs::write(
+        root.join("source/CommonModules/OnlyLocal/Ext/Module.bsl"),
+        "local module",
+    )
+    .unwrap();
+    let absent = value(
+        &call(
+            &client,
+            "status",
+            json!({"objects":["CommonModule.OnlyLocal"]}),
+        )
+        .await,
+    );
+    assert_eq!(absent["objects"][0]["status"], "notInBase");
+    assert_eq!(
+        absent["objects"][0]["localOnly"].as_array().unwrap().len(),
+        2
+    );
+
     #[cfg(unix)]
     {
         // Source and row symlinks are refused, even if they point inside the root.
@@ -149,6 +208,19 @@ async fn real_mcp_client_reads_fixed_fixture_and_enforces_policy() {
         // Move the symlink to evidence rather than deleting it, then restore input.
         fs::rename(&row, root.join("row-symlink-evidence")).unwrap();
         fs::rename(moved, row).unwrap();
+    }
+    #[cfg(unix)]
+    {
+        // Even a symlink to the SAME original root inode is a changed binding.
+        fs::rename(root.join("source"), root.join("saved-source-root")).unwrap();
+        std::os::unix::fs::symlink(root.join("saved-source-root"), root.join("source")).unwrap();
+        assert_eq!(call(&client, "tree", json!({})).await.is_error, Some(true));
+        fs::rename(
+            root.join("source"),
+            root.join("source-root-symlink-evidence"),
+        )
+        .unwrap();
+        fs::rename(root.join("saved-source-root"), root.join("source")).unwrap();
     }
     for args in [
         json!({"server":"other"}),
@@ -334,13 +406,8 @@ async fn real_mcp_client_reads_disposable_filedb_without_mutation() {
         )
         .await,
     );
-    assert!(
-        comparison["objects"][0]["files"]
-            .as_object()
-            .unwrap()
-            .values()
-            .all(|file| file["same"] == true)
-    );
+    assert_eq!(comparison["objects"][0]["status"], "same");
+    assert_eq!(comparison["objects"][0]["localOnly"], json!([]));
     assert_eq!(
         call(
             &client,

@@ -19,7 +19,13 @@ until stable database identity and shared write authorization are integrated.
 
 Tree/read/export SHALL use the common stored configuration engine and its existing
 offline memory reader. The adapter SHALL NOT implement a second storage backend
-or invoke native platform processes. A cancelled request SHALL publish no result.
+or invoke native platform processes. Status/compare SHALL use the common object
+comparator and include changed, base-only and local-only paths for selected
+objects, including selected objects absent from the database. Source snapshots
+SHALL be bounded, cancellable and confined; a file/directory census SHALL be
+revalidated before returning comparison results. Concurrent source additions,
+renames or replacements SHALL fail rather than silently report equality.
+A cancelled request SHALL publish no result.
 
 ## Remaining completion gate
 

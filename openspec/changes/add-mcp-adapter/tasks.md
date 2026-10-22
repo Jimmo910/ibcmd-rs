@@ -24,7 +24,15 @@
       pinned startup identity, recheck operator policy immediately before atomic
       publication, and propagate cancellation before any visible change.
 - [ ] Enforce agent-write per fixed database on every mutation and publication.
-- [ ] Full status/compare including local-only paths through confined snapshots.
+- [x] Full shared status/compare including local-only paths and selected objects
+      absent from the database, with bounded cancellable source snapshots.
+      Census revalidation rejects concurrent additions/renames; same-inode
+      symlink root aliases are refused. Independent review: no remaining findings.
+      4056 root library tests pass (15 ignored),19 filedb unit tests pass;
+      3 MCP + 6 editor + 6 filedb integration tests pass. All targets checked;
+      filedb all-target Clippy passes with warnings denied.
+      Logs: lab logs/issue-386-lib-all-final.log,
+      logs/issue-386-full-status-final.log, logs/issue-386-filedb-clippy.log.
 - [ ] Native acceptance: real MCP client edits disposable filedb module; external
       test orchestrator runs normal apply; native export matches source bytes.
 - [ ] Parent review before PR creation. No release/merge/issue closure in this slice.

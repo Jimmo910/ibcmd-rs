@@ -754,6 +754,24 @@ fn relative_slash(root: &Path, path: &Path) -> Option<String> {
     )
 }
 
+/// Source bytes are borrowed from a confined snapshot, or read lazily by the
+/// existing CLI/editor path. Source-only paths need no content reads.
+enum StatusFile<'a> {
+    Bytes(&'a [u8]),
+    Path(PathBuf),
+}
+impl StatusFile<'_> {
+    fn equals(&self, expected: &[u8]) -> Result<bool> {
+        Ok(match self {
+            Self::Bytes(bytes) => *bytes == expected,
+            Self::Path(path) => {
+                fs::read(path).with_context(|| format!("failed to read {}", path.display()))?
+                    == expected
+            }
+        })
+    }
+}
+
 /// The files of `object` in a source folder, by relative path (dot folders
 /// such as `.git` and `.ibcmd` are not the object's).
 fn local_files(dir: &Path, object: &StoredObject) -> Result<BTreeMap<String, PathBuf>> {
@@ -1072,6 +1090,49 @@ impl StoredConfiguration {
         dir: &Path,
         progress: Progress<'_>,
     ) -> Result<Vec<ObjectStatus>> {
+        self.status_with_files(
+            names,
+            || folder_objects(dir),
+            |object| {
+                Ok(local_files(dir, object)?
+                    .into_iter()
+                    .map(|(path, file)| (path, StatusFile::Path(file)))
+                    .collect())
+            },
+            progress,
+        )
+    }
+
+    /// The same status semantics over caller-confined immutable source files.
+    /// This includes source-only paths and explicitly selected objects absent
+    /// from the base; no source pathname is reopened by the engine.
+    pub(crate) fn status_snapshot(
+        &mut self,
+        names: &[String],
+        files: &BTreeMap<String, Vec<u8>>,
+        progress: Progress<'_>,
+    ) -> Result<Vec<ObjectStatus>> {
+        self.status_with_files(
+            Some(names),
+            || Ok(Vec::new()),
+            |object| {
+                Ok(files
+                    .iter()
+                    .filter(|(path, _)| object.owns_path(path))
+                    .map(|(path, bytes)| (path.clone(), StatusFile::Bytes(bytes)))
+                    .collect())
+            },
+            progress,
+        )
+    }
+
+    fn status_with_files<'a>(
+        &mut self,
+        names: Option<&[String]>,
+        local_objects: impl FnOnce() -> Result<Vec<String>>,
+        mut local_files: impl FnMut(&StoredObject) -> Result<BTreeMap<String, StatusFile<'a>>>,
+        progress: Progress<'_>,
+    ) -> Result<Vec<ObjectStatus>> {
         let _engine = engine();
         let (objects, local_only_names) = match names {
             Some(names) => self.with_inventory(|inventory, table| {
@@ -1092,7 +1153,7 @@ impl StoredConfiguration {
                     .iter()
                     .map(|object| object.full_name.to_lowercase())
                     .collect::<HashSet<_>>();
-                let absent = folder_objects(dir)?
+                let absent = local_objects()?
                     .into_iter()
                     .filter(|name| !known.contains(&name.to_lowercase()))
                     .collect();
@@ -1107,7 +1168,7 @@ impl StoredConfiguration {
         for (index, files) in exported.iter().enumerate() {
             progress(index + 1, exported.len(), &files.object.full_name);
             crate::cancel::check()?;
-            let local = local_files(dir, &files.object)?;
+            let local = local_files(&files.object)?;
             let mut status = ObjectStatus {
                 object: files.object.full_name.clone(),
                 kind: files.object.kind.clone(),
@@ -1120,10 +1181,8 @@ impl StoredConfiguration {
             for (path, bytes) in &files.files {
                 match local.get(path) {
                     None => status.base_only.push(path.clone()),
-                    Some(file) => {
-                        let on_disk = fs::read(file)
-                            .with_context(|| format!("failed to read {}", file.display()))?;
-                        if &on_disk != bytes {
+                    Some(on_disk) => {
+                        if !on_disk.equals(bytes)? {
                             status.changed.push(path.clone());
                         }
                     }
@@ -1148,7 +1207,7 @@ impl StoredConfiguration {
         }
         for name in local_only_names {
             let object = folder_object(&name).ok_or_else(|| UnknownObject(name.clone()))?;
-            let local = local_files(dir, &object)?;
+            let local = local_files(&object)?;
             statuses.push(ObjectStatus {
                 object: name,
                 kind: object.kind,
