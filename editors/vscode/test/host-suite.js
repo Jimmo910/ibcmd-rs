@@ -167,6 +167,47 @@ exports.run = async () => {
     await slow;
     assert.ok(api.status().includes("Fake B"));
     assert.ok(!api.status().includes("Fake A"));
+    // Refresh must not restore A after a newer selection B completed while list was pending.
+    process.env.IBCMD_FAKE_MODE = "pending";
+    pick = "fake/a";
+    await vscode.commands.executeCommand("ibcmd.select");
+    assert.ok(api.status().includes("Fake A"), api.status());
+    const gate = path.join(f.uri.fsPath, "refresh-list-gate");
+    process.env.IBCMD_FAKE_MODE = "delayed-list";
+    process.env.IBCMD_FAKE_LIST_GATE = gate;
+    const refreshing = vscode.commands.executeCommand("ibcmd.refresh");
+    let listPid;
+    for (let i = 0; i < 200; i++) {
+      try {
+        listPid = Number(await fs.readFile(gate + ".started", "utf8"));
+        break;
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(listPid, "Refresh list request reached the gate");
+    process.env.IBCMD_FAKE_MODE = "pending";
+    pick = "fake/b";
+    await vscode.commands.executeCommand("ibcmd.select");
+    assert.ok(api.status().includes("Fake B"), api.status());
+    await fs.writeFile(gate, "release");
+    await refreshing;
+    assert.ok(
+      api.status().includes("Fake B"),
+      `Stale Refresh restored A: ${api.status()}`,
+    );
+    assert.ok(!api.status().includes("Fake A"), api.status());
+    let alive = true;
+    for (let i = 0; i < 200; i++) {
+      try {
+        process.kill(listPid, 0);
+      } catch {
+        alive = false;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(alive, false, "The stale list process was disposed");
+    delete process.env.IBCMD_FAKE_LIST_GATE;
     delete process.env.IBCMD_FAKE_MODE;
     console.log(
       "Extension host: activation, Add/Edit, workspace metadata/bindings, SecretStorage save/delete flow, and real settings show passed.",

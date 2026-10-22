@@ -257,8 +257,19 @@ export async function activate(context: vscode.ExtensionContext) {
       if (folder && selected) {
         const f = folder;
         const id = selected.id;
-        await invalidate();
-        const b = (await list(f)).find((b) => b.id === id);
+        const stamp = await invalidate();
+        const current = () =>
+          generation.current(stamp) && folder === f && selected?.id === id;
+        if (!current()) return;
+        let bases: Base[];
+        try {
+          bases = await list(f);
+        } catch (error) {
+          if (current()) throw error;
+          return;
+        }
+        if (!current()) return;
+        const b = bases.find((b) => b.id === id);
         if (b && bound(f).includes(id)) await switchTo(f, b);
       } else await commands["ibcmd.select"]();
     },
@@ -274,11 +285,12 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   };
   async function invalidate() {
-    generation.next();
+    const stamp = generation.next();
     const old = client;
     client = undefined;
     status.text = "$(database) ibcmd-rs · reload/select connection";
     await old?.dispose();
+    return stamp;
   }
   async function edit(existing = false) {
     const f = await chooseFolder();

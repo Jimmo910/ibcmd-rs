@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Synthetic status/lifecycle fixture only. It does not contact a database.
+const fs = require("node:fs");
 let input = Buffer.alloc(0);
 function send(id, result, error) {
   const body = Buffer.from(
@@ -34,16 +35,24 @@ process.stdin.on("data", (chunk) => {
       continue;
     }
     if (m.method === "infobases/list") {
-      send(m.id, {
-        infobases: ["a", "b"].map((name) => ({
-          id: `fake/${name}`,
-          name,
-          server: "fake",
-          platform: "8.3.27",
-          source: "mssql",
-          mask: false,
-        })),
-      });
+      const reply = () =>
+        send(m.id, {
+          infobases: ["a", "b"].map((name) => ({
+            id: `fake/${name}`,
+            name,
+            server: "fake",
+            platform: "8.3.27",
+            source: "mssql",
+            mask: false,
+          })),
+        });
+      if (process.env.IBCMD_FAKE_MODE === "delayed-list") {
+        const gate = process.env.IBCMD_FAKE_LIST_GATE;
+        fs.writeFileSync(gate + ".started", String(process.pid));
+        const wait = () =>
+          fs.existsSync(gate) ? reply() : setTimeout(wait, 10);
+        wait();
+      } else reply();
       continue;
     }
     if (m.method === "infobases/connect") {
