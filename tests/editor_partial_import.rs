@@ -10,6 +10,13 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
+// Cancellation scopes are process-global. Serialize whole test bodies, not
+// only the flag mutation, so another export never observes a sibling's scope.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 const MODULE: &str = "CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl";
 const DESCRIPTOR: &str = "CommonModules/ФайловаяБазаПроверка.xml";
 fn fixture() -> PathBuf {
@@ -72,6 +79,7 @@ fn read(db: &Path, path: &str) -> Vec<u8> {
 }
 #[test]
 fn selected_module_preserves_unselected_files_and_previous_staging() {
+    let _serial = serial();
     let (db, tree) = setup();
     edit(
         &tree,
@@ -118,6 +126,7 @@ fn selected_module_preserves_unselected_files_and_previous_staging() {
 }
 #[test]
 fn changed_target_source_or_connection_refuses_before_writes() {
+    let _serial = serial();
     for scenario in 0..3 {
         let (db, tree) = setup();
         let text = fs::read_to_string(tree.join(MODULE)).unwrap() + "\r\n// edit\r\n";
@@ -139,6 +148,7 @@ fn changed_target_source_or_connection_refuses_before_writes() {
 }
 #[test]
 fn new_or_missing_files_and_incomplete_stage_refuse_before_writes() {
+    let _serial = serial();
     for scenario in 0..3 {
         let (db, tree) = setup();
         let before = fs::read(db.join("1Cv8.1CD")).unwrap();
@@ -178,6 +188,7 @@ fn new_or_missing_files_and_incomplete_stage_refuse_before_writes() {
 
 #[test]
 fn cancellation_preserves_database_and_existing_backup() {
+    let _serial = serial();
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -208,6 +219,7 @@ fn cancellation_preserves_database_and_existing_backup() {
 }
 #[test]
 fn late_publication_rejection_preserves_the_previous_backup() {
+    let _serial = serial();
     let (db, _) = setup();
     let before = fs::read(db.join("1Cv8.1CD")).unwrap();
     fs::write(ibcmd_filedb::backup_file(&db), b"previous backup").unwrap();
@@ -233,6 +245,7 @@ fn late_publication_rejection_preserves_the_previous_backup() {
 }
 #[test]
 fn interruption_child() {
+    let _serial = serial();
     let Some(db) = std::env::var_os("ISSUE382_INTERRUPTION_CHILD") else {
         return;
     };
@@ -251,6 +264,7 @@ fn interruption_child() {
 }
 #[test]
 fn process_interruption_preserves_published_files_and_refuses_stale_work() {
+    let _serial = serial();
     let (db, _) = setup();
     let before = fs::read(db.join("1Cv8.1CD")).unwrap();
     fs::write(ibcmd_filedb::backup_file(&db), b"old backup").unwrap();
@@ -273,6 +287,7 @@ fn process_interruption_preserves_published_files_and_refuses_stale_work() {
 #[cfg(unix)]
 #[test]
 fn operator_guards_check_consumed_identity_and_final_publication_policy() {
+    let _serial = serial();
     use std::os::unix::fs::MetadataExt;
     let (db, tree) = setup();
     fs::write(
@@ -340,6 +355,7 @@ fn operator_guards_check_consumed_identity_and_final_publication_policy() {
 }
 #[test]
 fn stage_versions_cannot_name_an_absent_row() {
+    let _serial = serial();
     let (db, tree) = setup();
     let mut session = ibcmd_filedb::open_for_write(&db).unwrap();
     let mut rows = session.config_rows("CONFIG").unwrap();
@@ -381,6 +397,7 @@ fn stage_versions_cannot_name_an_absent_row() {
 
 #[test]
 fn cancellation_at_the_final_policy_gate_is_checked_after_long_checks() {
+    let _serial = serial();
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -417,6 +434,7 @@ fn cancellation_at_the_final_policy_gate_is_checked_after_long_checks() {
 
 #[test]
 fn changed_import_uses_native_sync_versions_and_refuses_stale_staging() {
+    let _serial = serial();
     let (db, tree) = setup();
     fs::write(
         tree.join(MODULE),
@@ -460,6 +478,7 @@ fn changed_import_uses_native_sync_versions_and_refuses_stale_staging() {
 
 #[test]
 fn bounded_plan_retains_cancellation_control_for_publish() {
+    let _serial = serial();
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -507,6 +526,7 @@ fn bounded_plan_retains_cancellation_control_for_publish() {
 
 #[test]
 fn bounded_plan_checks_retained_callback_after_final_operator_guard() {
+    let _serial = serial();
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
