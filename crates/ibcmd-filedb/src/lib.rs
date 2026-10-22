@@ -583,13 +583,10 @@ impl WriteSession {
         } = self;
         #[cfg(windows)]
         drop(file);
-        if let Err(error) = publish_files(&paths, &work, &path, &backup_work, &backup, |a, b| {
+        // On error, RAII keeps the original descriptor locked until return.
+        publish_files(&paths, &work, &path, &backup_work, &backup, |a, b| {
             paths.rename(a, b)
-        }) {
-            #[cfg(unix)]
-            drop(file);
-            return Err(error);
-        }
+        })?;
         paths.sync();
         #[cfg(unix)]
         drop(file);
