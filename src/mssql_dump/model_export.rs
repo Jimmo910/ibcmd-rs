@@ -612,19 +612,21 @@ impl ModelExport {
 /// about the platform, since 8.5 runs 8.3.27-compatible configurations too.
 /// Reads the `root` row and the Configuration row it names, nothing else.
 pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> Result<bool> {
-    let _offline = args
-        .rows_dir
-        .as_deref()
-        .map(offline_rows::activate)
-        .transpose()?;
+    let _offline = match (&args.rows_dir, &args.file_infobase) {
+        (Some(dir), _) => Some(offline_rows::activate(dir)?),
+        (None, Some(path)) => Some(offline_rows::activate_rows(super::file_infobase::load(
+            path,
+        )?)?),
+        (None, None) => None,
+    };
     let password = sql_password(
         args.sql_user.as_deref(),
         args.sql_pwd.as_deref(),
         &args.sql_pwd_env,
     );
     // `--rows-dir` answers every read from its folder; no login is needed.
-    let sql = if args.rows_dir.is_some() {
-        crate::sql::SqlExec::detached("--rows-dir reads every row from its folder")
+    let sql = if args.rows_dir.is_some() || args.file_infobase.is_some() {
+        crate::sql::SqlExec::detached("the rows come from a folder or a file infobase")
     } else {
         crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
             sqlcmd: args.sqlcmd.as_deref(),

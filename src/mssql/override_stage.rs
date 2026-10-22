@@ -484,7 +484,7 @@ pub(super) fn dynamic_update_rows(sql: &SqlExec, database: &str) -> Result<Vec<S
 /// The `deleted` row of the platform's import: a BOM, the number of names,
 /// then each name in quotes followed by `0` (the flag of a Config row), raw
 /// deflate.
-pub(super) fn deleted_row(names: &[String]) -> Result<Vec<u8>> {
+pub(crate) fn deleted_row(names: &[String]) -> Result<Vec<u8>> {
     let mut text = format!("\u{feff}{}", names.len());
     for name in names {
         if name.contains('"') {

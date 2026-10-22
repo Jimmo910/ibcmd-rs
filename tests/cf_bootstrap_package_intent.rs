@@ -121,7 +121,7 @@ fn refusal(result: Output, output: &Path, code: &str, address: &str) {
 }
 
 #[test]
-fn extension_and_both_external_families_refuse_before_either_cf_compiler() {
+fn incomplete_extension_and_external_families_are_never_published_as_cf() {
     for base_free in [false, true] {
         for (kind, properties, address, suffix, storage) in [
             (
@@ -148,8 +148,20 @@ fn extension_and_both_external_families_refuse_before_either_cf_compiler() {
                 refusal(
                     bootstrap(&source, &output, base_free, storage),
                     &output,
-                    "bootstrap_package_not_supported",
-                    address,
+                    if kind == "Configuration" {
+                        if requested_suffix == "cf" {
+                            "bootstrap_package_invalid"
+                        } else {
+                            "extension_compile_failed"
+                        }
+                    } else {
+                        "bootstrap_package_not_supported"
+                    },
+                    if kind == "Configuration" && requested_suffix != "cf" {
+                        "CompatibilityMode"
+                    } else {
+                        address
+                    },
                 );
             }
         }
@@ -169,8 +181,8 @@ fn renamed_prefixed_extension_and_explicit_xml_file_are_addressed() {
             refusal(
                 bootstrap(&input, &output, base_free, "5"),
                 &output,
-                "bootstrap_package_not_supported",
-                "Renamed.xml",
+                "bootstrap_package_invalid",
+                "Extension",
             );
         }
     }
@@ -696,7 +708,7 @@ fn ordinary_prefix_and_shared_compatibility_survive_public_native_rebuild() {
 }
 
 #[test]
-fn extension_purpose_and_mapping_still_refuse_with_shared_ordinary_properties() {
+fn extension_purpose_and_mapping_never_select_an_ordinary_cf_builder() {
     for base_free in [false, true] {
         for marker in [
             "<ConfigurationExtensionPurpose>Patch</ConfigurationExtensionPurpose>",
@@ -712,7 +724,7 @@ fn extension_purpose_and_mapping_still_refuse_with_shared_ordinary_properties() 
             refusal(
                 bootstrap(&source, &output, base_free, "5"),
                 &output,
-                "bootstrap_package_not_supported",
+                "bootstrap_package_invalid",
                 "Extension",
             );
         }
@@ -923,5 +935,56 @@ fn older_v85_vocabulary_does_not_change_the_xml_2_20_contract() {
                 .success()
         );
         assert!(!output.exists());
+    }
+}
+
+#[test]
+fn extension_target_dialect_mismatch_is_refused_before_publication() {
+    for base_free in [false, true] {
+        for (source_dialect, source_platform, target) in [
+            ("2.20", "8.3.27.2214", "platform-8.5.1.1150"),
+            ("2.21", "8.5.1.1150", "platform-8.3.27.2214"),
+            ("2.21", "8.5.1.1150", "platform-8.3.27.1989"),
+        ] {
+            for selector in ["--platform", "--source-version"] {
+                let scratch = Scratch::new();
+                let source = scratch.source(
+                    "Configuration.xml",
+                    &metadata(
+                        "Configuration",
+                        "<ObjectBelonging>Adopted</ObjectBelonging><ConfigurationExtensionPurpose>Customization</ConfigurationExtensionPurpose>",
+                    )
+                    .replace("version=\"2.20\"", &format!("version=\"{source_dialect}\"")),
+                );
+                let output = scratch.0.join("blocked.cfe");
+                let mut command = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
+                command.args(["cf", "bootstrap"]);
+                command.arg(&source).arg(&output);
+                command.args([
+                    selector,
+                    if selector == "--platform" {
+                        source_platform
+                    } else {
+                        source_dialect
+                    },
+                    "--target-profile",
+                    target,
+                ]);
+                if base_free {
+                    command.arg("--base-free");
+                }
+                refusal(
+                    command.env("PATH", "").output().unwrap(),
+                    &output,
+                    "extension_target_dialect_mismatch",
+                    target,
+                );
+                assert_eq!(
+                    fs::read_dir(&scratch.0).unwrap().count(),
+                    1,
+                    "refused target must not leave output or temporary publication files",
+                );
+            }
+        }
     }
 }

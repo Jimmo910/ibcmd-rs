@@ -8,7 +8,7 @@ the inflated entry byte for byte). The image is a stand-in, not compiled code.
 
 Output: tests/fixtures/external/closed_module/{input.cfe, Module.bin}
 """
-import os, struct, sys, zlib
+import base64, hashlib, os, re, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import v8c
 
@@ -36,6 +36,29 @@ def inner_container(elements, revision):
     return bytes(out)
 
 
+def packed_bodies(container):
+    archive = v8c.V8(container)
+    return {name: archive.block(address) for name, address in archive.entries()}
+
+
+def refresh_manifest(entries, container):
+    # configinfo hashes the packed rows. write15 recompresses every row, so
+    # even unchanged inflated bodies need their actual output digest refreshed.
+    packed = packed_bodies(container)
+    seen = set()
+
+    def digest(match):
+        name = match[1].decode('utf-8')
+        assert name in packed and name != 'configinfo' and name not in seen
+        seen.add(name)
+        value = base64.b64encode(hashlib.sha1(packed[name]).digest())
+        return b'"' + match[1] + b'",' + value
+
+    updated = re.sub(rb'"([^"]+)",([A-Za-z0-9+/]{27}=)', digest, entries['configinfo'])
+    assert seen == set(entries) - {'configinfo'}, 'manifest must cover every data row once'
+    return updated
+
+
 def main():
     source = os.path.join(FIXTURES, 'test_extension', 'input.cfe')
     raw = open(source, 'rb').read()
@@ -50,6 +73,9 @@ def main():
     # write15 keeps a body that is itself a container as is (not deflated);
     # the export inflates entries, so deflate the module entry ourselves.
     container = v8c.write15(entries, storage_version, deflate_all=True)
+    entries['configinfo'] = refresh_manifest(entries, container)
+    container = v8c.write15(entries, storage_version, deflate_all=True)
+    assert refresh_manifest(entries, container) == entries['configinfo']
     open(os.path.join(dst, 'input.cfe'), 'wb').write(container)
     open(os.path.join(dst, 'Module.bin'), 'wb').write(module)
     check = v8c.V8(container)

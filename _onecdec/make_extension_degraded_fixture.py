@@ -14,6 +14,7 @@ import os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import v8c
+from make_closed_module_fixture import refresh_manifest
 
 REPO = os.path.dirname(HERE)
 FIXTURES = os.path.join(REPO, 'tests', 'fixtures', 'external')
@@ -29,7 +30,11 @@ def derive(source, case):
     entries[ROOT] = root.replace(KNOWN, UNKNOWN)
     dst = os.path.join(FIXTURES, 'extension_roots', case)
     os.makedirs(dst, exist_ok=True)
-    open(os.path.join(dst, 'input.cfe'), 'wb').write(v8c.write15(entries, deflate_all=True))
+    container = v8c.write15(entries, deflate_all=True)
+    entries['configinfo'] = refresh_manifest(entries, container)
+    container = v8c.write15(entries, deflate_all=True)
+    assert refresh_manifest(entries, container) == entries['configinfo']
+    open(os.path.join(dst, 'input.cfe'), 'wb').write(container)
     print('ok', dst)
 
 

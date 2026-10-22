@@ -1,10 +1,85 @@
-# Extension export parity (`mssql-dump-extension`)
+# Extension file and database parity
 
-Status of issue #348 (milestone 0.5): the tree that `mssql-dump-extension`
-writes for a configuration extension equals the tree that the native
-`ibcmd infobase config export --extension=<name>` writes for the same database.
+Issue #348 (milestone 0.5) covers extension export, compilation and loading.
+The database export results below compare `mssql-dump-extension` with native
+`ibcmd infobase config export --extension=<name>` for the same database.
+The standalone CFE route has its own source and output contract.
 
-## Result
+## Source-only CFE files
+
+The current sources implement a full-source extension builder:
+
+```powershell
+ibcmd-rs cf bootstrap F:\src\MyExtension F:\cf\MyExtension.cfe --platform 8.5.1.1150
+ibcmd-rs cf bootstrap F:\src\MyExtension F:\cf\MyExtension-base-free.cfe --platform 8.5.1.1150 --base-free
+ibcmd-rs cf export F:\cf\MyExtension.cfe F:\src\MyExtension-edit --platform 8.5.1.1150 --index --fail-on-opaque
+# Edit the exported XML/BSL and maintain the extension Version.
+ibcmd-rs cf load F:\src\MyExtension-edit F:\cf\MyExtension-new.cfe --base F:\cf\MyExtension.cfe --platform 8.5.1.1150
+```
+
+For an extension, both bootstrap forms select the same independent compiler
+(`src/extension/build.rs`). It compiles the complete tree through typed
+metadata and asset writers, reconstructs adoption headers from the original
+controlled properties, creates the extension root and a new SHA1 `configinfo`
+manifest, and writes a CFE Format15 container. It neither borrows rows from an
+existing CFE nor invokes native ibcmd. Unknown controlled properties fail
+explicitly. Publication requires manifest/digest validation and a byte-exact
+export-back comparison with all source files; derived `ConfigDumpInfo.xml`
+and the optional `.ibcmd` index are not source inputs.
+
+This differs from **ordinary configuration CF** bootstrap: without
+`--base-free`, that route retains the older restricted bootstrap compiler;
+with `--base-free`, it uses the empty-infobase source compiler. EPF/ERF
+bootstrap is still unsupported. Use a new `.cfe` output for an extension;
+a recognized suffix that requests a different package kind is refused.
+An explicit target profile must use the selected source XML dialect; cross-dialect
+CFE compilation is refused before publication. Without an explicit target, the
+profile is selected from `--platform`/`--source-version`.
+
+`cf load --base` remains an edit of an existing image. Module text edits retain
+the module's `info` and inner element headers. Changed packed rows receive new
+SHA1 entries in `configinfo`. The full export-back guard also applies to this
+edit route. For CFE drift warnings, export with `--index`: the index retains
+the original entry versions without adding a non-native XML file.
+
+### File XML versus database XML
+
+Native `config export --file=<extension.cfe>` does not write
+`ConfigDumpInfo.xml`; our CFE file export follows that contract.
+Native database `config export --extension=<name>` and our SQL export include
+it, deriving versions from the CAS manifest. They are separate references.
+The same logical tree therefore has one fewer file in its CFE export.
+
+The source corpus captured on 2026-10-20 from БСП on platform 8.5.1.1150,
+XML 2.21, passed exact file-name and byte comparisons for CFE export, both
+source-only bootstrap forms, native rebuild of our export, changed Version
+and module text, `cf load`, and read-only SQL export:
+
+| extension | Version | CFE-file XML files | SQL XML files |
+|---|---|---|---|
+| `_ДемоПустоеРасширение` | `1.0.1.1` | 2 | 3 |
+| `_ДемоРасширение` | `1.0.1.14` | 186 | 187 |
+| `ServiceDesk` | `1.9.148.0` | 809 | 810 |
+| total | | 997 | 1000 |
+
+These file operations do not import into the source database or activate an
+extension. SQL staging and activation keep their existing platform and
+structural-change restrictions, including the 8.5 write gate.
+
+Native acceptance used separate fresh file databases on drive F and native
+`ibcmd config export --threads=1 --file=<cfe> <xml>`. The native default-thread
+export was nondeterministic even for byte-identical input CFEs: some runs
+failed or stopped with a partial tree. The single-thread controls completed
+with all 997 file bytes equal for the three extensions; SQL comparisons
+covered all 1000 files. This is evidence for this dated corpus and platform,
+not a claim about all extension metadata or SQL 8.5 activation.
+
+The laboratory retains raw commands, exit codes, SHA-256 inventories and failed
+controls at `F:/ibcmd/lab/05/ext/crosscheck-bsp-20261020-v2`. Portable regression
+coverage includes `tests/cfe_source_roundtrip.rs` (both 8.3 and 8.5 without a
+platform on PATH), package-admission tests and free-list/container tests.
+
+## Database export results
 
 Measured 2026-09-29 on a clone of the БСП 8.3.27 database (four extensions),
 native reference exports against ours with `ibcmd-rs source-diff`
@@ -73,8 +148,9 @@ supplies the staged rows and fetches the rest from `ConfigCAS`; `--image active`
 reads the generation the registry names, `--image staged` fails when nothing is
 staged. The report says which image was exported (`image`, `image_cas_root`).
 
-The root object is rendered by `extension/root.rs`, `ConfigDumpInfo.xml` from the
-digests of the CAS manifest, and forms get a post-pass over their XML
+The root object is rendered by `extension/root.rs`, database
+`ConfigDumpInfo.xml` from the digests of the CAS manifest (the standalone CFE
+file export omits it), and forms get a post-pass over their XML
 (`extension/form.rs`, `adjust_form_files`). Every relaxation of an ordinary
 reader is gated by `extension::active()`, so an export of an ordinary
 configuration takes exactly the old paths.
@@ -94,9 +170,10 @@ the values an extension adds to a type list.
 
 ### `ConfigDumpInfo.xml`
 
-Not written at all before (the extension CAS has no `root`/`version`/`versions`
-rows). `configVersion` of an entry is the SHA-1 of the packed CAS row of that
-object; in the main configuration it is the 16-byte identity and `00000000`.
+The database export did not write it before (the extension CAS has no
+`root`/`version`/`versions` rows). This section concerns the database export;
+the CFE file export intentionally omits this file. `configVersion` of an
+entry is the SHA-1 of the packed CAS row of that object; in the main configuration it is the 16-byte identity and `00000000`.
 
 ### `Configuration.xml` (root object)
 
@@ -314,8 +391,8 @@ the reference stays an id.
 
 `mssql-load-extension` compiles the source tree of an extension into an
 overlay on the extension's active rows: every metadata row is kept, the bodies
-the tree carries replace theirs. Its metadata compile is the strict
-`cf bootstrap` one, which refuses what a native export writes for an extension
+the tree carries replace theirs. Its original metadata compile used the older strict
+bootstrap compiler, which refused what a native export writes for an extension
 (the document of an adopted object lists only the properties the extension
 records; the root carries `DefaultRoles`), so none of the four БСП 8.3.27
 extensions loaded from its own native tree (`Missing("Synonym")` on the
@@ -359,9 +436,9 @@ does), so `--mode online` is the one that runs on a registered clone.
 
 ## Whole-tree load
 
-The strict compile above refuses what a native export writes for an extension,
-so no whole native tree of the four БСП 8.3.27 extensions loaded, and a form, a
-picture or a template failed even in a bounded selection. `mssql-load-extension`
+The older strict compile described above refused native extension XML:
+no whole native tree of the four БСП 8.3.27 extensions loaded, and a form,
+a picture or a template failed even in a bounded selection. `mssql-load-extension`
 now goes the other way round (`mssql_extension_tree_load`), for the whole tree
 and for a `--path-prefix` selection that holds more than module bodies:
 
@@ -411,8 +488,9 @@ One writer rule came out of it: an ExtPicture with `LoadTransparent` true and no
 `TransparentPixel` is stored `{1,0,-1,-1}` (6 of 6 pictures of the extensions;
 the main-configuration corpora never have it, and the compiler refused it).
 
-Only platform 8.3.27.2214 writes extensions (8.5 is declared unsupported for
-extension writes).
+Only platform 8.3.27.2214 supports the SQL extension staging and activation
+described here (8.5 is declared unsupported for those database writes).
+This restriction does not describe standalone CFE file compilation.
 
 The root Version adapter preserves the existing component count and every
 other descriptor byte. For the evidenced native layout 68 (60 properties),
@@ -545,8 +623,8 @@ These are read off a single native sample; the evidence is in the lab folder
 ## Not covered yet
 
 * the ERP УХ 8.5 corpus for the 8.5 readers (no such clone was made);
-* the load of an 8.5 extension (the 8.5 form loader has the planner bag entry
-  and the empty-source characteristic compiles, but no 8.5 extension was loaded);
+* SQL activation of an 8.5 extension; source-only CFE compilation and file
+  editing are separate routes described above, and do not establish this;
 * the whole-tree load on the 8.5 clone (extension writes are declared
   unsupported for 8.5) and of a binary template (`Template.bin`): no case ran;
 * adopted-form interceptor writes beyond the measured 8.3.27 no-base common

@@ -651,8 +651,10 @@ pub struct CfBootstrapArgs {
     /// platform); independent from the container revision.
     #[arg(long, value_enum, default_value_t = InfobaseConfigSourceVersion::V2_20, hide = true)]
     pub source_version: InfobaseConfigSourceVersion,
-    /// Exact target platform profile selecting native family layouts.
-    #[arg(long, default_value = "platform-8.3.27.1989")]
+    /// Exact target platform profile selecting native family layouts. When
+    /// omitted, CFE uses the source dialect's platform; --platform selects
+    /// the base-free CF target, otherwise CF defaults to 8.3.27.1989.
+    #[arg(long, default_value = "", hide_default_value = true)]
     pub target_profile: String,
     /// Optional directory with additive experimental JSON profiles.
     #[arg(long)]
@@ -737,6 +739,9 @@ pub struct InfobaseConfigExportArgs {
     pub platform: Option<crate::platform::PlatformSpec>,
     /// Source XML version. 2.20 matches 1C 8.3.27, 2.21 matches 1C 8.5.1. Can also be set in settings.
     pub source_version: Option<InfobaseConfigSourceVersion>,
+    /// `--db-path`: a file infobase (the directory holding 1Cv8.1CD) in place
+    /// of a DBMS connection.
+    pub db_path: Option<PathBuf>,
     /// DBMS type. Only MSSQLServer is supported by the direct exporter.
     pub dbms: Option<String>,
     /// Database server.
@@ -794,6 +799,9 @@ pub struct InfobaseConfigImportArgs {
     /// Source XML version; when neither this nor the settings give one, the
     /// tree's own (`Configuration.xml`) is read.
     pub source_version: Option<InfobaseConfigSourceVersion>,
+    /// `--db-path`: a file infobase (the directory holding 1Cv8.1CD) in place
+    /// of a DBMS connection.
+    pub db_path: Option<PathBuf>,
     /// DBMS type. Only MSSQLServer is supported by the direct importer.
     pub dbms: Option<String>,
     /// Database server.
@@ -1745,6 +1753,11 @@ pub struct MssqlDumpConfigArgs {
     /// server or database is contacted.
     #[arg(long)]
     pub rows_dir: Option<PathBuf>,
+    /// Read the Config table, and a completed import stage in ConfigSave,
+    /// from a file infobase: the directory holding 1Cv8.1CD or the file
+    /// itself. No server or platform is used.
+    #[arg(long, conflicts_with = "rows_dir")]
+    pub file_infobase: Option<PathBuf>,
     /// Write every descriptor through the metadata model (the default for a
     /// full export; kept for scripts that pass it).
     #[arg(long, hide = true, conflicts_with = "legacy_export")]

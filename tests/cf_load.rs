@@ -110,26 +110,10 @@ fn extension_module_edit_round_trips() {
     );
     let back = common::temp_dir("load-cfe-back");
     assert!(common::export(&out, &back).status.success());
-    // ConfigDumpInfo.xml is derived: the edited module's configVersion is the
-    // refreshed configinfo digest, the only line that moves.
-    let (before, after) = (
-        fs::read_to_string(tree.join("ConfigDumpInfo.xml")).unwrap(),
-        fs::read_to_string(back.join("ConfigDumpInfo.xml")).unwrap(),
-    );
-    let moved = before
-        .lines()
-        .zip(after.lines())
-        .filter(|(a, b)| a != b)
-        .collect::<Vec<_>>();
-    assert_eq!(moved.len(), 1, "{moved:?}");
-    assert!(
-        moved[0]
-            .0
-            .contains("554f39c6-e029-4ee0-8535-8c15291a6a3f.0"),
-        "{moved:?}"
-    );
-    fs::remove_file(tree.join("ConfigDumpInfo.xml")).unwrap();
-    fs::remove_file(back.join("ConfigDumpInfo.xml")).unwrap();
+    // Native file-CFE export has no ConfigDumpInfo.xml. Compare the entire
+    // edited export rather than dropping a generated file from either tree.
+    assert!(!tree.join("ConfigDumpInfo.xml").exists());
+    assert!(!back.join("ConfigDumpInfo.xml").exists());
     common::assert_tree_eq(&tree, &back);
 }
 
@@ -345,6 +329,8 @@ fn a_base_changed_since_the_export_is_named_in_a_warning() {
     // module differs from the one the tree was exported with. The tree's text
     // replaces it -- the report says so for that module.
     let (base, tree) = exported("test_extension", "input.cfe", "load-drift");
+    // CFE has no ConfigDumpInfo.xml; its export index records provenance.
+    export_with_index(&base, &tree);
     let module = tree.join("CommonModules/ТестРасширение_Модуль/Ext/Module.bsl");
     let text = fs::read_to_string(&module).unwrap();
     let other = common::temp_dir("load-drift-other");

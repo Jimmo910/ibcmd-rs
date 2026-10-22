@@ -667,16 +667,23 @@ fn extract_failure(
 }
 
 fn bootstrap(mut args: CfBootstrapArgs) -> Result<CfCommandReport, CfCommandError> {
+    // An omitted target may follow the source platform. An explicitly named
+    // target, including the ordinary default's id, must never be substituted.
+    let target_unspecified = args.target_profile.is_empty();
+    if target_unspecified {
+        args.target_profile = DEFAULT_BOOTSTRAP_TARGET_PROFILE.to_owned();
+    }
     let package =
         crate::compiler::artifact::discover_source_package(&args.source_dir).map_err(|source| {
             bootstrap_failure(&args, "bootstrap_package_invalid", format!("{source:#}"))
         })?;
-    if package.intent != crate::compiler::artifact::PackageIntent::Configuration {
+    let extension = package.intent == crate::compiler::artifact::PackageIntent::Extension;
+    if !extension && package.intent != crate::compiler::artifact::PackageIntent::Configuration {
         return Err(bootstrap_failure(
             &args,
             "bootstrap_package_not_supported",
             format!(
-                "{:?} source `{}` requires its own base-free package builder; CFE/EPF/ERF builders are not implemented yet; refusing ordinary CF publication",
+                "{:?} source `{}` requires its own base-free package builder; EPF/ERF builders are not implemented yet; refusing ordinary CF publication",
                 package.intent,
                 package.root_xml.display(),
             ),
@@ -707,9 +714,14 @@ fn bootstrap(mut args: CfBootstrapArgs) -> Result<CfCommandReport, CfCommandErro
             format!("failed to load target profiles: {source:#}"),
         )
     })?;
-    if args.base_free
-        && args.target_profile == DEFAULT_BOOTSTRAP_TARGET_PROFILE
-        && let Some(platform) = args.platform
+    let source_platform = args.platform.or_else(|| {
+        extension
+            .then(|| crate::platform::for_xml_version(args.source_version).ok())
+            .flatten()
+    });
+    if (args.base_free || extension)
+        && target_unspecified
+        && let Some(platform) = source_platform
         && let Some(profile) = platform_target_profile(&profiles, platform)
     {
         // `--platform 8.5.1.1150` names the platform the file is for; the
@@ -730,6 +742,41 @@ fn bootstrap(mut args: CfBootstrapArgs) -> Result<CfCommandReport, CfCommandErro
             format!("target profile `{profile_id}` was not found"),
         )
     })?;
+    if extension {
+        let target_xml = target
+            .constants
+            .get(crate::platform::CONSTANT_XML_FORMAT)
+            .ok_or_else(|| {
+                bootstrap_failure(
+                    &args,
+                    "invalid_target_profile",
+                    format!("target profile `{profile_id}` names no platform XML format"),
+                )
+            })?;
+        if target_xml.value != args.source_version.as_str() {
+            return Err(bootstrap_failure(
+                &args,
+                "extension_target_dialect_mismatch",
+                format!(
+                    "CFE source XML {} differs from target profile `{profile_id}` XML {}; cross-profile CFE compilation is not supported",
+                    args.source_version.as_str(),
+                    target_xml.value,
+                ),
+            ));
+        }
+        let storage_profile = target
+            .storage_profile
+            .as_ref()
+            .map(|coordinate| coordinate.value.clone())
+            .ok_or_else(|| {
+                bootstrap_failure(
+                    &args,
+                    "invalid_target_profile",
+                    format!("target profile `{profile_id}` names no storage profile"),
+                )
+            })?;
+        return bootstrap_extension(args, storage_profile);
+    }
     if args.base_free {
         let Some(storage_profile) = target
             .storage_profile
@@ -848,6 +895,57 @@ fn platform_target_profile(
         .find(|(_, build, _)| build == platform.display())
         .or_else(|| builds.iter().min())
         .map(|(_, _, id)| id.clone())
+}
+
+/// CFE always uses an unpaged format15 container, as the native file API
+/// accepts on both supported platform families. The source-only extension
+/// compiler proves byte parity before this atomic publication step.
+fn bootstrap_extension(
+    args: CfBootstrapArgs,
+    storage_profile: StorageProfileId,
+) -> Result<CfCommandReport, CfCommandError> {
+    let compilation = crate::extension::build::patch(&args.source_dir, args.source_version)
+        .map_err(|source| {
+            bootstrap_failure(&args, "extension_compile_failed", format!("{source:#}"))
+        })?;
+    let storage_entries = compilation.patch.len();
+    let limits = limits_for_len(compilation.retained)
+        .map_err(|message| bootstrap_failure(&args, "source_tree_invalid", message))?;
+    let mut profile =
+        BootstrapCfProfile::new(Revision::Format15, args.storage_version, storage_profile)
+            .with_extension()
+            .with_reserved(args.reserved);
+    if let Some(page_size) = args.page_size {
+        profile = profile.with_page_size(page_size);
+    }
+    let publication = publish_bootstrap_patch_new(compilation.patch, profile, &args.output, limits)
+        .map_err(|source| {
+            bootstrap_failure(&args, "extension_publish_failed", format!("{source:#}"))
+        })?;
+    Ok(CfCommandReport::Bootstrap(CfBootstrapReport {
+        schema_version: REPORT_SCHEMA_VERSION,
+        command: "bootstrap",
+        ok: true,
+        source_dir: display_path(&args.source_dir),
+        output: display_path(&args.output),
+        source_version: args.source_version.as_str(),
+        target_profile: args.target_profile,
+        revision: revision_name(Revision::Format15),
+        storage_version: args.storage_version,
+        page_size: args.page_size,
+        reserved: args.reserved,
+        source_files: compilation.source_files,
+        metadata_files: compilation.metadata_files,
+        asset_files: compilation.asset_files,
+        non_source_files: compilation.non_source_files,
+        storage_entries,
+        publication: Some(CfBootstrapPublicationReport {
+            bytes_written: publication.write.bytes_written,
+            entries_written: publication.write.entries_written,
+            entries_validated: publication.validation.entries_validated,
+        }),
+        errors: Vec::new(),
+    }))
 }
 
 /// `cf bootstrap --base-free`: the tree's rows from the base-free stage, as

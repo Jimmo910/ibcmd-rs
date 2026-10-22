@@ -98,6 +98,13 @@ pub trait RoleRightsSource {
     /// The uuid of the field `object` declares directly under `field` (an
     /// attribute, dimension or resource), or `None` when it declares none.
     fn declared_field_uuid(&self, object: &str, field: &str) -> Result<Option<String>, String>;
+
+    /// Adopted metadata references end in marker 3. The marker also preserves
+    /// explicitly granted rights on standard attributes against the ordinary
+    /// role defaults; an own object keeps the ordinary reference marker.
+    fn is_adopted_object(&self, _reference: &str) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 /// A parsed `Rights.xml`, text exactly as the file spells it (entities
@@ -174,7 +181,10 @@ pub fn write_role_rights_document(
                 object.name.clone(),
             ));
         }
-        let reference = resolve_object(&object.name, source)?;
+        let mut reference = resolve_object(&object.name, source)?;
+        reference.adopted = source
+            .is_adopted_object(&object.name)
+            .map_err(|detail| RoleRightsRefusal::new("unresolved adoption", detail))?;
         match object_refs.get(&reference.uuid) {
             Some(existing) if existing != &reference.base_name => {
                 return Err(RoleRightsRefusal::new(
@@ -448,6 +458,7 @@ struct ResolvedObject {
     /// The name the exporter looks the uuid up under: the object's own name,
     /// or its owner's for a standard attribute.
     base_name: String,
+    adopted: bool,
 }
 
 enum ReferenceTail {
@@ -459,14 +470,24 @@ impl ResolvedObject {
     fn text(&self) -> String {
         match &self.tail {
             ReferenceTail::Plain { field } => {
-                format!("{{1,{},0,{}}}", self.uuid, if *field { 1 } else { 0 })
+                format!(
+                    "{{1,{},0,{}}}",
+                    self.uuid,
+                    if self.adopted {
+                        3
+                    } else if *field {
+                        1
+                    } else {
+                        0
+                    }
+                )
             }
             ReferenceTail::Nested(slots) => {
                 let mut text = format!("{{1,{},{}", self.uuid, slots.len());
                 for (slot, family) in slots {
                     text.push_str(&format!(",\r\n{{{slot},{family}}}"));
                 }
-                text.push_str(",1}");
+                text.push_str(if self.adopted { ",3}" } else { ",1}" });
                 text
             }
         }
@@ -527,6 +548,7 @@ fn resolve_object(
                 uuid: source.metadata_object_uuid(&owner).map_err(unresolved)?,
                 tail: ReferenceTail::Nested(slots),
                 base_name: owner,
+                adopted: false,
             })
         }
         Some("StandardTabularSection") => {
@@ -548,6 +570,7 @@ fn resolve_object(
                 uuid: source.metadata_object_uuid(&owner).map_err(unresolved)?,
                 tail: ReferenceTail::Nested(slots),
                 base_name: owner,
+                adopted: false,
             })
         }
         _ => {
@@ -570,6 +593,7 @@ fn resolve_object(
                 uuid: source.metadata_object_uuid(name).map_err(unresolved)?,
                 tail: ReferenceTail::Plain { field },
                 base_name: name.to_string(),
+                adopted: false,
             })
         }
     }
@@ -1005,6 +1029,7 @@ struct UuidNode {
     uuid: String,
     name: String,
     children: Vec<UuidNode>,
+    adopted: bool,
 }
 
 impl SourceTreeRoleRightsSource {
@@ -1126,6 +1151,25 @@ impl RoleRightsSource for SourceTreeRoleRightsSource {
         Ok(current.uuid.clone())
     }
 
+    fn is_adopted_object(&self, reference: &str) -> Result<bool, String> {
+        let parts = reference.split('.').collect::<Vec<_>>();
+        if parts.len() < 2 || parts.len() % 2 != 0 {
+            return Err(format!("malformed reference {reference}"));
+        }
+        let (node, rest) = self.object_node(&parts)?;
+        let mut current = node.as_ref();
+        for pair in rest.chunks(2) {
+            if matches!(pair[0], "StandardAttribute" | "StandardTabularSection") {
+                return Ok(current.adopted);
+            }
+            current = unique_child(current, |child| {
+                child.tag == pair[0] && child.name == pair[1]
+            })
+            .ok_or_else(|| format!("{reference}: no single {} {}", pair[0], pair[1]))?;
+        }
+        Ok(current.adopted)
+    }
+
     fn declared_field_uuid(&self, object: &str, field: &str) -> Result<Option<String>, String> {
         let parts = object.split('.').collect::<Vec<_>>();
         if parts.len() < 2 || parts.len() % 2 != 0 {
@@ -1190,6 +1234,7 @@ fn parse_uuid_tree(xml: &[u8]) -> Option<UuidNode> {
     let mut path = Vec::<String>::new();
     let mut root = None::<UuidNode>;
     let mut name_text = None::<String>;
+    let mut adoption_text = None::<String>;
     loop {
         match reader.read_event_into(&mut buffer).ok()? {
             Event::Start(start) => {
@@ -1209,19 +1254,27 @@ fn parse_uuid_tree(xml: &[u8]) -> Option<UuidNode> {
                             uuid: uuid.trim().to_ascii_lowercase(),
                             name: String::new(),
                             children: Vec::new(),
+                            adopted: false,
                         },
                     ));
-                } else if local == "Name"
+                } else if matches!(local.as_str(), "Name" | "ObjectBelonging")
                     && path.last().map(String::as_str) == Some("Properties")
                     && open
                         .last()
                         .is_some_and(|(depth, _)| depth + 2 == path.len())
                 {
-                    name_text = Some(String::new());
+                    if local == "Name" {
+                        name_text = Some(String::new());
+                    } else {
+                        adoption_text = Some(String::new());
+                    }
                 }
                 path.push(local);
             }
             Event::Text(chunk) => {
+                if let Some(value) = adoption_text.as_mut() {
+                    value.push_str(&chunk.decode().ok()?);
+                }
                 if let Some(name) = name_text.as_mut() {
                     name.push_str(&chunk.decode().ok()?);
                 }
@@ -1237,6 +1290,16 @@ fn parse_uuid_tree(xml: &[u8]) -> Option<UuidNode> {
             }
             Event::End(_) => {
                 let local = path.pop()?;
+                if local == "ObjectBelonging"
+                    && let Some(value) = adoption_text.take()
+                    && let Some((_, node)) = open.last_mut()
+                {
+                    match value.trim() {
+                        "Adopted" => node.adopted = true,
+                        "Own" => node.adopted = false,
+                        _ => return None,
+                    }
+                }
                 if local == "Name"
                     && let Some(name) = name_text.take()
                     && let Some((_, node)) = open.last_mut()
@@ -1327,6 +1390,55 @@ mod tests {
         fn declared_field_uuid(&self, _: &str, _: &str) -> Result<Option<String>, String> {
             Ok(None)
         }
+    }
+
+    #[test]
+    fn adopted_standard_attribute_rights_keep_grants_against_attribute_default() {
+        use crate::module_blob::{
+            MetadataSourceContext, inflate_raw, pack_role_rights_blob_base_free,
+        };
+        let temp =
+            std::env::temp_dir().join(format!("ibcmd-adopted-rights-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        std::fs::create_dir(temp.as_path().join("Catalogs")).unwrap();
+        std::fs::write(
+            temp.as_path().join("Catalogs/A.xml"),
+            br#"<MetaDataObject>
+          <Catalog uuid="aaaaaaaa-0000-4000-8000-000000000001"><Properties>
+            <ObjectBelonging>Adopted</ObjectBelonging><Name>A</Name></Properties>
+            <ChildObjects><Attribute uuid="bbbbbbbb-0000-4000-8000-000000000002"><Properties>
+              <Name>B</Name></Properties></Attribute></ChildObjects>
+          </Catalog></MetaDataObject>"#,
+        )
+        .unwrap();
+        let xml = br#"<Rights><setForNewObjects>false</setForNewObjects>
+          <setForAttributesByDefault>true</setForAttributesByDefault>
+          <independentRightsOfChildObjects>false</independentRightsOfChildObjects>
+          <object><name>Catalog.A.StandardAttribute.Code</name>
+            <right><name>View</name><value>true</value></right>
+            <right><name>Edit</name><value>true</value></right></object>
+          <object><name>Catalog.A.Attribute.B</name>
+            <right><name>View</name><value>false</value></right></object></Rights>"#;
+        let source = SourceTreeRoleRightsSource::new(temp.as_path());
+        assert!(source.is_adopted_object("Catalog.A").unwrap());
+        assert!(
+            source
+                .is_adopted_object("Catalog.A.StandardAttribute.Code")
+                .unwrap()
+        );
+        assert!(!source.is_adopted_object("Catalog.A.Attribute.B").unwrap());
+        let context = MetadataSourceContext::new(temp.as_path().to_path_buf());
+        // The packer itself reads the written row back and compares the full
+        // rights document. Losing the adopted marker used to drop both grants.
+        let packed = pack_role_rights_blob_base_free(xml, &context).unwrap();
+        let text = String::from_utf8(inflate_raw(&packed.blob).unwrap()).unwrap();
+        assert!(text.contains(",3}"), "{text}");
+        assert!(
+            text.contains("{1,bbbbbbbb-0000-4000-8000-000000000002,0,1}"),
+            "{text}"
+        );
+        assert!(temp.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(&temp).unwrap();
     }
 
     /// The order the stored row of БСП's `ЧтениеДанныхСервисаDSS` lists its
