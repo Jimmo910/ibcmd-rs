@@ -257,7 +257,7 @@ load`) и совпадение её выгрузки с выгрузкой ис�
 
 | Параметр | Что задаёт |
 |---|---|
-| `--db-path=<каталог>`, `--database-path` | Файловая информационная база: каталог с `1Cv8.1CD` (или сам файл). Только для `config export` и `config import`; вместе с `--dbms`, `--db-server`, `--db-name` не указывается. См. [Файловые базы](#файловые-базы). |
+| `--db-path=<каталог>`, `--database-path` | Файловая информационная база: каталог с `1Cv8.1CD` (или сам файл). Только для `config export`, `config import` и `config save`; вместе с `--dbms`, `--db-server`, `--db-name` не указывается. См. [Файловые базы](#файловые-базы). |
 | `--dbms=MSSQLServer` | Тип СУБД. Из серверных поддерживается только `MSSQLServer`. |
 | `--db-server=<сервер>`, `--database-server` | Сервер: `server`, `server\instance`, `server/instance` (как пишет штатный `ibcmd`), `server,port`. По умолчанию — из настроек, иначе `localhost`. |
 | `--db-name=<база>`, `--database-name` | Имя базы данных. |
@@ -281,7 +281,12 @@ load`) и совпадение её выгрузки с выгрузкой ис�
 ```
 ibcmd infobase config export --db-path=/srv/ib/demo /srv/export/demo
 ibcmd infobase config import --db-path=/srv/ib/demo /srv/export/demo
+ibcmd infobase config save --db-path=/srv/ib/demo /srv/export/demo.cf
 ```
+
+- **Сохранение в .cf** (`config save`) пишет строки, которые публикует
+  выгрузка: `CONFIG` с законченной подготовкой из `CONFIGSAVE`; с `--db` —
+  один `CONFIG`. Базу не изменяет.
 
 - **Выгрузка** читает таблицу `CONFIG`, а законченную подготовку загрузки в
   `CONFIGSAVE` публикует вместо строк с теми же именами — как для SQL Server.
@@ -425,7 +430,7 @@ ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 --db-name=MyBa
   `import files`); применения
   `--extension`, `--sqlcmd`; сохранения `--extension`;
   общие `--pid`, `--remote`;
-- применение, сохранение, `import files` и расширения файловых баз
+- применение, `import files` и расширения файловых баз
   (`--db-path`); СУБД кроме `MSSQLServer`.
 
 ### Вывод и коды возврата

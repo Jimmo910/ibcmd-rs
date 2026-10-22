@@ -290,14 +290,11 @@ fn unsupported_options_and_malformed_lines_are_refused() {
         FAILED,
         "передайте --db-path",
     );
-    // a file infobase is exported and imported; the other commands refuse it
+    // a file infobase is exported, imported and saved; the other commands
+    // refuse it
     assert_refused(
         &["infobase", "config", "apply", "--db-path=C:\\ib"],
-        "выполняет только config export и config import",
-    );
-    assert_refused(
-        &["infobase", "config", "save", "--db-path=C:\\ib", out.arg()],
-        "выполняет только config export и config import",
+        "выполняет только config export, config import и config save",
     );
     assert_malformed(
         &[

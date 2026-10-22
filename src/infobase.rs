@@ -255,7 +255,7 @@ impl InfobaseConfigSaveArgs {
             format: None,
             platform: None,
             source_version: None,
-            db_path: None,
+            db_path: self.db_path.as_deref(),
             dbms: self.dbms.as_deref(),
             db_server: self.db_server.as_deref(),
             db_name: self.db_name.as_deref(),
@@ -274,25 +274,33 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
     use crate::mssql_dump::config_save::{ConfigSaveRequest, SavedConfiguration, save_config};
 
     let config = resolve_connection(args.connection())?;
-    ensure_mssql(&config.dbms)?;
+    if config.file_infobase.is_none() {
+        ensure_mssql(&config.dbms)?;
+    }
     let output = if args.output.is_absolute() {
         args.output.clone()
     } else {
         env::current_dir()?.join(&args.output)
     };
-    let sql = crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
-        sqlcmd: args.sqlcmd.as_deref(),
-        bcp: None,
-        server: &config.db_server,
-        user: config.db_user.as_deref(),
-        password: config.db_pwd.as_deref(),
-        password_env: &args.db_pwd_env,
-        trust_server_certificate: true,
-    })?;
+    // A file infobase answers every read from its 1Cv8.1CD; no login.
+    let sql = if config.file_infobase.is_some() {
+        crate::sql::SqlExec::detached("the rows come from a file infobase")
+    } else {
+        crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
+            sqlcmd: args.sqlcmd.as_deref(),
+            bcp: None,
+            server: &config.db_server,
+            user: config.db_user.as_deref(),
+            password: config.db_pwd.as_deref(),
+            password_env: &args.db_pwd_env,
+            trust_server_certificate: true,
+        })?
+    };
     let save = save_config(&ConfigSaveRequest {
         sql: &sql,
         database: &config.db_name,
         rows_dir: None,
+        file_infobase: config.file_infobase.as_deref(),
         configuration: if args.database_configuration {
             SavedConfiguration::Database
         } else {
@@ -303,7 +311,11 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
     })?;
     Ok(InfobaseConfigSaveReport {
         operation: "infobase config save",
-        backend: "mssql-config-rows",
+        backend: if config.file_infobase.is_some() {
+            "file-infobase-config-rows"
+        } else {
+            "mssql-config-rows"
+        },
         dbms: config.dbms,
         db_server: config.db_server,
         db_name: config.db_name,

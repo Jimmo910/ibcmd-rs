@@ -96,6 +96,9 @@ pub struct ConfigSaveRequest<'a> {
     /// A folder of `<FileName>__part<N>.bin` files read as the `Config`
     /// table instead of a server (`offline_rows`).
     pub rows_dir: Option<&'a Path>,
+    /// A file infobase (the directory holding 1Cv8.1CD) read instead of a
+    /// server (`--db-path`, #352).
+    pub file_infobase: Option<&'a Path>,
     pub configuration: SavedConfiguration,
     pub output: &'a Path,
     /// Replace an existing file (the drop-in) instead of refusing it.
@@ -172,6 +175,7 @@ pub fn save_config_command(args: &MssqlSaveConfigArgs) -> Result<ConfigSaveRepor
         sql: &sql,
         database: &args.database,
         rows_dir: args.rows_dir.as_deref(),
+        file_infobase: None,
         configuration,
         output: &args.output,
         overwrite: args.overwrite,
@@ -182,7 +186,16 @@ pub fn save_config_command(args: &MssqlSaveConfigArgs) -> Result<ConfigSaveRepor
 pub fn save_config(request: &ConfigSaveRequest<'_>) -> Result<ConfigSaveReport> {
     // The view this save resolves ends with it (#409 F-2), as an export's.
     let _views = dynamic_generation::StorageViewScope::begin(request.database);
-    let _offline = request.rows_dir.map(offline_rows::activate).transpose()?;
+    let _offline = match (request.rows_dir, request.file_infobase) {
+        (Some(dir), _) => Some(offline_rows::activate(dir)?),
+        // The main configuration is what the file publishes (a completed
+        // stage folded in, as its export reads it); `--db` is its CONFIG.
+        (None, Some(path)) => Some(offline_rows::activate_rows(match request.configuration {
+            SavedConfiguration::Main => super::file_infobase::load(path)?,
+            SavedConfiguration::Database => super::file_infobase::load_stored(path)?,
+        })?),
+        (None, None) => None,
+    };
     let published = published_rows(
         request.sql,
         request.database,
@@ -190,6 +203,8 @@ pub fn save_config(request: &ConfigSaveRequest<'_>) -> Result<ConfigSaveReport> 
     )?;
     let source = if request.rows_dir.is_some() {
         "rows-dir"
+    } else if request.file_infobase.is_some() {
+        "file-infobase"
     } else if published.staged > 0 {
         "Config+ConfigSave"
     } else {

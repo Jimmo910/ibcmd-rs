@@ -274,3 +274,38 @@ fn broken_files_fail_closed() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("1Cv8.1CD"));
 }
+
+fn save(db: &Path, cf: &Path, database_configuration: bool) -> Output {
+    let mut args: Vec<&std::ffi::OsStr> =
+        vec!["infobase".as_ref(), "config".as_ref(), "save".as_ref()];
+    let path = db_path(db);
+    args.push(&path);
+    if database_configuration {
+        args.push("--db".as_ref());
+    }
+    args.push(cf.as_os_str());
+    run(&args)
+}
+
+#[test]
+fn a_file_infobase_is_saved_as_a_cf_of_its_configuration() {
+    // #352: the .cf holds the rows the file stores; its export is the
+    // platform's export of the file (`tiny-xml`).
+    let dir = scratch("save");
+    let db = infobase(&dir, "tiny");
+    for database_configuration in [false, true] {
+        let cf = dir.join(format!("saved-{database_configuration}.cf"));
+        ok(&save(&db, &cf, database_configuration));
+        let out = dir.join(format!("xml-{database_configuration}"));
+        ok(&run(&[
+            "cf".as_ref(),
+            "export".as_ref(),
+            cf.as_os_str(),
+            out.as_os_str(),
+            "--platform".as_ref(),
+            "8.5.1".as_ref(),
+        ]));
+        assert_same_tree(&fixtures().join("tiny-xml"), &out, &[]);
+    }
+    assert!(!ibcmd_filedb::backup_file(&db).exists());
+}

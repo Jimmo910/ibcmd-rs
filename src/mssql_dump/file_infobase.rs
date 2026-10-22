@@ -14,11 +14,30 @@ use ibcmd_filedb::{ConfigRow, FileDb};
 use super::offline_rows::OfflineRows;
 use super::{STAGE_COMMIT_ROW, STAGE_INVENTORY_ROW, STAGE_NEW_SUFFIX};
 
+/// The `CONFIG` table of a file infobase alone, as offline rows: the
+/// database configuration (`config save --db`).
+pub(super) fn load_stored(db_path: &Path) -> Result<OfflineRows> {
+    let mut db = open(db_path)?;
+    let config = assemble(
+        db.config_rows("CONFIG").map_err(|err| anyhow!("{err}"))?,
+        "CONFIG",
+    )?;
+    Ok(OfflineRows::from_memory(
+        config
+            .into_iter()
+            .map(|(name, bytes)| (name, Arc::new(bytes))),
+    ))
+}
+
+fn open(db_path: &Path) -> Result<FileDb> {
+    FileDb::open(db_path)
+        .map_err(|err| anyhow!("{err}"))
+        .with_context(|| format!("не удалось прочитать файловую базу {}", db_path.display()))
+}
+
 /// The configuration a file infobase publishes, as offline rows.
 pub(super) fn load(db_path: &Path) -> Result<OfflineRows> {
-    let mut db = FileDb::open(db_path)
-        .map_err(|err| anyhow!("{err}"))
-        .with_context(|| format!("не удалось прочитать файловую базу {}", db_path.display()))?;
+    let mut db = open(db_path)?;
     let config = assemble(
         db.config_rows("CONFIG").map_err(|err| anyhow!("{err}"))?,
         "CONFIG",

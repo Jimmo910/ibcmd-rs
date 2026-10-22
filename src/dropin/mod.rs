@@ -112,15 +112,14 @@ pub fn run_infobase(args: &[OsString]) -> i32 {
         }
         Ok(Invocation::Export(request)) => run_export(request),
         Ok(Invocation::Import(request)) => run_import(request),
-        // A file infobase is exported and imported; the rest stays the
-        // platform's for now.
+        // A file infobase is exported, imported and saved; the rest stays
+        // the platform's for now.
         Ok(Invocation::ImportFiles(request)) if request.common.db_path.is_some() => {
             refuse_file_infobase()
         }
         Ok(Invocation::Apply(request)) if request.common.db_path.is_some() => {
             refuse_file_infobase()
         }
-        Ok(Invocation::Save(request)) if request.common.db_path.is_some() => refuse_file_infobase(),
         Ok(Invocation::ImportFiles(request)) => run_import_files(request),
         Ok(Invocation::Apply(request)) => apply::run(request),
         Ok(Invocation::Save(request)) => run_save(request),
@@ -199,7 +198,7 @@ pub fn refusal_message(refusal: &Refusal, program: &str) -> (String, bool) {
         Refusal::UnknownDbms(dbms) => format!("Указанный тип СУБД не поддерживается: '{dbms}'"),
         Refusal::FileInfobase => {
             "Для файловой информационной базы (--db-path) ibcmd-rs выполняет только \
-config export и config import; эту команду выполните штатным ibcmd или укажите \
+config export, config import и config save; эту команду выполните штатным ibcmd или укажите \
 --dbms=MSSQLServer, --db-server и --db-name"
                 .to_string()
         }
@@ -414,6 +413,7 @@ pub fn save_args(request: &SaveRequest) -> InfobaseConfigSaveArgs {
     InfobaseConfigSaveArgs {
         settings: common.settings.clone(),
         native_config: common.native_config.clone(),
+        db_path: common.db_path.clone(),
         dbms: common.dbms.clone(),
         db_server: common.db_server.as_deref().map(sql_server_name),
         db_name: common.db_name.clone(),
