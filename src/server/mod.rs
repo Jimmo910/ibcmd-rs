@@ -678,6 +678,9 @@ impl State {
         if let ConfigSource::RowsDir(_) = session.configuration.source() {
             return Err(offline("objects/import", session));
         }
+        if matches!(session.configuration.source(), ConfigSource::FileDb(_)) {
+            return Err(offline("objects/import", session));
+        }
         if !params.confirm {
             return Err(RpcError::new(
                 codes::CONFIRMATION_REQUIRED,
@@ -754,6 +757,7 @@ fn offline(method: &str, session: &Session) -> RpcError {
                 .unwrap_or_default()
         }
         ConfigSource::Database { .. } => String::new(),
+        ConfigSource::FileDb(_) => format!("{method} is not yet available for file-db"),
     };
     RpcError::new(codes::NOT_SUPPORTED_OFFLINE, reason)
 }
@@ -764,6 +768,12 @@ fn opened_message(session: &Session) -> String {
             "infobase {}: stored rows of {} (platform {})",
             session.entry.id,
             dir.display(),
+            session.entry.platform
+        ),
+        ConfigSource::FileDb(path) => format!(
+            "infobase {}: file database {} (platform {})",
+            session.entry.id,
+            path.display(),
             session.entry.platform
         ),
         ConfigSource::Database { database, .. } => format!(

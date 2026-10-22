@@ -14,6 +14,9 @@ use super::{DatabaseBinding, Located, NativeConfig, SettingsFile, SettingsLayer}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct FileDocument {
+    // MCP validates its own policy; ordinary commands share this settings file.
+    #[serde(default, rename = "mcp")]
+    _mcp: Option<toml::Value>,
     platform: Option<Spanned<String>>,
     db_server: Option<Spanned<String>>,
     db_user: Option<Spanned<String>>,
@@ -33,6 +36,9 @@ struct DatabaseDocument {
     name: Spanned<String>,
     platform: Spanned<String>,
     rows_dir: Option<Spanned<String>>,
+    db_path: Option<Spanned<String>>,
+    #[serde(default)]
+    agent_write: bool,
 }
 
 fn read_text(path: &Path, what: &str) -> Result<String> {
@@ -157,12 +163,34 @@ pub(super) fn read_settings_file(path: &Path, layer: SettingsLayer) -> Result<Se
             }
             None => None,
         };
+        let db_path = text_value(entry.db_path, "db-path")?.map(|value| {
+            let value = Path::new(&value.value);
+            if value.is_relative() {
+                path.parent().unwrap_or_else(|| Path::new(".")).join(value)
+            } else {
+                value.to_path_buf()
+            }
+        });
+        if db_path.is_some() && (rows_dir.is_some() || server.is_some() || name.contains('*')) {
+            bail!(
+                "{}:{line}: db-path cannot be combined with rows-dir, server or a database mask",
+                path.display()
+            );
+        }
+        if entry.agent_write && name.contains('*') {
+            bail!(
+                "{}:{line}: agent-write requires a fixed database name",
+                path.display()
+            );
+        }
         databases.push(DatabaseBinding {
             server,
             name: name.to_string(),
             platform,
             line,
             rows_dir,
+            db_path,
+            agent_write: entry.agent_write,
         });
     }
     Ok(SettingsFile {
