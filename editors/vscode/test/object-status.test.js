@@ -6,6 +6,7 @@ const os = require("node:os");
 const { execFileSync } = require("node:child_process");
 const {
   classify,
+  classifyVersioned,
   comparisons,
   localChanged,
   safePath,
@@ -130,4 +131,147 @@ test("Git baseline uses committed bytes and source subtree, rejects missing ref 
   const abort = new AbortController();
   abort.abort();
   await assert.rejects(gitBaseline(repo, "HEAD", cache, abort.signal));
+});
+
+function nativeState(
+  current,
+  reference,
+  evidence,
+  changed,
+  baseline = "test-baseline",
+) {
+  return classifyVersioned(current, reference, evidence, changed, baseline);
+}
+// Measured 8.5.1.1592 whole-import mismatch: metadata versions changed while
+// Configuration/Language exported bytes stayed unchanged. No native parser is duplicated here.
+test("version evidence corrects the observed Language/Configuration byte mismatch", () => {
+  const language = {
+    ...row("same"),
+    object: "Language.English",
+    version: "opaque-rpc-token",
+  };
+  const evidence = {
+    basis: "native-config-version",
+    baselineIdentity: "test-baseline",
+    object: language.object,
+    objectVersion: language.version,
+    conclusive: true,
+    changed: true,
+  };
+  assert.equal(classify(language, language, false), "same"); // Existing byte preview, documented limit.
+  assert.equal(nativeState(language, language, evidence, false), "database");
+  assert.equal(nativeState(language, language, evidence, true), "both");
+  const configuration = {
+    ...row("modified", ["Configuration.xml"]),
+    object: "Configuration",
+  };
+  const reference = { ...configuration, status: "same", changed: [] };
+  assert.equal(classify(configuration, reference, true), "file");
+  assert.equal(
+    nativeState(
+      configuration,
+      reference,
+      {
+        ...evidence,
+        object: "Configuration",
+        objectVersion: configuration.version,
+      },
+      true,
+    ),
+    "both",
+  );
+});
+test("native direction combines independent evidence into all six states", () => {
+  const current = row("modified"),
+    reference = row("modified");
+  const e = {
+    basis: "native-config-version",
+    baselineIdentity: "test-baseline",
+    object: current.object,
+    objectVersion: current.version,
+    conclusive: true,
+    changed: false,
+  };
+  for (const [db, file, expected] of [
+    [false, false, "same"],
+    [true, false, "database"],
+    [false, true, "file"],
+    [true, true, "both"],
+  ])
+    assert.equal(
+      nativeState(current, reference, { ...e, changed: db }, file),
+      expected,
+    );
+  assert.equal(nativeState(row("notExported")), "databaseOnly");
+  assert.equal(nativeState(row("notInBase")), "fileOnly");
+});
+test("missing, partial, mixed-basis or stale native evidence never becomes clean", () => {
+  const current = row("same"),
+    reference = row("same");
+  const e = {
+    basis: "native-config-version",
+    baselineIdentity: "test-baseline",
+    object: current.object,
+    objectVersion: current.version,
+    conclusive: true,
+    changed: false,
+  };
+  for (const evidence of [
+    undefined,
+    { ...e, conclusive: false },
+    { ...e, changed: undefined },
+    { ...e, changed: 0 },
+    { ...e, basis: "file-content-sha256" },
+    { ...e, object: "Language.Other" },
+    { ...e, objectVersion: "stale" },
+    { ...e, baselineIdentity: "wrong-reference" },
+  ])
+    assert.equal(nativeState(current, reference, evidence, false), "unknown");
+  assert.equal(
+    nativeState(current, { ...reference, version: "stale" }, e, false),
+    "unknown",
+  );
+  assert.equal(nativeState(current, undefined, e, false), "unknown");
+  assert.equal(nativeState(current, reference, e, undefined), "unknown");
+  assert.equal(
+    nativeState(
+      { ...current, version: 1 },
+      { ...reference, version: 1 },
+      { ...e, objectVersion: 1 },
+      false,
+    ),
+    "unknown",
+  );
+});
+
+test("version evidence is bound to exact reference object and baseline snapshot", () => {
+  const current = row("same"),
+    reference = row("same");
+  const e = {
+    basis: "native-config-version",
+    baselineIdentity: "reference-A",
+    object: current.object,
+    objectVersion: current.version,
+    conclusive: true,
+    changed: false,
+  };
+  assert.equal(
+    classifyVersioned(current, reference, e, false, "reference-A"),
+    "same",
+  );
+  assert.equal(
+    classifyVersioned(
+      current,
+      { ...reference, object: "Language.Other" },
+      e,
+      false,
+      "reference-A",
+    ),
+    "unknown",
+  );
+  assert.equal(
+    classifyVersioned(current, reference, e, false, "reference-B"),
+    "unknown",
+  );
+  assert.equal(classifyVersioned(current, reference, e, false), "unknown");
 });

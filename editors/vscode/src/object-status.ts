@@ -17,6 +17,61 @@ export interface Comparison {
   baseOnly: string[];
   localOnly: string[];
 }
+// Internal adapter contract awaiting the shared #362 server helper. Not a wire API yet.
+// objectVersion is the existing opaque RPC cache token; it is NOT configVersion or a file hash.
+export interface DatabaseVersionEvidence {
+  basis: "native-config-version";
+  object: string;
+  objectVersion: string;
+  baselineIdentity: string;
+  conclusive: boolean;
+  changed?: boolean;
+}
+
+function direction(databaseChanged: boolean, fileChanged: boolean): State {
+  return databaseChanged
+    ? fileChanged
+      ? "both"
+      : "database"
+    : fileChanged
+      ? "file"
+      : "same";
+}
+
+/** Combine independently measured DB version and local file evidence.
+ * Callers must attach server evidence for this object/reference to this refresh;
+ * never derive native evidence from byte equality or the RPC cache token itself.
+ */
+export function classifyVersioned(
+  current: Comparison,
+  reference: Comparison | undefined,
+  evidence: DatabaseVersionEvidence | undefined,
+  fileChanged?: boolean,
+  expectedBaselineIdentity?: string,
+): State {
+  if (current.status === "notExported") return "databaseOnly";
+  if (current.status === "notInBase") return "fileOnly";
+  if (
+    !reference ||
+    reference.object !== current.object ||
+    !evidence ||
+    typeof expectedBaselineIdentity !== "string" ||
+    expectedBaselineIdentity.length === 0 ||
+    evidence.baselineIdentity !== expectedBaselineIdentity ||
+    typeof fileChanged !== "boolean" ||
+    evidence.basis !== "native-config-version" ||
+    evidence.object !== current.object ||
+    evidence.conclusive !== true ||
+    typeof evidence.changed !== "boolean" ||
+    typeof current.version !== "string" ||
+    current.version.length === 0 ||
+    current.version !== reference.version ||
+    current.version !== evidence.objectVersion
+  )
+    return "unknown";
+  return direction(evidence.changed, fileChanged);
+}
+
 export const labels: Record<State, string> = {
   same: "Совпадает",
   database: "Изменён в базе",
@@ -42,13 +97,7 @@ export function classify(
   )
     return "unknown";
   const dbChanged = baseline.status !== "same";
-  return dbChanged
-    ? localChanged
-      ? "both"
-      : "database"
-    : localChanged
-      ? "file"
-      : "same";
+  return direction(dbChanged, localChanged);
 }
 export function comparisons(value: any): Comparison[] {
   if (!Array.isArray(value?.objects))

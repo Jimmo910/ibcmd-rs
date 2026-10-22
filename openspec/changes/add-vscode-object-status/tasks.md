@@ -9,6 +9,7 @@
 - [x] Independent review; DB-version race and unrelated Git submodule findings fixed.
 - [ ] Final parent review of reviewable UI commit/API.
 - [x] Integrate shared #382 READ filedb backend 644684f2 (local cherry-pick 020b88fe); no duplicate implementation.
-- [ ] Agree #362 native ConfigDumpInfo/version semantics through parent.
+- [x] Prepare dormant pure native-evidence adapter and exact contract proposal/regression tests for measured byte/version mismatch.
+- [ ] Agree #362 native ConfigDumpInfo/version helper and RPC contract through parent.
 - [ ] Disposable native filedb platform/local edits and measured extension-host parity.
 - [ ] Complete issue acceptance and create PR only after parent review.

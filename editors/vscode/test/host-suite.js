@@ -210,6 +210,8 @@ exports.run = async () => {
     // not native-version parity: native may report version changes with unchanged bytes.
     const nativeRoot = process.env.IBCMD_TEST_FILEDB_ROOT;
     if (nativeRoot) {
+      const filedb = path.join(nativeRoot, "db/1Cv8.1CD");
+      const beforeRead = await fs.readFile(filedb);
       await fs.writeFile(
         path.join(f.uri.fsPath, "ibcmd-rs.toml"),
         await fs.readFile(path.join(nativeRoot, "workspace/ibcmd-rs.toml")),
@@ -275,6 +277,11 @@ exports.run = async () => {
           null,
           2,
         ),
+      );
+      assert.deepEqual(
+        await fs.readFile(filedb),
+        beforeRead,
+        "UI READ must not mutate the actual filedb",
       );
       console.log(
         "Actual filedb READ UI passed; recorded native version/byte divergence, native parity remains BLOCKED.",
