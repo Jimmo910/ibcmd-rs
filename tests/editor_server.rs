@@ -315,14 +315,14 @@ fn serve_speaks_the_protocol_and_its_lifecycle() {
     assert_eq!(server.error("initialize", json!({})), -32602);
     let refused = server.call("initialize", json!({"protocolVersion": "2.0"}));
     assert_eq!(refused["error"]["code"], -32010);
-    assert_eq!(refused["error"]["data"]["serverProtocolVersion"], "1.1");
+    assert_eq!(refused["error"]["data"]["serverProtocolVersion"], "1.2");
     assert_eq!(
-        server.error("initialize", json!({"protocolVersion": "1.2"})),
+        server.error("initialize", json!({"protocolVersion": "1.3"})),
         -32010
     );
 
     let initialized = server.ok("initialize", corpus.initialize_params());
-    assert_eq!(initialized["protocolVersion"], "1.1");
+    assert_eq!(initialized["protocolVersion"], "1.2");
     assert_eq!(initialized["serverInfo"]["name"], "ibcmd-rs");
     assert_eq!(
         initialized["serverInfo"]["version"],
@@ -920,5 +920,95 @@ fn serve_rereads_an_object_when_versions_changes() {
     assert_eq!(configuration["objects"][0]["status"], "same");
 
     assert_eq!(server.ok("shutdown", Value::Null), Value::Null);
+    assert_eq!(server.finish(true), 0);
+}
+
+#[cfg(unix)]
+fn file_import_corpus(tag: &str) -> (Corpus, PathBuf, PathBuf) {
+    let corpus = Corpus::new(tag);
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase");
+    let db = corpus.root.join("file-db");
+    fs::create_dir_all(&db).unwrap();
+    let mut bytes = Vec::new();
+    flate2::read::GzDecoder::new(fs::File::open(fixtures.join("tiny.1CD.gz")).unwrap())
+        .read_to_end(&mut bytes)
+        .unwrap();
+    fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+    fs::write(
+        &corpus.settings,
+        "[[database]]\nname='demo'\nplatform='8.5.1'\ndb-path='file-db'\n",
+    )
+    .unwrap();
+    let tree = corpus.root.join("file-source");
+    for (path, bytes) in common::files(&fixtures.join("tiny-xml")) {
+        let target = tree.join(path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, bytes).unwrap();
+    }
+    let module = tree.join("CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl");
+    let mut bytes = fs::read(&module).unwrap();
+    bytes.extend(b"\r\n// RPC selected edit\r\n");
+    fs::write(module, bytes).unwrap();
+    (corpus, db, tree)
+}
+#[cfg(unix)]
+#[test]
+fn file_import_rpc_requires_confirmation_and_consumes_one_opaque_plan() {
+    let (corpus, db, tree) = file_import_corpus("file-import-confirm");
+    let before = fs::read(db.join("1Cv8.1CD")).unwrap();
+    let mut server = Server::start(&corpus);
+    server.ok("initialize", corpus.initialize_params());
+    let prepared = server.ok(
+        "objects/import/prepare",
+        json!({"infobase":"demo","sourceDir":tree,"objects":["CommonModule.ФайловаяБазаПроверка"]}),
+    );
+    assert_eq!(prepared["preflight"]["ready"], true);
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+    assert_eq!(
+        server.error(
+            "objects/import",
+            json!({"infobase":"demo","sourceDir":tree,"plan":prepared["plan"]})
+        ),
+        -32015
+    );
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+    let result = server.ok(
+        "objects/import",
+        json!({"infobase":"demo","sourceDir":tree,"plan":prepared["plan"],"confirm":true}),
+    );
+    assert_eq!(result["report"]["backend"], "file-db-partial-configsave");
+    assert_eq!(fs::read(ibcmd_filedb::backup_file(&db)).unwrap(), before);
+    assert_eq!(
+        server.error(
+            "objects/import",
+            json!({"infobase":"demo","sourceDir":tree,"plan":prepared["plan"],"confirm":true})
+        ),
+        -32602
+    );
+    server.ok("shutdown", Value::Null);
+    assert_eq!(server.finish(true), 0);
+}
+#[cfg(unix)]
+#[test]
+fn reconnect_invalidates_file_import_plans_before_writes() {
+    let (corpus, db, tree) = file_import_corpus("file-import-reconnect");
+    let before = fs::read(db.join("1Cv8.1CD")).unwrap();
+    let mut server = Server::start(&corpus);
+    server.ok("initialize", corpus.initialize_params());
+    let prepared = server.ok(
+        "objects/import/prepare",
+        json!({"infobase":"demo","sourceDir":tree,"changed":true}),
+    );
+    server.ok("infobases/connect", json!({"infobase":"demo"}));
+    assert_eq!(
+        server.error(
+            "objects/import",
+            json!({"infobase":"demo","sourceDir":tree,"plan":prepared["plan"],"confirm":true})
+        ),
+        -32602
+    );
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+    assert!(!ibcmd_filedb::backup_file(&db).exists());
+    server.ok("shutdown", Value::Null);
     assert_eq!(server.finish(true), 0);
 }

@@ -126,3 +126,23 @@ code --extensionDevelopmentPath="$PWD" \
 
 Object trees, export/import/apply UI, VSIX/Marketplace delivery and live SQL
 verification are outside this connection-only candidate.
+
+### Selected and changed import (#382)
+
+For a Unix file database, add a fixed `[[database]]` entry with `db-path` in
+workspace TOML and select that connection. `ibcmd.sourceDirectory` defaults to
+`.` and may name a configuration source folder inside the workspace. Explorer
+and editor context menus provide «Загрузить в базу»; «Загрузить изменённые» is
+also available. The #380 object-view hook accepts its `{object, uri}` rows.
+
+Import prepares and verifies a complete effective CONFIG/CONFIGSAVE baseline,
+then asks for confirmation before publishing. Dependency suggestions require
+separate consent and another check. Unsaved files, switched connections,
+changed source/target and unsupported changes fail before publication. New
+objects/deletions and unsupported file collations are refused.
+
+Changed import requires synchronized `ConfigDumpInfo.xml` versions; it refuses
+stale database/staging versions rather than reverting them. Refresh the export
+baseline after synchronization, or explicitly select files when reviewing a
+conflict. Successful import leaves CONFIGSAVE staged; apply remains a separate
+platform operation (#384). File-db pending status is currently unknown.

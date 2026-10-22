@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import { RpcClient, RpcError } from "./rpc";
+import { runImport, ImportValidationError } from "./import";
 import { Database, editConfig, idOf, snapshot, saveConfig } from "./config";
 import { Base, Metadata, Generation, pendingText } from "./status";
 
@@ -208,7 +209,172 @@ export async function activate(context: vscode.ExtensionContext) {
       await rpc?.dispose();
     }
   }
-  const commands: Record<string, () => Promise<void>> = {
+  async function importFiles(
+    uri?: vscode.Uri | { object: string; uri: vscode.Uri },
+    selectedUris?: (vscode.Uri | { object: string; uri: vscode.Uri })[],
+    changed = false,
+  ) {
+    const rpc = client,
+      f = folder,
+      base = selected;
+    if (!rpc || !f || !base)
+      throw new ImportValidationError("Select a workspace connection first");
+    if (base.source !== "file-db")
+      throw new ImportValidationError(
+        "Safe editor import currently requires a file-db connection",
+      );
+    const stamp = generation.capture(),
+      settings = activeSettings;
+    const current = async () => {
+      if (
+        !generation.current(stamp) ||
+        client !== rpc ||
+        folder !== f ||
+        selected !== base ||
+        settings === undefined
+      )
+        return false;
+      const actual = await snapshot(file(f));
+      return (
+        generation.current(stamp) &&
+        client === rpc &&
+        folder === f &&
+        selected === base &&
+        actual === settings &&
+        !vscode.workspace.textDocuments.some(
+          (d) =>
+            d.isDirty &&
+            vscode.workspace.getWorkspaceFolder(d.uri)?.uri.toString() ===
+              f.uri.toString(),
+        )
+      );
+    };
+    const uris = selectedUris?.length
+      ? selectedUris
+      : uri
+        ? [uri]
+        : !changed && vscode.window.activeTextEditor
+          ? [vscode.window.activeTextEditor.document.uri]
+          : [];
+    const sourceRoot = path.resolve(
+      f.uri.fsPath,
+      config(f).get<string>("sourceDirectory", "."),
+    );
+    const rootRelative = path.relative(f.uri.fsPath, sourceRoot);
+    if (
+      rootRelative === ".." ||
+      rootRelative.startsWith(".." + path.sep) ||
+      path.isAbsolute(rootRelative)
+    )
+      throw new ImportValidationError(
+        "Source directory must be inside the connected workspace",
+      );
+    if (uris.length)
+      for (const input of uris) {
+        const u = "object" in input ? input.uri : input;
+        const rel = path.relative(sourceRoot, u.fsPath);
+        if (
+          u.scheme !== "file" ||
+          rel === ".." ||
+          rel.startsWith(".." + path.sep) ||
+          path.isAbsolute(rel)
+        )
+          throw new ImportValidationError(
+            "Select objects/files inside the connected source tree",
+          );
+      }
+    const objects =
+      !changed && uris.length && uris.every((u) => "object" in u)
+        ? uris.map((u) => (u as { object: string }).object)
+        : undefined;
+    const files =
+      changed || objects
+        ? undefined
+        : uris.map((input) => {
+            const u = "object" in input ? input.uri : input;
+            const relative = path
+              .relative(sourceRoot, u.fsPath)
+              .replace(/\\/g, "/");
+            if (
+              u.scheme !== "file" ||
+              relative === ".." ||
+              relative.startsWith("../") ||
+              path.isAbsolute(relative)
+            )
+              throw new ImportValidationError(
+                "Select files inside the connected workspace source tree",
+              );
+            return relative;
+          });
+    if (!changed && !files?.length && !objects?.length)
+      throw new ImportValidationError("Select files to import");
+    if (
+      vscode.workspace.textDocuments.some(
+        (d) =>
+          d.isDirty &&
+          vscode.workspace.getWorkspaceFolder(d.uri)?.uri.toString() ===
+            f.uri.toString(),
+      )
+    )
+      throw new ImportValidationError(
+        "Save changed workspace files before import",
+      );
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "ibcmd-rs: проверка и загрузка",
+        cancellable: true,
+      },
+      async (_, token) => {
+        const abort = new AbortController();
+        const subscription = token.onCancellationRequested(() => abort.abort());
+        if (token.isCancellationRequested) abort.abort();
+        try {
+          const result = await runImport(
+            rpc,
+            {
+              infobase: base.id,
+              sourceDir: sourceRoot,
+              files,
+              objects,
+              changed,
+            },
+            {
+              current,
+              confirm: async (message) =>
+                (await vscode.window.showWarningMessage(
+                  message,
+                  { modal: true },
+                  "Загрузить",
+                )) === "Загрузить",
+            },
+            abort.signal,
+          );
+          if (result)
+            void vscode.window.showInformationMessage(
+              "Выбранные изменения загружены в CONFIGSAVE. Примените их отдельной командой платформы.",
+            );
+        } catch (error) {
+          const message =
+            error instanceof RpcError
+              ? error.detail || error.message
+              : error instanceof Error
+                ? error.message
+                : "Import failed";
+          void vscode.window.showErrorMessage(message);
+        } finally {
+          subscription.dispose();
+        }
+      },
+    );
+  }
+  const commands: Record<string, (...args: any[]) => Promise<void>> = {
+    "ibcmd.importSelected": async (
+      uri?: vscode.Uri | { object: string; uri: vscode.Uri },
+      uris?: (vscode.Uri | { object: string; uri: vscode.Uri })[],
+    ) => importFiles(uri, uris),
+    "ibcmd.importChanged": async (uri?: vscode.Uri, uris?: vscode.Uri[]) =>
+      importFiles(uri, uris, true),
     "ibcmd.select": async () => {
       const f = await chooseFolder();
       if (!f) return;
@@ -439,12 +605,18 @@ export async function activate(context: vscode.ExtensionContext) {
   }
   for (const [name, run] of Object.entries(commands))
     context.subscriptions.push(
-      vscode.commands.registerCommand(name, async () => {
+      vscode.commands.registerCommand(name, async (...args: any[]) => {
         if (!vscode.workspace.isTrusted) return;
         try {
-          await run();
+          await run(...args);
         } catch (e) {
-          void vscode.window.showErrorMessage(safeError(e));
+          const importCommand =
+            name === "ibcmd.importSelected" || name === "ibcmd.importChanged";
+          void vscode.window.showErrorMessage(
+            importCommand && e instanceof ImportValidationError
+              ? e.message
+              : safeError(e),
+          );
         }
       }),
     );

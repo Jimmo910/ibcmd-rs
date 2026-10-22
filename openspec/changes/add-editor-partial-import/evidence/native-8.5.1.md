@@ -17,7 +17,7 @@ All eight Metadata names and IDs were retained with no additions, omissions or d
 
 The other six versions were unchanged, including the neighbour's descriptor and module. A separate Rust export of the applied file database matched the native export's complete inventory, including all eight names, IDs and versions. This checks both source coverage and the stored-version projection.
 
-A native-only differential control was created from the same pre-write backup and imported the expected tree, then applied and exported natively. Its source-byte comparison and inventory identity checks are recorded alongside the laboratory logs.
+A native-only differential control was created from the same pre-write backup and imported the expected tree, then applied and exported natively. Its source files matched both expected and our native re-export byte-for-byte outside the separately audited inventory, with all names/IDs identical. That independent full native import regenerated all eight versions; our partial import retained six and changed only the two selected payload rows. Random independent versions are not asserted equal across separate imports. The control comparison is recorded in logs/issue-382-native-control-comparison.json.
 
 Local evidence (not committed database/source artifacts): `logs/issue-382-native-{oracle,rpc-stderr,apply,export,rust-export}.log`, `logs/issue-382-native-{comparison,inventory}.json`, and `logs/issue-382-native-control-*.log` under `/Volumes/Work/Dev/ibcmd-rs-lab`.
 

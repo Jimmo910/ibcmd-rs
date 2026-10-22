@@ -1,7 +1,7 @@
-- [ ] Shared file database source with backward compatible settings and RPC schema
-- [ ] Fail-before-write regression tests
-- [ ] Locked effective-stage partial import and verification
-- [ ] Reference preflight, dependency confirmation, stale/cancel checks
-- [ ] Editor actions and focused client tests
-- [ ] Native module + document form apply/export acceptance
+- [x] Shared file database source with backward compatible settings and RPC schema
+- [x] Fail-before-write regression tests
+- [x] Locked effective-stage partial import and verification
+- [x] Reference preflight, dependency confirmation, stale/cancel checks
+- [x] Editor actions and focused client tests
+- [x] Native module + document form apply/export acceptance
 - [ ] Independent review, identity/secret checks, commits and approved tracking

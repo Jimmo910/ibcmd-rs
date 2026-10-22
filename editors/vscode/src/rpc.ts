@@ -1,7 +1,10 @@
 import { spawn, ChildProcessWithoutNullStreams } from "node:child_process";
 
 export class RpcError extends Error {
-  constructor(public code: number) {
+  constructor(
+    public code: number,
+    public detail?: string,
+  ) {
     super(`ibcmd-rs request failed (${code})`);
   }
 }
@@ -130,7 +133,16 @@ export class RpcClient {
           p.reject(new Error("Invalid RPC error"));
           throw new Error("Invalid RPC error");
         }
-        p.reject(new RpcError(message.error.code));
+        p.reject(
+          new RpcError(
+            message.error.code,
+            typeof message.error.message === "string"
+              ? message.error.message
+                  .slice(0, 2000)
+                  .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, " ")
+              : undefined,
+          ),
+        );
       } else p.resolve(message.result);
     }
   }
