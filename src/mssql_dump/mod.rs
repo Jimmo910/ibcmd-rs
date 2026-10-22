@@ -6881,6 +6881,7 @@ fn dump_table_row_bytes(
                 };
                 let written = write_source_asset(
                     context,
+                    file_name,
                     asset,
                     &bytes,
                     parsed_form_body.as_ref(),
