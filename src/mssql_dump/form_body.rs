@@ -1337,6 +1337,7 @@ pub(super) struct FormBodyProperties {
     pub(super) enter_key_behavior: Option<&'static str>,
     pub(super) save_window_settings: Option<bool>,
     pub(super) auto_title: Option<bool>,
+    pub(super) read_only: Option<bool>,
     pub(super) auto_url: Option<bool>,
     pub(super) save_data_in_settings: Option<&'static str>,
     pub(super) settings_storage: Option<String>,
@@ -2728,6 +2729,7 @@ pub(super) fn extract_form_body_properties(
         enter_key_behavior: extract_form_enter_key_behavior(fields),
         save_window_settings: extract_form_save_window_settings(fields),
         auto_title: extract_form_auto_title(fields),
+        read_only: extract_form_read_only(fields),
         auto_url: extract_form_auto_url(fields),
         save_data_in_settings: extract_form_save_data_in_settings(fields),
         settings_storage: None,
@@ -2840,6 +2842,23 @@ pub(super) fn extract_form_save_window_settings(fields: &[&str]) -> Option<bool>
         .map(|field| field.trim())?
     {
         "0" => Some(false),
+        _ => None,
+    }
+}
+
+/// The form-wide ReadOnly flag is root member 16. Native 8.5.1 rebuilding
+/// the ServiceDesk list form with only ReadOnly toggled changes exactly this
+/// member (1 to 0) in the stored marker-59 layout. The common marker-49/50
+/// head keeps the same slot; child controls have separate ReadOnly fields.
+pub(super) fn extract_form_read_only(fields: &[&str]) -> Option<bool> {
+    if !matches!(
+        fields.first().map(|field| field.trim()),
+        Some("49" | "50" | "59")
+    ) {
+        return None;
+    }
+    match fields.get(16).map(|field| field.trim())? {
+        "1" => Some(true),
         _ => None,
     }
 }
@@ -31668,6 +31687,9 @@ fn format_form_body_open_xml_with_dcs_profiles(
     }
     if properties.auto_url == Some(false) {
         xml.push_str("\t<AutoURL>false</AutoURL>\r\n");
+    }
+    if properties.read_only == Some(true) {
+        xml.push_str("\t<ReadOnly>true</ReadOnly>\r\n");
     }
     if let Some(group) = properties.group.filter(|group| *group != "Vertical") {
         xml.push_str(&format!("\t<Group>{}</Group>\r\n", escape_xml_text(group)));

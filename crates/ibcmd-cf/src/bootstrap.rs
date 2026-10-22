@@ -49,6 +49,7 @@ const REQUIRED_SPECIAL_ENTRIES: [&str; 3] = ["root", "version", "versions"];
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BootstrapCfProfile {
     revision: Revision,
+    extension: bool,
     page_size: u32,
     storage_version: u32,
     reserved: u32,
@@ -70,11 +71,19 @@ impl BootstrapCfProfile {
         };
         Self {
             revision,
+            extension: false,
             page_size,
             storage_version,
             reserved: 0,
             storage_profile,
         }
+    }
+
+    /// Selects the CFE package contract: configinfo, with no ordinary CF service rows.
+    #[must_use]
+    pub const fn with_extension(mut self) -> Self {
+        self.extension = true;
+        self
     }
 
     /// Overrides the independently selected physical page size.
@@ -150,7 +159,12 @@ pub fn assemble_bootstrap_artifact(
         return Err(BootstrapError::ZeroPageSize);
     }
     patch.preflight().map_err(BootstrapError::PatchBlocked)?;
-    require_special_entries(&patch)?;
+    if profile.extension && profile.revision != Revision::Format15 {
+        return Err(BootstrapError::InvalidPackageLayout {
+            reason: "CFE bootstrap requires format15",
+        });
+    }
+    require_special_entries(&patch, profile.extension)?;
 
     let address_bytes = match profile.revision {
         Revision::Format15 => format15::ELEMENT_ADDRESS_SIZE,
@@ -214,8 +228,26 @@ pub fn assemble_bootstrap_artifact(
     Ok(BootstrapArtifact { profile, image })
 }
 
-fn require_special_entries(patch: &StoragePatch) -> Result<(), BootstrapError> {
-    for required in REQUIRED_SPECIAL_ENTRIES {
+fn require_special_entries(patch: &StoragePatch, extension: bool) -> Result<(), BootstrapError> {
+    let has = |name: &str| {
+        patch
+            .entries()
+            .iter()
+            .any(|entry| entry.target().key().as_str() == name)
+    };
+    if extension && REQUIRED_SPECIAL_ENTRIES.iter().any(|name| has(name))
+        || !extension && has("configinfo")
+    {
+        return Err(BootstrapError::InvalidPackageLayout {
+            reason: "ordinary CF service rows and CFE configinfo cannot be mixed",
+        });
+    }
+    let required_entries: &[&str] = if extension {
+        &["configinfo"]
+    } else {
+        &REQUIRED_SPECIAL_ENTRIES
+    };
+    for &required in required_entries {
         if !patch
             .entries()
             .iter()
@@ -503,6 +535,9 @@ fn atomic_io(operation: &'static str, error: std::io::Error) -> BootstrapError {
 
 #[derive(Debug)]
 pub enum BootstrapError {
+    InvalidPackageLayout {
+        reason: &'static str,
+    },
     PatchBlocked(StoragePatchPreflightError),
     MissingSpecialEntry {
         key: &'static str,
@@ -548,6 +583,9 @@ pub enum BootstrapError {
 impl fmt::Display for BootstrapError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidPackageLayout { reason } => {
+                write!(formatter, "invalid bootstrap package layout: {reason}")
+            }
             Self::PatchBlocked(source) => write!(formatter, "bootstrap patch is blocked: {source}"),
             Self::MissingSpecialEntry { key } => {
                 write!(formatter, "bootstrap patch has no required `{key}` entry")
@@ -688,6 +726,65 @@ mod tests {
             .collect(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn extension_contract_uses_configinfo_and_rejects_mixed_cf_service_entries() {
+        let manifest = encode_payload(
+            PayloadEncoding::RawDeflate,
+            b"manifest",
+            ResourceLimits::default(),
+        )
+        .unwrap();
+        let cfe_patch = || {
+            StoragePatch::new(vec![StoragePatchEntry::new(
+                target("configinfo"),
+                StoragePatchOutcome::compiled(manifest.clone()).unwrap(),
+            )])
+            .unwrap()
+        };
+        let artifact = assemble_bootstrap_artifact(
+            cfe_patch(),
+            profile(Revision::Format15).with_extension(),
+            ResourceLimits::default(),
+        )
+        .unwrap();
+        let mut bytes = Vec::new();
+        write_bootstrap_artifact(&mut bytes, &artifact).unwrap();
+        assert_eq!(
+            validate_bootstrap_artifact(Cursor::new(bytes), &artifact, ResourceLimits::default())
+                .unwrap()
+                .entries_validated,
+            1
+        );
+        assert!(matches!(
+            assemble_bootstrap_artifact(
+                cfe_patch(),
+                profile(Revision::Format16).with_extension(),
+                ResourceLimits::default()
+            ),
+            Err(BootstrapError::InvalidPackageLayout { .. })
+        ));
+        let mut mixed = compiled_patch().into_entries();
+        mixed.push(StoragePatchEntry::new(
+            target("configinfo"),
+            StoragePatchOutcome::compiled(manifest).unwrap(),
+        ));
+        for extension in [false, true] {
+            let profile = if extension {
+                profile(Revision::Format15).with_extension()
+            } else {
+                profile(Revision::Format15)
+            };
+            assert!(matches!(
+                assemble_bootstrap_artifact(
+                    StoragePatch::new(mixed.clone()).unwrap(),
+                    profile,
+                    ResourceLimits::default()
+                ),
+                Err(BootstrapError::InvalidPackageLayout { .. })
+            ));
+        }
     }
 
     #[test]

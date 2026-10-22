@@ -272,7 +272,9 @@ pub(crate) fn published_rows(
 /// A table that holds the rows of an operation the platform did not finish
 /// is no configuration to save: the apply refuses it for the same names and
 /// sends it to `config repair` (`mssql_config_apply`, `UNFINISHED_NAMES`).
-fn refuse_unfinished_operation<'a>(stored: impl IntoIterator<Item = &'a str>) -> Result<()> {
+pub(super) fn refuse_unfinished_operation<'a>(
+    stored: impl IntoIterator<Item = &'a str>,
+) -> Result<()> {
     let unfinished = stored
         .into_iter()
         .filter(|name| {

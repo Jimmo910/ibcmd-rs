@@ -307,6 +307,9 @@ pub struct LoadReport {
 
 struct LoadCodec<'a> {
     edited: &'a Path,
+    /// Ordinary module key -> its edited text source. Existing native info
+    /// and element headers belong to the module and survive a text-only edit.
+    modules: BTreeMap<String, String>,
     /// Form body key → the edited form module.
     forms: BTreeMap<String, String>,
     /// The base has a `versions` entry (configurations, external objects);
@@ -322,6 +325,15 @@ impl OverlayCodec for LoadCodec<'_> {
         base: &StorageEntry,
     ) -> Result<Vec<u8>, String> {
         let key = target.key().as_str();
+        if let Some(path) = self.modules.get(key) {
+            return crate::module_blob::pack_module_blob_bytes(
+                &module_text(self.edited, path)?,
+                Some(base.packed_payload()),
+                None,
+            )
+            .map(|packed| packed.blob)
+            .map_err(|error| format!("{error:#}"));
+        }
         let module = self
             .forms
             .get(key)
@@ -625,7 +637,12 @@ fn export_and_diff(
     let result = (|| {
         let report = export_base(base, &scratch, source_version)?;
         let diff = diff_trees(&scratch, edited)?;
-        let base_versions = config_versions(&scratch.join(CONFIG_DUMP_INFO));
+        let mut base_versions = config_versions(&scratch.join(CONFIG_DUMP_INFO));
+        // Native CFE file export has no ConfigDumpInfo. The archive still
+        // records the same entry versions in its configinfo manifest.
+        if base_versions.is_empty() {
+            base_versions = index::file_versions(base);
+        }
         Ok::<_, anyhow::Error>((diff, keys_by_output(&report), base_versions))
     })();
     drop(scratch);
@@ -641,7 +658,17 @@ fn load_plan(
     base_versions: &BTreeMap<String, String>,
     report: &mut LoadReport,
 ) -> std::result::Result<(), LoadError> {
-    let tree_versions = config_versions(&edited.join(CONFIG_DUMP_INFO));
+    let mut tree_versions = config_versions(&edited.join(CONFIG_DUMP_INFO));
+    // For CFE, provenance is explicit (--index), rather than an extra XML
+    // file absent from the native export contract. An older base's index
+    // is useful here even though it cannot select the fast loading path.
+    if tree_versions.is_empty() {
+        if let Some(found) =
+            index::read_tree_index(edited).filter(|found| found.dialect == source_version.as_str())
+        {
+            tree_versions = found.versions;
+        }
+    }
     if !plan.unsupported.is_empty() {
         return Err(LoadError::Unsupported(plan.unsupported));
     }
@@ -652,12 +679,14 @@ fn load_plan(
     let mut texts = BTreeMap::new();
     let mut codec = LoadCodec {
         edited,
+        modules: BTreeMap::new(),
         forms: BTreeMap::new(),
         base_has_versions: true,
     };
     for edit in &plan.edits {
         match edit {
             Edit::Module { key, text_path } => {
+                codec.modules.insert(key.clone(), text_path.clone());
                 texts.insert(
                     key.clone(),
                     module_text(edited, text_path).map_err(|error| anyhow::anyhow!(error))?,
@@ -688,7 +717,7 @@ fn load_plan(
     let provenance =
         |key: &str| StorageProvenance::new(&format!("cf-load:{key}")).context("load provenance");
     let mut requests = Vec::new();
-    for (key, text) in &texts {
+    for key in texts.keys() {
         let target = StoragePatchTarget::new(
             StorageKey::new(key).context("module storage key")?,
             MultipartIdentity::single(),
@@ -696,7 +725,10 @@ fn load_plan(
         );
         requests.push(CompileRequest::new(
             target,
-            SourcePayload::ModuleText { text, info: None },
+            SourcePayload::NeedsBase {
+                required: StorageKey::new(key).context("module storage key")?,
+                reason: "module text is replaced inside its native frame",
+            },
         ));
     }
     for key in codec.forms.keys() {
@@ -860,6 +892,7 @@ fn refresh_configinfo(
     .map_err(|error| anyhow::anyhow!("failed to compile configinfo: {error}"))?;
     let mut codec = LoadCodec {
         edited,
+        modules: BTreeMap::new(),
         forms: BTreeMap::new(),
         base_has_versions: false,
     };
@@ -901,6 +934,115 @@ pub fn keys_by_output(report: &StorageImageSourceExportReport) -> BTreeMap<Strin
 mod tests {
     use super::*;
     use std::fs;
+
+    fn native_module_fixture() -> Vec<u8> {
+        use crate::v8_container::{V8Element, build_v8_container, make_v8_element_header};
+        let mut info_header = make_v8_element_header("info");
+        info_header[..16].copy_from_slice(&[0x17; 16]);
+        let mut text_header = make_v8_element_header("text");
+        text_header[..16].copy_from_slice(&[0x29; 16]);
+        crate::module_blob::deflate_raw(
+            &build_v8_container(&[
+                V8Element {
+                    name: "info".into(),
+                    header: info_header,
+                    data: b"\xef\xbb\xbf{3,1,1,\"retained-context\",0}".to_vec(),
+                },
+                V8Element {
+                    name: "text".into(),
+                    header: text_header,
+                    data: b"\xef\xbb\xbf// old\r\n".to_vec(),
+                },
+            ])
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn assert_module_context_preserved(base: &[u8], packed: &[u8], text: &[u8]) {
+        let parse = |bytes: &[u8]| {
+            crate::v8_container::parse_v8_container(&inflate_raw(bytes).unwrap()).unwrap()
+        };
+        let before = parse(base);
+        let after = parse(packed);
+        assert_eq!(after.len(), 2);
+        for name in ["info", "text"] {
+            let old = before.iter().find(|element| element.name == name).unwrap();
+            let new = after.iter().find(|element| element.name == name).unwrap();
+            assert_eq!(new.header, old.header, "{name} header");
+            assert_eq!(
+                new.data,
+                if name == "info" {
+                    old.data.as_slice()
+                } else {
+                    text
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn compiled_module_edit_preserves_native_info_and_headers() {
+        let root = tmp("compiled-module-context");
+        let path = "CommonModules/Owned/Ext/Module.bsl";
+        let key = "23eac911-1056-4e85-92d7-6467c511eb49.0";
+        write(&root, path, "// edited\n");
+        let base = native_module_fixture();
+        let compiled = compiled::compile_edit(
+            &root,
+            [(key.to_owned(), base.clone())].into_iter().collect(),
+            &diff(&[path], &[], &[]),
+            &keys(&[(path, key)]),
+        )
+        .unwrap();
+        assert_module_context_preserved(
+            &base,
+            &compiled.rows[key],
+            &module_text(&root, path).unwrap(),
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn overlay_module_edit_preserves_native_info_and_headers() {
+        use ibcmd_core::storage::{
+            CompressionKind, OpaqueStorageMetadata, StorageName, StorageOrigin, StoragePayloads,
+        };
+        let root = tmp("overlay-module-context");
+        let path = "CommonModules/Owned/Ext/Module.bsl";
+        let key = "23eac911-1056-4e85-92d7-6467c511eb49.0";
+        write(&root, path, "// edited\n");
+        let base = native_module_fixture();
+        let entry = StorageEntry::new(
+            StorageName::new(key).unwrap(),
+            StorageKey::new(key).unwrap(),
+            MultipartIdentity::single(),
+            OpaqueStorageMetadata::empty(),
+            StoragePayloads::new(base.clone(), inflate_raw(&base).unwrap()).unwrap(),
+            CompressionKind::raw_deflate(),
+            StorageOrigin::new(
+                StorageProfileId::parse(OVERLAY_PROFILE).unwrap(),
+                StorageProvenance::new("fixture:load-native-module").unwrap(),
+            ),
+        )
+        .unwrap();
+        let target = StoragePatchTarget::new(
+            StorageKey::new(key).unwrap(),
+            MultipartIdentity::single(),
+            StorageProvenance::new("fixture:module-edit").unwrap(),
+        );
+        let mut codec = LoadCodec {
+            edited: &root,
+            modules: [(key.to_owned(), path.to_owned())].into_iter().collect(),
+            forms: BTreeMap::new(),
+            base_has_versions: false,
+        };
+        let packed = codec
+            .resolve_needs_base(&target, entry.logical_key(), &entry)
+            .unwrap();
+        assert_module_context_preserved(&base, &packed, &module_text(&root, path).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn tmp(tag: &str) -> std::path::PathBuf {
         let dir =

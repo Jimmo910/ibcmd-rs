@@ -50123,6 +50123,46 @@ fn extracts_session_parameter_xml_with_type_from_metadata_blob() {
 }
 
 #[test]
+fn an_empty_typed_pattern_is_only_valid_for_an_uncontrolled_adopted_type() {
+    use super::extension::{AdoptedHeader, ExtensionContext, activate};
+    let uuid = "11111111-1111-4111-8111-111111111111";
+    let text = format!(
+        "{{1,{{1,{{2,{{3,{{1,0,{uuid}}},\"Inherited\",{{0}},\"\",0,0,00000000-0000-0000-0000-000000000000,0}},{{\"Pattern\"}}}}}},0}}"
+    );
+    assert!(
+        super::parse_typed_metadata_properties_from_text(&text, uuid, &BTreeMap::new()).is_none()
+    );
+    for controlled in [false, true] {
+        let properties = if controlled {
+            vec![("b1053250-abe6-11d4-9434-004095e12fc7".to_owned(), 2)]
+        } else {
+            vec![]
+        };
+        let _guard = activate(ExtensionContext::new([AdoptedHeader {
+            uuid: uuid.to_owned(),
+            properties,
+            extended_object: None,
+            added_values: vec![],
+        }]))
+        .unwrap();
+        let decoded =
+            super::parse_typed_metadata_properties_from_text(&text, uuid, &BTreeMap::new());
+        assert_eq!(decoded.is_some(), !controlled);
+        if let Some(decoded) = decoded {
+            assert!(decoded.value_types.is_empty());
+        }
+        assert!(
+            super::parse_typed_metadata_properties_from_text(
+                &text.replace("Pattern", "Invalid"),
+                uuid,
+                &BTreeMap::new()
+            )
+            .is_none()
+        );
+    }
+}
+
+#[test]
 fn extracts_common_attribute_xml_with_type_from_metadata_blob() {
     let uuid = "33333333-3333-4333-8333-333333333333";
     let catalog_uuid = "44444444-4444-4444-8444-444444444444";
@@ -80357,4 +80397,55 @@ fn chart_root_empty_presence_keeps_nested_and_complete_present_contracts() {
     assert!(xml.contains("<StandardTabularSections>"));
     assert!(xml.contains("authored section"));
     assert!(xml.contains("name=\"ExtDimensionTypes\""));
+}
+
+#[test]
+fn form_root_read_only_uses_its_own_head_flag_and_native_xml_position() {
+    use super::form_body::{extract_form_body_properties, extract_form_read_only};
+    for marker in ["49", "50", "59"] {
+        let mut fields = vec!["0"; 18];
+        fields[0] = marker;
+        fields[9] = "0";
+        fields[16] = "1";
+        let properties = extract_form_body_properties(&fields, None);
+        assert_eq!(properties.read_only, Some(true));
+        let xml = format_form_body_xml(
+            &properties,
+            None,
+            &[],
+            &[],
+            &[],
+            &FormAttributesSection::default(),
+            &[],
+            &[],
+            &None,
+        )
+        .unwrap();
+        assert!(
+            xml.find("<AutoTitle>false</AutoTitle>").unwrap()
+                < xml.find("<ReadOnly>true</ReadOnly>").unwrap()
+        );
+        fields[16] = "0";
+        let properties = extract_form_body_properties(&fields, None);
+        assert_eq!(properties.read_only, None);
+        let xml = format_form_body_xml(
+            &properties,
+            None,
+            &[],
+            &[],
+            &[],
+            &FormAttributesSection::default(),
+            &[],
+            &[],
+            &None,
+        )
+        .unwrap();
+        assert!(!xml.contains("<ReadOnly>"));
+        fields[16] = "2";
+        assert_eq!(extract_form_read_only(&fields), None);
+    }
+    assert_eq!(extract_form_read_only(&[]), None);
+    let mut unsupported = vec!["1"; 18];
+    unsupported[0] = "99";
+    assert_eq!(extract_form_read_only(&unsupported), None);
 }

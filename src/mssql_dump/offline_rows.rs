@@ -212,6 +212,14 @@ impl OfflineRows {
         }
     }
 
+    /// Every row, its parts assembled: name -> stored bytes.
+    pub(super) fn into_rows(self) -> Result<BTreeMap<String, Vec<u8>>> {
+        self.rows
+            .into_iter()
+            .map(|(name, parts)| Ok((name, read_parts(&parts)?)))
+            .collect()
+    }
+
     /// The number of stored rows.
     pub(super) fn len(&self) -> usize {
         self.rows.len()
@@ -916,6 +924,7 @@ mod tests {
             sql_pwd_env: "IBCMD_DB_PSW".to_owned(),
             database: "f2_export".to_owned(),
             rows_dir: Some(dir.clone()),
+            file_infobase: None,
             model_export: false,
             legacy_export: false,
             output_dir: out.clone(),

@@ -46,7 +46,7 @@ use crate::sql::SqlExec;
 
 mod form;
 mod project;
-mod properties;
+pub(crate) mod properties;
 pub(super) mod root;
 
 pub(crate) use project::project_object_xml;
@@ -586,30 +586,173 @@ pub fn export_extension_image_to_source(
     base_provider: Option<BaseIndexProvider>,
 ) -> Result<StorageImageSourceExportReport> {
     let plan = StorageExportPlan::from_image(image);
-    let mut rows = Vec::with_capacity(plan.records().len());
-    let mut records = Vec::with_capacity(plan.records().len());
+    let records = plan
+        .records()
+        .iter()
+        .map(|record| {
+            let payload = record.packed_payload()?.into_owned();
+            Ok((
+                DirectStorageExportRecord {
+                    logical_name: record.logical_name().to_owned(),
+                    logical_key: record.logical_key().to_owned(),
+                    part_count: record.part_count(),
+                    packed_bytes: payload.len(),
+                },
+                payload,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    export_extension_records_to_source(
+        records,
+        image.source_profile().map(|p| p.as_str().to_owned()),
+        plan.physical_entries(),
+        output_dir,
+        false,
+        source_version,
+        base_provider,
+        true,
+    )
+}
+
+/// File and database extensions share the same adoption normalization and XML
+/// projection. A CFE's manifest is checked against the exact packed payloads
+/// before it is accepted; it is a container index, not an XML source asset.
+pub(crate) fn export_extension_entries_to_source(
+    source_profile: &str,
+    entries: Vec<(String, Vec<u8>)>,
+    output_dir: &Path,
+    overwrite: bool,
+    source_version: InfobaseConfigSourceVersion,
+) -> Result<StorageImageSourceExportReport> {
+    use std::collections::BTreeSet;
+    let physical_entries = entries.len();
+    let mut names = BTreeMap::new();
+    for (name, payload) in &entries {
+        if names.insert(name.as_str(), payload.as_slice()).is_some() {
+            bail!("duplicate CFE storage entry {name}");
+        }
+    }
+    let configinfo = names
+        .get("configinfo")
+        .context("CFE configinfo is missing")?;
+    let configinfo_bytes = configinfo.len();
+    let manifest = crate::mssql_extension_stage::validate_container_configinfo_manifest(
+        &crate::module_blob::inflate_raw(configinfo)?,
+    )
+    .context("CFE configinfo manifest")?;
+    let root_name = manifest.identity.configuration_id.hyphenated().to_string();
+    let root_payload = names.get(root_name.as_str()).with_context(|| {
+        format!("CFE manifest maps missing row {root_name} (configuration root)")
+    })?;
+    let root = normalize_row(root_payload)
+        .context("CFE configuration root descriptor")?
+        .context("CFE configuration root has no adopted header")?;
+    if !root.is_root {
+        bail!("CFE manifest identity {root_name} does not name a configuration root");
+    }
+    let mut mapped = BTreeSet::new();
+    for entry in &manifest.entries {
+        let payload = names
+            .get(entry.logical_name.as_str())
+            .with_context(|| format!("CFE manifest maps missing row {}", entry.logical_name))?;
+        if <[u8; 20]>::from(Sha1::digest(payload)) != entry.packed_sha1 {
+            bail!("CFE manifest SHA-1 differs for {}", entry.logical_name);
+        }
+        mapped.insert(entry.logical_name.as_str());
+    }
+    for name in names.keys() {
+        if *name != "configinfo" && !mapped.contains(name) {
+            bail!("CFE storage row {name} is absent from configinfo");
+        }
+    }
+    drop(names);
+    let records = entries
+        .into_iter()
+        .filter(|(name, _)| name != "configinfo")
+        .map(|(name, payload)| {
+            (
+                DirectStorageExportRecord {
+                    logical_name: name.clone(),
+                    logical_key: name,
+                    part_count: 1,
+                    packed_bytes: payload.len(),
+                },
+                payload,
+            )
+        })
+        .collect();
+    let mut report = export_extension_records_to_source(
+        records,
+        Some(source_profile.to_owned()),
+        physical_entries,
+        output_dir,
+        overwrite,
+        source_version,
+        None,
+        false,
+    )?;
+    report
+        .storage
+        .entries
+        .push(StorageExportEntryReport::supported_packed(
+            "configinfo",
+            "configinfo",
+            1,
+            configinfo_bytes,
+            Vec::new(),
+        ));
+    // The index has been consumed and its full graph and packed digests checked.
+    let index = report.storage.entries.last_mut().expect("manifest report");
+    index.message =
+        Some("validated CFE configuration identity and packed SHA-1 manifest".to_owned());
+    report.storage = StorageExportReport::from_parts(
+        report.storage.source_profile.clone(),
+        physical_entries,
+        physical_entries,
+        report.storage.entries,
+    );
+    Ok(report)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_extension_records_to_source(
+    source_records: Vec<(DirectStorageExportRecord, Vec<u8>)>,
+    source_profile: Option<String>,
+    physical_entries: usize,
+    output_dir: &Path,
+    overwrite: bool,
+    source_version: InfobaseConfigSourceVersion,
+    base_provider: Option<BaseIndexProvider>,
+    write_dump_info: bool,
+) -> Result<StorageImageSourceExportReport> {
+    let mut rows = Vec::with_capacity(source_records.len());
+    let mut records = Vec::with_capacity(source_records.len());
     let mut adopted = Vec::new();
     let mut adopted_rows = BTreeMap::<String, usize>::new();
     let mut packed_sha1 = BTreeMap::new();
     let mut refused = Vec::<StorageExportEntryReport>::new();
     let mut root_header = None::<String>;
-    for record in plan.records() {
-        let payload = record.packed_payload().with_context(|| {
-            format!(
-                "failed to materialize storage record `{}`",
-                record.logical_key()
-            )
-        })?;
+    // Managed forms and predefined-item state columns are read after conversion.
+    // Keeping metadata and large template/module payloads again would double
+    // the image. Predefined rows use the same state reader as the file adapter.
+    let original_payloads = source_records
+        .iter()
+        .filter(|(record, _)| {
+            record.logical_name.ends_with(".0") || record.logical_name.ends_with(".1c")
+        })
+        .map(|(record, payload)| (record.logical_name.clone(), payload.clone()))
+        .collect::<BTreeMap<_, _>>();
+    for (record, payload) in source_records {
         packed_sha1.insert(
-            record.logical_name().to_owned(),
+            record.logical_name.to_owned(),
             <[u8; 20]>::from(Sha1::digest(&payload)),
         );
         let packed_bytes = payload.len();
-        let mut bytes = payload.into_owned();
-        if !record.logical_name().contains('.') {
+        let mut bytes = payload;
+        if !record.logical_name.contains('.') {
             match normalize_row(&bytes) {
                 Ok(Some(normalized)) => {
-                    adopted_rows.insert(record.logical_name().to_owned(), normalized.adopted.len());
+                    adopted_rows.insert(record.logical_name.to_owned(), normalized.adopted.len());
                     if normalized.is_root {
                         root_header = normalized.adopted.first().map(|header| header.uuid.clone());
                     }
@@ -619,9 +762,9 @@ pub fn export_extension_image_to_source(
                 Ok(None) => {}
                 Err(error) => {
                     refused.push(StorageExportEntryReport::failed_packed(
-                        record.logical_name(),
-                        record.logical_key(),
-                        record.part_count(),
+                        record.logical_name,
+                        record.logical_key,
+                        record.part_count,
                         packed_bytes,
                         format!("{error:#}"),
                     ));
@@ -632,19 +775,19 @@ pub fn export_extension_image_to_source(
         let data_size = i64::try_from(bytes.len()).with_context(|| {
             format!(
                 "storage record `{}` is too large for the row boundary",
-                record.logical_key()
+                record.logical_key
             )
         })?;
         rows.push(config_row_from_binary(BinaryConfigRow {
-            file_name: record.logical_name().to_owned(),
+            file_name: record.logical_name.to_owned(),
             part_no: 0,
             data_size,
             binary: bytes,
         }));
         records.push(DirectStorageExportRecord {
-            logical_name: record.logical_name().to_owned(),
-            logical_key: record.logical_key().to_owned(),
-            part_count: record.part_count(),
+            logical_name: record.logical_name.to_owned(),
+            logical_key: record.logical_key.to_owned(),
+            part_count: record.part_count,
             packed_bytes,
         });
     }
@@ -666,20 +809,20 @@ pub fn export_extension_image_to_source(
     if let Some(context) = active() {
         let _ = context.extended_compatibility_mode();
     }
+    let logical_records = records.len() + refused.len();
     let exported = export_direct_storage_rows_to_source(
         rows,
         records,
-        image
-            .source_profile()
-            .map(|profile| profile.as_str().to_owned()),
-        plan.physical_entries(),
+        source_profile,
+        physical_entries,
         output_dir,
-        false,
+        overwrite,
         source_version,
         // The extended configuration is resolved through this module's
         // ExtensionContext base provider, not through the .cfe export's
         // foreign references.
         None,
+        write_dump_info,
     );
     let context = active();
     drop(guard);
@@ -687,6 +830,20 @@ pub fn export_extension_image_to_source(
     let context = context.ok_or_else(|| anyhow!("the extension export context vanished"))?;
     let mut entries = std::mem::take(&mut report.storage.entries);
     for entry in &mut entries {
+        if entry.disposition == StorageExportDisposition::Supported
+            && entry
+                .outputs
+                .iter()
+                .any(|output| output == "Configuration.xml")
+            && let Some(reason) = context.diagnostic(&entry.logical_name)
+        {
+            // A known extension root may retain its known fields while an
+            // unsupported controlled property makes the whole row fail.
+            // Preserve that diagnostic XML, unlike an approximate body.
+            entry.disposition = StorageExportDisposition::Failed;
+            entry.message = Some(reason);
+            continue;
+        }
         if entry.disposition == StorageExportDisposition::Opaque
             && let Some(reason) = context.diagnostic(&entry.logical_name)
         {
@@ -695,7 +852,11 @@ pub fn export_extension_image_to_source(
             ));
         }
         if entry.disposition == StorageExportDisposition::Supported {
-            if let Err(error) = adjust_form_files(output_dir, entry, &context, &plan) {
+            if let Err(error) = adjust_form_files(output_dir, entry, &context, &original_payloads)
+                .and_then(|()| {
+                    adjust_predefined_files(output_dir, entry, &context, &original_payloads)
+                })
+            {
                 fail_outputs(output_dir, entry, error);
                 continue;
             }
@@ -713,7 +874,7 @@ pub fn export_extension_image_to_source(
     report.storage = StorageExportReport::from_parts(
         report.storage.source_profile.clone(),
         report.storage.physical_entries,
-        plan.records().len(),
+        logical_records,
         entries,
     );
     Ok(report)
@@ -950,6 +1111,40 @@ const FIRST_COMPATIBILITY_WITH_SCHEMA_NAMESPACE: u32 = 80315;
 const SCHEMA_NAMESPACE_DECLARATION: &str =
     r#" xmlns:dcssch="http://v8.1c.ru/8.1/data-composition-system/schema""#;
 
+/// The state column of an adopted owner's predefined items is not an ordinary
+/// predefined-data property. Restore its XML after the shared body converter.
+fn adjust_predefined_files(
+    output_dir: &Path,
+    entry: &StorageExportEntryReport,
+    context: &ExtensionContext,
+    packed_rows: &BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    let Some(uuid) = entry.logical_name.strip_suffix(".1c") else {
+        return Ok(());
+    };
+    if context.adopted(uuid).is_none() {
+        return Ok(());
+    }
+    let packed = packed_rows
+        .get(&entry.logical_name)
+        .context("the adopted predefined items row is missing")?;
+    let plain = inflate_raw_deflate(packed)?;
+    let text = String::from_utf8(plain).context("predefined items row is not UTF-8")?;
+    let states = crate::extension::predefined::states(&text)?;
+    for output in &entry.outputs {
+        if !output.replace('\\', "/").ends_with("/Ext/Predefined.xml") {
+            continue;
+        }
+        let path = output_dir.join(output);
+        let xml =
+            std::fs::read_to_string(&path).with_context(|| format!("failed to read {output}"))?;
+        let projected = crate::extension::predefined::rewrite(&xml, &states)?;
+        std::fs::write(&path, projected.as_bytes())
+            .with_context(|| format!("failed to write {output}"))?;
+    }
+    Ok(())
+}
+
 /// What the platform does to the form XML of an extension beyond what the
 /// stored body states: the older shape of a form in an old compatibility mode
 /// (no schema namespace on the root of `Ext/Form.xml`) and the completion of
@@ -961,7 +1156,7 @@ fn adjust_form_files(
     output_dir: &Path,
     entry: &StorageExportEntryReport,
     context: &ExtensionContext,
-    plan: &StorageExportPlan,
+    packed_rows: &BTreeMap<String, Vec<u8>>,
 ) -> Result<()> {
     let adopted = entry
         .logical_name
@@ -983,12 +1178,9 @@ fn adjust_form_files(
             adjusted = upgraded;
         }
         if adopted {
-            let record = plan
-                .records()
-                .iter()
-                .find(|record| record.logical_name() == entry.logical_name)
+            let packed = packed_rows
+                .get(&entry.logical_name)
                 .context("the adopted form's storage body is missing")?;
-            let packed = record.packed_payload()?;
             let body = crate::module_blob::parse_form_body_blob(&packed)
                 .context("the adopted form's storage body is not readable")?;
             if let Some(called) = form::add_call_types(&adjusted, &body.layout)? {
@@ -1317,6 +1509,102 @@ mod tests {
                 );
             }
             let _ = std::fs::remove_dir_all(&out);
+
+            // A file export consumes the same rows, but validates configinfo
+            // and does not invent the database export's ConfigDumpInfo.xml.
+            let entries = || {
+                let mut entries = rows
+                    .iter()
+                    .map(|(name, bytes)| (name.to_string(), bytes.to_vec()))
+                    .collect::<Vec<_>>();
+                entries.push((
+                    "configinfo".to_owned(),
+                    crate::module_blob::deflate_raw(&manifest).unwrap(),
+                ));
+                entries
+            };
+            let report = super::export_extension_entries_to_source(
+                "storage:cfe-test",
+                entries(),
+                &out,
+                false,
+                version,
+            )
+            .unwrap();
+            assert_eq!((report.storage.failed, report.storage.opaque), (0, 0));
+            assert_eq!(report.files_written, 2);
+            assert!(!out.join("ConfigDumpInfo.xml").exists());
+            for (path, expected) in native {
+                if path == "ConfigDumpInfo.xml" {
+                    continue;
+                }
+                assert_eq!(std::fs::read(out.join(path)).unwrap(), expected);
+            }
+            let _ = std::fs::remove_dir_all(&out);
+            let mut changed = entries();
+            changed[0].1.push(0);
+            let error = super::export_extension_entries_to_source(
+                "storage:cfe-test",
+                changed,
+                &out,
+                false,
+                version,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("SHA-1 differs"), "{error:#}");
+            assert!(
+                !out.exists(),
+                "invalid manifests must fail before publishing a tree"
+            );
+            let mut missing = entries();
+            missing.remove(0);
+            assert!(
+                super::export_extension_entries_to_source(
+                    "storage:cfe-test",
+                    missing,
+                    &out,
+                    false,
+                    version,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("maps missing row")
+            );
+            let mut extra = entries();
+            extra.push(("unmapped".to_owned(), Vec::new()));
+            assert!(
+                super::export_extension_entries_to_source(
+                    "storage:cfe-test",
+                    extra,
+                    &out,
+                    false,
+                    version,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("absent from configinfo")
+            );
+            let wrong_identity = ConfigInfoIdentity {
+                configuration_id: uuid::Uuid::parse_str(LANGUAGE).unwrap(),
+                ..identity.clone()
+            };
+            let wrong_manifest = generate_configinfo_manifest(&wrong_identity, &stage).unwrap();
+            let mut wrong_root = entries();
+            wrong_root.last_mut().unwrap().1 =
+                crate::module_blob::deflate_raw(&wrong_manifest).unwrap();
+            assert!(
+                super::export_extension_entries_to_source(
+                    "storage:cfe-test",
+                    wrong_root,
+                    &out,
+                    false,
+                    version,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("does not name a configuration root")
+            );
+            assert!(!out.exists());
         }
     }
 

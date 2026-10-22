@@ -311,3 +311,24 @@ pub fn compile_object(object: &ObjectXml<'_>, context: &DescriptorContext) -> Re
 pub fn not_yet(object: &ObjectXml<'_>) -> anyhow::Error {
     anyhow!("no base-free compiler for {} yet", object.kind)
 }
+
+/// An omitted scalar on an adopted object inherits the base object's value.
+pub(crate) fn absent_on_adopted(properties: &Element, name: &str) -> bool {
+    properties.child(name).is_none()
+        && properties.child_text("ObjectBelonging").map(str::trim) == Some("Adopted")
+}
+
+#[cfg(test)]
+mod adopted_default_tests {
+    use super::*;
+
+    #[test]
+    fn padded_adoption_defaults_only_omitted_properties() -> Result<()> {
+        let xml = xml::MetadataXml::parse(br#"<MetaDataObject><Catalog><Properties><ObjectBelonging>  Adopted
+</ObjectBelonging><UseStandardCommands>false</UseStandardCommands></Properties></Catalog></MetaDataObject>"#)?;
+        let properties = xml.object()?.child("Properties").unwrap();
+        assert!(absent_on_adopted(properties, "CodeLength"));
+        assert!(!absent_on_adopted(properties, "UseStandardCommands"));
+        Ok(())
+    }
+}

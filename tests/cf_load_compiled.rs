@@ -83,7 +83,11 @@ fn load_back(
         let _ = fs::remove_file(tree.join("ConfigDumpInfo.xml"));
     }
     let dump_info = fs::read_to_string(back.join("ConfigDumpInfo.xml")).unwrap_or_default();
-    if objects_changed {
+    if ext == "cfe" {
+        // Native file-CFE export has no database dump-info document. The
+        // extension test below validates every new configinfo SHA-1 instead.
+        assert!(!back.join("ConfigDumpInfo.xml").exists());
+    } else if objects_changed {
         fs::remove_file(back.join("ConfigDumpInfo.xml")).unwrap();
     }
     assert_same_but_versions(tree, &back);
@@ -434,4 +438,58 @@ fn an_adopted_form_s_interceptor_edit_loads() {
         "<Event name=\"OnOpen\" callType=\"Override\">Расш_ПриОткрытииПеред</Event>",
     );
     assert_loads_back(&tree, &base, "compiled-adopted-form", "cfe");
+}
+
+/// Both module-only overlay and descriptor compilation must reopen a closed
+/// module with fresh metadata, rather than carrying its binary-only frame.
+#[test]
+fn closed_module_replacement_is_fresh_on_both_load_routes() {
+    for compiled in [false, true] {
+        let tag = format!("closed-replacement-{compiled}");
+        let (base, tree) = exported("closed_module", "input.cfe", &tag);
+        let module = tree.join("CommonModules/ТестРасширение_Модуль/Ext/Module.bin");
+        fs::remove_file(&module).unwrap();
+        let text = b"Procedure Reopened()\r\nEndProcedure\r\n";
+        fs::write(module.with_extension("bsl"), text).unwrap();
+        if compiled {
+            edit(
+                &tree.join("Configuration.xml"),
+                "<Version/>",
+                "<Version>1.0.0.1</Version>",
+            );
+        }
+        let out = fresh_output(&format!("{tag}-out"), "cfe");
+        let run = load(&tree, &out, &base);
+        assert!(
+            run.status.success(),
+            "{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+        assert_eq!(
+            report["compiled_objects"]
+                .as_array()
+                .is_some_and(|v| !v.is_empty()),
+            compiled
+        );
+        let archive = ibcmd_v8::format15::parse(&fs::read(&out).unwrap()).unwrap();
+        let packed = archive
+            .elements
+            .into_iter()
+            .find(|e| e.name == "554f39c6-e029-4ee0-8535-8c15291a6a3f.0")
+            .unwrap()
+            .data
+            .unwrap();
+        let fresh = ibcmd_rs::module_blob::pack_module_blob_bytes(text, None, None).unwrap();
+        assert_eq!(
+            packed, fresh.blob,
+            "closed info/header survived route {compiled}"
+        );
+        let back = common::temp_dir(&format!("{tag}-back"));
+        assert!(common::export(&out, &back).status.success());
+        assert_eq!(
+            fs::read(back.join("CommonModules/ТестРасширение_Модуль/Ext/Module.bsl")).unwrap(),
+            text
+        );
+    }
 }

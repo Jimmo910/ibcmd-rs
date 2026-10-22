@@ -131,6 +131,7 @@ struct FormXmlBodyProperties {
     enter_key_behavior: Option<FormXmlEnterKeyBehavior>,
     save_window_settings: Option<bool>,
     auto_title: Option<bool>,
+    read_only: Option<bool>,
     auto_url: Option<bool>,
     save_data_in_settings: Option<FormXmlSaveDataInSettings>,
     auto_save_data_in_settings: Option<FormXmlAutoSaveDataInSettings>,
@@ -1759,7 +1760,10 @@ pub fn pack_module_blob_bytes(
     info: Option<&[u8]>,
 ) -> Result<PackedModuleBlob> {
     let base_elements = match base_blob {
-        Some(blob) => Some(read_base_elements_from_blob(blob)?),
+        Some(blob) => {
+            let elements = read_base_elements_from_blob(blob)?;
+            elements.contains_key("text").then_some(elements)
+        }
         None => None,
     };
 
@@ -1962,7 +1966,7 @@ pub fn pack_simple_metadata_blob_from_xml_with_source(
             let command_group = parse_command_group_xml_properties(xml, source)?;
             patch_command_group_metadata_text(text, &command_group)?
         }
-        "Configuration" => patch_configuration_metadata_text(text, &properties)?,
+        "Configuration" => patch_configuration_source_metadata(text, &properties, xml)?,
         _ => patch_simple_metadata_header_text(text, &properties)?,
     };
     let plain = patched.into_bytes();
@@ -2033,9 +2037,18 @@ pub fn pack_style_body_blob_from_xml_with_base(
     source: Option<&MetadataSourceContext>,
 ) -> Result<PackedStyleBodyBlob> {
     let items = parse_style_body_xml_items(xml)?;
+    let brands = items
+        .iter()
+        .filter(|item| item.name == "FirstBrand")
+        .collect::<Vec<_>>();
+    if brands.len() > 1 {
+        anyhow::bail!("Style body has more than one FirstBrand colour");
+    }
+    let brand = brands.first().copied();
     if !base_blob.is_empty() {
         let formatted_by_key = items
             .iter()
+            .filter(|item| item.name != "FirstBrand")
             .map(|item| {
                 let formatted = format_style_body_item(item, source)?;
                 let key = style_body_item_key(&formatted)?;
@@ -2070,6 +2083,13 @@ pub fn pack_style_body_blob_from_xml_with_base(
                 replacements.push((item_range.clone(), formatted.clone()));
             }
         }
+        if let Some(trailer) = fields.get(2 + count) {
+            let mut brand_text = String::new();
+            style_body_brand_node(brand, source)?.write_platform(&mut brand_text, true);
+            replacements.push((trailer.clone(), brand_text));
+        } else if brand.is_some() {
+            anyhow::bail!("base Style body has no 8.5 brand-colour trailer");
+        }
         replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
         for (range, replacement) in replacements {
             replace_1c_value_if_different(&mut plain, range, &replacement);
@@ -2090,11 +2110,17 @@ pub fn pack_style_body_blob_from_xml_with_base(
     // shapes). Laid out as the platform stores it: the BOM, every nested
     // record on its own line, a list that ends with one closed on its own line.
     let mut entries = vec![
-        StyleNode::token("1"),
-        StyleNode::token(items.len().to_string()),
+        StyleNode::token(if brand.is_some() { "2" } else { "1" }),
+        StyleNode::token((items.len() - usize::from(brand.is_some())).to_string()),
     ];
     for item in &items {
-        entries.push(style_body_item_node(item, source)?);
+        if item.name == "FirstBrand" {
+            continue;
+        }
+        entries.push(style_body_item_node(item, source, brand.is_some())?);
+    }
+    if brand.is_some() {
+        entries.push(style_body_brand_node(brand, source)?);
     }
     let mut text = String::from("\u{feff}");
     StyleNode::List(entries).write_platform(&mut text, true);
@@ -2183,6 +2209,7 @@ fn style_body_ref_node(
 fn style_body_item_node(
     item: &StyleBodyXmlItem,
     source: Option<&MetadataSourceContext>,
+    layout_8_5: bool,
 ) -> Result<StyleNode> {
     let key = style_body_key_node(&item.name, source)?;
     let (kind, value) = match &item.value {
@@ -2205,7 +2232,49 @@ fn style_body_item_node(
             )
         }
     };
+    let value = if layout_8_5 && matches!(kind, "0" | "1") {
+        style_body_value_85(value, kind == "1")
+    } else {
+        value
+    };
     Ok(StyleNode::List(vec![key, StyleNode::token(kind), value]))
+}
+
+/// 8.5 keeps the same declared font members and colour variants, raises the
+/// tuple revision and adds the colour's repeated variant field.
+fn style_body_value_85(value: StyleNode, font: bool) -> StyleNode {
+    let StyleNode::List(mut fields) = value else {
+        unreachable!("typed style value")
+    };
+    fields[0] = StyleNode::token(if font { "8" } else { "4" });
+    if !font {
+        let StyleNode::Token(variant) = &fields[1] else {
+            unreachable!("typed colour variant")
+        };
+        fields.push(StyleNode::token(variant.clone()));
+    }
+    StyleNode::List(fields)
+}
+
+/// Brand colours are a trailer outside the declared item count. The evidenced
+/// 8.5 layout carries its first colour as `{1,{0,<colour>}}`, or `{0}` if absent.
+fn style_body_brand_node(
+    brand: Option<&StyleBodyXmlItem>,
+    source: Option<&MetadataSourceContext>,
+) -> Result<StyleNode> {
+    let Some(brand) = brand else {
+        return Ok(StyleNode::List(vec![StyleNode::token("0")]));
+    };
+    let StyleBodyXmlValue::Color(colour) = &brand.value else {
+        anyhow::bail!("FirstBrand must be a colour");
+    };
+    Ok(StyleNode::List(vec![
+        StyleNode::token("1"),
+        StyleNode::List(vec![
+            StyleNode::token("0"),
+            style_body_value_85(style_body_color_node(colour, source)?, false),
+        ]),
+    ]))
 }
 
 fn style_body_color_node(value: &str, source: Option<&MetadataSourceContext>) -> Result<StyleNode> {
@@ -2685,7 +2754,12 @@ fn format_style_body_item(
     let key = style_body_key_for_name(&item.name, source)?;
     let (kind, value) = match &item.value {
         StyleBodyXmlValue::Color(value) => ("0", format_style_body_color_value(value, source)?),
-        StyleBodyXmlValue::Font(attrs) => ("1", format_style_body_font_value(attrs, source)?),
+        StyleBodyXmlValue::Font(attrs) => {
+            let node = style_body_value_85(style_body_font_node(attrs, source)?, true);
+            let mut text = String::new();
+            node.write_platform(&mut text, true);
+            ("1", text)
+        }
         StyleBodyXmlValue::Border(attrs) => ("2", format_style_body_border_value(attrs, source)?),
     };
     Ok(format!("{{{key},{kind},{value}}}"))
@@ -2802,41 +2876,7 @@ fn bool_code(value: bool) -> u8 {
 }
 
 fn style_body_standard_code_for_name(name: &str) -> Option<i32> {
-    match name {
-        "FormBackColor" => Some(-1),
-        "FormTextColor" => Some(-11),
-        "ButtonBackColor" => Some(-3),
-        "ButtonTextColor" => Some(-15),
-        "FieldBackColor" => Some(-7),
-        "FieldTextColor" => Some(-13),
-        "FieldSelectionBackColor" => Some(-21),
-        "FieldSelectedTextColor" => Some(-10),
-        "FieldAlternativeBackColor" => Some(-14),
-        "ToolTipBackColor" => Some(-23),
-        "ToolTipTextColor" => Some(-24),
-        "SpecialTextColor" => Some(-16),
-        "NegativeTextColor" => Some(-17),
-        "BorderColor" => Some(-22),
-        "ReportHeaderBackColor" => Some(-25),
-        "ReportGroup1BackColor" => Some(-26),
-        "ReportGroup2BackColor" => Some(-27),
-        "ReportLineColor" => Some(-28),
-        "ControlBorder" => Some(-18),
-        "TextFont" => Some(-20),
-        "SmallTextFont" => Some(-30),
-        "NormalTextFont" => Some(-31),
-        "LargeTextFont" => Some(-32),
-        "ExtraLargeTextFont" => Some(-33),
-        "ButtonBorderColor" => Some(-34),
-        "TableHeaderBackColor" => Some(-35),
-        "TableHeaderTextColor" => Some(-36),
-        "TableFooterBackColor" => Some(-37),
-        "TableFooterTextColor" => Some(-38),
-        "NavigationColor" => Some(-42),
-        "AuxiliaryNavigationColor" => Some(-43),
-        "ActivityColor" => Some(-44),
-        _ => None,
-    }
+    crate::mssql_dump::standard_style_item_code_for_name(name)
 }
 
 fn style_body_web_color_code(name: &str) -> Option<i32> {
@@ -3154,6 +3194,7 @@ pub fn pack_form_body_blob_from_form_xml_with_source_and_assets(
             || properties.width.is_some()
             || properties.height.is_some()
             || properties.auto_title.is_some()
+            || properties.read_only.is_some()
             || properties.auto_url.is_some()
             || properties.save_data_in_settings.is_some()
             || properties.auto_save_data_in_settings.is_some()
@@ -6632,14 +6673,17 @@ fn native_field_payload(
                 item.width.as_deref().unwrap_or("50"),
                 item.height.as_deref().unwrap_or("10"),
                 item.enable_start_drag.unwrap_or(false),
+                item.enable_drag.unwrap_or(false),
                 &events,
             ))
         }
         Some(11) => {
             let horizontal = item.horizontal_stretch.unwrap_or(true);
             let vertical = item.vertical_stretch.unwrap_or(true);
-            if horizontal != vertical
-                || item.max_width.is_some()
+            // Native ServiceDesk dashboard charts carry independent flags:
+            // width32/height5, horizontal1, vertical0. The payload already has
+            // separate members, so equality is not a validity condition.
+            if item.max_width.is_some()
                 || item.auto_max_width.is_some()
                 || item.auto_max_height.is_some()
             {
@@ -8832,6 +8876,7 @@ fn format_native_form_body(
             auto_save_data_in_settings: properties.auto_save_data_in_settings.map(|_| "Use"),
             settings_storage: settings_storage.as_deref(),
             auto_title: properties.auto_title.unwrap_or(true),
+            read_only: properties.read_only.unwrap_or(false),
             title: &title,
             group: properties.group.map(|_| "Vertical"),
             child_items_width: properties
@@ -9430,6 +9475,22 @@ pub fn compile_native_form_body(
     source: Option<&MetadataSourceContext>,
     items_root: Option<&Path>,
 ) -> Result<String> {
+    // BaseForm is a separate inherited document, never ordinary root items.
+    // Keep the usual no-BaseForm path unchanged and decide with the XML parser
+    // after this cheap token prefilter (comments cannot activate the adapter).
+    if form_xml
+        .windows(b"BaseForm".len())
+        .any(|w| w == b"BaseForm")
+        && let Some(body) = crate::mssql::offline_compile::compile_adopted_form_body_base_free(
+            form_xml,
+            module_text,
+            source,
+            items_root,
+        )?
+    {
+        return Ok(body);
+    }
+
     // A 2.21 Form.xml is a platform 8.5 form: it is compiled through its
     // 8.3.27 reading and stored in the 8.5 layout -- or in the 8.3.27 one,
     // for a configuration kept in an 8.3 compatibility mode.
@@ -11260,6 +11321,7 @@ fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
                     || path_ends_with(&path, &["Form", "Width"])
                     || path_ends_with(&path, &["Form", "Height"])
                     || path_ends_with(&path, &["Form", "AutoTitle"])
+                    || path_ends_with(&path, &["Form", "ReadOnly"])
                     || path_ends_with(&path, &["Form", "AutoURL"])
                     || path_ends_with(&path, &["Form", "SaveDataInSettings"])
                     || path_ends_with(&path, &["Form", "AutoSaveDataInSettings"])
@@ -11804,6 +11866,7 @@ fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
                     || path_ends_with(&path, &["Form", "Width"])
                     || path_ends_with(&path, &["Form", "Height"])
                     || path_ends_with(&path, &["Form", "AutoTitle"])
+                    || path_ends_with(&path, &["Form", "ReadOnly"])
                     || path_ends_with(&path, &["Form", "AutoURL"])
                     || path_ends_with(&path, &["Form", "SaveDataInSettings"])
                     || path_ends_with(&path, &["Form", "AutoSaveDataInSettings"])
@@ -12752,6 +12815,10 @@ fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
                     "Height" if path_ends_with(&path, &["Form", "Height"]) => {
                         properties.height =
                             Some(parse_form_dimension_xml("Height", text_value.trim())?);
+                    }
+                    "ReadOnly" if path_ends_with(&path, &["Form", "ReadOnly"]) => {
+                        properties.read_only =
+                            Some(parse_form_xml_bool("ReadOnly", text_value.trim())?);
                     }
                     "AutoTitle" if path_ends_with(&path, &["Form", "AutoTitle"]) => {
                         properties.auto_title =
@@ -17746,6 +17813,9 @@ fn patch_form_layout_properties(
     }
     if let Some(auto_title) = properties.auto_title {
         replace_braced_field(layout, 9, if auto_title { "1" } else { "0" })?;
+    }
+    if let Some(read_only) = properties.read_only {
+        replace_braced_field(layout, 16, if read_only { "1" } else { "0" })?;
     }
     if let Some(auto_url) = properties.auto_url {
         replace_form_auto_url(layout, auto_url)?;
@@ -30429,6 +30499,51 @@ fn patch_simple_metadata_header_text(
     Ok(text)
 }
 
+/// The root header's UUID is the application module group, while Version
+/// lives in the configuration properties tuple. Updating only the header
+/// silently kept the released extension version when cf load compiled XML.
+fn patch_configuration_source_metadata(
+    text: String,
+    properties: &SimpleMetadataXmlProperties,
+    xml: &[u8],
+) -> Result<String> {
+    use crate::metadata_model::{
+        brace::{self, Brace},
+        xml::MetadataXml,
+    };
+    let patched = patch_configuration_metadata_text(text, properties)?;
+    let document = MetadataXml::parse(xml)?;
+    let Some(version) = document.object()?.path(&["Properties", "Version"]) else {
+        return Ok(patched);
+    };
+    let mut row = brace::parse_row(patched.as_bytes())?;
+    let mut tuple = &mut row;
+    for index in [3, 1, 1] {
+        tuple = tuple
+            .as_list_mut()
+            .and_then(|fields| fields.get_mut(index))
+            .context("configuration properties tuple is missing")?;
+    }
+    let fields = tuple
+        .as_list_mut()
+        .context("configuration properties is not a tuple")?;
+    let marker = fields.first().and_then(Brace::as_atom);
+    if !matches!(marker, Some("63" | "68" | "76")) {
+        anyhow::bail!(
+            "configuration properties tuple {:?} has no evidenced Version slot",
+            marker
+        );
+    }
+    let stored = fields
+        .get_mut(15)
+        .context("configuration Version slot is missing")?;
+    if stored.as_str().is_none() {
+        anyhow::bail!("configuration Version slot is not a string");
+    }
+    *stored = Brace::str(&version.text);
+    String::from_utf8(brace::serialize_row(&row)).context("configuration row is not UTF-8")
+}
+
 fn patch_configuration_metadata_text(
     text: String,
     properties: &SimpleMetadataXmlProperties,
@@ -34258,6 +34373,31 @@ mod tests {
     }
 
     #[test]
+    fn closed_module_replacement_discards_closed_info_and_headers() -> anyhow::Result<()> {
+        let text = b"Procedure Run()\r\nEndProcedure\r\n";
+        let mut header = super::make_v8_element_header("info");
+        header[0] = 42;
+        let closed = super::build_module_inner(&[
+            super::V8Element {
+                name: "info".into(),
+                header,
+                data: b"closed-module-info".to_vec(),
+            },
+            super::V8Element {
+                name: "image".into(),
+                header: super::make_v8_element_header("image"),
+                data: vec![1, 2, 3],
+            },
+        ])?;
+        let closed = super::deflate_raw(&closed)?;
+        let replaced = super::pack_module_blob_bytes(text, Some(&closed), None)?;
+        let fresh = super::pack_module_blob_bytes(text, None, None)?;
+        assert_eq!(replaced.blob, fresh.blob);
+        assert_eq!(super::unpack_module_blob_text(&replaced.blob)?, text);
+        Ok(())
+    }
+
+    #[test]
     fn base_free_module_wrapper_matches_explicit_no_base_pack() -> anyhow::Result<()> {
         let text = b"Procedure Run()\r\nEndProcedure\r\n";
         let info = b"{3,1,0,\"source-info\",0}";
@@ -34515,6 +34655,51 @@ mod tests {
         assert!(inflated.contains("\"NewApp\""));
         assert!(inflated.contains("{1,\"en\",\"New app\"}"));
         assert!(inflated.contains("\"New comment\""));
+    }
+
+    #[test]
+    fn configuration_version_load_changes_the_stored_slot_and_preserves_adoption() {
+        use crate::metadata_model::brace::{self, Brace};
+        for (dialect, marker) in [("2.20", 68), ("2.21", 76)] {
+            let header = brace::parse_row(b"{3,{1,0,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb},\"Extension\",{0},\"\",1,0,00000000-0000-0000-0000-000000000000,0}").unwrap();
+            let mut tuple = vec![Brace::num(0); marker + 1];
+            tuple[0] = Brace::num(marker as i64);
+            tuple[1] = Brace::list(vec![Brace::num(0), header]);
+            tuple[15] = Brace::str("1.0.1.1");
+            tuple[42] = Brace::str("ext_");
+            tuple[44] = Brace::num(2);
+            let row = Brace::list(vec![
+                Brace::num(2),
+                Brace::list(vec![Brace::uuid("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")]),
+                Brace::num(1),
+                Brace::list(vec![
+                    Brace::uuid("9cd510cd-abfc-11d4-9434-004095e12fc7"),
+                    Brace::list(vec![Brace::num(1), Brace::list(tuple)]),
+                ]),
+            ]);
+            let base = deflate_raw(&brace::serialize_row(&row)).unwrap();
+            for version in [Some("1.0.1.2"), Some(""), None] {
+                let version_xml = version
+                    .map(|v| format!("<Version>{v}</Version>"))
+                    .unwrap_or_default();
+                let xml = format!(
+                    "<MetaDataObject version=\"{dialect}\"><Configuration uuid=\"aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa\"><Properties><ObjectBelonging>Adopted</ObjectBelonging><Name>Extension</Name><Synonym/><Comment/>{version_xml}</Properties></Configuration></MetaDataObject>"
+                );
+                let packed =
+                    super::pack_simple_metadata_blob_from_xml(&base, xml.as_bytes()).unwrap();
+                let back = brace::parse_row(&inflate_raw(&packed.blob).unwrap()).unwrap();
+                let mut expected = row.clone();
+                if let Some(version) = version {
+                    let fields = expected.as_list_mut().unwrap()[3].as_list_mut().unwrap()[1]
+                        .as_list_mut()
+                        .unwrap()[1]
+                        .as_list_mut()
+                        .unwrap();
+                    fields[15] = Brace::str(version);
+                }
+                assert_eq!(back, expected, "dialect={dialect} version={version:?}");
+            }
+        }
     }
 
     #[test]
@@ -36047,6 +36232,88 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         assert!(text.ends_with("1,100}}}"));
 
         let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn packs_style_body_xml_with_85_standard_items() -> anyhow::Result<()> {
+        let mut xml = String::from("<Style>");
+        xml.push_str(r##"<Item name="ImportantColor"><Color>#123456</Color></Item>"##);
+        for name in [
+            "TitleLevel3",
+            "TitleLevel5",
+            "TextLevel1",
+            "TextLevel2",
+            "TextLevel3",
+            "SubtitleLevel1",
+            "TitleLevel2",
+        ] {
+            xml.push_str(&format!(
+                r#"<Item name="{name}"><Font ref="style:{name}" kind="StyleItem"/></Item>"#
+            ));
+        }
+        xml.push_str("</Style>");
+        let packed = super::pack_style_body_blob_from_xml(xml.as_bytes(), None)?;
+        let text = String::from_utf8(super::inflate_raw(&packed.blob)?)?.replace("\r\n", "");
+        assert!(text.contains("{{-47},0,{3,0,{5649426}}}"), "{text}");
+        for code in [-50, -52, -53, -54, -55, -56, -59] {
+            assert!(
+                text.contains(&format!("{{{{{code}}},1,{{7,2,0,{{{code}}},1,100}}}}")),
+                "{text}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn style_brand_colour_roundtrips_and_can_be_updated_or_removed() -> anyhow::Result<()> {
+        use crate::cli::InfobaseConfigSourceVersion;
+        let xml = br##"<Style>
+          <Item name="ImportantColor"><Color>#123456</Color></Item>
+          <Item name="TitleLevel3"><Font ref="style:TitleLevel3" kind="StyleItem" height="10" bold="true" italic="false"/></Item>
+          <Item name="FirstBrand"><Color>#112233</Color></Item>
+        </Style>"##;
+        let packed = super::pack_style_body_blob_from_xml(xml, None)?;
+        let text = String::from_utf8(super::inflate_raw(&packed.blob)?)?.replace("\r\n", "");
+        assert!(
+            text.starts_with("\u{feff}{2,2,"),
+            "brand is not part of the item count: {text}"
+        );
+        assert!(
+            text.contains("{8,2,14,{-50},100,700,0,1,100}"),
+            "font mask: {text}"
+        );
+        let read = |blob: &[u8]| {
+            crate::mssql_dump::extract_style_body_xml(
+                blob,
+                &std::collections::BTreeMap::new(),
+                &std::collections::BTreeMap::new(),
+                InfobaseConfigSourceVersion::V2_21,
+            )
+        };
+        let native_xml = read(&packed.blob)?;
+        assert!(
+            native_xml.contains(r#"<Item name="FirstBrand">"#),
+            "{native_xml}"
+        );
+        assert!(
+            native_xml.contains("<Color>#112233</Color>"),
+            "{native_xml}"
+        );
+        assert!(
+            native_xml.contains(r#"height="10" bold="true" italic="false""#),
+            "{native_xml}"
+        );
+        let edited = String::from_utf8(xml.to_vec())?.replace("#112233", "#445566");
+        let changed =
+            super::pack_style_body_blob_from_xml_with_base(&packed.blob, edited.as_bytes(), None)?;
+        assert!(read(&changed.blob)?.contains("<Color>#445566</Color>"));
+        let no_brand = br##"<Style><Item name="ImportantColor"><Color>#123456</Color></Item>
+          <Item name="TitleLevel3"><Font ref="style:TitleLevel3" kind="StyleItem" height="10" bold="true" italic="false"/></Item></Style>"##;
+        let removed =
+            super::pack_style_body_blob_from_xml_with_base(&changed.blob, no_brand, None)?;
+        assert!(!read(&removed.blob)?.contains("FirstBrand"));
+        assert!(super::pack_style_body_blob_from_xml(br#"<Style><Item name="FirstBrand"><Font ref="style:TextFont" kind="StyleItem"/></Item></Style>"#, None).is_err());
         Ok(())
     }
 
@@ -46885,5 +47152,81 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         assert!(blockers[1].contains("unchanged row set"));
         assert!(blockers[2].contains("without dropping stable Config entries"));
         assert!(blockers[2].contains("database-specific GUIDs"));
+    }
+}
+
+#[cfg(test)]
+mod root_read_only_tests {
+    use super::*;
+
+    #[test]
+    fn root_read_only_round_trips_through_fresh_and_overlay_compilers() -> anyhow::Result<()> {
+        for dialect in ["2.20", "2.21"] {
+            for value in [false, true] {
+                let xml = format!(
+                    r#"<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" version="{dialect}"><ReadOnly>{value}</ReadOnly><AutoCommandBar name="FormCommandBar" id="-1"/></Form>"#
+                );
+                let packed = pack_native_form_body_blob(xml.as_bytes(), None, None, None)?;
+                let parsed = parse_form_body_blob(&packed.blob)?;
+                let fields = scan_braced_fields(&parsed.layout, 0)?;
+                assert_eq!(
+                    &parsed.layout[fields[16].clone()],
+                    if value { "1" } else { "0" }
+                );
+                let flipped_xml = xml.replace(&format!(">{value}<"), &format!(">{}<", !value));
+                let patched =
+                    pack_form_body_blob_from_form_xml(&packed.blob, flipped_xml.as_bytes(), None)?;
+                let patched = parse_form_body_blob(&patched.blob)?;
+                let patched_fields = scan_braced_fields(&patched.layout, 0)?;
+                assert_eq!(
+                    &patched.layout[patched_fields[16].clone()],
+                    if value { "0" } else { "1" }
+                );
+                // A patch that does not name ReadOnly keeps the original flag.
+                let absent = format!(
+                    r#"<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" version="{dialect}"><AutoCommandBar name="FormCommandBar" id="-1"/></Form>"#
+                );
+                let unchanged =
+                    pack_form_body_blob_from_form_xml(&packed.blob, absent.as_bytes(), None)?;
+                let unchanged = parse_form_body_blob(&unchanged.blob)?;
+                let unchanged_fields = scan_braced_fields(&unchanged.layout, 0)?;
+                assert_eq!(
+                    &unchanged.layout[unchanged_fields[16].clone()],
+                    if value { "1" } else { "0" }
+                );
+            }
+        }
+        let invalid = br#"<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" version="2.20"><ReadOnly>maybe</ReadOnly></Form>"#;
+        assert!(pack_native_form_body_blob(invalid, None, None, None).is_err());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod chart_field_form_scope_tests {
+    use super::*;
+
+    #[test]
+    fn form_scope_chart_field_compiles_independent_stretch_flags() -> anyhow::Result<()> {
+        for dialect in ["2.20", "2.21"] {
+            for (horizontal, vertical) in
+                [(true, false), (false, true), (false, false), (true, true)]
+            {
+                let xml = format!(
+                    r#"<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" version="{dialect}"><AutoCommandBar name="FormCommandBar" id="-1"/><ChildItems><ChartField name="Chart" id="1"><Width>32</Width><Height>5</Height><HorizontalStretch>{horizontal}</HorizontalStretch><VerticalStretch>{vertical}</VerticalStretch><ContextMenu name="ChartContextMenu" id="2"/><ExtendedTooltip name="ChartTooltip" id="3"/></ChartField></ChildItems></Form>"#
+                );
+                let body = compile_native_form_body(xml.as_bytes(), None, None, None)?;
+                let normalized = body.replace(['\r', '\n'], "");
+                assert!(
+                    normalized.contains(&format!(
+                        "{{1,32,5,{},{},{{0,1,0}},1,0,0,1,0}}",
+                        u8::from(horizontal),
+                        u8::from(vertical)
+                    )),
+                    "{normalized}"
+                );
+            }
+        }
+        Ok(())
     }
 }

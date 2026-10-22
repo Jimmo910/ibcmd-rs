@@ -28,6 +28,9 @@ const EVIDENCED_CONFIGINFO_STORAGE_FORMATS_8327: [u32; 4] = [80_310, 80_314, 80_
 /// fixtures of upstream PR 387). Read only: nothing is generated or staged in
 /// them.
 const READABLE_CONFIGINFO_STORAGE_FORMATS_85: [u32; 2] = [80_327, 80_501];
+/// Older standalone CFE inputs backed by the platform-made compatibility-form
+/// fixtures. They are readable containers, not evidenced SQL staging targets.
+const READABLE_LEGACY_CONTAINER_STORAGE_FORMATS: [u32; 3] = [80_318, 80_319, 80_322];
 const MAX_CONFIGINFO_BYTES: usize = 64 * 1024 * 1024;
 const MAX_CONFIGINFO_DESCRIPTOR_BYTES: usize = 64 * 1024;
 const MAX_EXTENSION_ZIPPED_INFO_BYTES: usize = 4_000;
@@ -223,6 +226,16 @@ pub fn generate_configinfo_manifest(
     rows: &[ExtensionStageRow],
 ) -> Result<Vec<u8>, ExtensionStageError> {
     validate_storage_format(identity.storage_format)?;
+    generate_container_configinfo_manifest(identity, rows)
+}
+
+/// Generates a standalone CFE manifest. This does not authorize staging an
+/// 8.5 image into SQL; the SQL entry point retains its narrower format gate.
+pub(crate) fn generate_container_configinfo_manifest(
+    identity: &ConfigInfoIdentity,
+    rows: &[ExtensionStageRow],
+) -> Result<Vec<u8>, ExtensionStageError> {
+    validate_readable_storage_format(identity.storage_format)?;
     validate_descriptor(&identity.descriptor)?;
     validate_content_rows(rows)?;
     if rows.iter().any(|row| row.logical_name == "configinfo") {
@@ -287,6 +300,28 @@ pub fn generate_configinfo_manifest(
 pub fn validate_configinfo_manifest(
     bytes: &[u8],
 ) -> Result<ConfigInfoManifest, ExtensionStageError> {
+    validate_manifest_with_format_gate(bytes, validate_readable_storage_format)
+}
+
+/// Validates a standalone CFE's manifest, including evidenced older container
+/// formats. SQL staging and activation retain their existing format gate.
+/// All structural, identity, mapping and digest-width checks remain shared.
+pub(crate) fn validate_container_configinfo_manifest(
+    bytes: &[u8],
+) -> Result<ConfigInfoManifest, ExtensionStageError> {
+    validate_manifest_with_format_gate(bytes, |storage_format| {
+        if READABLE_LEGACY_CONTAINER_STORAGE_FORMATS.contains(&storage_format) {
+            Ok(())
+        } else {
+            validate_readable_storage_format(storage_format)
+        }
+    })
+}
+
+fn validate_manifest_with_format_gate(
+    bytes: &[u8],
+    validate_format: impl FnOnce(u32) -> Result<(), ExtensionStageError>,
+) -> Result<ConfigInfoManifest, ExtensionStageError> {
     if bytes.len() > MAX_CONFIGINFO_BYTES {
         return Err(ExtensionStageError::LimitExceeded(format!(
             "configinfo plaintext is {} bytes; maximum is {MAX_CONFIGINFO_BYTES}",
@@ -325,7 +360,7 @@ pub fn validate_configinfo_manifest(
     let storage_format = format[0].trim().parse::<u32>().map_err(|_| {
         ExtensionStageError::InvalidConfigInfo("storage format is not an integer".to_owned())
     })?;
-    validate_readable_storage_format(storage_format)?;
+    validate_format(storage_format)?;
 
     let identity = split_braced_fields(records[1])?;
     if identity.len() != 3 || identity[0].trim() != "2" {
@@ -1240,6 +1275,52 @@ mod tests {
         let mut identity = identity();
         identity.storage_format = 80_999;
         assert!(generate_configinfo_manifest(&identity, &content_rows()).is_err());
+    }
+
+    #[test]
+    fn reads_legacy_container_formats_without_authorizing_sql_staging() {
+        let plain = generate_configinfo_manifest(&identity(), &content_rows()).unwrap();
+        let text = String::from_utf8(plain).unwrap();
+        for format in READABLE_LEGACY_CONTAINER_STORAGE_FORMATS {
+            let legacy = text.replace("80321", &format.to_string());
+            let parsed = validate_container_configinfo_manifest(legacy.as_bytes()).unwrap();
+            assert_eq!(parsed.storage_format, format);
+            assert_eq!(
+                parsed.identity.configuration_id,
+                identity().configuration_id
+            );
+            assert_eq!(parsed.entries.len(), 2);
+            assert!(validate_configinfo_manifest(legacy.as_bytes()).is_err());
+            let mut legacy_identity = identity();
+            legacy_identity.storage_format = format;
+            assert!(generate_configinfo_manifest(&legacy_identity, &content_rows()).is_err());
+            assert!(
+                generate_container_configinfo_manifest(&legacy_identity, &content_rows()).is_err()
+            );
+        }
+        // Future formats require evidence even when reading a standalone file.
+        let future = text.replace("80321", "80328");
+        assert!(validate_container_configinfo_manifest(future.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn legacy_container_validation_retains_identity_and_digest_checks() {
+        let plain = generate_configinfo_manifest(&identity(), &content_rows()).unwrap();
+        let legacy = String::from_utf8(plain).unwrap().replace("80321", "80318");
+        let short_digest = legacy.replace(&encode_base64(&Sha1::digest([1])), "AQ==");
+        assert!(matches!(
+            validate_container_configinfo_manifest(short_digest.as_bytes()),
+            Err(ExtensionStageError::InvalidConfigInfo(reason)) if reason.contains("instead of 20")
+        ));
+        let missing_root = legacy.replacen(
+            "{2,6a5f6dac-3040-4142-b853-482f745e1e4b,",
+            "{2,00000000-0000-0000-0000-000000000001,",
+            1,
+        );
+        assert!(matches!(
+            validate_container_configinfo_manifest(missing_root.as_bytes()),
+            Err(ExtensionStageError::InvalidConfigInfo(reason)) if reason.contains("root")
+        ));
     }
 
     #[test]

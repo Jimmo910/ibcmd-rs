@@ -15,9 +15,11 @@ fn style_fonts_keep_their_code_in_the_2_20_dialect() {
     let run = common::export(&dir.join("input.cfe"), &out);
     assert!(
         run.status.success(),
-        "{}",
-        String::from_utf8_lossy(&run.stdout)
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
     );
+    assert!(!out.join("ConfigDumpInfo.xml").exists());
     let expected = fs::read(dir.join("Template.xml")).unwrap();
     let actual =
         fs::read(out.join("CommonTemplates/ТестРасширение_Макет/Ext/Template.xml")).unwrap();

@@ -162,7 +162,7 @@ pub(crate) struct GuardRequest<'a> {
 
 /// Whether the guard runs: as `verify` says, unless `IBCMD_RS_STAGE_VERIFY`
 /// forces it off (`0`, `off`, `no`) or on (`1`, `on`, `yes`) for a script.
-pub(super) fn wanted(verify: bool) -> bool {
+pub(crate) fn wanted(verify: bool) -> bool {
     wanted_with(std::env::var(VERIFY_ENV).ok().as_deref(), verify)
 }
 

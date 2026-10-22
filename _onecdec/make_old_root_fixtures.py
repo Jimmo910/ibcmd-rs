@@ -25,6 +25,7 @@ Output: tests/fixtures/external/old_roots/<case>/input.cf where <case> is
 import os, re, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import v8c
+from make_closed_module_fixture import refresh_manifest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(os.path.dirname(HERE), 'tests', 'fixtures', 'external')
@@ -97,7 +98,12 @@ def derive(source, case, rewrite, out_name='input.cf', post=None):
     entries[cfg] = ('﻿' + text).encode('utf-8')
     dst = os.path.join(FIXTURES, 'old_roots', case)
     os.makedirs(dst, exist_ok=True)
-    open(os.path.join(dst, out_name), 'wb').write(v8c.write15(entries, storage_version))
+    container = v8c.write15(entries, storage_version)
+    if 'configinfo' in entries and 'root' not in entries:
+        entries['configinfo'] = refresh_manifest(entries, container)
+        container = v8c.write15(entries, storage_version)
+        assert refresh_manifest(entries, container) == entries['configinfo']
+    open(os.path.join(dst, out_name), 'wb').write(container)
     print('ok', case, len(fields), 'fields')
 
 

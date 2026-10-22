@@ -121,6 +121,7 @@ pub fn roundtrip_config(
     args: &InfobaseConfigRoundtripArgs,
 ) -> Result<InfobaseConfigRoundtripReport> {
     let config = resolve_connection(ConnectionRequest {
+        db_path: None,
         settings: args.settings.as_deref(),
         native_config: None,
         format: args.format,
@@ -182,6 +183,7 @@ pub fn roundtrip_config(
         None
     } else {
         Some(export_config(&InfobaseConfigExportArgs {
+            db_path: None,
             settings: args.settings.clone(),
             native_config: None,
             format: args.format,
@@ -217,6 +219,7 @@ pub fn roundtrip_config(
     })?;
 
     let import = import_config(&InfobaseConfigImportArgs {
+        db_path: None,
         settings: args.settings.clone(),
         native_config: None,
         format: args.format,
@@ -290,6 +293,7 @@ pub fn roundtrip_config(
     let selected_after_apply_file_name_count = selected_after_apply_file_names.len();
     let after_apply_export = export_config_report(
         &ConnectionConfig {
+            file_infobase: None,
             dbms: config.dbms.clone(),
             db_server: config.db_server.clone(),
             db_name: target_db.clone(),
@@ -342,6 +346,7 @@ pub fn roundtrip_config(
 
 pub fn sweep_config(args: &InfobaseConfigSweepArgs) -> Result<InfobaseConfigSweepReport> {
     let config = resolve_connection(ConnectionRequest {
+        db_path: None,
         settings: args.settings.as_deref(),
         native_config: None,
         format: args.format,
@@ -367,6 +372,7 @@ pub fn sweep_config(args: &InfobaseConfigSweepArgs) -> Result<InfobaseConfigSwee
 
     if args.source_dir.is_none() {
         export_config(&InfobaseConfigExportArgs {
+            db_path: None,
             settings: args.settings.clone(),
             native_config: None,
             format: args.format,

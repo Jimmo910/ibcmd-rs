@@ -104,9 +104,9 @@ impl From<DetectError> for ParseError {
     }
 }
 
-/// Detect the revision using the two independent signatures used by the
-/// format: every complete artifact starts with a Format15 envelope, while a
-/// Format16 artifact additionally has its 64-bit sentinel at `0x1359`.
+/// Detect the revision of a complete artifact. The first word is the free
+/// page head, not a magic constant: native import may leave a nonempty free
+/// list in the Format15 envelope. Format16 also has its wide header at 0x1359.
 pub fn detect(bytes: &[u8]) -> Result<Detection, DetectError> {
     if bytes.len() < 4 {
         return Err(DetectError::InputTooShort {
@@ -115,14 +115,14 @@ pub fn detect(bytes: &[u8]) -> Result<Detection, DetectError> {
         });
     }
     let first = u32::from_le_bytes(bytes[..4].try_into().unwrap());
-    if first != format15::SENTINEL {
+    if first != format15::SENTINEL && !has_free_page_header(bytes, first) {
         return Err(DetectError::UnknownSignature { found: first });
     }
 
     let wide_end = format16::BASE_OFFSET + 8;
     if bytes.len() >= wide_end {
         let marker = u64::from_le_bytes(bytes[format16::BASE_OFFSET..wide_end].try_into().unwrap());
-        if marker == format16::SENTINEL {
+        if marker == format16::SENTINEL || has_wide_free_page_header(bytes, marker) {
             return Ok(Detection {
                 revision: Revision::Format16,
                 base_offset: format16::BASE_OFFSET,
@@ -134,6 +134,48 @@ pub fn detect(bytes: &[u8]) -> Result<Detection, DetectError> {
         revision: Revision::Format15,
         base_offset: 0,
     })
+}
+
+/// The first free page has the sentinel in its data-size slot. Full parsing
+/// checks the whole list, ranges and overlap with live pages.
+fn has_free_page_header(bytes: &[u8], head: u32) -> bool {
+    let start = head as usize;
+    if start < format15::FILE_HEADER_SIZE {
+        return false;
+    }
+    let Some(end) = start.checked_add(format15::BLOCK_HEADER_SIZE) else {
+        return false;
+    };
+    bytes.get(format15::FILE_HEADER_SIZE..format15::FILE_HEADER_SIZE + 2) == Some(b"\r\n")
+        && bytes.get(start..end).is_some_and(|header| {
+            header.starts_with(b"\r\n")
+                && header[2..10].eq_ignore_ascii_case(b"7fffffff")
+                && header[10] == b' '
+                && header.ends_with(b" \r\n")
+        })
+}
+
+fn has_wide_free_page_header(bytes: &[u8], head: u64) -> bool {
+    let Ok(head) = usize::try_from(head) else {
+        return false;
+    };
+    if head < format16::FILE_HEADER_SIZE {
+        return false;
+    }
+    let Some(start) = format16::BASE_OFFSET.checked_add(head) else {
+        return false;
+    };
+    let Some(end) = start.checked_add(format16::BLOCK_HEADER_SIZE) else {
+        return false;
+    };
+    let toc = format16::BASE_OFFSET + format16::FILE_HEADER_SIZE;
+    bytes.get(toc..toc + 2) == Some(b"\r\n")
+        && bytes.get(start..end).is_some_and(|header| {
+            header.starts_with(b"\r\n")
+                && header[2..18].eq_ignore_ascii_case(b"ffffffffffffffff")
+                && header[18] == b' '
+                && header.ends_with(b" \r\n")
+        })
 }
 
 pub fn parse(bytes: &[u8]) -> Result<Container, ParseError> {

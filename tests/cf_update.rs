@@ -129,11 +129,9 @@ fn an_extension_module_changed_is_rewritten_alone() {
     assert_eq!(report["update"]["mode"], "incremental", "{report}");
     assert_eq!(
         report["update"]["rewritten"],
-        serde_json::json!([
-            "CommonModules/ТестРасширение_Модуль/Ext/Module.bsl",
-            "ConfigDumpInfo.xml"
-        ])
+        serde_json::json!(["CommonModules/ТестРасширение_Модуль/Ext/Module.bsl"])
     );
+    assert!(!tree.join("ConfigDumpInfo.xml").exists());
     assert_like_full_export(&tree, &newer, "update-cfe");
     // The index now names the newer file: a load onto it takes the index.
     let again = update(&newer, &tree);
@@ -261,8 +259,8 @@ fn an_interrupted_update_is_refused() {
 
 #[test]
 fn a_tree_without_config_dump_info_updates_from_the_index_versions() {
-    // An export that skips entries writes no ConfigDumpInfo.xml; the index
-    // keeps the versions, so the update stays incremental.
+    // Native file-CFE export has no ConfigDumpInfo.xml; the index keeps
+    // the versions, so the update stays incremental.
     let base = common::fixture("test_extension").join("input.cfe");
     let newer = newer(&base, "update-nodump", |tree| {
         let module = tree.join("CommonModules/ТестРасширение_Модуль/Ext/Module.bsl");
@@ -271,7 +269,7 @@ fn a_tree_without_config_dump_info_updates_from_the_index_versions() {
     });
     let tree = common::temp_dir("update-nodump-tree");
     export_indexed(&base, &tree);
-    fs::remove_file(tree.join("ConfigDumpInfo.xml")).unwrap();
+    assert!(!tree.join("ConfigDumpInfo.xml").exists());
     let report = update(&newer, &tree);
     assert_eq!(report["update"]["mode"], "incremental", "{report}");
     assert_eq!(
