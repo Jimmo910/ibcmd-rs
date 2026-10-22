@@ -1015,15 +1015,24 @@ fn apply_complex_settings_view_mode(
     table: usize,
     item: &FormItemFactsV8_5_1,
 ) -> Result<()> {
-    let Some(Node::List(members)) = item.record.get(58 + item.prefix_offset) else {
-        return Ok(());
+    let stored = match item.record.get(58 + item.prefix_offset) {
+        Some(Node::List(members))
+            if members.len() == 3
+                && members[0].as_leaf() == Some("\"#\"")
+                && members[1].as_leaf() == Some(COMPLEX_SETTINGS_VIEW_MODE_TYPE) =>
+        {
+            Some(members)
+        }
+        _ => None,
     };
-    if members.len() != 3
-        || members[0].as_leaf() != Some("\"#\"")
-        || members[1].as_leaf() != Some(COMPLEX_SETTINGS_VIEW_MODE_TYPE)
-    {
-        return Ok(());
-    }
+    let Some(members) = stored else {
+        // A table of a composer's user settings that stores no mode of its
+        // own still writes `Show`: ERP 2.6.1 exported by 8.5.1.1529 writes
+        // it on all 28 tables bound to a `*.UserSettings` path and on no
+        // other, three of which keep no member 58 value
+        // (`ПомощникПереносаОперацийВРесурсныеСпецификации/ФормаПроизвольныйОтбор`).
+        return show_user_settings_mode(edits, table);
+    };
     let value = match members[2].as_leaf() {
         Some("0") => "Show",
         other => bail!("<Table> ComplexSettingsViewMode: unknown 8.5 code {other:?}"),
@@ -1424,6 +1433,12 @@ fn upgrade_table(edits: &mut XmlEdits<'_>, table: usize) -> Result<()> {
             add_simple(edits, table, new, &value)?;
         }
     }
+    show_user_settings_mode(edits, table)
+}
+
+/// `ComplexSettingsViewMode` `Show` on a table bound to a settings
+/// composer's user settings (`*.UserSettings`) that names no mode.
+fn show_user_settings_mode(edits: &mut XmlEdits<'_>, table: usize) -> Result<()> {
     let user_settings = child_text(edits, table, "DataPath")?
         .is_some_and(|(_, path)| path.ends_with(".UserSettings"));
     if user_settings && child_text(edits, table, "ComplexSettingsViewMode")?.is_none() {
@@ -1675,6 +1690,35 @@ mod tests {
             record: vec![Node::Leaf("0".to_owned()); 60],
             ..FormItemFactsV8_5_1::default()
         }
+    }
+
+    #[test]
+    fn a_user_settings_table_without_a_stored_mode_shows_complex_settings() {
+        let table = |path: &str| {
+            format!(
+                "<Form>\r\n\t<Table name=\"Т\" id=\"1\">\r\n\t\t<DataPath>{path}</DataPath>\r\n\t</Table>\r\n</Form>"
+            )
+        };
+        let facts = FormItemFactsV8_5_1 {
+            record: vec![Node::Leaf("0".to_owned()); 60],
+            ..FormItemFactsV8_5_1::default()
+        };
+        let written = |xml: &str| {
+            let mut edits = XmlEdits::new(xml).unwrap();
+            let element = edits
+                .elements
+                .iter()
+                .position(|element| element.tag == "Table")
+                .unwrap();
+            apply_complex_settings_view_mode(&mut edits, element, &facts).unwrap();
+            edits.finish().unwrap()
+        };
+        assert!(
+            written(&table("КомпоновщикНастроек.UserSettings"))
+                .contains("<ComplexSettingsViewMode>Show</ComplexSettingsViewMode>")
+        );
+        let other = table("Список");
+        assert_eq!(written(&other), other);
     }
 
     /// The appended importance member of a button says `Main` exactly for its
