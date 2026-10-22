@@ -14,3 +14,9 @@ the `.1CD` files are gzip-compressed (`gzip -9 -n`).
 
 The format evidence these files back is in
 `openspec/changes/add-file-infobase-backend/evidence/1cd-format.md`.
+
+| Fixture | How it was made |
+|---------|-----------------|
+| `default-button-source/` | `tiny-source` with the БСП common form `ДополнительноеОписание` added (its module cut down to an empty handler): a command-bar button with `DefaultButton` `true`. |
+| `default-button.1CD.gz` | 8.5.1.1529 (Windows): `ibcmd infobase create --db-path=db --create-database --import=default-button-source --apply --force`. |
+| `default-button-xml/` | `ibcmd infobase config export --db-path=db default-button-xml` (8.5.1.1529): the default button is written with `ButtonImportance` `Main`. |

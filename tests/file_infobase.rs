@@ -274,3 +274,22 @@ fn broken_files_fail_closed() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("1Cv8.1CD"));
 }
+
+#[test]
+fn an_exact_build_named_for_the_export_spells_its_own_defaults() {
+    // 8.5.1.1529 writes `ButtonImportance` `Main` on a default button whose
+    // record names no importance of its own; the release 8.5.1 keeps the
+    // oldest build's spelling (`default-button-xml`).
+    let dir = scratch("exact-build");
+    let db = infobase(&dir, "default-button");
+    let out = dir.join("xml");
+    ok(&run(&[
+        "infobase".as_ref(),
+        "config".as_ref(),
+        "export".as_ref(),
+        &db_path(&db),
+        "--platform=8.5.1.1529".as_ref(),
+        out.as_os_str(),
+    ]));
+    assert_same_tree(&fixtures().join("default-button-xml"), &out, &[]);
+}

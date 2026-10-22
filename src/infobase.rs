@@ -880,6 +880,12 @@ fn settle_platform(
             incremental,
         } => {
             if config.xml_version_given {
+                // An exact build on the command line spells its own
+                // defaults (`platform::note_export_platform`), as for
+                // `cf export --platform`.
+                if let Some(platform) = request.platform {
+                    crate::platform::note_export_platform(platform);
+                }
                 return Ok(());
             }
             let platform = {
@@ -911,6 +917,7 @@ fn settle_platform(
                     },
                 )?
             };
+            crate::platform::note_export_platform(platform);
             config.legacy_adapter = adapter_for(platform.xml_version())?;
             Ok(())
         }
