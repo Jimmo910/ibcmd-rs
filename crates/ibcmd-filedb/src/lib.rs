@@ -349,6 +349,11 @@ pub fn open_for_write(db_path: &Path) -> Result<WriteSession> {
 }
 
 impl WriteSession {
+    /// Metadata from the descriptor holding this write lock.
+    pub fn metadata(&self) -> std::io::Result<fs::Metadata> {
+        self.file.metadata()
+    }
+
     pub fn locale(&self) -> &str {
         &self.locale
     }
@@ -369,6 +374,56 @@ impl WriteSession {
         read_rows(&mut pager, &self.tables, table, false)
     }
 
+    /// Digest of the locked data file including its filesystem identity.
+    /// Suitable for a preflight/commit compare-and-swap token.
+    pub fn snapshot(&self) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        self.check_binding()?;
+        let mut hash = Sha256::new();
+        let metadata = self.file.metadata()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            hash.update(metadata.dev().to_le_bytes());
+            hash.update(metadata.ino().to_le_bytes());
+        }
+        #[cfg(not(unix))]
+        {
+            // Until handle identity is measured on this OS, refuse this new API.
+            return Err(Error::Refused(
+                "file import CAS identity is not supported on this OS".into(),
+            ));
+        }
+        let mut file = &self.file;
+        file.seek(SeekFrom::Start(0))?;
+        let mut buffer = vec![0; 1 << 20];
+        loop {
+            let n = file.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            hash.update(&buffer[..n]);
+        }
+        self.check_binding()?;
+        Ok(format!("{:x}", hash.finalize()))
+    }
+
+    fn check_binding(&self) -> Result<()> {
+        let current = fs::symlink_metadata(&self.path)?;
+        let original = self.file.metadata()?;
+        if !current.is_file() || current.file_type().is_symlink() {
+            return Err(Error::Refused("file database path was rebound".into()));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if (current.dev(), current.ino()) != (original.dev(), original.ino()) {
+                return Err(Error::Refused("file database identity changed".into()));
+            }
+        }
+        Ok(())
+    }
+
     /// Replaces every row of a configuration table and ends the session.
     ///
     /// The steps: copy the data file to a new work file (its mode and owner
@@ -379,6 +434,29 @@ impl WriteSession {
     /// rename the copy over the data file. A failure before the rename leaves
     /// the infobase untouched.
     pub fn replace(self, table: &str, rows: &[ConfigRow]) -> Result<ReplaceReport> {
+        self.replace_checked(table, rows, || Ok(()))
+    }
+
+    /// As replace, with a caller publication check before work and after verification.
+    /// A rejected final check leaves the original data file in place.
+    pub fn replace_checked(
+        self,
+        table: &str,
+        rows: &[ConfigRow],
+        mut check: impl FnMut() -> Result<()>,
+    ) -> Result<ReplaceReport> {
+        self.replace_guarded(table, rows, |_| check())
+    }
+
+    /// Supplies the actual locked descriptor metadata at both publication gates.
+    pub fn replace_guarded(
+        self,
+        table: &str,
+        rows: &[ConfigRow],
+        mut check: impl FnMut(&fs::Metadata) -> Result<()>,
+    ) -> Result<ReplaceReport> {
+        check(&self.file.metadata()?)?;
+        self.check_binding()?;
         if !CONFIG_TABLES.contains(&table) {
             return Err(Error::Refused(format!(
                 "Запись таблицы {table} не поддерживается"
@@ -413,6 +491,48 @@ impl WriteSession {
             }
         };
         drop(copy);
+        // Prepare recovery data without replacing an existing backup. Rejection
+        // or interruption before the final check preserves both published files.
+        let backup_work = sibling(&self.path, ".ibcmd-rs.bak.new");
+        let prepare_backup = || -> Result<()> {
+            self.check_binding()?;
+            if fs::hard_link(&self.path, &backup_work).is_ok() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let original = self.file.metadata()?;
+                    let linked = fs::symlink_metadata(&backup_work)?;
+                    if (original.dev(), original.ino()) != (linked.dev(), linked.ino()) {
+                        return Err(Error::Refused("backup source identity changed".into()));
+                    }
+                }
+            } else {
+                let mut out = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&backup_work)?;
+                let mut original = &self.file;
+                original.seek(SeekFrom::Start(0))?;
+                std::io::copy(&mut original.take(u64::MAX), &mut out)?;
+                out.sync_all()?;
+            }
+            Ok(())
+        };
+        if let Err(error) = prepare_backup() {
+            let _ = fs::remove_file(&work);
+            return Err(error);
+        }
+        if let Err(error) = check(&self.file.metadata()?).and_then(|()| self.check_binding()) {
+            let _ = fs::remove_file(&work);
+            let _ = fs::remove_file(&backup_work);
+            return Err(error);
+        }
+        // Publication boundary: no cancellable work remains between these renames.
+        if let Err(error) = fs::rename(&backup_work, &backup) {
+            let _ = fs::remove_file(&work);
+            let _ = fs::remove_file(&backup_work);
+            return Err(Error::Io(error));
+        }
         let WriteSession { path, file, .. } = self;
         // Windows cannot replace a file that is open; the exclusive handle goes
         // first there. On Unix the lock is held across the rename.
@@ -534,14 +654,6 @@ impl WriteSession {
         verify_index(&mut pager, &tables, &target.name, self.collation)?;
         drop(pager);
 
-        let _ = fs::remove_file(backup);
-        if fs::hard_link(&self.path, backup).is_err() {
-            let mut original = &self.file;
-            original.seek(SeekFrom::Start(0))?;
-            let mut out = File::create(backup)?;
-            std::io::copy(&mut original.take(u64::MAX), &mut out)?;
-            out.sync_all()?;
-        }
         Ok(ReplaceReport {
             table: target.name.clone(),
             rows_before,

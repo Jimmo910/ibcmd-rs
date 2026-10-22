@@ -13,3 +13,15 @@ Settings/server consumer file ownership remains with #382 until this commit is i
 ## Evidence
 
 Contract test was run before implementation: failed on unknown `dbPath`. Five integration tests then passed: real 1CD tree/read/status with byte-identical target and no backup, legacy SQL/rows-dir routing, conflicting selectors, opt-in default/mask refusal, and public Session invariant revalidation. Independent reviewer found the latter validation gap; fixed with regression test. Build uses explicit official Rust 1.95, two jobs, lab-only target/temp/cache.
+
+# Shared partial staging API
+
+`file_import::{Selection, prepare, prepare_guarded, Plan}` is the shared Rust engine; it does not launch the platform. Selection accepts exactly one of relative `files`, full metadata `objects`, or `changed`.
+
+`prepare_guarded(target, source, selection, platform, &mut guard)` calls `guard(&std::fs::Metadata)` on the consumed locked descriptor before reading CONFIG/CONFIGSAVE and after compilation. The opaque plan exposes a serializable `summary()` with selected changed files, readiness, unresolved static metadata references and source dependency suggestions. Missing references produce an unpublishable plan; callers must explicitly confirm added scope and prepare again. No new objects/deletions are accepted.
+
+`Plan::publish_guarded(current_target, &mut guard)` reopens the current target under a write lock, checks inode+whole-file digest CAS, rechecks the retained source census, and invokes the guard on actual descriptor metadata. The final publication callback runs source validation, operator policy and cancellation in that order; target binding is checked again after the callback. MCP owns its policy and pinned startup identity; a path-only check is insufficient. Unguarded wrappers are available to the local editor/CLI library consumer.
+
+`ibcmd_filedb::WriteSession::{snapshot, metadata, replace_checked, replace_guarded}` retain the existing lock, verified-copy and atomic rename protocol. Backup preparation uses a separate `.bak.new`; rejection preserves the previous backup. Interrupted `.tmp`/`.bak.new` artifacts are refused, never silently overwritten. On Unix the CAS token includes dev/ino; on other OSes this new partial API refuses until descriptor identity is measured. Existing full importer and SQL APIs remain available; whole-tree file importer now rejects unused path-prefix rather than accidentally importing everything.
+
+Limitations: measured file collation remains en_US_POSIX/ru_RU only; Mac default `ru` is refused before writes. Existing staged deletions, incomplete/unrecognised stages, new/missing files and unsupported compiler changes are refused before publication. Reference preflight handles static metadata object/type references; runtime BSL expressions remain platform-language behavior. Full expected-tree verification always runs, regardless of diagnostic environment switches.
