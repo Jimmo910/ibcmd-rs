@@ -43,7 +43,7 @@ use rpc::{RpcError, codes};
 /// served when its major is this one and its minor is not above this one
 /// (see `initialize`); the editor extension and the executable are released
 /// together, so the check catches a mismatched pair.
-pub const PROTOCOL_VERSION: (u32, u32) = (1, 0);
+pub const PROTOCOL_VERSION: (u32, u32) = (1, 1);
 
 /// The methods a client may call.
 pub const METHODS: &[&str] = &[
@@ -333,6 +333,7 @@ struct InitializeParams {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ConnectParams {
+    auth: Option<infobases::AuthMode>,
     infobase: String,
     database: Option<String>,
     user: Option<String>,
@@ -544,6 +545,7 @@ impl State {
     fn connect(&mut self, params: ConnectParams) -> Result<Value, RpcError> {
         let entry = self.entry(&params.infobase)?.clone();
         let login = Login {
+            auth: params.auth,
             user: params.user.filter(|user| !user.trim().is_empty()),
             password: params.password.map(Secret::new),
         };

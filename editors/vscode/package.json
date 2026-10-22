@@ -1,0 +1,118 @@
+{
+  "name": "ibcmd-rs-connections",
+  "displayName": "ibcmd-rs Connections",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "ibcmd-rs",
+  "description": "Workspace connections for ibcmd-rs serve --stdio",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "main": "./out/extension.js",
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "test": "npm run compile && node --test test/core.test.js test/real.test.js",
+    "test:host": "npm run compile && node test/host.js",
+    "format": "prettier --write src test package.json tsconfig.json",
+    "format:check": "prettier --check src test package.json tsconfig.json"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "ibcmd.add",
+        "title": "ibcmd-rs: Add Connection"
+      },
+      {
+        "command": "ibcmd.edit",
+        "title": "ibcmd-rs: Edit Connection"
+      },
+      {
+        "command": "ibcmd.select",
+        "title": "ibcmd-rs: Select Workspace Connection"
+      },
+      {
+        "command": "ibcmd.bind",
+        "title": "ibcmd-rs: Bind Workspace Connections"
+      },
+      {
+        "command": "ibcmd.refresh",
+        "title": "ibcmd-rs: Reload Connections and Refresh Status"
+      },
+      {
+        "command": "ibcmd.forgetPassword",
+        "title": "ibcmd-rs: Forget Connection Password"
+      }
+    ],
+    "configuration": {
+      "title": "ibcmd-rs",
+      "properties": {
+        "ibcmd.executable": {
+          "type": "string",
+          "default": "ibcmd-rs",
+          "scope": "machine",
+          "description": "Trusted executable path (never a shell command)."
+        },
+        "ibcmd.connections": {
+          "type": "array",
+          "default": [],
+          "scope": "resource",
+          "items": {
+            "type": "string"
+          },
+          "description": "Infobase IDs bound to this workspace folder."
+        },
+        "ibcmd.connectionMetadata": {
+          "type": "object",
+          "default": {},
+          "scope": "resource",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "auth": {
+                "type": "string",
+                "enum": [
+                  "windows",
+                  "sql"
+                ]
+              },
+              "user": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Friendly names and authentication preferences; passwords belong in SecretStorage."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "toml-eslint-parser": "^0.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/test-electron": "^2.5.0",
+    "prettier": "3.8.4",
+    "typescript": "^5.7.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ]
+}
