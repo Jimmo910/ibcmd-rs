@@ -1050,6 +1050,7 @@ impl StoredConfiguration {
             DumpHooks {
                 sql,
                 object_recursion: None,
+                native_versions: false,
                 sink: Some(sink.clone()),
             },
         )?;

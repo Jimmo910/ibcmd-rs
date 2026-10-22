@@ -339,20 +339,19 @@ ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 ^
 | `--threads=<n>`, `-T <n>` | Число потоков выгрузки: по умолчанию — число ядер, но не больше 16; явно — до 64. |
 | `--force` | Принимается. Непустой каталог, как и у штатного `ibcmd`, не перезаписывается (кроме выгрузки с `--base` или `--sync`). |
 | `--ignore-unresolved-refs` | Принимается для совместимости. |
-| `--base=<файл>`, `-b <файл>` | `ConfigDumpInfo.xml` предыдущей выгрузки: выгружаются только объекты, версия (`configVersion`) которых отличается от указанной в файле, и `ConfigDumpInfo.xml` всей конфигурации (если что-то переименовано — вся конфигурация). Каталог может содержать предыдущую выгрузку, файлы остальных объектов не записываются. Подробности — [ниже](#инкрементальная-выгрузка---base---sync). |
-| `--sync` | Синхронизировать каталог с конфигурацией: после выгрузки удалить файлы, которых нет в полной выгрузке (удалённых и переименованных объектов, исчезнувших модулей и форм). Без `--base` выгружается вся конфигурация. |
+| `--base=<файл>`, `-b <файл>` | Только изменённые/новые строки и ConfigDumpInfo. При отсутствии изменений ничего не записывается; удаление/переименование требует полной выгрузки (rc255). |
+| `--sync` | Обновить существующую выгрузку по её ConfigDumpInfo. Удаление/переименование требует полной выгрузки (rc255). Вместе с `--base` не допускается (rc2). |
 
-### Инкрементальная выгрузка (`--base`, `--sync`)
+### Инкрементальная выгрузка custom API (`--base`, `--sync`)
 
 ```
-ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 --db-name=MyBase ^
+ibcmd-rs infobase-config-export --dbms=MSSQLServer --db-server=sql01 --db-name=MyBase ^
   --base=C:\export\MyBase\ConfigDumpInfo.xml --sync C:\export\MyBase
 ```
 
-Что изменилось, утилита определяет по версиям строк конфигурации, как
-задача [#362](https://github.com/Untru/ibcmd-rs/issues/362) описывает штатные
-параметры (вывод и поведение штатного `ibcmd` с `--base` и `--sync` в
-репозитории пока не сняты): строка `versions` таблицы Config хранит версию
+Следующие правила сохраняют контракт custom API `infobase-config-export` и
+`mssql-dump-config`. Native CLI отличается: см. Native export queries (#362)
+ниже. Что изменилось, утилита определяет по версиям строк конфигурации: строка `versions` таблицы Config хранит версию
 каждой строки конфигурации, а `ConfigDumpInfo.xml` выгрузки перечисляет их
 (`<Metadata name="…" id="…" configVersion="…">`; вложенные `<Metadata>` —
 реквизиты и команды объекта — отдельных версий не имеют).
@@ -1019,3 +1018,36 @@ ibcmd-rs convert edt-project returned-xml --source-format edt --target-format xm
 |---|---|
 | `module-blob-pack` | Собрать хранимое тело общего модуля из текста BSL. |
 | `versions-blob-patch` | Поправить строку `versions` таблицы Config под записанные изменения. |
+
+
+### Native export queries (#362)
+
+`ibcmd-rs infobase config export info [--out=<directory>]` reads the published
+main configuration through the same filedb/SQL view as full export. Stdout is
+ConfigDumpInfo XML without a BOM; `--out` requires an existing directory and
+writes BOM-prefixed `ConfigDumpInfo.xml` there. Inventory generation skips the
+object-body conversion batches; preparing its shared indexes may read bodies.
+
+`... export status --base=<ConfigDumpInfo.xml> [--out=<file>] [--short]`
+compares stored versions, independently of the custom editor's byte-diff status.
+Unchanged stdout is empty. Changed entries are `added: <name>` or
+`modified: <name>` (`A:` / `M:` with `--short`). A removed or renamed reference
+requires `modified: all`. Output files contain a UTF-8 BOM, even with no changes.
+
+`... export objects --out=<directory> [--recursive] <full-names...>` exports
+only selected descriptors and their own bodies. Owned forms/templates and the
+Configuration's top-level children are included with `--recursive`.
+ConfigDumpInfo is not included. Output paths containing links/reparse points
+are rejected; unknown objects are resolved before any output files are written.
+Extensions and archives remain explicitly unsupported on these new commands.
+
+Native 8.5.1.1592 measurements supersede the earlier unmeasured drop-in claims
+above: `--base` and `--sync` are mutually exclusive (rc2). Unchanged `--base`
+creates no output directory; unchanged `--sync` preserves file mtimes. Native
+`--sync` requires an existing export directory and reads its ConfigDumpInfo.
+Both forms refuse deletion/rename with rc255 and require a full export.
+The custom `infobase-config-export` / `mssql-dump-config` API retains its
+existing combined base+sync and full-fallback/pruning behavior.
+
+Own minimal native snapshots and exact expected bytes are in
+`tests/fixtures/native-export-commands/manifest.json`. They contain no ERP data.

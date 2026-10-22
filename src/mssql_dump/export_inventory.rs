@@ -38,6 +38,7 @@ pub(crate) fn read_config_dump_info_with_sql(
     sql: Option<crate::sql::SqlExec>,
 ) -> Result<Vec<u8>> {
     if args.runtime_journal.is_some()
+        || args.inflate
         || !args.file_names.is_empty()
         || !args.file_name_lists.is_empty()
         || !args.objects.is_empty()
@@ -47,7 +48,9 @@ pub(crate) fn read_config_dump_info_with_sql(
         || !args.extract_metadata_xml
         || !args.extract_module_text
     {
-        bail!("ConfigDumpInfo requires an unfiltered read-only inventory without runtime_journal");
+        bail!(
+            "ConfigDumpInfo requires an unfiltered read-only inventory without runtime_journal or inflate"
+        );
     }
     let sink = Arc::new(InventorySink(Mutex::new(None)));
     dump_config_with(
@@ -56,6 +59,7 @@ pub(crate) fn read_config_dump_info_with_sql(
             sql,
             sink: Some(sink.clone()),
             object_recursion: None,
+            native_versions: false,
         },
     )?;
     let bytes = sink

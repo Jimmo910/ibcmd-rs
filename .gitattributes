@@ -18,3 +18,5 @@ tests/fixtures/file-infobase/*.gz binary
 tests/fixtures/file-infobase/tiny-xml/** -text whitespace=cr-at-eol
 tests/fixtures/file-infobase/tiny-source/** -text whitespace=cr-at-eol
 src/load/seeds/** -text
+tests/fixtures/native-export-commands/** -text whitespace=cr-at-eol
+tests/fixtures/native-export-commands/**/*.gz binary

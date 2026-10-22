@@ -216,6 +216,7 @@ impl DumpInfo {
 pub(crate) struct IncrementalExport {
     base: Option<(PathBuf, DumpInfo)>,
     sync: bool,
+    native_versions: bool,
 }
 
 /// How an export with `--base` or `--sync` went, for the report.
@@ -291,7 +292,16 @@ impl IncrementalExport {
             }
             None => None,
         };
-        Ok(Some(Self { base, sync }))
+        Ok(Some(Self {
+            base,
+            sync,
+            native_versions: false,
+        }))
+    }
+
+    pub(crate) fn use_native_versions(mut self) -> Self {
+        self.native_versions = true;
+        self
     }
 
     pub(crate) fn base_path(&self) -> Option<&Path> {
@@ -330,7 +340,8 @@ impl IncrementalExport {
             return full("no --base: every row is exported".to_owned());
         };
         // Another XML format rewrites every file.
-        if base.format_version.as_deref() != Some(source_version.as_str()) {
+        if !self.native_versions && base.format_version.as_deref() != Some(source_version.as_str())
+        {
             return full(format!(
                 "the base is of XML version {}, the export writes {}",
                 base.format_version.as_deref().unwrap_or("(none)"),
@@ -798,6 +809,7 @@ mod tests {
         IncrementalExport {
             base: Some((PathBuf::from("ConfigDumpInfo.xml"), base)),
             sync,
+            native_versions: false,
         }
     }
 
@@ -1012,6 +1024,7 @@ mod tests {
         let sync_only = IncrementalExport {
             base: None,
             sync: true,
+            native_versions: false,
         }
         .select(&current, Some(&refs), InfobaseConfigSourceVersion::V2_20);
         assert_eq!(sync_only.changed.len(), 1);

@@ -30,7 +30,7 @@ using canonical metadata-reference grammar and root descriptors from the same na
 templates retain their immediate full name; `root` permits top-level roll-up.
 Inline Command modules map to the object whose XML contains their descriptor;
 `nativeObject` retains the exact Command reference (and every other owner).
-Native inline forms may have only a versioned body in ConfigDumpInfo; storage row IDs must not be treated as metadata UUIDs. The immediate canonical form name is retained even then. No search climbs past an unknown nested kind to a known ancestor. The native Configuration.<name> owner is normalized to the editor root
+Inline members such as owned Commands need not have a standalone descriptor version entry; storage row IDs must not be treated universally as metadata UUIDs. Canonical nested references are retained as written. This is name routing, not an independent proof that an editor tree node still exists; RPC must check its source/freshness identity. No search climbs past an unknown nested kind to a known ancestor. The native Configuration.<name> owner is normalized to the editor root
 `Configuration`. `unmappedIds` is explicit and must prevent an all-green result
 for unsupported/future metadata. Metadata bytes never participate in this map.
 

@@ -1047,6 +1047,10 @@ fn config_version(version: Uuid) -> String {
     value
 }
 
+pub(super) fn empty_config_dump_info(source_version: InfobaseConfigSourceVersion) -> Vec<u8> {
+    format_config_dump_info_xml(source_version, &[])
+}
+
 fn format_config_dump_info_xml(
     source_version: InfobaseConfigSourceVersion,
     metadata: &[ConfigDumpMetadata],
@@ -1056,7 +1060,12 @@ fn format_config_dump_info_xml(
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n");
     xml.push_str("<ConfigDumpInfo xmlns=\"http://v8.1c.ru/8.3/xcf/dumpinfo\" xmlns:xen=\"http://v8.1c.ru/8.3/xcf/enums\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" format=\"Hierarchical\" version=\"");
     xml.push_str(source_version.as_str());
-    xml.push_str("\">\r\n\t<ConfigVersions>\r\n");
+    xml.push_str("\">\r\n");
+    if metadata.is_empty() {
+        xml.push_str("\t<ConfigVersions/>\r\n</ConfigDumpInfo>");
+        return xml.into_bytes();
+    }
+    xml.push_str("\t<ConfigVersions>\r\n");
     for entry in metadata {
         xml.push_str("\t\t<Metadata name=\"");
         xml.push_str(&escape_xml_text(&entry.name));

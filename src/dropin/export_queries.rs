@@ -1,0 +1,116 @@
+//! Native query stdout/file protocols, measured on 8.5.1.1592.
+use super::{
+    EXIT_FAILED, export_args,
+    parse::{ExportQueryKind, ExportQueryRequest},
+};
+use crate::infobase::export_commands;
+use anyhow::Result;
+use std::{fs, io::Write};
+
+pub(super) fn run(mut request: ExportQueryRequest) -> i32 {
+    let kind = request.kind;
+    let title = match kind {
+        ExportQueryKind::Info => {
+            "Получение информации о состоянии конфигурации информационной базы"
+        }
+        ExportQueryKind::Status => {
+            "Вычисление изменений конфигурации информационной базы относительно ранее сохраненного состояния"
+        }
+        ExportQueryKind::Objects => "Экспорт объектов конфигурации в XML",
+    };
+    let logged = request.out.is_some() || kind == ExportQueryKind::Objects;
+    if logged {
+        println!("[INFO] {title}...");
+    }
+    let result = (|| -> Result<()> {
+        super::read_requested_password(&mut request.export.common).map_err(anyhow::Error::msg)?;
+        if let Some(threads) = request.export.threads {
+            crate::parallel::request_workers(threads);
+        }
+        crate::mssql_dump::model_export::set_quiet_summaries(true);
+        let args = export_args(&request.export);
+        if kind == ExportQueryKind::Objects {
+            return export_commands::objects(&args, &request.objects, request.recursive);
+        }
+        let current = export_commands::info(&args)?;
+        let bytes = if kind == ExportQueryKind::Info {
+            current
+        } else {
+            let base = fs::read(
+                request
+                    .export
+                    .base
+                    .as_ref()
+                    .expect("parser requires --base"),
+            )?;
+            let text = export_commands::status(&current, &base, request.short)?;
+            let mut bytes = if request.out.is_some() {
+                vec![0xef, 0xbb, 0xbf]
+            } else {
+                Vec::new()
+            };
+            bytes.extend_from_slice(text.as_bytes());
+            bytes
+        };
+        if let Some(out) = &request.out {
+            if kind == ExportQueryKind::Info {
+                anyhow::ensure!(
+                    out.is_dir(),
+                    "output directory does not exist: {}",
+                    out.display()
+                );
+                export_commands::guarded_write(&out.join("ConfigDumpInfo.xml"), &bytes)?;
+            } else {
+                export_commands::guarded_write(out, &bytes)?;
+            }
+        } else {
+            let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+            std::io::stdout().lock().write_all(bytes)?;
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => {
+            if let Some(path) = request.export.common.report.as_deref() {
+                let command = match kind {
+                    ExportQueryKind::Info => "info",
+                    ExportQueryKind::Status => "status",
+                    ExportQueryKind::Objects => "objects",
+                };
+                if let Err(error) = super::write_json(
+                    path,
+                    &serde_json::json!({"operation":format!("infobase config export {command}"),"ok":true}),
+                ) {
+                    eprintln!("[ERROR] {error:#}");
+                    return EXIT_FAILED;
+                }
+            }
+            if logged {
+                let ended = if kind != ExportQueryKind::Objects {
+                    "завершено."
+                } else {
+                    "завершен"
+                };
+                println!("[INFO] {title} успешно {ended}");
+            }
+            0
+        }
+        Err(error) => {
+            if let Some(unknown) = error.downcast_ref::<crate::stored_objects::UnknownObject>() {
+                eprintln!(
+                    "[ERROR] Операция невозможна, при выполнении экспорта объектов конфигурации в XML обнаружены ошибки: Объект метаданных {} не существует в конфигурации.",
+                    unknown.0
+                );
+            } else if kind == ExportQueryKind::Status
+                && request.out.as_ref().is_some_and(|out| out.is_dir())
+            {
+                eprintln!(
+                    "[ERROR] Операция невозможна, при вычислении изменений конфигурации информационной базы относительно ранее сохраненного состояния обнаружены ошибки: Ошибка приемника потока"
+                );
+            } else {
+                eprintln!("[ERROR] {error:#}");
+            }
+            EXIT_FAILED
+        }
+    }
+}
