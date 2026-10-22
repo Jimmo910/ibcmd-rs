@@ -153,6 +153,7 @@ impl Object {
     pub(crate) fn read_all(&self, pager: &mut Pager<'_>) -> Result<Vec<u8>> {
         let len = usize::try_from(self.len)
             .map_err(|_| corrupt(format!("Объект {} слишком велик", self.header_page)))?;
+        pager.materialize_object(self.len)?;
         let mut buf = vec![0u8; len];
         self.read_at(pager, 0, &mut buf)?;
         Ok(buf)

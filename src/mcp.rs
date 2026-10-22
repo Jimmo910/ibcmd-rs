@@ -335,8 +335,19 @@ impl Bound {
             "file target identity mismatch"
         );
         ensure!(current.len() <= 128 * 1024 * 1024, "file input limit");
-        let mut db = ibcmd_filedb::FileDb::from_file(file)
-            .map_err(|_| anyhow::anyhow!("file database unavailable"))?;
+        let mut db = ibcmd_filedb::FileDb::from_file_with_limits(
+            file,
+            ibcmd_filedb::ReadLimits {
+                max_records: 100_000,
+                max_binary_bytes: 128 * 1024 * 1024,
+                max_object_bytes: 256 * 1024 * 1024,
+            },
+            || {
+                crate::cancel::check()
+                    .map_err(|error| ibcmd_filedb::Error::Refused(error.to_string()))
+            },
+        )
+        .map_err(|_| anyhow::anyhow!("file database unavailable"))?;
         ensure!(
             (db.metadata().dev(), db.metadata().ino()) == (pinned.dev(), pinned.ino()),
             "consumed target identity mismatch"

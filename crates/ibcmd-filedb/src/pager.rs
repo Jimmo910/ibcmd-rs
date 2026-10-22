@@ -54,6 +54,7 @@ pub(crate) struct Pager<'a> {
     page_size: usize,
     page_count: u32,
     header: Vec<u8>,
+    read_budget: Option<crate::read_limits::ReadBudget>,
 }
 
 impl<'a> Pager<'a> {
@@ -91,9 +92,32 @@ impl<'a> Pager<'a> {
             page_size,
             page_count,
             header: Vec::new(),
+            read_budget: None,
         };
         pager.header = pager.read_page(0)?;
         Ok(pager)
+    }
+
+    pub(crate) fn set_read_budget(&mut self, budget: Option<crate::read_limits::ReadBudget>) {
+        self.read_budget = budget;
+    }
+    pub(crate) fn read_is_bounded(&self) -> bool {
+        self.read_budget.is_some()
+    }
+    pub(crate) fn check_read(&self) -> Result<()> {
+        self.read_budget
+            .as_ref()
+            .map_or(Ok(()), |budget| budget.check())
+    }
+    pub(crate) fn materialize_object(&mut self, bytes: u64) -> Result<()> {
+        self.read_budget
+            .as_mut()
+            .map_or(Ok(()), |budget| budget.object(bytes))
+    }
+    pub(crate) fn materialize_record(&mut self, bytes: u64) -> Result<()> {
+        self.read_budget
+            .as_mut()
+            .map_or(Ok(()), |budget| budget.record(bytes))
     }
 
     pub(crate) fn page_size(&self) -> usize {
@@ -121,6 +145,7 @@ impl<'a> Pager<'a> {
     }
 
     pub(crate) fn read_page_into(&mut self, page: u32, buf: &mut [u8]) -> Result<()> {
+        self.check_read()?;
         if page >= self.page_count {
             return Err(corrupt(format!("Страница {page} вне файла")));
         }

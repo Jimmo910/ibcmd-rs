@@ -16,7 +16,10 @@
 - [x] Integrate descriptor READ571e6a13 as7c911837; genuine MCP reads disposable
       filedb module/export/compare without mutation; native8.5.1.1592 re-export
       matches module source. 3 MCP + 6 editor + 6 filedb tests pass.
-- [ ] Bounded/cancellable shared filedb materialization before blob expansion.
+- [x] Bounded/cancellable shared filedb materialization before blob expansion,
+      including repeated CONFIG blob aliases and root/table descriptor aliases.
+      19 filedb unit tests + 3 MCP + 6 filedb contracts pass.
+      Logs: lab logs/issue-386-budget-lib.log, logs/issue-386-budget-mcp.log.
 - [ ] Integrate #382 guarded staging API: validate consumed descriptor against
       pinned startup identity, recheck operator policy immediately before atomic
       publication, and propagate cancellation before any visible change.

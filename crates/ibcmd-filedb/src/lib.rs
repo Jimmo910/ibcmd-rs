@@ -23,6 +23,7 @@ pub mod index;
 mod lock;
 mod object;
 mod pager;
+mod read_limits;
 mod record;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,6 +36,7 @@ pub use config::ConfigRow;
 pub use descr::{Field, FieldKind, Table};
 pub use error::{Error, Result};
 pub use index::Collation;
+pub use read_limits::ReadLimits;
 pub use record::Timestamp;
 
 use lock::Mode;
@@ -122,7 +124,25 @@ impl FileDb {
         &self.metadata
     }
 
+    /// Read an exact descriptor under cumulative materialization limits. The
+    /// callback runs before metadata/object/row reads and within long blob walks.
+    pub fn from_file_with_limits(
+        file: File,
+        limits: ReadLimits,
+        check: impl Fn() -> Result<()> + Send + Sync + 'static,
+    ) -> Result<FileDb> {
+        check()?;
+        lock::lock_read_descriptor(&file)?;
+        Self::from_locked_file_budget(file, Some(read_limits::ReadBudget::new(limits, check)))
+    }
+
     fn from_locked_file(file: File) -> Result<FileDb> {
+        Self::from_locked_file_budget(file, None)
+    }
+    fn from_locked_file_budget(
+        file: File,
+        budget: Option<read_limits::ReadBudget>,
+    ) -> Result<FileDb> {
         let metadata = file.metadata()?;
         if !metadata.is_file() {
             return Err(Error::Refused(
@@ -130,6 +150,7 @@ impl FileDb {
             ));
         }
         let mut pager = Pager::new(file)?;
+        pager.set_read_budget(budget);
         let (locale, tables) = descr::read_tables(&mut pager)?;
         Ok(FileDb {
             pager,

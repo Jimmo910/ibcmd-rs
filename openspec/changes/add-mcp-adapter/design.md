@@ -60,11 +60,14 @@ immutable snapshot. Feed that snapshot into existing OfflineRows::from_memory,
 ConfigTable and export sinks, preserving a single backend. Source comparisons
 also use directory-relative NOFOLLOW reads, reject traversal, absolute paths,
 backslashes, empty components and special files. Offline snapshot rows are limited before accumulation to
-128 MiB and 100000 parts; filedb input files are limited to128 MiB. The current
-filedb reader checks aggregate rows after materialization; malformed repeated
-blob references can exceed the intended aggregate memory limit before that
-check, and cancellation is checked around the shared reader. A bounded,
-cancellable shared reader remains a concrete hardening gate. Tool inputs are
+128 MiB and 100000 parts; filedb input files are limited to128 MiB. Filedb reads use FileDb::from_file_with_limits: cumulative limits are charged
+before object buffers and copied blob/metadata values are allocated, including
+aliases and repeated table reads. Budget: 100000 descriptors/live records,
+128 MiB copied row binary, 256 MiB object/metadata buffers; each metadata chain
+is capped at1 MiB in the bounded API. Cancellation is checked in initialization,
+page reads, metadata parsing, record loops and blob-block walks. Existing
+unbounded APIs retain their previous limits. These counters bound major input
+buffers/copies; they do not claim an exact process heap ceiling. Tool inputs are
 limited to32 objects/32 KiB, transport lines64 KiB, results1 MiB. Resource bounds are enforced before publication; native engine resource
 limits still govern decoding. One admitted worker avoids an unbounded blocking
 queue. Cancelled futures set the shared engine flag and suppress publication.
@@ -101,4 +104,6 @@ This is read evidence; it does not satisfy the write/apply roundtrip gate.
 Independent security reviews found and fixed parser separation, rows snapshot
 confinement, worker admission, server identity, FIFO reads, part-count limits and
 strict policy fields. Descriptor filedb review confirms consumed identity and
-snapshot routing; malformed-file materialization remains as described above.
+snapshot routing; malformed-file materialization was subsequently closed with constructor/row
+budget tests and cancellation checks, including malformed native-fixture copies
+with repeated blob and descriptor aliases.
