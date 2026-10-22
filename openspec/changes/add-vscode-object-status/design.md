@@ -15,16 +15,22 @@ bytes. Tokens/hashes are freshness identities, never native configVersion values
 The byte-difference union remains solely a way to discover local/reference paths.
 Native mode is default; byte preview is explicit and never an automatic fallback.
 
-The narrow adapter requires row identity and exact canonical object name. Root
-Configuration and measured CommonModule.Module are explicit cases. Unknown row
-roles, conflicting identities and incomplete coverage are inconclusive; no nearest
-ancestor mapping. Native fullRequired makes common-object evidence inconclusive.
+The adapter consumes #362's canonical `owners()` mapping (a5fdd226), retaining
+immediate object, native object and root in `nativeOwners`. Supported module/form
+rows roll up explicitly to their immediate UI object and root object (whose source
+files contain those nested files). Storage row UUIDs are not metadata UUIDs.
+Unknown roles and incomplete coverage stay inconclusive; there is no guessed
+nearest ancestor. Native fullRequired makes common-object evidence inconclusive.
 DB-only/file-only existence remains separate from native version change reporting.
 
-Filedb uses the shared effective CONFIG+completed CONFIGSAVE backend. MSSQL native
-mode is gated before files/SQL: its active byte/tree view does not yet match the
-main-state native helper. Rows and the legacy byte API remain compatible. Further
-role/view support must come from common engine evidence, not a parallel adapter.
+Filedb uses the shared effective CONFIG+completed CONFIGSAVE backend. Native SQL
+status and `tree/children(mainConfiguration=true)` use a separate main-view cache
+and the existing read-only CONFIGSAVE overlay. Legacy tree/byte requests retain the
+active view. SQL native exports read the whole main view before object partitioning:
+selected raw rows cannot reconstruct completed staging. Recording SqlClient tests
+verify CONFIG/CONFIGSAVE SELECTs, separate cache/arguments and reject all writes;
+no live SQL login or server acceptance is claimed. Missing native evidence cannot
+fall back to byte equality. This favors correctness over the excluded #379 work.
 
 Generation invalidation and AbortController reject cancelled/stale requests after
 refresh, selection, settings, crash or workspace removal. Folder references are

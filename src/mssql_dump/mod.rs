@@ -2188,6 +2188,16 @@ pub(crate) fn with_database_table<T>(
     read(&ConfigTable::active(sql, database))
 }
 
+/// Main CONFIG + completed CONFIGSAVE table view through the existing read-only overlay.
+pub(crate) fn with_main_database_table<T>(
+    sql: &crate::sql::SqlExec,
+    database: &str,
+    read: impl FnOnce(&ConfigTable<'_>) -> Result<T>,
+) -> Result<T> {
+    let _views = dynamic_generation::StorageViewScope::begin(database);
+    read(&ConfigTable::main(sql, database))
+}
+
 /// [`dump_config`] with the caller's [`DumpHooks`]: the same export, the
 /// same arguments.
 pub(crate) fn dump_config_with(

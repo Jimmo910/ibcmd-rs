@@ -224,6 +224,7 @@ pub struct VersionedObjectStatus {
     pub full_required: bool,
     pub database_snapshot: String,
     pub native_changes: Vec<crate::native_export_status::VersionChange>,
+    pub native_owners: crate::native_export_status::NativeVersionOwners,
 }
 
 /// What an export of one object into a source folder changed there.
@@ -877,6 +878,7 @@ pub struct StoredConfiguration {
     /// By full name, for the inventory's digest.
     exports: HashMap<String, Arc<ObjectFiles>>,
     cached_bytes: usize,
+    main_configuration: bool,
 }
 
 impl StoredConfiguration {
@@ -887,7 +889,15 @@ impl StoredConfiguration {
             inventory: None,
             exports: HashMap::new(),
             cached_bytes: 0,
+            main_configuration: false,
         }
+    }
+
+    /// Separate cache/view for native main-state reads. Legacy active-state readers stay unchanged.
+    pub fn main_view(&self) -> Self {
+        let mut view = Self::new(self.source.clone(), self.platform);
+        view.main_configuration = true;
+        view
     }
 
     pub fn source(&self) -> &ConfigSource {
@@ -909,6 +919,7 @@ impl StoredConfiguration {
             inventory,
             exports,
             cached_bytes,
+            main_configuration,
             ..
         } = self;
         let run = |table: &ConfigTable<'_>| -> Result<T> {
@@ -931,7 +942,13 @@ impl StoredConfiguration {
         match source {
             ConfigSource::RowsDir(dir) => with_rows_dir_table(dir, run),
             ConfigSource::FileDb(path) => crate::mssql_dump::with_file_db_table(path, run),
-            ConfigSource::Database { sql, database } => with_database_table(sql, database, run),
+            ConfigSource::Database { sql, database } => {
+                if *main_configuration {
+                    crate::mssql_dump::with_main_database_table(sql, database, run)
+                } else {
+                    with_database_table(sql, database, run)
+                }
+            }
         }
     }
 
@@ -1064,7 +1081,7 @@ impl StoredConfiguration {
         if rows.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let args = export_args(&self.source, self.platform, rows.into_iter().collect());
+        let args = self.view_export_args(rows);
         let sink = Arc::new(MemorySink {
             root: PathBuf::from(MEMORY_ROOT),
             files: Mutex::new(BTreeMap::new()),
@@ -1086,6 +1103,19 @@ impl StoredConfiguration {
         Ok(files)
     }
 
+    fn view_export_args(&self, rows: BTreeSet<String>) -> MssqlDumpConfigArgs {
+        let mut args = export_args(&self.source, self.platform, rows.into_iter().collect());
+        if self.main_configuration {
+            args.main_configuration = true;
+            // Selected SQL rows cannot reconstruct the completed ConfigSave overlay.
+            // Read the shared whole main view, then partition its files by object.
+            if matches!(self.source, ConfigSource::Database { .. }) {
+                args.file_names.clear();
+            }
+        }
+        args
+    }
+
     /// Native DB-version evidence combined with the existing byte comparison.
     /// Bracket all reads with the shared native inventory; external mutations
     /// or a changed reference fail instead of attaching stale native evidence.
@@ -1097,9 +1127,12 @@ impl StoredConfiguration {
         progress: Progress<'_>,
     ) -> Result<VersionedObjectStatus> {
         use crate::native_export_status::ConfigDumpInfoSnapshot;
-        if matches!(self.source, ConfigSource::Database { .. }) {
-            bail!(
-                "native version status requires a coherent main configuration view; MSSQL byte/tree view is active configuration"
+        if !self.main_configuration {
+            return self.main_view().status_with_versions(
+                names,
+                source_dir,
+                baseline_dir,
+                progress,
             );
         }
         let reference_path = baseline_dir.join("ConfigDumpInfo.xml");
@@ -1136,6 +1169,7 @@ impl StoredConfiguration {
             full_required: native.full_required,
             database_snapshot: sha256_hex(&before),
             native_changes: native.changes,
+            native_owners: current.owners(),
         })
     }
 

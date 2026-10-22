@@ -105,12 +105,30 @@ fn rpc_native_evidence_is_additive_identity_bound_and_never_clean_on_full_or_bad
             .iter()
             .all(|r| r["databaseVersionStatus"].is_null())
     );
+    let active_tree = rpc.call("tree/children", json!({"infobase":"native"}));
+    let main_tree = rpc.call(
+        "tree/children",
+        json!({"infobase":"native", "mainConfiguration":true}),
+    );
+    assert!(main_tree["error"].is_null(), "{main_tree}");
+    assert_eq!(active_tree["result"], main_tree["result"]);
     let mut params = params;
     params["versionBaselineDir"] = json!(root.join("baseline"));
     let result = rpc.call("objects/status", params.clone());
     assert!(result["error"].is_null(), "{result}");
     let result = &result["result"];
     assert_eq!(result["fullRequired"], false);
+    assert_eq!(result["nativeOwners"]["unmappedIds"], json!([]));
+    assert!(
+        result["nativeOwners"]["byId"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(
+                |owner| owner["object"] == "CommonModule.ФайловаяБазаПроверка"
+                    && owner["root"] == "CommonModule.ФайловаяБазаПроверка"
+            )
+    );
     let digest = format!("{:x}", Sha256::digest(changed_reference.as_bytes()));
     for row in result["objects"].as_array().unwrap() {
         assert_eq!(row["status"], "same");

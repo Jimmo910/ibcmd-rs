@@ -131,11 +131,12 @@ freshness; both native-mode requests must agree. Engine reads are bracketed with
 that inventory and reference bytes. Production now selects the versioned adapter
 by default. `statusComparison=bytes` remains an explicit labelled preview.
 
-Native row ownership is narrowed to exact canonical object/row UUID matches,
-root Configuration and measured CommonModule.Module. Other roles are inconclusive,
-with no closest-ancestor fallback. MSSQL native is explicitly gated until its
-byte/tree active view agrees with the shared native main-state helper.
+The completed owner helper a5fdd226 now replaces the temporary narrow mapper.
+Canonical nested owners are retained in nativeOwners and rolled into explicit UI
+root objects. Unknown roles stay inconclusive. SQL main-view adaptation uses the
+existing CONFIGSAVE overlay for tree/bytes/versions with an independent cache;
+read-only recording-client coverage is not live SQL acceptance.
 
 Actual native selected-import all-six-state extension-host and folder/Git evidence
-now passes; see evidence/native-integration-20261022.md. Configurator GUI and broader
-source/role coverage are not claimed by that measurement.
+passes; see evidence/native-integration-20261022.md and the owner regression follow-up.
+Configurator GUI and live SQL validation are not claimed by those measurements.

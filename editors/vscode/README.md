@@ -179,23 +179,23 @@ change direction becomes unknown rather than unchanged.
 
 The shared filedb READ backend is integrated from #382 `644684f2`; native helper
 from #362 `b46cd919`. No duplicate backend/parser or production native process is
-provided. Native owner mapping is deliberately narrow: exact canonical objects
-with matching row identity, root Configuration and the measured common-module
-Module role. Unmapped or ambiguous coverage is inconclusive; forms/body rows are
-never silently assigned to a parent. Additional roles need shared mapping evidence.
+provided. Canonical owner helper #362 `a5fdd226` supplies immediate/native/root
+owners, including ordinary object modules and form bodies. Supported nested files
+roll up explicitly to the intended UI objects. Unmapped coverage is inconclusive.
 
-Native MSSQL requests currently fail explicitly: its byte/tree view is active
-configuration while the native helper reads main configuration. A shared coherent
-view must be supplied before enabling that source. For explicit legacy byte-only
-inspection, set `ibcmd.statusComparison` to `bytes`; the UI identifies that mode as
-a preview without native version parity. Native mode never silently falls back.
+Native SQL status uses the same main configuration view for version, tree and byte
+reads, through the existing read-only CONFIGSAVE overlay and separate cache. Legacy
+byte/tree requests retain their active view. SQL adapter tests use a recording
+client that rejects writes; a live SQL server was not tested. For explicit byte-only
+inspection, set `ibcmd.statusComparison` to `bytes`; that mode remains a labelled
+preview. Native mode never silently falls back to byte equality.
 
 Actual 8.5.1.1592 filedb acceptance covers all six UI/Explorer states, native
 selected module imports plus independent local edits, folder/Git baseline,
 changed-only filtering, and byte-identical DB after READ. It uses supported release
 profile `8.5.1`; exact build 8.5.1.1592 is not yet in the profile registry.
 This is native command validation, not a Configurator GUI run. Parent review,
-MSSQL/source coverage and any required GUI acceptance remain explicit gates.
+live SQL and any required GUI acceptance remain explicit evidence gaps.
 Evidence: `openspec/changes/add-vscode-object-status/evidence/native-integration-20261022.md`.
 
 ### Reproduce native acceptance (opt-in)
@@ -221,3 +221,15 @@ stdout/stderr, expected states and source/reference trees; it deletes nothing.
 The host records `ui-evidence.json` and checks that UI reads do not mutate 1CD bytes.
 `IBCMD_TEST_FILEDB_ROOT` optionally adds the separate version-only whole-import
 regression case documented in the historical `native-read-20261022.md` evidence.
+
+Opt-in Catalog/module/form owner regression (new disposable DB only):
+
+```sh
+IBCMD_TEST_ROOT=/absolute/external/owners \
+IBCMD_TEST_NATIVE_BINARY=/opt/1cv8/8.5.1.1592/ibcmd \
+IBCMD_TEST_BINARY=/absolute/external/build/debug/ibcmd-rs \
+python3 editors/vscode/test/prepare-native-owners.py
+```
+
+This public fixture test checks identical and platform-modified inventories, an
+unrelated common module and DB byte immutability. Artifacts are retained.

@@ -61,3 +61,18 @@ native snapshot and reference identity.
 - **THEN** its six tested states agree with measured native versions and local bytes
 - **AND** fullRequired, unmapped roles and incoherent source views cannot become clean
 - **AND** native command evidence is not described as Configurator GUI validation
+
+#### Scenario: supported nested roles do not invalidate unrelated objects
+- **GIVEN** Catalog and Document object modules, a body-only form and an unrelated common module
+- **WHEN** native inventories are identical or only the object modules/form change
+- **THEN** supported nested owners roll into their explicit immediate/root UI objects
+- **AND** the unrelated common module remains conclusively unchanged
+- **AND** truly unmapped roles remain inconclusive without a guessed ancestor
+
+#### Scenario: SQL native reads share the main configuration view
+- **GIVEN** native status uses CONFIG plus a completed CONFIGSAVE overlay
+- **WHEN** the client requests native tree and status
+- **THEN** tree, exported bytes and version inventory read the shared main view
+- **AND** legacy byte/tree requests retain their active view and separate cache
+- **AND** read-only adapter tests reject script execution and database writes
+- **AND** adapter tests do not claim an unperformed live SQL login

@@ -225,7 +225,11 @@ export class ObjectView
               if (abort.signal.aborted) throw new Error("Cancelled");
               const result = await rpc.request(
                 "tree/children",
-                { infobase, ...(node ? { node } : {}) },
+                {
+                  infobase,
+                  mainConfiguration: this.nativeMode,
+                  ...(node ? { node } : {}),
+                },
                 abort.signal,
               );
               if (!Array.isArray(result?.nodes))

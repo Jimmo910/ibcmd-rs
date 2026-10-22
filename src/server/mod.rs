@@ -351,6 +351,8 @@ struct InfobaseParams {
 struct ChildrenParams {
     infobase: String,
     node: Option<String>,
+    #[serde(default)]
+    main_configuration: bool,
 }
 
 #[derive(Deserialize)]
@@ -573,10 +575,15 @@ impl State {
 
     fn children(&mut self, params: ChildrenParams) -> Result<Value, RpcError> {
         let session = self.session(&params.infobase)?;
-        let nodes = session
-            .configuration
-            .children(params.node.as_deref())
-            .map_err(failure)?;
+        let nodes = if params.main_configuration {
+            session
+                .configuration
+                .main_view()
+                .children(params.node.as_deref())
+        } else {
+            session.configuration.children(params.node.as_deref())
+        }
+        .map_err(failure)?;
         Ok(json!({ "nodes": nodes }))
     }
 
