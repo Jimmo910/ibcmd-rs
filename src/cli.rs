@@ -673,7 +673,9 @@ pub struct CfBootstrapArgs {
     pub reserved: u32,
     /// Compile the tree with the base-free stage an empty infobase is loaded
     /// from (every row of the tree, no base) instead of the bootstrap
-    /// compiler.
+    /// compiler. The only route for an external data processor or report
+    /// (.epf/.erf, 8.3.x XML): it refuses a tree that refers to
+    /// configuration objects.
     #[arg(long)]
     pub base_free: bool,
 }

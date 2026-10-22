@@ -695,7 +695,7 @@ fn bootstrap(mut args: CfBootstrapArgs) -> Result<CfCommandReport, CfCommandErro
             &args,
             "bootstrap_package_not_supported",
             format!(
-                "{:?} source `{}` requires its own base-free package builder; EPF/ERF builders are not implemented yet; refusing ordinary CF publication",
+                "{:?} source `{}` is built by `cf bootstrap --base-free --platform 8.3.27` (.epf/.erf); refusing ordinary CF publication",
                 package.intent,
                 package.root_xml.display(),
             ),
@@ -1020,7 +1020,39 @@ fn bootstrap_base_free(
 /// `.epf`/`.erf` from the external tree alone (issue #438): the compiled
 /// load onto a seed package given the tree's identities
 /// (`crate::load::build_external`), verified by exporting it back.
-fn bootstrap_external(args: CfBootstrapArgs) -> Result<CfCommandReport, CfCommandError> {
+fn bootstrap_external(mut args: CfBootstrapArgs) -> Result<CfCommandReport, CfCommandError> {
+    // The seeds are 8.3.27.2214 packages and the load keeps their container:
+    // nothing else was measured, so nothing else is offered.
+    let unmeasured = [
+        (
+            args.source_version != crate::legacy_version::InfobaseConfigSourceVersion::V2_20,
+            "8.5 XML (2.21)",
+        ),
+        (
+            args.target_profile != DEFAULT_BOOTSTRAP_TARGET_PROFILE,
+            "--target-profile",
+        ),
+        (args.profile_dir.is_some(), "--profile-dir"),
+        (args.revision != CfRevision::Format16, "--revision"),
+        (args.storage_version != 5, "--storage-version"),
+        (args.page_size.is_some(), "--page-size"),
+        (args.reserved != 0, "--reserved"),
+    ]
+    .into_iter()
+    .filter_map(|(given, option)| given.then_some(option))
+    .collect::<Vec<_>>();
+    if !unmeasured.is_empty() {
+        return Err(bootstrap_failure(
+            &args,
+            "bootstrap_option_not_supported",
+            format!(
+                "an .epf/.erf is built from XML 2.20 into the container 8.3.27.2214 writes; \
+                 not supported for external objects: {}",
+                unmeasured.join(", ")
+            ),
+        ));
+    }
+    args.target_profile = "platform-8.3.27.2214".to_owned();
     if args.output.exists() {
         return Err(bootstrap_failure(
             &args,

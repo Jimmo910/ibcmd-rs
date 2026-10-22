@@ -8937,14 +8937,12 @@ pub(crate) fn format_empty_auto_command_bar(id: &str, name: &str) -> String {
 // Fail-closed throughout: a part the rule cannot name returns `None`, and the
 // caller refuses the form rather than writing a binding that would load wrong.
 
-/// The marker a `[<i>]` subscript is stored under.
-///
-/// 1 932 uses across 56 forms, the first member always the literal index, so
-/// `[0]` looks exactly like `{0,<uuid>}` and only the uuid tells them apart.
 /// The data-path steps compiled form bodies walked, when a caller asked for
 /// them: `(segment, parent)`, `parent` the type the segment is a member of --
 /// `meta|<object key>|<section>` for a metadata object (and one of its
-/// tabular sections), or the XML type spelling of a value table or tree. An
+/// tabular sections), the XML type spelling of a value table or tree, or
+/// `platform|<member>` for a member of a platform object (a settings
+/// composer and its settings), whose type id is not measured. An
 /// external object's `copyinfo` lists them, and 8.3.27.2214 drops every form
 /// `<DataPath>` whose steps it does not list (`load::seed`).
 static DATA_PATH_STEPS: std::sync::Mutex<Option<std::collections::BTreeSet<(String, String)>>> =
@@ -8974,6 +8972,10 @@ fn note_data_path_step(segment: &str, parent: String) {
     }
 }
 
+/// The marker a `[<i>]` subscript is stored under.
+///
+/// 1 932 uses across 56 forms, the first member always the literal index, so
+/// `[0]` looks exactly like `{0,<uuid>}` and only the uuid tells them apart.
 const DATA_PATH_INDEX_UUID: &str = "e67e2953-cebe-4d97-bb93-12b17e6384f8";
 
 /// The marker a column of a `<Columns><AdditionalColumns table="…">` block
@@ -9790,10 +9792,11 @@ fn resolve_data_path_tokens<'a>(
                     DataPathContext::Meta { .. } | DataPathContext::DynamicList
                 )
             }) {
-                emitted.push(format!(
-                    "{{{},{DATA_PATH_ADDITIONAL_COLUMN_UUID}}}",
-                    extra.id
-                ));
+                let segment = format!("{{{},{DATA_PATH_ADDITIONAL_COLUMN_UUID}}}", extra.id);
+                if let Some(parent) = attribute.and_then(|entry| entry.types.first()) {
+                    note_data_path_step(&segment, parent.clone());
+                }
+                emitted.push(segment);
                 context = data_path_context_for_types(&extra.types);
             } else {
                 match current {
@@ -9874,6 +9877,7 @@ fn resolve_data_path_tokens<'a>(
                     }
                     DataPathContext::Builtin { members, composer } => {
                         let member = data_path_member(members, name)?;
+                        note_data_path_step(&format!("{{{member}}}"), format!("platform|{name}"));
                         emitted.push(format!("{{{member}}}"));
                         context = if composer {
                             DataPathContext::Dcs(data_path_dcs_members(name))
@@ -9883,6 +9887,7 @@ fn resolve_data_path_tokens<'a>(
                     }
                     DataPathContext::Dcs(members) => {
                         let member = data_path_member(members, name)?;
+                        note_data_path_step(&format!("{{{member}}}"), format!("platform|{name}"));
                         emitted.push(format!("{{{member}}}"));
                         context = DataPathContext::Dcs(data_path_dcs_members(name));
                     }

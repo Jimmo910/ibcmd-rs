@@ -1,6 +1,8 @@
 //! `cf bootstrap --base-free` of an external data processor or report from
 //! its XML tree alone (issue #438): a fixture package exported, built back
-//! from the tree with no base, and exported again gives the same tree.
+//! from the tree with no base, and exported again gives the same tree --
+//! also with every identity and the name changed, a form path into the
+//! object, and a name the seed's own children have.
 
 use std::{
     fs,
@@ -73,27 +75,35 @@ fn files(root: &Path) -> Vec<(String, Vec<u8>)> {
     out
 }
 
-fn round_trip(fixture: &str, suffix: &str, tag: &str) {
-    let scratch = Scratch::new(tag);
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture);
-    let tree = scratch.0.join("tree");
-    export(&fixture, &tree);
-    let output = scratch.0.join(format!("built.{suffix}"));
-    let built = ibcmd(&[
+fn bootstrap(tree: &Path, output: &Path) -> std::process::Output {
+    ibcmd(&[
         Path::new("cf"),
         Path::new("bootstrap"),
         Path::new("--base-free"),
         Path::new("--platform"),
         Path::new("8.3.27"),
-        &tree,
-        &output,
-    ]);
+        tree,
+        output,
+    ])
+}
+
+fn build(tree: &Path, output: &Path) {
+    let built = bootstrap(tree, output);
     assert!(
         built.status.success(),
         "{}{}",
         String::from_utf8_lossy(&built.stdout),
         String::from_utf8_lossy(&built.stderr)
     );
+}
+
+fn round_trip(fixture: &str, suffix: &str, tag: &str) {
+    let scratch = Scratch::new(tag);
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture);
+    let tree = scratch.0.join("tree");
+    export(&fixture, &tree);
+    let output = scratch.0.join(format!("built.{suffix}"));
+    build(&tree, &output);
     let back = scratch.0.join("back");
     export(&output, &back);
     assert_eq!(files(&tree), files(&back));
@@ -115,4 +125,193 @@ fn a_report_builds_from_its_tree_alone() {
         "erf",
         "report",
     );
+}
+
+/// The tree's own identities, in order of first appearance: object uuids
+/// and the ids of its contained and generated types. Platform class ids
+/// (`<xr:ClassId>`) stay.
+fn uuids(tree: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    for (_, bytes) in files(tree) {
+        let text = String::from_utf8_lossy(&bytes);
+        for opener in ["uuid=\"", "<xr:ObjectId>", "<xr:TypeId>", "<xr:ValueId>"] {
+            for piece in text.split(opener).skip(1) {
+                let id = piece.get(..36).unwrap_or_default().to_ascii_lowercase();
+                if id.len() == 36 && !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `tree` exported from `fixture` with every uuid replaced by a fresh one and
+/// the object renamed from `from` to `to`, in the files and their paths.
+fn renamed_tree(fixture: &str, scratch: &Path, from: &str, to: &str) -> PathBuf {
+    let exported = scratch.join("exported");
+    export(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture),
+        &exported,
+    );
+    let fresh = uuids(&exported)
+        .into_iter()
+        .enumerate()
+        .map(|(index, id)| {
+            (
+                id,
+                format!("5eed{index:04x}-0000-4000-8000-00000000{index:04x}"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let tree = scratch.join("tree");
+    for (relative, bytes) in files(&exported) {
+        let mut text = String::from_utf8(bytes).unwrap();
+        for (old, new) in &fresh {
+            text = text.replace(old.as_str(), new);
+        }
+        // Paths and the root's own name; the tabular section attribute and
+        // the template keep theirs.
+        for (old, new) in [
+            (format!("<Name>{from}</Name>"), format!("<Name>{to}</Name>")),
+            (format!(".{from}<"), format!(".{to}<")),
+            (format!(".{from}."), format!(".{to}.")),
+            (format!(".{from}\""), format!(".{to}\"")),
+        ] {
+            text = text.replacen(&old, &new, usize::MAX);
+        }
+        let path = tree.join(relative.replacen(from, to, 1));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    tree
+}
+
+/// The root's attribute `Строка` on the form, so its data path steps
+/// through the object's own type.
+fn add_object_field(tree: &Path, name: &str) {
+    let form = tree.join(format!("{name}/Forms/Форма/Ext/Form.xml"));
+    let text = fs::read_to_string(&form).unwrap();
+    let field = "\t<ChildItems>\r\n\t\t<InputField name=\"Строка\" id=\"2\">\r\n\
+                 \t\t\t<DataPath>Объект.Строка</DataPath>\r\n\
+                 \t\t\t<ContextMenu name=\"СтрокаКонтекстноеМеню\" id=\"3\"/>\r\n\
+                 \t\t\t<ExtendedTooltip name=\"СтрокаРасширеннаяПодсказка\" id=\"4\"/>\r\n\
+                 \t\t</InputField>\r\n\t</ChildItems>\r\n\t<Attributes>";
+    assert!(text.contains("\t<Attributes>"));
+    fs::write(&form, text.replacen("\t<Attributes>", field, 1)).unwrap();
+}
+
+/// The text of the `copyinfo` entry of `file`.
+fn copyinfo(file: &Path, scratch: &Path) -> String {
+    let dir = scratch.join("copyinfo");
+    let out = ibcmd(&[
+        Path::new("cf"),
+        Path::new("extract"),
+        file,
+        Path::new("copyinfo"),
+        &dir,
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(fs::read(dir.join("unpacked.bin")).unwrap()).unwrap()
+}
+
+/// The text between `<tag>` and `</tag>` after `after` in `xml`.
+fn value_after<'a>(xml: &'a str, after: &str, tag: &str) -> &'a str {
+    let from = xml.find(after).unwrap();
+    let start = from + xml[from..].find(&format!("<{tag}>")).unwrap() + tag.len() + 2;
+    let end = start + xml[start..].find(&format!("</{tag}>")).unwrap();
+    &xml[start..end]
+}
+
+fn renamed_processor_builds(name: &str, tag: &str) {
+    let scratch = Scratch::new(tag);
+    let tree = renamed_tree(
+        "tests/fixtures/external/test_processor/input.epf",
+        &scratch.0,
+        "ТестОбработка",
+        name,
+    );
+    add_object_field(&tree, name);
+    let output = scratch.0.join("built.epf");
+    build(&tree, &output);
+    let back = scratch.0.join("back");
+    export(&output, &back);
+    assert_eq!(files(&tree), files(&back));
+
+    let root = fs::read_to_string(tree.join(format!("{name}.xml"))).unwrap();
+    let attribute = root
+        .split("<Attribute uuid=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+        .to_owned();
+    let type_id = value_after(&root, "category=\"Object\"", "xr:TypeId");
+    assert!(attribute.starts_with("5eed") && type_id.starts_with("5eed"));
+    let copyinfo = copyinfo(&output, &scratch.0);
+    assert!(
+        copyinfo.contains(&format!("{{0,{attribute}}},{type_id},")),
+        "{copyinfo}"
+    );
+}
+
+#[test]
+fn a_processor_with_new_identities_keeps_its_form_paths() {
+    renamed_processor_builds("НоваяОбработка", "fresh");
+}
+
+#[test]
+fn a_processor_may_take_the_name_of_a_seed_child() {
+    renamed_processor_builds("Число", "child-name");
+}
+
+#[test]
+fn a_report_with_new_identities_builds() {
+    let scratch = Scratch::new("fresh-report");
+    let tree = renamed_tree(
+        "tests/fixtures/external/test_report/input.erf",
+        &scratch.0,
+        "ТестОтчет",
+        "НовыйОтчет",
+    );
+    let output = scratch.0.join("built.erf");
+    build(&tree, &output);
+    let back = scratch.0.join("back");
+    export(&output, &back);
+    assert_eq!(files(&tree), files(&back));
+    assert!(back.join("НовыйОтчет.xml").is_file());
+}
+
+#[test]
+fn a_reference_to_the_configuration_is_refused_without_output() {
+    let scratch = Scratch::new("refused");
+    let tree = renamed_tree(
+        "tests/fixtures/external/test_processor/input.epf",
+        &scratch.0,
+        "ТестОбработка",
+        "СоСсылкой",
+    );
+    let root = tree.join("СоСсылкой.xml");
+    let text = fs::read_to_string(&root).unwrap();
+    fs::write(
+        &root,
+        text.replacen(
+            "<v8:Type>xs:string</v8:Type>",
+            "<v8:Type>cfg:CatalogRef.Валюты</v8:Type>",
+            1,
+        ),
+    )
+    .unwrap();
+    let output = scratch.0.join("built.epf");
+    let refused = bootstrap(&tree, &output);
+    let report = String::from_utf8_lossy(&refused.stdout).into_owned()
+        + &String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{report}");
+    assert!(report.contains("cfg:CatalogRef.Валюты"), "{report}");
+    assert!(!output.exists());
 }

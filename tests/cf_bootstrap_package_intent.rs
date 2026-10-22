@@ -147,16 +147,16 @@ fn incomplete_extension_and_external_families_are_never_published_as_cf() {
                 let output = scratch.0.join(format!("blocked.{requested_suffix}"));
                 // An extension goes to the extension compiler, which refuses
                 // this root for its missing compatibility mode. `--base-free`
-                // builds an external object (#438): this root names no
-                // ObjectId, so the build refuses it. A `.cf` output for either
-                // is refused before.
+                // builds an external object (#438) into the container
+                // 8.3.27.2214 writes, so it refuses another storage version.
+                // A `.cf` output for either is refused before.
                 let external = kind != "Configuration";
                 let (code, address) = match (external, base_free, requested_suffix) {
                     (_, _, "cf") if !external || base_free => {
                         ("bootstrap_package_invalid", address)
                     }
                     (false, _, _) => ("extension_compile_failed", "CompatibilityMode"),
-                    (true, true, _) => ("base_free_compile_failed", "ObjectId"),
+                    (true, true, _) => ("bootstrap_option_not_supported", "--storage-version"),
                     _ => ("bootstrap_package_not_supported", address),
                 };
                 refusal(

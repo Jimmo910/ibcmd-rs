@@ -6,9 +6,12 @@
 //! root's properties and child objects replace the seed's, the tree's forms,
 //! templates and modules are added, and the seed's own are removed.
 //!
-//! The seeds are the platform-built fixtures `tests/fixtures/external/
-//! variants/no_module/input.epf` and `tests/fixtures/external/test_report/
-//! input.erf` (8.3.27.2214); their identities are those their own XML dumps.
+//! The seeds (`src/load/seeds`) are packages 8.3.27.2214 built: copies of the
+//! fixtures `tests/fixtures/external/variants/no_module/input.epf` and
+//! `tests/fixtures/external/test_report/input.erf`, owned here so a fixture
+//! regenerated for a test cannot change the product. Their identities are
+//! those their own XML dumps; `the_seed_identities_are_the_seeds_own` holds
+//! the constants to the bytes.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -36,7 +39,7 @@ struct Seed {
 }
 
 const PROCESSOR: Seed = Seed {
-    bytes: include_bytes!("../../tests/fixtures/external/variants/no_module/input.epf"),
+    bytes: include_bytes!("seeds/processor.epf"),
     tag: "ExternalDataProcessor",
     uuid: "dc0e1582-2d76-4880-ba01-3711da6f4448",
     object_id: "80ba9317-3805-45ad-950d-e4cab1dd642b",
@@ -47,7 +50,7 @@ const PROCESSOR: Seed = Seed {
 };
 
 const REPORT: Seed = Seed {
-    bytes: include_bytes!("../../tests/fixtures/external/test_report/input.erf"),
+    bytes: include_bytes!("seeds/report.erf"),
     tag: "ExternalReport",
     uuid: "b0509899-141e-4cda-ba24-de8ed9711646",
     object_id: "3ae658fc-eb5f-4e2d-a3b9-8f021f275ff7",
@@ -60,11 +63,14 @@ const REPORT: Seed = Seed {
 /// `copyinfo` of an object that references no configuration object.
 const EMPTY_COPYINFO: &str = "\u{feff}{4,\r\n{0},\r\n{0},\r\n{0},\r\n{0,0},\r\n{0}\r\n}";
 
-/// Kinds of configuration object a tree may name: `<Kind>.<Name>` in an XML
-/// value or a help link; `cfg:<Kind>Ref…` in a type.
-const CONFIGURATION_KINDS: [&str; 24] = [
+/// Kinds of configuration object a tree may name: a metadata path
+/// `<Kind>.<Name>…` as a whole value, `cfg:<Kind>Ref.<Name>` in a type.
+const CONFIGURATION_KINDS: [&str; 46] = [
     "Catalog",
     "Document",
+    "DocumentJournal",
+    "DocumentNumerator",
+    "Sequence",
     "Enum",
     "ChartOfCharacteristicTypes",
     "ChartOfAccounts",
@@ -77,16 +83,35 @@ const CONFIGURATION_KINDS: [&str; 24] = [
     "AccountingRegister",
     "CalculationRegister",
     "Constant",
+    "DataProcessor",
+    "Report",
+    "FilterCriterion",
+    "SettingsStorage",
+    "DefinedType",
     "CommonForm",
     "CommonPicture",
     "CommonTemplate",
     "CommonCommand",
+    "CommandGroup",
     "CommonModule",
+    "CommonAttribute",
+    "SessionParameter",
+    "Role",
+    "FunctionalOption",
+    "FunctionalOptionsParameter",
+    "Subsystem",
+    "Language",
     "StyleItem",
     "Style",
-    "SettingsStorage",
-    "DefinedType",
-    "FilterCriterion",
+    "XDTOPackage",
+    "WebService",
+    "HTTPService",
+    "WSReference",
+    "EventSubscription",
+    "ScheduledJob",
+    "ExternalDataSource",
+    "IntegrationService",
+    "Bot",
 ];
 
 /// The end of a dotted identifier starting at `start`.
@@ -96,36 +121,62 @@ fn identifier_end(text: &str, start: usize) -> usize {
         .map_or(text.len(), |len| start + len)
 }
 
-/// The configuration objects `text` names.
-fn references_in(text: &str, found: &mut BTreeSet<String>) {
+/// The object a metadata path names (`Kind.Name`), when `value` as a whole
+/// is a path into a configuration object other than the tree's own `own`.
+fn configuration_path(value: &str, own: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || identifier_end(value, 0) != value.len() {
+        return None;
+    }
+    let mut parts = value.split('.');
+    let (kind, name) = (parts.next()?, parts.next()?);
+    if name.is_empty() || !CONFIGURATION_KINDS.contains(&kind) {
+        return None;
+    }
+    let path = format!("{kind}.{name}");
+    (path != own).then_some(path)
+}
+
+/// The configuration objects `text` names where a reference is written: a
+/// `cfg:` type with an object name, a whole element value (`<xr:Ref>`,
+/// `<CommandName>`, a design-time reference, an `MDObjectRef` item) and a
+/// whole attribute value (a role's `name="Role.…"`, a help link
+/// `href="Catalog.…/Help"`). A path inside a text (a cell
+/// `ExchangePlan.%1`, a link `e1cib/data/Catalog.…?ref=`) and a type set of
+/// every object of a kind (`cfg:CatalogRef`) are not references: the
+/// platform builds both without the configuration. `own` is the tree's
+/// object in the configuration spelling (`DataProcessor.<name>`).
+fn references_in(text: &str, own: &str, found: &mut BTreeSet<String>) {
     let mut at = 0;
     while let Some(offset) = text[at..].find("cfg:") {
         let start = at + offset + 4;
         let end = identifier_end(text, start);
         let name = &text[start..end];
-        if !name.is_empty() && !name.starts_with("External") {
+        if name.contains('.')
+            && !name.starts_with("ExternalDataProcessor")
+            && !name.starts_with("ExternalReport")
+        {
             found.insert(format!("cfg:{name}"));
         }
         at = end.max(start);
     }
-    for kind in CONFIGURATION_KINDS {
-        for opener in [">", "\"", "/"] {
-            let needle = format!("{opener}{kind}.");
-            let mut at = 0;
-            while let Some(offset) = text[at..].find(&needle) {
-                let start = at + offset + opener.len();
-                let end = identifier_end(text, start);
-                found.insert(text[start..end].trim_end_matches('.').to_owned());
-                at = end.max(start + 1);
-            }
-        }
+    for piece in text.split('>').skip(1) {
+        let value = piece.split('<').next().unwrap_or_default();
+        found.extend(configuration_path(value, own));
+    }
+    for piece in text.split("=\"").skip(1) {
+        let value = piece.split('"').next().unwrap_or_default();
+        found.extend(configuration_path(
+            value.split('/').next().unwrap_or_default(),
+            own,
+        ));
     }
 }
 
 /// The configuration objects the tree names: without the configuration
 /// their identities are unknown -- a platform building the object from its
 /// XML in an empty infobase drops them -- so such a build is refused.
-fn configuration_references(tree: &Path) -> Result<Vec<String>> {
+fn configuration_references(tree: &Path, own: &str) -> Result<Vec<String>> {
     let mut found = BTreeSet::new();
     let mut stack = vec![tree.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -139,7 +190,9 @@ fn configuration_references(tree: &Path) -> Result<Vec<String>> {
                 .extension()
                 .is_some_and(|ext| ext == "xml" || ext == "html")
             {
-                references_in(&fs::read_to_string(&path).unwrap_or_default(), &mut found);
+                let text = fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read {}", path.display()))?;
+                references_in(&text, own, &mut found);
             }
         }
     }
@@ -243,11 +296,19 @@ fn external_root(tree: &Path) -> Result<Option<(PathBuf, String, &'static Seed)>
     }
 }
 
-/// `text` with every seed identity replaced by the tree's.
+/// `text` with every seed identity replaced by the tree's. The seed's
+/// children are renamed before the root takes the tree's name, which may be
+/// one of theirs (a processor named `Число`).
 fn rekeyed(text: &str, seed: &Seed, target: &Identity, children: &[(String, String)]) -> String {
     let mut out = text.to_owned();
     for (from, to) in children {
         out = out.replace(from.as_str(), to.as_str());
+    }
+    for (index, child) in seed.children.iter().enumerate() {
+        out = out.replace(
+            &format!("\"{child}\""),
+            &format!("\"ibcmdSeedChild{index}\""),
+        );
     }
     for (from, to) in [
         (seed.uuid, target.uuid.as_str()),
@@ -257,17 +318,10 @@ fn rekeyed(text: &str, seed: &Seed, target: &Identity, children: &[(String, Stri
     ] {
         out = out.replace(from, to);
     }
-    out = out.replace(
+    out.replace(
         &format!("\"{}\"", seed.name),
         &format!("\"{}\"", target.name),
-    );
-    for (index, child) in seed.children.iter().enumerate() {
-        out = out.replace(
-            &format!("\"{child}\""),
-            &format!("\"ibcmdSeedChild{index}\""),
-        );
-    }
-    out
+    )
 }
 
 /// Writes the seed package, given the tree's identities, to `path`.
@@ -334,8 +388,13 @@ fn write_seed(seed: &Seed, target: &Identity, path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// One build at a time: the form compiler records data-path steps for the
+/// whole process (`form_native::record_data_path_steps`).
+static BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Builds `output` from the external tree `tree` with no base package:
-/// `Ok(None)` when the tree is not an external object.
+/// `Ok(None)` when the tree is not an external object. A failed build leaves
+/// no `output` it created.
 pub fn build_external(
     tree: &Path,
     output: &Path,
@@ -345,11 +404,19 @@ pub fn build_external(
         return Ok(None);
     };
     let target = identity(&text, seed.tag)?;
-    let references = configuration_references(if tree.is_file() {
-        root_xml.parent().unwrap_or(tree)
+    let internal = if seed.tag == "ExternalReport" {
+        "Report"
     } else {
-        tree
-    })?;
+        "DataProcessor"
+    };
+    let references = configuration_references(
+        if tree.is_file() {
+            root_xml.parent().unwrap_or(tree)
+        } else {
+            tree
+        },
+        &format!("{internal}.{}", target.name),
+    )?;
     if !references.is_empty() {
         return Err(anyhow!(
             "the object refers to configuration objects, whose identities only the \
@@ -378,6 +445,10 @@ pub fn build_external(
     } else {
         "seed.epf"
     });
+    let _build = BUILD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let existed = output.exists();
     crate::compiler::bodies::form_native::record_data_path_steps();
     let result = write_seed(seed, &target, &seed_path)
         .map_err(super::LoadError::from)
@@ -400,6 +471,9 @@ pub fn build_external(
         Ok(report)
     });
     let _ = fs::remove_dir_all(&scratch);
+    if result.is_err() && !existed {
+        let _ = fs::remove_file(output);
+    }
     result.map(Some)
 }
 
@@ -459,6 +533,7 @@ fn copyinfo_with_steps(
     let own = format!("meta|{internal}.{}|", target.name);
     let sections = tabular_section_types(root_xml);
     let mut entries = Vec::new();
+    let mut unmeasured = BTreeSet::new();
     for (segment, parent) in steps {
         let type_id = if let Some(section) = parent.strip_prefix(&own) {
             if section.is_empty() {
@@ -471,15 +546,32 @@ fn copyinfo_with_steps(
             }
         } else if let Some((_, uuid)) = BUILTIN_TYPES.iter().find(|(name, _)| name == parent) {
             (*uuid).to_owned()
+        } else if let Some(member) = parent.strip_prefix("platform|") {
+            // 8.3.27.2214 lists these steps under the platform type's id
+            // (СериализаторMXL of Vanessa Automation: a settings composer's
+            // `Settings.Filter`); the ids are not measured, and without them
+            // the platform would drop the path.
+            unmeasured.insert(member.to_owned());
+            continue;
         } else {
             continue;
         };
-        let index = segment
-            .trim_start_matches('{')
-            .trim_end_matches('}')
-            .parse::<i64>()
-            .map_or_else(|_| "-1".to_owned(), |number| number.to_string());
+        let inner = segment.trim_start_matches('{').trim_end_matches('}');
+        // A value-tree additional column repeats its segment; an own member
+        // has no index.
+        let index = match inner.parse::<i64>() {
+            Ok(number) => number.to_string(),
+            Err(_) if inner.contains(',') && !inner.starts_with("0,") => inner.to_owned(),
+            Err(_) => "-1".to_owned(),
+        };
         entries.push(format!("{{\r\n{segment},{type_id},\r\n{{{index}}}\r\n}}"));
+    }
+    if !unmeasured.is_empty() {
+        bail!(
+            "a form data path steps through a platform object whose copyinfo entry is not \
+             measured -- build it with cf load --base: {}",
+            unmeasured.into_iter().collect::<Vec<_>>().join(", ")
+        );
     }
     if entries.is_empty() {
         return Ok(EMPTY_COPYINFO.to_owned());
@@ -569,9 +661,17 @@ mod tests {
             ("{0,c}".to_owned(), "meta|DataProcessor.Б|ТЧ".to_owned()),
             ("{2}".to_owned(), "v8:ValueTable".to_owned()),
             ("{0,f}".to_owned(), "meta|Catalog.Чужой|".to_owned()),
+            (
+                "{1,5bdad865-f2c5-434b-8041-ba4aad3b6687}".to_owned(),
+                "v8:ValueTree".to_owned(),
+            ),
         ]);
         let text = copyinfo_with_steps(root, &PROCESSOR, &target(), &steps).unwrap();
-        assert!(text.contains("{3,"));
+        assert!(text.contains("{0},\r\n{4,\r\n"));
+        assert!(text.contains(
+            "{1,5bdad865-f2c5-434b-8041-ba4aad3b6687},e603c0f2-92fb-4d47-8f38-a44a381cf235,\
+             \r\n{1,5bdad865-f2c5-434b-8041-ba4aad3b6687}"
+        ));
         assert!(text.contains("{0,a},33333333-3333-3333-3333-333333333333,\r\n{-1}"));
         assert!(text.contains("{0,c},55555555-5555-5555-5555-555555555555,\r\n{-1}"));
         assert!(text.contains("{2},acf6192e-81ca-46ef-93a6-5a6968b78663,\r\n{2}"));
@@ -580,6 +680,9 @@ mod tests {
             copyinfo_with_steps(root, &PROCESSOR, &target(), &BTreeSet::new()).unwrap(),
             EMPTY_COPYINFO
         );
+        let composer = BTreeSet::from([("{0}".to_owned(), "platform|Settings".to_owned())]);
+        let refused = copyinfo_with_steps(root, &PROCESSOR, &target(), &composer).unwrap_err();
+        assert!(refused.to_string().contains("Settings"));
     }
 
     #[test]
@@ -588,16 +691,95 @@ mod tests {
         references_in(
             "<v8:Type>cfg:CatalogRef.Валюты</v8:Type><v8:Type>cfg:ExternalDataProcessorObject.Б\
              </v8:Type><xr:Ref>CommonPicture.Лого</xr:Ref><a href=\"Catalog.Банки/Help\">\
-             <xr:Ref>StdPicture.Print</xr:Ref>",
+             <xr:Ref>StdPicture.Print</xr:Ref><xr:Value name=\"Role.Админ\">false</xr:Value>\
+             <CommandName>CommonCommand.Печать</CommandName>\
+             <xr:Value xsi:type=\"xr:DesignTimeRef\">Enum.Виды.EnumValue.Первый</xr:Value>\
+             <CommandName>DataProcessor.Б.Command.Свой</CommandName>",
+            "DataProcessor.Б",
             &mut found,
         );
         assert_eq!(
             found.into_iter().collect::<Vec<_>>(),
             [
                 "Catalog.Банки",
+                "CommonCommand.Печать",
                 "CommonPicture.Лого",
+                "Enum.Виды",
+                "Role.Админ",
                 "cfg:CatalogRef.Валюты"
             ]
         );
+    }
+
+    /// The three refusals the review found on the Vanessa Automation
+    /// plugins: each builds, and exports back the same, without the check.
+    #[test]
+    fn a_path_inside_a_text_or_a_kind_type_set_is_no_reference() {
+        let mut found = BTreeSet::new();
+        references_in(
+            "<v8:content>ExchangePlan.%1 не найден</v8:content>\
+             <v8:content>e1cib/data/Catalog.Catalog1?ref=00000000</v8:content>\
+             <v8:TypeSet>cfg:CatalogRef</v8:TypeSet>\
+             <v8:Type>cfg:ExternalDataSourceTableRef.Источник.Таблица</v8:Type>",
+            "DataProcessor.Б",
+            &mut found,
+        );
+        assert_eq!(
+            found.into_iter().collect::<Vec<_>>(),
+            ["cfg:ExternalDataSourceTableRef.Источник.Таблица"]
+        );
+    }
+
+    #[test]
+    fn a_root_named_like_a_seed_child_keeps_its_name() {
+        let target = Identity {
+            name: "Число".into(),
+            ..target()
+        };
+        let text = "{\"ТестОбработка\",\"Число\",\"Форма\"}";
+        assert_eq!(
+            rekeyed(text, &PROCESSOR, &target, &[]),
+            "{\"Число\",\"ibcmdSeedChild4\",\"ibcmdSeedChild0\"}"
+        );
+    }
+
+    /// The constants name the seeds' own identities: a replaced seed package
+    /// fails here, not in a build.
+    #[test]
+    fn the_seed_identities_are_the_seeds_own() {
+        let scratch =
+            std::env::temp_dir().join(format!("ibcmd-rs-seed-identities-{}", std::process::id()));
+        fs::create_dir_all(&scratch).unwrap();
+        for (seed, file) in [(&PROCESSOR, "seed.epf"), (&REPORT, "seed.erf")] {
+            let path = scratch.join(file);
+            fs::write(&path, seed.bytes).unwrap();
+            let (archive, _) = compiled::decode_base(&path).unwrap();
+            let main = archive
+                .image()
+                .entries()
+                .iter()
+                .find(|entry| entry.logical_key().as_str() == seed.uuid)
+                .expect("the seed's main row is keyed by its uuid");
+            let text = String::from_utf8(inflate_raw(main.packed_payload()).unwrap()).unwrap();
+            for id in [seed.object_id, seed.type_id, seed.value_id] {
+                assert!(text.contains(id), "{} names no {id}", seed.tag);
+            }
+            let every = archive
+                .image()
+                .entries()
+                .iter()
+                .filter_map(|entry| inflate_raw(entry.packed_payload()).ok())
+                .filter_map(|plain| String::from_utf8(plain).ok())
+                .collect::<String>();
+            assert!(text.contains(&format!("\"{}\"", seed.name)));
+            for name in seed.children {
+                assert!(
+                    every.contains(&format!("\"{name}\"")),
+                    "{} names no {name}",
+                    seed.tag
+                );
+            }
+        }
+        let _ = fs::remove_dir_all(&scratch);
     }
 }
