@@ -43,7 +43,9 @@ pub fn enum_owner_upgrade(revision: &str, members: usize) -> Option<OwnerRecordU
 pub fn history_owner_upgrade(revision: &str, members: usize) -> Option<OwnerRecordUpgrade> {
     let (target_revision, appended_members) = match (revision, members) {
         ("29", 47) => ("30", ",0,0"),
-        ("54", 59) => ("56", ",0,0"),
+        // ЗУП 3.1.18: eight catalogs of revision 55 end where revision 56
+        // appends its last two zero slots, as 54 does (`УслугиСервиса`).
+        ("54" | "55", 59) => ("56", ",0,0"),
         ("52" | "53", 58) => ("56", ",0,0,0"),
         ("46" | "47", 53) => ("56", ",2,{1,{0,0}},0,{1,2,0},0,0,0,0"),
         ("38", 51) => ("40", ",0,0"),
@@ -109,6 +111,59 @@ pub const ATTRIBUTE_WRAPPER_UPGRADES: &[AttributeWrapperUpgrade] = &[
         source_members: 5,
         target_revision: "8",
         appended_members: "",
+    },
+    // An information register attribute: revision 3 keeps the members of
+    // revision 4 (indexing, full-text search, data history): ЗУП 3.1.18
+    // `БухучетПлановыхНачислений.НеИзменятьПриОтменеНачисления` stores
+    // `0,1,1` and 8.3.27.2214 writes DontIndex/Use/Use, as БСП's revision 4
+    // `1,0,1` writes Index/DontUse/Use.
+    AttributeWrapperUpgrade {
+        collection_id: "a2207540-1400-11d6-a3c7-0050bae0a776",
+        source_revision: "3",
+        source_members: 5,
+        target_revision: "4",
+        appended_members: "",
+    },
+    // Revision 2 stores indexing and full-text search, not data history,
+    // which 8.3.27.2214 writes `Use` (ЗУП 3.1.18, 65 attributes:
+    // `ДоступныеЛицензии.ДатаИзменения` `0,1`).
+    AttributeWrapperUpgrade {
+        collection_id: "a2207540-1400-11d6-a3c7-0050bae0a776",
+        source_revision: "2",
+        source_members: 4,
+        target_revision: "4",
+        appended_members: ",1",
+    },
+    // An information register resource: revision 7 keeps indexing,
+    // full-text search and data history; revision 6 the same three (ЗУП
+    // `СлужебныеАдресныеСведения.Значение` `0,0,1`: DontIndex/DontUse/Use),
+    // revision 5 the first two, data history then `Use` (ЗУП
+    // `УсловияОплатыОтпускаПоУходуЗаРебенкомИспр.СреднийДневнойЗаработок`).
+    AttributeWrapperUpgrade {
+        collection_id: "13134202-f60b-11d5-a3c7-0050bae0a776",
+        source_revision: "6",
+        source_members: 5,
+        target_revision: "7",
+        appended_members: "",
+    },
+    AttributeWrapperUpgrade {
+        collection_id: "13134202-f60b-11d5-a3c7-0050bae0a776",
+        source_revision: "5",
+        source_members: 4,
+        target_revision: "7",
+        appended_members: ",1",
+    },
+    // An information register dimension: revision 9 stores master, main
+    // filter, indexing, deny-incomplete, full-text search and data history;
+    // revision 6 all but the last, which 8.3.27.2214 writes `Use` (ЗУП
+    // `УсловияОплатыОтпускаПоУходуЗаРебенкомИспр.Организация` `0,1,0,1,1`:
+    // false/true/DontIndex/true/Use).
+    AttributeWrapperUpgrade {
+        collection_id: "13134203-f60b-11d5-a3c7-0050bae0a776",
+        source_revision: "6",
+        source_members: 7,
+        target_revision: "9",
+        appended_members: ",1",
     },
 ];
 
@@ -220,6 +275,36 @@ mod tests {
         assert!(!LegacyMetadataRecordLayout::command_picture("4", 8));
         assert!(!LegacyMetadataRecordLayout::common_command_envelope("2", 3));
     }
+    #[test]
+    fn older_register_children_and_catalog_owners_have_upgrades() {
+        let wrapper = |collection: &str, revision: &str, members: usize| {
+            ATTRIBUTE_WRAPPER_UPGRADES.iter().find(|upgrade| {
+                upgrade.collection_id == collection && upgrade.accepts(revision, members, "{27,x}")
+            })
+        };
+        let attribute = "a2207540-1400-11d6-a3c7-0050bae0a776";
+        let resource = "13134202-f60b-11d5-a3c7-0050bae0a776";
+        let dimension = "13134203-f60b-11d5-a3c7-0050bae0a776";
+        for (collection, revision, members, target, appended) in [
+            (attribute, "3", 5, "4", ""),
+            (attribute, "2", 4, "4", ",1"),
+            (resource, "6", 5, "7", ""),
+            (resource, "5", 4, "7", ",1"),
+            (dimension, "6", 7, "9", ",1"),
+        ] {
+            let upgrade = wrapper(collection, revision, members).unwrap();
+            assert_eq!(
+                (upgrade.target_revision, upgrade.appended_members),
+                (target, appended)
+            );
+        }
+        let catalog = history_owner_upgrade("55", 59).unwrap();
+        assert_eq!(
+            (catalog.target_revision, catalog.appended_members),
+            ("56", ",0,0")
+        );
+    }
+
     #[test]
     fn script_and_run_mode_coordinates_are_independent() {
         assert_ne!(
