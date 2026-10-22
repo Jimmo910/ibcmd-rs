@@ -115,6 +115,7 @@ impl DumpInfo {
         // The local names of the open elements, the root first.
         let mut open = Vec::<String>::new();
         let mut root_seen = false;
+        let mut versions_seen = false;
         loop {
             let event = reader.read_event_into(&mut buffer).map_err(|error| {
                 anyhow!("XML parse error at {}: {error}", reader.error_position())
@@ -148,6 +149,12 @@ impl DumpInfo {
                     let attributes = attributes(start)?;
                     info.layout = attributes.get("format").cloned();
                     info.format_version = attributes.get("version").cloned();
+                }
+                1 if name == "ConfigVersions" => {
+                    if versions_seen {
+                        bail!("the file lists ConfigVersions twice");
+                    }
+                    versions_seen = true;
                 }
                 2 if name == "Metadata" && open[1] == "ConfigVersions" => {
                     let mut attributes = attributes(start)?;
@@ -183,6 +190,9 @@ impl DumpInfo {
         }
         if !root_seen {
             bail!("the file holds no <ConfigDumpInfo>");
+        }
+        if !versions_seen {
+            bail!("the file holds no <ConfigVersions>");
         }
         Ok(info)
     }

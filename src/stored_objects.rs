@@ -705,15 +705,39 @@ impl Inventory {
 
 /// The rows of the named objects, read through the view the caller (the
 /// export, for `mssql-dump-config --object`) has begun.
-pub(crate) fn stored_rows_of(
+pub(crate) fn stored_rows_selected(
     table: &ConfigTable<'_>,
     names: &[String],
+    recursive: Option<bool>,
 ) -> Result<BTreeSet<String>> {
     let mut inventory = Inventory::read(table, table.names()?)?;
     let mut rows = BTreeSet::new();
     for name in names {
         let object = inventory.resolve(table, name)?;
-        rows.extend(inventory.rows_of(table, &object)?);
+        if recursive.unwrap_or(true) {
+            rows.extend(inventory.rows_of(table, &object)?);
+            if object.kind == "Configuration" && recursive == Some(true) {
+                for (kind, _) in inventory.kinds() {
+                    inventory.name_kind(table, kind)?;
+                }
+                let top = inventory
+                    .top
+                    .iter()
+                    .filter_map(|(_, id)| inventory.objects.get(id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for child in top {
+                    rows.extend(inventory.rows_of(table, &child)?);
+                }
+            }
+        } else {
+            inventory.rows_under(&object.uuid, &mut rows);
+            if object.kind == "Configuration" {
+                for id in inventory.contained.clone() {
+                    inventory.rows_under(&id, &mut rows);
+                }
+            }
+        }
     }
     Ok(rows)
 }
@@ -885,6 +909,20 @@ impl StoredConfiguration {
         }
     }
 
+    /// Native ConfigDumpInfo of the main configuration (completed ConfigSave
+    /// included), for native version status. Does not replace `status`, which
+    /// compares exported bytes with a source folder.
+    pub fn native_config_dump_info(&mut self) -> Result<Vec<u8>> {
+        let _engine = engine();
+        let mut args = export_args(&self.source, self.platform, Vec::new());
+        args.main_configuration = true;
+        let sql = match &self.source {
+            ConfigSource::Database { sql, .. } => Some(sql.clone()),
+            _ => None,
+        };
+        crate::mssql_dump::read_config_dump_info_with_sql(&args, sql)
+    }
+
     /// The children of a node of the tree (`None`: the configuration).
     pub fn children(&mut self, node: Option<&str>) -> Result<Vec<TreeNode>> {
         let _engine = engine();
@@ -1014,6 +1052,7 @@ impl StoredConfiguration {
             &args,
             DumpHooks {
                 sql,
+                object_recursion: None,
                 sink: Some(sink.clone()),
             },
         )?;

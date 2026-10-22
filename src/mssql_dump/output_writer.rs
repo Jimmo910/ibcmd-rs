@@ -48,6 +48,10 @@ const MAX_QUEUED_JOBS: usize = 8192;
 /// it to, on the writer threads (or the calling one), so it must be cheap to
 /// share. An error fails the export like a failed write does.
 pub(crate) trait FileSink: Send + Sync {
+    /// Read the inventory without converting any object body.
+    fn inventory_only(&self) -> bool {
+        false
+    }
     fn accept(&self, path: &Path, bytes: &[u8]) -> Result<()>;
 }
 
