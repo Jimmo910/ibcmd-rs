@@ -27,6 +27,13 @@ pub struct SourceInventoryLimits {
     pub max_total_bytes: u64,
 }
 
+/// Optional traversal bounds retained by held custody and every revalidation.
+#[derive(Clone, Copy, Debug)]
+pub struct SourceTraversalLimits {
+    pub max_entries: usize,
+    pub max_depth: usize,
+}
+
 impl Default for SourceInventoryLimits {
     fn default() -> Self {
         Self {
@@ -180,6 +187,7 @@ pub struct HeldSourceRoot {
     canonical_root: PathBuf,
     baseline: SourceInventory,
     admission: CensusAdmission,
+    traversal: Option<SourceTraversalLimits>,
     anchor: Arc<RootAnchor>,
     consumed: Mutex<BTreeMap<String, ConsumedSourceFile>>,
 }
@@ -210,6 +218,27 @@ impl HeldSourceRoot {
             canonical_root,
             CensusAdmission::CallerBudget(limits),
             &BTreeSet::new(),
+            None,
+        )
+    }
+
+    /// Bound actual custody capture, including directory-only trees. These
+    /// bounds also apply to final census and all later captures.
+    pub fn open_with_traversal_limits(
+        root: &Path,
+        limits: SourceInventoryLimits,
+        traversal: SourceTraversalLimits,
+    ) -> Result<Self, SourceChangeError> {
+        validate_limits(limits)?;
+        if traversal.max_entries == 0 || traversal.max_depth == 0 {
+            return Err(SourceChangeError::InvalidInventoryLimits);
+        }
+        Self::open_with_admission(
+            root,
+            canonical_directory(root)?,
+            CensusAdmission::CallerBudget(limits),
+            &BTreeSet::new(),
+            Some(traversal),
         )
     }
 
@@ -218,14 +247,16 @@ impl HeldSourceRoot {
         canonical_root: PathBuf,
         admission: CensusAdmission,
         retained: &BTreeSet<String>,
+        traversal: Option<SourceTraversalLimits>,
     ) -> Result<Self, SourceChangeError> {
         let anchor = RootAnchor::open(&canonical_root)?;
-        let baseline = capture_inventory(&anchor, admission, retained)?;
+        let baseline = capture_inventory(&anchor, admission, retained, traversal)?;
         Ok(Self {
             requested_root: root.to_owned(),
             canonical_root,
             baseline,
             admission,
+            traversal,
             anchor,
             consumed: Mutex::new(BTreeMap::new()),
         })
@@ -241,6 +272,7 @@ impl HeldSourceRoot {
             canonical_directory(root)?,
             CensusAdmission::OriginalSource,
             &candidate_retention_paths(&selected),
+            None,
         )
     }
 
@@ -252,6 +284,7 @@ impl HeldSourceRoot {
             canonical_directory(root)?,
             CensusAdmission::OriginalSource,
             &BTreeSet::new(),
+            None,
         )
     }
 
@@ -427,7 +460,12 @@ impl HeldSourceRoot {
         if !held_root_paths_equal(&current_root, &self.canonical_root) {
             return Err(SourceChangeError::HeldRootChanged);
         }
-        capture_inventory(&self.anchor, self.admission, &BTreeSet::new())
+        capture_inventory(
+            &self.anchor,
+            self.admission,
+            &BTreeSet::new(),
+            self.traversal,
+        )
     }
 
     pub fn classify_current(
@@ -448,7 +486,7 @@ impl HeldSourceRoot {
         // a retargeted ancestor must never supply selected-path authority.
         let selected = resolve_selected_path(&self.canonical_root, selected_path)?;
         let retention = candidate_retention_paths(&selected);
-        let current = capture_inventory(&self.anchor, self.admission, &retention)?;
+        let current = capture_inventory(&self.anchor, self.admission, &retention, self.traversal)?;
         classify_source_change(&self.baseline, &current, &selected, target, mode)
     }
 }
@@ -1204,15 +1242,38 @@ fn capture_inventory(
     anchor: &Arc<RootAnchor>,
     admission: CensusAdmission,
     retain_bytes: &BTreeSet<String>,
+    traversal: Option<SourceTraversalLimits>,
 ) -> Result<SourceInventory, SourceChangeError> {
     let mut files = Vec::new();
     let mut total = 0_u64;
     let mut identities = BTreeSet::new();
     let mut directory_spellings = BTreeMap::<String, String>::new();
-    for entry in WalkDir::new(&anchor.path).follow_links(false) {
+    let mut entries = 0usize;
+    // The extra level is visited only to reject it; never silently truncate a
+    // census at max_depth and accidentally authorize an incomplete tree.
+    let walker = WalkDir::new(&anchor.path)
+        .follow_links(false)
+        // WalkDir closes old iterators by eagerly collecting their remainder.
+        // Keep every admitted ancestor open so hidden allocation cannot run
+        // ahead of the per-entry budget/cancellation checks.
+        .max_open(traversal.map_or(10, |limits| limits.max_depth.saturating_add(2)))
+        .max_depth(traversal.map_or(usize::MAX, |limits| limits.max_depth.saturating_add(1)));
+    for entry in walker {
+        crate::cancel::check().map_err(|error| SourceChangeError::Io(error.to_string()))?;
         let entry = entry.map_err(|error| SourceChangeError::Io(error.to_string()))?;
         if entry.path() == anchor.path {
             continue;
+        }
+        entries = entries
+            .checked_add(1)
+            .ok_or(SourceChangeError::InventoryLimit("entry count overflow"))?;
+        if let Some(limits) = traversal {
+            if entries > limits.max_entries {
+                return Err(SourceChangeError::InventoryLimit("directory entry count"));
+            }
+            if entry.depth() > limits.max_depth {
+                return Err(SourceChangeError::InventoryLimit("directory depth"));
+            }
         }
         if entry.file_type().is_symlink() || path_has_reparse_attribute(entry.path())? {
             return Err(SourceChangeError::LinkOrReparsePoint(
@@ -2624,3 +2685,63 @@ mod tests {
 
 #[cfg(test)]
 mod original_source_tests;
+
+#[cfg(test)]
+mod traversal_budget_tests {
+    use super::*;
+    fn root() -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("held-source-budget-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        root
+    }
+    #[test]
+    fn empty_directory_growth_is_bounded_during_initial_and_final_capture() {
+        let root = root();
+        let limits = SourceTraversalLimits {
+            max_entries: 2,
+            max_depth: 4,
+        };
+        let held = HeldSourceRoot::open_with_traversal_limits(
+            &root,
+            SourceInventoryLimits::default(),
+            limits,
+        )
+        .unwrap();
+        for name in ["one", "two", "three"] {
+            fs::create_dir(root.join(name)).unwrap();
+        }
+        assert!(matches!(
+            held.require_unchanged(),
+            Err(SourceChangeError::InventoryLimit("directory entry count"))
+        ));
+        assert!(matches!(
+            HeldSourceRoot::open_with_traversal_limits(
+                &root,
+                SourceInventoryLimits::default(),
+                limits
+            ),
+            Err(SourceChangeError::InventoryLimit("directory entry count"))
+        ));
+        // Legacy callers retain their existing admission, independently of the
+        // additive untrusted-consumer traversal controls.
+        assert!(HeldSourceRoot::open(&root, SourceInventoryLimits::default()).is_ok());
+    }
+    #[test]
+    fn depth_limit_refuses_instead_of_truncating_the_census() {
+        let root = root();
+        fs::create_dir_all(root.join("one/two/three")).unwrap();
+        let limits = SourceTraversalLimits {
+            max_entries: 100,
+            max_depth: 2,
+        };
+        assert!(matches!(
+            HeldSourceRoot::open_with_traversal_limits(
+                &root,
+                SourceInventoryLimits::default(),
+                limits
+            ),
+            Err(SourceChangeError::InventoryLimit("directory depth"))
+        ));
+    }
+}

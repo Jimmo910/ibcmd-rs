@@ -209,7 +209,15 @@ pub fn prepare_guarded(
     guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
 ) -> Result<Plan> {
     crate::stored_objects::exclusive(|| {
-        prepare_locked(target, source, selection, platform, guard, None)
+        prepare_locked(
+            target,
+            source,
+            selection,
+            platform,
+            guard,
+            None,
+            SourceInventoryLimits::default(),
+        )
     })
 }
 /// Bounded prepare for untrusted consumers. Identity/policy is checked on the
@@ -224,6 +232,28 @@ pub fn prepare_guarded_with_limits(
     guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
     read_control: ReadControl,
 ) -> Result<Plan> {
+    prepare_guarded_with_source_limits(
+        target,
+        source,
+        selection,
+        platform,
+        guard,
+        read_control,
+        SourceInventoryLimits::default(),
+    )
+}
+
+/// Also bound source materialization within the shared held-source reader.
+/// A caller's earlier census alone cannot enforce this across filesystem races.
+pub fn prepare_guarded_with_source_limits(
+    target: &Path,
+    source: &Path,
+    selection: &Selection,
+    platform: PlatformSpec,
+    guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
+    read_control: ReadControl,
+    source_limits: SourceInventoryLimits,
+) -> Result<Plan> {
     crate::stored_objects::exclusive(|| {
         prepare_locked(
             target,
@@ -232,6 +262,7 @@ pub fn prepare_guarded_with_limits(
             platform,
             guard,
             Some(read_control),
+            source_limits,
         )
     })
 }
@@ -249,6 +280,7 @@ fn prepare_locked(
     platform: PlatformSpec,
     guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
     read_control: Option<ReadControl>,
+    source_limits: SourceInventoryLimits,
 ) -> Result<Plan> {
     crate::cancel::check()?;
     let modes = usize::from(!selection.files.is_empty())
@@ -257,7 +289,18 @@ fn prepare_locked(
     if modes != 1 {
         bail!("choose exactly one import selection: files, objects or changed");
     }
-    let source = HeldSourceRoot::open(source, SourceInventoryLimits::default())?;
+    let source = if read_control.is_some() {
+        HeldSourceRoot::open_with_traversal_limits(
+            source,
+            source_limits,
+            crate::mssql_source_change::SourceTraversalLimits {
+                max_entries: source_limits.max_files,
+                max_depth: 64,
+            },
+        )?
+    } else {
+        HeldSourceRoot::open(source, source_limits)?
+    };
     let target = fs::canonicalize(ibcmd_filedb::data_file(target)).context("file import target")?;
     let mut session = open_session(&target, read_control.as_ref(), guard)?;
     let snapshot = session.snapshot()?;
