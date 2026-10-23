@@ -363,7 +363,13 @@ export class XmlSource implements Source {
   }
   async read(file: string, signal: AbortSignal): Promise<Buffer | undefined> {
     const target = localPath(this.directory, file);
-    const realRoot = await fs.realpath(this.directory);
+    let realRoot: string;
+    try {
+      realRoot = await fs.realpath(this.directory);
+    } catch (e: any) {
+      if (e.code === "ENOENT") return;
+      throw e;
+    }
     let real: string;
     try {
       real = await fs.realpath(target);

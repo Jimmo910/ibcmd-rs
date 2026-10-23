@@ -124,9 +124,10 @@ code --extensionDevelopmentPath="$PWD" \
   --extensions-dir="$IBCMD_TEST_ROOT/manual-extensions" /path/to/workspace
 ```
 
-Object trees, export/import/apply UI, VSIX/Marketplace delivery and live SQL
-verification are outside this connection-only candidate.
-# Дерево конфигурации
+Команды выгрузки, загрузки и применения, распространение VSIX и проверка
+на работающем SQL Server остаются отдельными задачами.
+
+## Дерево конфигурации
 
 Представление «Конфигурация 1С» находится в проводнике. После подключения оно
 показывает базу; команда `ibcmd.tree.xml` открывает каталог штатной XML-выгрузки.
