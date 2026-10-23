@@ -403,7 +403,7 @@ pub(crate) fn designer_dcs_localized(local: &str, p: &PropertyValue) -> Option<O
 /// ПЕРЕИСПОЛЬЗУЕТСЯ EDT-сайдкаром `ListSettings.dcss` ([`super::super::dcss`]) — он снимает префикс
 /// `dcsset:` с этого дерева и оборачивает его в корень `<Settings>` (один writer на оба локуса).
 pub(crate) fn designer_list_settings(ls: &DcsListSettings) -> OutElement {
-    if *ls == DcsListSettings::default() {
+    if ls.is_empty() {
         return OutElement::self_closing("", "ListSettings");
     }
     let mut el = OutElement::branch("", "ListSettings");

@@ -86,7 +86,8 @@
     "DesignRecord validation binds the already-native current chart counterpart before restoring separate Enum/Value records; dotted literal payloads and unrelated projected values are never projected twice",
     "CURRENT DynamicList availability includes effective main-table CommonAttributes with content/autoUse/separation and family-specific SDK policies; calculated-field availability consumes CURRENT Configuration compatibility >8.3.18, with root mode and common definitions in dependency digests",
     "CURRENT chart design projection retains validated Designer names-only factory presence while replacing values with freshly computed native defaults; EDT hidden source spelling is cleared",
-    "Witnessed current EDT LF form framing is a source-only lexical facet; declaration-bound verbatim text retains explicit carriage-return edits while legacy CRLF defaults and native envelope validation remain unchanged"
+    "Witnessed current EDT LF form framing is a source-only lexical facet; declaration-bound verbatim text retains explicit carriage-return edits while legacy CRLF defaults and native envelope validation remain unchanged",
+    "Witnessed current EDT ListSettings.dcss LF framing is a source-only lexical facet with verbatim typed text; legacy CRLF emission, semantic emptiness and native empty ListSettings self-closing spelling remain unchanged"
   ],
   "files": [
     {
@@ -135,7 +136,7 @@
     },
     {
       "path": "crates/core/src/ir/form/dcs.rs",
-      "sha256": "356dcb0ad6d57b86981d924a223a039d8ba85633c164f8f5aa196cf31e80d1bc"
+      "sha256": "c3d6af468525fedeb9fcd6f80ea53d68003d9de8e81f8bbb81ac086af1f7f466"
     },
     {
       "path": "crates/core/src/ir/form/decorations.rs",
@@ -1687,7 +1688,7 @@
     },
     {
       "path": "crates/formats-xml/src/form/dcss/list_settings.rs",
-      "sha256": "acdf829740440bec11cc4e46791c0b9f28229c67410ea2d89ee070424ce8eced"
+      "sha256": "bd0cd4258d74f1f2f657fae3308d33fbc4604c89875c5b08c6413f9a323e924f"
     },
     {
       "path": "crates/formats-xml/src/form/dcss/mod.rs",
@@ -1791,7 +1792,7 @@
     },
     {
       "path": "crates/formats-xml/src/form/read/dcs_settings.rs",
-      "sha256": "cdc7b2d0fc70dc4f6ef2b30f6b4fcffdfed8ddabc85dafabf24b372dd4c2905c"
+      "sha256": "04dbaf6dc84020ba0b70cc47828532b3f8e46584c74b5b0ae62dafc6b585df7c"
     },
     {
       "path": "crates/formats-xml/src/form/read/designer.rs",
@@ -1903,7 +1904,7 @@
     },
     {
       "path": "crates/formats-xml/src/form/write/designer_dcs.rs",
-      "sha256": "ce6bb887f6295eda8963e45a1272920bdb42fce42e50029859c002e66dabcaef"
+      "sha256": "bf4b316fbbb4f5940f7493bc0bcc08ef36e825b17aa06e49898e137f915ac850"
     },
     {
       "path": "crates/formats-xml/src/form/write/edt.rs",
