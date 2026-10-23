@@ -2497,7 +2497,9 @@ fn dump_config_inner(
                         "--file-infobase publishes the main configuration; drop --include-config-save"
                     );
                 }
-                Some(offline_rows::activate_shared(file_infobase::read_rows(path)?)?)
+                Some(offline_rows::activate_shared(file_infobase::read_rows(
+                    path,
+                )?)?)
             }
             (None, None) => {
                 if args.database.trim().is_empty() {

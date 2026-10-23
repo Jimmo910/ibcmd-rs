@@ -123,7 +123,8 @@ code --extensionDevelopmentPath="$PWD" \
   --extensions-dir="$IBCMD_TEST_ROOT/manual-extensions" /path/to/workspace
 ```
 
-Export/import/apply UI and live SQL verification belong to separate work.
+Import, apply, selective export and packaged installation are described below.
+Live SQL verification remains an independent acceptance gate.
 
 ## Object status (#380)
 
@@ -132,7 +133,8 @@ an existing connection, configure the source and reference for that workspace
 folder, then run **Refresh Object Status**. **Reload Connections and Refresh
 Status** also refreshes objects after reconnecting. The toolbar toggles **Changed
 Objects Only**; unknown remains visible. Matching source files receive Explorer
-badges. This does not implement #379's full metadata browser or ERP performance work.
+badges. The separate configuration browser is described below; representative
+ERP performance remains an acceptance gate.
 
 ```json
 {
@@ -331,18 +333,6 @@ tiny database. The standard host runner gives it a fresh profile/workspace below
 `IBCMD_TEST_ROOT`; all fixtures and staging evidence are retained for Trash cleanup.
 ERP UH document latency and SQL acceptance require separate representative lab
 fixtures; the tiny public test does not establish those results.
-Edit Connection supports SQL and read-only rows-directory entries. An omitted server
-stays omitted so normal `db-server`/environment resolution still applies. Copying an
-inherited rows-directory entry keeps its resolved source directory. File databases
-and unknown source types are excluded from this editor; edit their settings using
-the appropriate source-specific tooling instead.
-
-Edit Connection supports SQL and read-only rows-directory entries. An omitted server
-stays omitted so normal `db-server`/environment resolution still applies. Copying an
-inherited rows-directory entry keeps its resolved source directory. File databases
-and unknown source types are excluded from this editor; edit their settings using
-the appropriate source-specific tooling instead.
-
 ### Selected and changed import (#382)
 
 For a Unix file database, add a fixed `[[database]]` entry with `db-path` in

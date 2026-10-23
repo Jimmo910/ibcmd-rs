@@ -33,7 +33,7 @@ impl StoredConfiguration {
         let view = self.main_view_mut();
         progress(0, 4, "editor export: read inventory");
         let read_scope = match &view.source {
-            ConfigSource::FileDb(path) => {
+            ConfigSource::FileDb(path) if view.rows_snapshot.is_none() => {
                 let _engine = engine();
                 Some(crate::mssql_dump::FileDbReadScope::begin(path)?)
             }

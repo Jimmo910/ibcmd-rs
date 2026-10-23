@@ -936,6 +936,7 @@ impl StoredConfiguration {
     /// Separate cache/view for native main-state reads. Legacy active-state readers stay unchanged.
     pub fn main_view(&self) -> Self {
         let mut view = Self::new(self.source.clone(), self.platform);
+        view.rows_snapshot = self.rows_snapshot.clone();
         view.main_configuration = true;
         view
     }
@@ -1020,7 +1021,7 @@ impl StoredConfiguration {
             ConfigSource::Database { sql, .. } => Some(sql.clone()),
             _ => None,
         };
-        crate::mssql_dump::read_config_dump_info_with_sql(&args, sql)
+        crate::mssql_dump::read_config_dump_info_with_sql(&args, sql, self.rows_snapshot.clone())
     }
 
     /// The children of a node of the tree (`None`: the configuration).
@@ -1625,6 +1626,151 @@ pub fn require_database(source: &ConfigSource, what: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn immutable_snapshot_after_rebinding() -> (StoredConfiguration, PathBuf) {
+        use std::io::Read;
+        let root = std::env::temp_dir().join(format!("derived-snapshot-{}", uuid::Uuid::new_v4()));
+        let db = root.join("db");
+        fs::create_dir_all(&db).unwrap();
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase/tiny.1CD.gz");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(fixture).unwrap())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+        let rows = exclusive(|| {
+            crate::mssql_dump::with_file_db_table(&db, |table| table.rows(&table.names()?))
+        })
+        .unwrap()
+        .into_iter()
+        .map(|(name, bytes)| (name, Arc::new(bytes)))
+        .collect();
+        let configuration = StoredConfiguration::from_rows_snapshot(
+            ConfigSource::FileDb(db.clone()),
+            crate::platform::parse("8.5.1").unwrap(),
+            rows,
+        );
+        fs::rename(db.join("1Cv8.1CD"), root.join("preserved.1CD")).unwrap();
+        fs::write(db.join("1Cv8.1CD"), b"replacement must never be opened").unwrap();
+        (configuration, root)
+    }
+
+    fn isolated_snapshot_test(name: &str) -> bool {
+        const CHILD: &str = "IBCMD_DERIVED_SNAPSHOT_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            return false;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("test result: ok. 1 passed; 0 failed;"),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        true
+    }
+
+    #[test]
+    fn derived_main_views_keep_immutable_rows_after_source_rebinding() {
+        if isolated_snapshot_test(
+            "stored_objects::tests::derived_main_views_keep_immutable_rows_after_source_rebinding",
+        ) {
+            return;
+        }
+        let (mut active, root) = immutable_snapshot_after_rebinding();
+        let children = active.children(None).unwrap();
+        let names = vec!["CommonModule.ФайловаяБазаПроверка".into()];
+        let progress = |_, _, _: &str| {};
+        let expected = active.export(&names, &progress).unwrap().remove(0);
+        let mut standalone = active.main_view();
+        assert_eq!(
+            serde_json::to_value(standalone.children(None).unwrap()).unwrap(),
+            serde_json::to_value(&children).unwrap()
+        );
+        let first = active
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        assert_eq!(first.files, expected.files);
+        assert!(
+            !Arc::ptr_eq(&first, &expected),
+            "main/active caches stay separate"
+        );
+        active.main_view_mut().children(None).unwrap();
+        let second = active
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "main cache keeps immutable export"
+        );
+        let nested = standalone
+            .main_view()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        assert_eq!(nested.files, expected.files);
+        assert_eq!(
+            fs::read(root.join("db/1Cv8.1CD")).unwrap(),
+            b"replacement must never be opened"
+        );
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn native_inventory_keeps_immutable_rows_after_source_rebinding() {
+        if isolated_snapshot_test(
+            "stored_objects::tests::native_inventory_keeps_immutable_rows_after_source_rebinding",
+        ) {
+            return;
+        }
+        let (mut active, root) = immutable_snapshot_after_rebinding();
+        let inventory = active.native_config_dump_info().unwrap();
+        assert!(crate::native_export_status::ConfigDumpInfoSnapshot::parse(&inventory).is_ok());
+        assert_eq!(
+            active.main_view_mut().native_config_dump_info().unwrap(),
+            inventory
+        );
+        assert_eq!(
+            active.main_view().native_config_dump_info().unwrap(),
+            inventory
+        );
+        let source = root.join("source");
+        let stage = root.join("stage");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&stage).unwrap();
+        let plan = active
+            .prepare_editor_export(
+                &["CommonModule.ФайловаяБазаПроверка".into()],
+                false,
+                &source,
+                &stage,
+                &|_, _, _| {},
+            )
+            .unwrap();
+        assert!(
+            !plan.files.is_empty(),
+            "snapshot supplies selected staged files"
+        );
+        assert!(plan.files.iter().any(|path| path.ends_with("Module.bsl")));
+        assert_eq!(
+            fs::read(root.join("db/1Cv8.1CD")).unwrap(),
+            b"replacement must never be opened"
+        );
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
 
     #[test]
     fn main_view_reuses_exports_separately_and_invalidates_on_versions_change() {

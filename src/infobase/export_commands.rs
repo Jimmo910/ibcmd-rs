@@ -160,6 +160,7 @@ pub fn objects(args: &InfobaseConfigExportArgs, names: &[String], recursive: boo
     dump_config_with(
         &dump,
         DumpHooks {
+            rows_snapshot: None,
             sql: None,
             sink: Some(Arc::new(ObjectSink { root })),
             object_recursion: Some(recursive),

@@ -779,11 +779,6 @@ export async function activate(context: vscode.ExtensionContext) {
       });
       if (password === undefined) return;
     }
-    const local = readLocal(expected, old?.id);
-    if (old?.source === "rows-dir" && !local && !old.rowsDir)
-      throw new Error(
-        "Inherited rows directory is missing; reload before editing",
-      );
     const database: Database = {
       ...(server?.trim() ? { server: server.trim() } : {}),
       name: name.trim(),

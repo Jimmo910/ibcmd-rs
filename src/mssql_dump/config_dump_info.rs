@@ -1303,12 +1303,13 @@ impl FileSink for InventorySink {
 /// are written. `main_configuration` selects completed ConfigSave over Config;
 /// this does not change the editor's custom byte-diff or raw Config APIs.
 pub fn read_config_dump_info(args: &MssqlDumpConfigArgs) -> Result<Vec<u8>> {
-    read_config_dump_info_with_sql(args, None)
+    read_config_dump_info_with_sql(args, None, None)
 }
 
 pub(crate) fn read_config_dump_info_with_sql(
     args: &MssqlDumpConfigArgs,
     sql: Option<crate::sql::SqlExec>,
+    rows_snapshot: Option<Arc<BTreeMap<String, Arc<Vec<u8>>>>>,
 ) -> Result<Vec<u8>> {
     if args.runtime_journal.is_some()
         || args.inflate
@@ -1330,6 +1331,7 @@ pub(crate) fn read_config_dump_info_with_sql(
         args,
         DumpHooks {
             sql,
+            rows_snapshot,
             sink: Some(sink.clone()),
             object_recursion: None,
             native_versions: false,
