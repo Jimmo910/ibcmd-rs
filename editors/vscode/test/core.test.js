@@ -245,3 +245,16 @@ test("clearing an explicit server preserves its TOML comments", () => {
   assert.equal(readConfig(edited)[0].server, undefined);
   assert.ok(edited.includes("# keep server explanation"));
 });
+
+test("a missing executable rejects initialize and reports one transport crash", async () => {
+  let crashes = 0;
+  const client = new RpcClient(
+    path.join(__dirname, "missing-ibcmd-fixture"),
+    __dirname,
+    () => crashes++,
+    [],
+  );
+  await assert.rejects(client.request("initialize"));
+  await client.dispose();
+  assert.equal(crashes, 1);
+});
