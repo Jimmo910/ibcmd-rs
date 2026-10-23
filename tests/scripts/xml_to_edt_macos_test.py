@@ -1,0 +1,267 @@
+"""Synthetic negative controls only: no installed EDT acceptance is claimed.
+
+Fixtures are retained; the lab runner sets TMPDIR to the external disk.
+"""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import subprocess
+from types import SimpleNamespace
+import unittest
+from unittest.mock import Mock, patch
+
+sys.dont_write_bytecode = True
+source = Path(__file__).resolve().parents[2] / "scripts/edt-lab/xml_to_edt_macos.py"
+spec = importlib.util.spec_from_file_location("forward_edt", source)
+lab = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(lab)
+
+
+def write(path, content=b"fixture"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+
+
+def project(root, runtime="8.5.1"):
+    for name, content in ((".project", b"synthetic"), ("DT-INF/PROJECT.PMF", f"Runtime-Version: {runtime}\n".encode()),
+                          ("src/Configuration/Configuration.mdo", b"synthetic")):
+        write(root / name, content)
+
+
+class Controls(unittest.TestCase):
+    def fixture(self):
+        root = Path(tempfile.mkdtemp(prefix="issue357-control-"))
+        native, run = root / "native", root / "run"
+        write(native / "Configuration.xml", b"original XML bytes")
+        write(native / "ConfigDumpInfo.xml", b"original dump bytes")
+        run.mkdir()
+        for name in ("ours", "edt", "java"):
+            write(root / name)
+        plugins = root / "plugins"
+        write(plugins / "model.jar", b"synthetic; never loaded")
+        manifest = {"schema_version": 1, "status": "INVENTORIED_NOT_RUNTIME_VERIFIED",
+                    "edt_cli": str(root / "edt"), "edt_cli_sha256": lab.oracle.digest(root / "edt"),
+                    "plugins": lab.oracle.snapshot(plugins),
+                    "runtime_files": [{"path": str(root / name), "bytes": (root / name).stat().st_size,
+                                       "sha256": lab.oracle.digest(root / name)} for name in ("edt", "java")]}
+        lab.oracle.write_json(root / "installation.json", manifest)
+        return SimpleNamespace(lab_root=root, edt_installation_manifest=root / "installation.json", run=run, native=native, ours_exe=root / "ours", edt_exe=root / "edt", edt_vm=root / "java",
+            source_version="2.21", edt_build="2025.2.3.30", timeout=1, heap_gib=4)
+
+    def capture(self, args, *, version=None, diagnostics=b"", mutation=None, missing_tsv=False):
+        class SyntheticCapture:
+            def __init__(self, _):
+                self.labels = []
+            def command(self, label, argv, workspace=None):
+                self.labels.append(label)
+                for suffix in ("stdout", "stderr"):
+                    write(args.run / f"{label}.{suffix}", b"")
+                return b"synthetic; never executed"
+            def edt(self, label, operation, workspace_name=None):
+                self.command(label, operation)
+                if label == "edt-version":
+                    return (version or args.edt_build).encode()
+                if label == "edt-import-native":
+                    project(args.run / "native-workspace/NativeControl", {"2.20": "8.3.27", "2.21": "8.5.1"}[args.source_version])
+                elif label in ("edt-export-native", "edt-export-generated"):
+                    target = Path(operation[operation.index("--configuration-files") + 1])
+                    write(target / "Configuration.xml", b"different" if mutation == "serializer" and label == "edt-export-generated" else b"same installed serializer")
+                elif label == "edt-validate-generated":
+                    if not missing_tsv:
+                        write(args.run / "generated-validation.tsv", diagnostics)
+                    if mutation == "workspace-error":
+                        write(args.run / f"{label}.workspace-log", b"!ENTRY org.example 4 0 2026-10-23\n!MESSAGE fail\n")
+                    if mutation in ("cli-error", "shutdown-error"):
+                        suffix = "1cedtcli.log" if mutation == "cli-error" else "1cedtcli-shutdown-hook.log"
+                        write(args.run / f"{label}.workspace-{suffix}", b"ERROR failed\n")
+                    if mutation == "stream-error":
+                        write(args.run / f"{label}.stderr", b"ERROR failed\n")
+                return b""
+            def convert(self, label, source, target, reverse=False):
+                self.command(label, [])
+                if reverse:
+                    for name in ("Configuration.xml", "ConfigDumpInfo.xml"):
+                        write(target / name, (args.native / name).read_bytes())
+                    if mutation == "changed":
+                        write(target / "Configuration.xml", b"different")
+                    if mutation == "added":
+                        write(target / "extra.xml")
+                    if mutation == "missing-dump":
+                        # Retain the file outside the returned tree; never delete.
+                        (target / "ConfigDumpInfo.xml").rename(args.run / "retained-dump")
+                    if mutation == "stripped":
+                        write(args.run / "generated-without-provenance/src/Configuration/Configuration.mdo", b"mutated")
+                    if mutation == "native":
+                        write(args.native / "Configuration.xml", b"mutated")
+                    if mutation == "generated":
+                        write(source / "src/Configuration/Configuration.mdo", b"mutated")
+                    if mutation == "tool":
+                        write(args.ours_exe, b"changed executable")
+                else:
+                    project(target, {"2.20": "8.3.27", "2.21": "8.5.1"}[args.source_version])
+                    write(target / ".ibcmd-provenance/manifest.json")
+        with patch.object(lab, "Capture", SyntheticCapture):
+            return lab.execute(args)
+
+    def test_clean_synthetic_flow_and_manifest_receipts(self):
+        args = self.fixture()
+        result = self.capture(args)
+        self.assertEqual(result["status"], "PASS")
+        self.assertTrue(all(result["gates"].values()))
+        self.assertTrue((args.run / "generated-project/.ibcmd-provenance/manifest.json").is_file())
+        self.assertFalse((args.run / "generated-without-provenance/.ibcmd-provenance").exists())
+        self.assertEqual(json.loads((args.run / "exact-return-comparison.json").read_text())["excluded_paths"], [])
+
+    def test_actual_wrong_version_stops_before_project_import(self):
+        args = self.fixture()
+        with self.assertRaisesRegex(lab.Error, "exact version mismatch"):
+            self.capture(args, version="2026.2.1.3")
+        self.assertFalse((args.run / "native-workspace").exists())
+
+    def test_source_validation_errors_unknown_and_malformed_rows_fail(self):
+        for category in ("Configuration error", "Unfamiliar", "malformed"):
+            with self.subTest(category=category):
+                args = self.fixture()
+                row = b"malformed" if category == "malformed" else (
+                    f"2026-10-23T10:00:00Z\tError\t{category}\tp\tv\to\t1\tbad\n").encode()
+                result = self.capture(args, diagnostics=row)
+                self.assertEqual(result["status"], "FAIL")
+                self.assertFalse(result["gates"]["no_source_errors_or_unknown_validation_rows"])
+
+    def test_all_exact_tree_and_immutable_gates_fail_closed(self):
+        gates = {"serializer": "same_installed_serializer_exact_tree",
+                 "stripped": "stripped_project_unchanged", "changed": "exact_original_xml_tree_including_dump_info",
+                 "added": "exact_original_xml_tree_including_dump_info",
+                 "native": "native_unchanged", "generated": "generated_project_unchanged",
+                 "tool": "tools_unchanged", "workspace-error": "no_command_or_workspace_errors",
+                 "stream-error": "no_command_or_workspace_errors",
+                 "cli-error": "no_command_or_workspace_errors",
+                 "shutdown-error": "no_command_or_workspace_errors"}
+        for mutation, gate in gates.items():
+            with self.subTest(mutation=mutation):
+                result = self.capture(self.fixture(), mutation=mutation)
+                self.assertEqual(result["status"], "FAIL")
+                self.assertFalse(result["gates"][gate])
+
+    def test_required_artifacts_cannot_be_absent(self):
+        for options in ({"missing_tsv": True}, {"mutation": "missing-dump"}):
+            with self.subTest(options=options), self.assertRaises(lab.Error):
+                self.capture(self.fixture(), **options)
+
+    def test_project_links_refused_before_copy(self):
+        args = self.fixture()
+        original = args.run / "project"
+        project(original)
+        write(original / ".ibcmd-provenance/manifest.json")
+        (original / "linked").symlink_to(args.native, target_is_directory=True)
+        with self.assertRaisesRegex(lab.Error, "Symlink"):
+            lab.copy_without_provenance(original, args.run / "copy")
+        self.assertFalse((args.run / "copy").exists())
+
+    def test_command_launch_failure_retains_exclusive_receipt(self):
+        args = self.fixture()
+        capture = lab.Capture(args)
+        with self.assertRaisesRegex(lab.Error, "could not launch"):
+            capture.command("missing", [args.run / "missing-executable"])
+        record = json.loads((args.run / "missing.command.json").read_text())
+        self.assertIn("launch_error", record)
+        self.assertEqual(Path(record["isolated_home"]).parent, args.run)
+        with self.assertRaises(FileExistsError):
+            lab.Capture(args)
+
+    def test_timeout_and_cancellation_kill_only_owned_process_group(self):
+        for error in (subprocess.TimeoutExpired("synthetic", 1), KeyboardInterrupt()):
+            args = self.fixture()
+            cap = lab.Capture(args)
+            process = Mock(pid=1234567, returncode=-9)
+            process.wait.side_effect = [error, -9]
+            expected = lab.Error if isinstance(error, subprocess.TimeoutExpired) else KeyboardInterrupt
+            with patch.object(lab.subprocess, "Popen", return_value=process), \
+                 patch.object(lab.os, "killpg", create=True) as kill, \
+                 self.assertRaises(expected):
+                cap.command("cancelled", ["synthetic-never-executed"])
+            kill.assert_called_once_with(process.pid, lab.signal.SIGKILL)
+            record = json.loads((args.run / "cancelled.command.json").read_text())
+            self.assertEqual(record["exit_code"], -9)
+            self.assertTrue(record["timeout" if isinstance(error, subprocess.TimeoutExpired) else "cancelled"])
+
+    def test_scope_guard_refuses_existing_outside_and_linked_paths(self):
+        args = self.fixture()
+        with self.assertRaises(lab.Error):
+            lab.contained(args.native, args.run)
+        with self.assertRaises(lab.Error):
+            lab.contained(args.run, args.run)
+        linked = args.run / "link"
+        linked.symlink_to(args.native, target_is_directory=True)
+        with self.assertRaises(lab.Error):
+            lab.contained(linked, args.run)
+
+    def test_declared_wrong_build_is_refused(self):
+        for build in ("2025.2.3", "2026.2.1+3", "not-a-build", "2025.2.3.30 extra"):
+            with self.subTest(build=build), self.assertRaises(lab.Error):
+                lab.require_exact_build(build)
+        lab.require_exact_build("2025.2.3.30")
+        lab.require_exact_build("2026.2.1.3")
+
+    def test_profiles_preserve_legacy_model_and_name_current_tool_separately(self):
+        for profile in ("2.20", "2.21"):
+            args = self.fixture()
+            args.source_version, args.edt_build = profile, "2026.2.1.3"
+            result = self.capture(args)
+            self.assertEqual(result["status"], "PASS")
+            self.assertEqual(result["installed_edt_build"], "2026.2.1.3")
+            self.assertEqual(result["writer_model_profile"], f"edt-2025.2.3-xml-{profile}")
+
+    def test_preflight_valid_run_and_existing_run_and_wrong_build(self):
+        args = self.fixture()
+        args.lab_root = args.run.parent
+        args.run = args.run.parent / "new-run"
+        for tool in (args.ours_exe, args.edt_exe, args.edt_vm):
+            tool.chmod(0o700)
+        with patch.object(lab.sys, "platform", "darwin"), patch.object(lab, "is_external_lab_root", return_value=True):
+            lab.preflight(args)
+            args.edt_build = "2026.2.1+3"
+            with self.assertRaisesRegex(lab.Error, "four-component"):
+                lab.preflight(args)
+            args.edt_build = "2026.2.1.3"
+            args.run.mkdir()
+            with self.assertRaisesRegex(lab.Error, "Run must be new"):
+                lab.preflight(args)
+
+    def test_jvm_home_tmp_and_vm_are_explicit_external_arguments(self):
+        args = self.fixture()
+        cap = lab.Capture(args)
+        with patch.object(cap, "command", return_value=b"") as command:
+            cap.edt("version", ["version"])
+        argv = command.call_args.args[1]
+        self.assertEqual(argv[argv.index("-vm") + 1], args.edt_vm)
+        self.assertIn(f"-Duser.home={args.run / 'home'}", argv)
+        self.assertIn(f"-Djava.io.tmpdir={args.run / 'tmp'}", argv)
+
+    def test_installation_binding_refuses_changed_plugins_and_runtime(self):
+        for mutation in ("plugin", "java", "manifest-cli"):
+            args = self.fixture()
+            lab.bind_installation(args)
+            if mutation == "plugin":
+                write(args.lab_root / "plugins/model.jar", b"modified plugin")
+            elif mutation == "java":
+                write(args.edt_vm, b"modified java")
+            else:
+                manifest = json.loads(args.edt_installation_manifest.read_text())
+                manifest["edt_cli"] = str(args.edt_vm)
+                args.edt_installation_manifest.write_text(json.dumps(manifest))
+            with self.subTest(mutation=mutation), self.assertRaises(lab.Error):
+                lab.bind_installation(args)
+
+    def test_parent_traversal_cannot_escape_external_root(self):
+        root = Path("/Volumes/lab")
+        for path in (root / "../outside/run", root / "nested/../../outside/run"):
+            with self.subTest(path=path), self.assertRaisesRegex(lab.Error, "traversal"):
+                lab.contained(path, root)
+
+
+if __name__ == "__main__":
+    unittest.main()
