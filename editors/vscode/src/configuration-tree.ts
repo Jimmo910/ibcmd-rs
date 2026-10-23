@@ -186,6 +186,12 @@ const common = new Set([
   "Interface",
   "PaletteColor",
 ]);
+export function groupContains(group: Node, fullName: string): boolean {
+  if (group.kind === "Common") return common.has(fullName.split(".")[0]);
+  const parent = group.parent?.fullName;
+  const owner = parent && parent !== "Configuration" ? parent + "." : "";
+  return fullName.startsWith(`${owner}${group.kind}.`);
+}
 export function relativePath(file: string): string {
   if (
     !file ||
