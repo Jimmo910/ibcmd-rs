@@ -495,3 +495,61 @@ test("cancelling search leaves a shared tree expansion usable", async () => {
   assert.deepEqual(await expansion, []);
   model.dispose();
 });
+
+test("large database source reads use a finite extended deadline and retain cancellation", async () => {
+  const calls = [];
+  const abort = new AbortController();
+  const source = new DatabaseSource(
+    {
+      request: async (method, params, signal, timeout) => {
+        calls.push({ method, signal, timeout });
+        return {
+          path: params.path,
+          exists: true,
+          encoding: "utf-8",
+          files: [],
+          content: xml(
+            params.path === "Configuration.xml" ? "Configuration" : "Catalog",
+            "<ChildObjects/>",
+          ).toString(),
+        };
+      },
+    },
+    "/work",
+    "demo",
+  );
+  await source.read("Catalogs/Test.xml", abort.signal);
+  await source.children(
+    { type: "object", kind: "Catalog", path: "Catalogs/Test.xml" },
+    abort.signal,
+  );
+  await source.children(
+    { type: "group", kind: "ConfigurationFiles" },
+    abort.signal,
+  );
+  for (const call of calls) {
+    assert.equal(call.method, "source/read");
+    assert.equal(call.signal, abort.signal);
+    assert.ok(Number.isFinite(call.timeout) && call.timeout >= 600000);
+  }
+});
+
+test("ordinary database tree reads retain the default deadline", async () => {
+  const requests = [];
+  const source = new DatabaseSource(
+    {
+      request: async (...args) => {
+        requests.push(args);
+        return { nodes: [] };
+      },
+    },
+    "/source",
+    "test",
+  );
+  const signal = new AbortController().signal;
+  await source.children(undefined, signal);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0][0], "tree/children");
+  assert.equal(requests[0][2], signal);
+  assert.equal(requests[0][3], undefined);
+});

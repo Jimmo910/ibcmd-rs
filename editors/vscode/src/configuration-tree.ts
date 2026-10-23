@@ -21,8 +21,16 @@ export interface Source {
   read(file: string, signal: AbortSignal): Promise<Buffer | undefined>;
 }
 export interface Rpc {
-  request(method: string, params?: object, signal?: AbortSignal): Promise<any>;
+  request(
+    method: string,
+    params?: object,
+    signal?: AbortSignal,
+    timeout?: number,
+  ): Promise<any>;
 }
+
+// Loading complete source snapshots can take minutes; cancellation remains immediate.
+export const SOURCE_OPERATION_TIMEOUT = 10 * 60 * 1000;
 
 const plurals: Record<string, string> = {
   Configuration: "",
@@ -477,6 +485,7 @@ export class DatabaseSource implements Source {
         "source/read",
         { infobase: this.infobase, path: file },
         signal,
+        SOURCE_OPERATION_TIMEOUT,
       ),
       file,
     );
@@ -488,6 +497,7 @@ export class DatabaseSource implements Source {
         "source/read",
         { infobase: this.infobase, path: "Configuration.xml" },
         signal,
+        SOURCE_OPERATION_TIMEOUT,
       );
       const bytes = readResult(result, "Configuration.xml");
       if (
@@ -506,6 +516,7 @@ export class DatabaseSource implements Source {
         "source/read",
         { infobase: this.infobase, path: node.path },
         signal,
+        SOURCE_OPERATION_TIMEOUT,
       );
       const bytes = readResult(value, node.path!);
       if (
