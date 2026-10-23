@@ -315,14 +315,14 @@ fn serve_speaks_the_protocol_and_its_lifecycle() {
     assert_eq!(server.error("initialize", json!({})), -32602);
     let refused = server.call("initialize", json!({"protocolVersion": "2.0"}));
     assert_eq!(refused["error"]["code"], -32010);
-    assert_eq!(refused["error"]["data"]["serverProtocolVersion"], "1.2");
+    assert_eq!(refused["error"]["data"]["serverProtocolVersion"], "1.3");
     assert_eq!(
-        server.error("initialize", json!({"protocolVersion": "1.3"})),
+        server.error("initialize", json!({"protocolVersion": "1.4"})),
         -32010
     );
 
     let initialized = server.ok("initialize", corpus.initialize_params());
-    assert_eq!(initialized["protocolVersion"], "1.2");
+    assert_eq!(initialized["protocolVersion"], "1.3");
     assert_eq!(initialized["serverInfo"]["name"], "ibcmd-rs");
     assert_eq!(
         initialized["serverInfo"]["version"],
@@ -1085,5 +1085,61 @@ fn cancelled_import_prepare_returns_request_cancelled_without_writes() {
     assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
     assert!(!ibcmd_filedb::backup_file(&db).exists());
     server.ok("shutdown", Value::Null);
+    assert_eq!(server.finish(true), 0);
+}
+
+#[test]
+fn editor_apply_requires_consent_and_leaves_file_db_to_client() {
+    let corpus = Corpus::new("apply-contract");
+    let db = corpus.root.join("disposable/1Cv8.1CD");
+    fs::create_dir_all(db.parent().unwrap()).unwrap();
+    let input = fs::File::open(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase/tiny.1CD.gz"),
+    )
+    .unwrap();
+    let mut decoder = flate2::read::GzDecoder::new(input);
+    let mut output = fs::File::create(&db).unwrap();
+    std::io::copy(&mut decoder, &mut output).unwrap();
+    drop(output);
+    // Exercise a lexical alias on every host; Windows TEMP may also use an
+    // 8.3 short-name alias which Session::open resolves to its canonical path.
+    let db = corpus.root.join("disposable/../disposable/1Cv8.1CD");
+    let before = fs::read(&db).unwrap();
+    let mut params = corpus.initialize_params();
+    params["infobases"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"apply-file", "dbPath":db, "platform":"8.5.1"}));
+    let mut server = Server::start(&corpus);
+    let initialized = server.ok("initialize", params);
+    assert!(
+        initialized["capabilities"]["methods"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("config/apply"))
+    );
+    server.ok("infobases/connect", json!({"infobase":"apply-file"}));
+    let plan = server.ok("config/apply/prepare", json!({"infobase":"apply-file"}));
+    assert_eq!(plan["backend"], "external-native");
+    assert_eq!(plan["modes"], json!(["exclusive"]));
+    let canonical_db = fs::canonicalize(&db).unwrap();
+    assert_eq!(plan["dbPath"], json!(canonical_db.parent().unwrap()));
+    let planned_db = Path::new(plan["dbPath"].as_str().unwrap()).join("1Cv8.1CD");
+    assert_eq!(fs::canonicalize(planned_db).unwrap(), canonical_db);
+    let pending = server.ok("config/pending", json!({"infobase":"apply-file"}));
+    assert_eq!(pending["conclusive"], true);
+    assert_eq!(pending["pending"], false);
+    let mut apply = json!({"infobase":"apply-file", "mode":"exclusive", "recoveryDir":corpus.root.join("recovery")});
+    assert_eq!(server.error("config/apply", apply.clone()), -32015);
+    apply["confirm"] = json!(true);
+    assert_eq!(server.error("config/apply", apply.clone()), -32013);
+    apply["mode"] = json!("dynamic");
+    assert_eq!(server.error("config/apply", apply), -32602);
+    assert_eq!(
+        fs::read(&db).unwrap(),
+        before,
+        "preflight/refusals must not change database bytes"
+    );
+    server.ok("shutdown", json!({}));
     assert_eq!(server.finish(true), 0);
 }

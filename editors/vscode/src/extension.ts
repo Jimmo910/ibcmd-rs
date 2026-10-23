@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
+import { runApply, nativeApply } from "./apply";
 import { RpcClient, RpcError } from "./rpc";
 import { runImport, ImportValidationError, importErrorMessage } from "./import";
 import { Database, editConfig, idOf, snapshot, saveConfig } from "./config";
@@ -26,6 +27,8 @@ export async function activate(context: vscode.ExtensionContext) {
   status.show();
   context.subscriptions.push(status);
   const objects = new ObjectView(context);
+  const output = vscode.window.createOutputChannel("ibcmd-rs Apply");
+  context.subscriptions.push(output);
   let client: RpcClient | undefined;
   let folder: vscode.WorkspaceFolder | undefined;
   let selected: Base | undefined;
@@ -69,7 +72,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const rpc = new RpcClient(executable(), f.uri.fsPath, onCrash);
     try {
       await rpc.request("initialize", {
-        protocolVersion: "1.2",
+        protocolVersion: "1.3",
         clientInfo: { name: "ibcmd-rs-vscode", version: "0.1.0" },
         workspaceFolder: f.uri.fsPath,
       });
@@ -386,9 +389,28 @@ export async function activate(context: vscode.ExtensionContext) {
             },
             abort.signal,
           );
+          if (result) {
+            try {
+              if (await current()) {
+                const pending = await rpc.request("config/pending", {
+                  infobase: base.id,
+                });
+                if (await current())
+                  status.text = `$(database) ${label(f, base)} · ${base.platform} · ${pendingText(pending)}`;
+              }
+            } catch {
+              if (
+                generation.current(stamp) &&
+                client === rpc &&
+                folder === f &&
+                selected === base
+              )
+                status.text = `$(database) ${label(f, base)} · ${base.platform} · pending unknown`;
+            }
+          }
           if (result)
             void vscode.window.showInformationMessage(
-              "Выбранные изменения загружены в CONFIGSAVE. Примените их отдельной командой платформы.",
+              "Выбранные изменения загружены в CONFIGSAVE. Используйте ibcmd-rs: Apply CONFIGSAVE.",
             );
         } catch (error) {
           void vscode.window.showErrorMessage(importErrorMessage(error));
@@ -399,6 +421,102 @@ export async function activate(context: vscode.ExtensionContext) {
     );
   }
   const commands: Record<string, (...args: any[]) => Promise<void>> = {
+    "ibcmd.apply": async () => {
+      const rpc = client,
+        f = folder,
+        base = selected,
+        settings = activeSettings;
+      if (!rpc || !f || !base || settings === undefined)
+        throw new ImportValidationError("Select a workspace connection first");
+      const stamp = generation.capture();
+      const current = async () => {
+        if (
+          !generation.current(stamp) ||
+          client !== rpc ||
+          folder !== f ||
+          selected !== base
+        )
+          return false;
+        const actual = await snapshot(file(f));
+        return (
+          generation.current(stamp) &&
+          client === rpc &&
+          folder === f &&
+          selected === base &&
+          actual === settings
+        );
+      };
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "ibcmd-rs: Apply",
+          cancellable: true,
+        },
+        async (_, token) => {
+          const abort = new AbortController();
+          const subscription = token.onCancellationRequested(() =>
+            abort.abort(),
+          );
+          if (token.isCancellationRequested) abort.abort();
+          output.show(true);
+          try {
+            await runApply(
+              rpc,
+              base.id,
+              path.join(f.uri.fsPath, ".ibcmd-recovery"),
+              {
+                current,
+                confirm: async (message) =>
+                  (await vscode.window.showWarningMessage(
+                    message,
+                    { modal: true },
+                    "Apply exclusively",
+                  )) === "Apply exclusively",
+                log: (message) => output.appendLine(message),
+                native: async (plan, signal) => {
+                  const paths = config(f).get<Record<string, string>>(
+                    "nativeExecutables",
+                    {},
+                  );
+                  const executable = paths[base.platform];
+                  if (!executable || !path.isAbsolute(executable))
+                    throw new ImportValidationError(
+                      "Configure an absolute nativeExecutables path for this exact bound platform",
+                    );
+                  if (plan.platform !== base.platform)
+                    throw new ImportValidationError(
+                      "Bound platform changed; reconnect before applying",
+                    );
+                  await nativeApply(
+                    executable,
+                    plan,
+                    path.join(f.uri.fsPath, ".ibcmd-recovery"),
+                    signal,
+                    current,
+                  );
+                },
+              },
+              abort.signal,
+            );
+          } catch (error) {
+            void vscode.window.showErrorMessage(
+              error instanceof ImportValidationError
+                ? error.message
+                : "Apply failed; inspect pending state and recovery before retrying",
+            );
+          } finally {
+            subscription.dispose();
+            try {
+              if (await current()) await commands["ibcmd.refresh"]();
+            } catch {
+              output.appendLine(
+                "Pending refresh unavailable; reload the connection before retrying.",
+              );
+            }
+          }
+        },
+      );
+    },
     "ibcmd.importSelected": async (
       uri?: vscode.Uri | { object: string; uri: vscode.Uri },
       uris?: (vscode.Uri | { object: string; uri: vscode.Uri })[],
@@ -587,11 +705,6 @@ export async function activate(context: vscode.ExtensionContext) {
       });
       if (password === undefined) return;
     }
-    const local = readLocal(expected, old?.id);
-    if (old?.source === "rows-dir" && !local && !old.rowsDir)
-      throw new Error(
-        "Inherited rows directory is missing; reload before editing",
-      );
     const database: Database = {
       ...(server?.trim() ? { server: server.trim() } : {}),
       name: name.trim(),
@@ -603,7 +716,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const validator = new RpcClient(executable(), f.uri.fsPath);
     try {
       await validator.request("initialize", {
-        protocolVersion: "1.2",
+        protocolVersion: "1.3",
         workspaceFolder: f.uri.fsPath,
         infobases: [
           {

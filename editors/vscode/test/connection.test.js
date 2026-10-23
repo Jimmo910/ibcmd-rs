@@ -19,8 +19,13 @@ async function harness({
   store = async () => {},
   listed,
   text = "",
+  snapshot = async () => text,
+  request = async () => undefined,
+  source = "mssql",
   initialize = async () => ({}),
 } = {}) {
+  const errors = [],
+    infos = [];
   const commands = new Map(),
     stores = [],
     clients = [];
@@ -40,11 +45,10 @@ async function harness({
     ["a", "b"].map((id) => ({
       id,
       name: id,
-      source: "mssql",
+      source,
       platform: "8.3.27",
     }));
   const saved = [],
-    errors = [],
     offered = [];
   const values = {
     executable: "synthetic",
@@ -78,7 +82,8 @@ async function harness({
       if (method === "infobases/list") return { infobases: bases };
       if (method === "infobases/connect")
         return connect(params, signal, () => this.onCrash());
-      return { conclusive: true, pending: false };
+      const result = await request(method, params, signal);
+      return result ?? { conclusive: true, pending: false };
     }
   }
   const vscode = {
@@ -111,6 +116,7 @@ async function harness({
       },
     },
     window: {
+      createOutputChannel: () => ({ appendLine() {}, show() {}, dispose() {} }),
       createStatusBarItem: () => ({ text: "", show() {}, dispose() {} }),
       showInputBox: input,
       showQuickPick: async (items) => {
@@ -126,16 +132,19 @@ async function harness({
       showErrorMessage(message) {
         errors.push(message);
       },
-      showInformationMessage() {},
+      showInformationMessage(message) {
+        infos.push(message);
+      },
+      showWarningMessage: async (_, options, label) => label,
       withProgress: (_, task) => task({}, token),
     },
   };
   const module = { exports: {} };
-  const source = fs.readFileSync(
+  const extensionSource = fs.readFileSync(
     path.join(__dirname, "../out/extension.js"),
     "utf8",
   );
-  vm.runInNewContext(source, {
+  vm.runInNewContext(extensionSource, {
     exports: module.exports,
     module,
     AbortController,
@@ -146,7 +155,7 @@ async function harness({
       if (id === "./config")
         return {
           ...require("../out/config"),
-          snapshot: async () => text,
+          snapshot,
           saveConfig: async (_, expected, next) => {
             assert.equal(expected, text);
             saved.push(next);
@@ -162,6 +171,7 @@ async function harness({
       if (id === "./executable") return require("../out/executable");
 
       if (id === "./status") return require("../out/status");
+      if (id === "./apply") return require("../out/apply");
       if (id === "./import") return require("../out/import");
       if (id === "./configuration-view")
         return {
@@ -195,6 +205,8 @@ async function harness({
     saved,
     errors,
     offered,
+    infos,
+    invoke: (name) => commands.get(name)(),
     edit: (id) => {
       picked = id;
       return commands.get("ibcmd.edit")();
@@ -505,4 +517,193 @@ test("a late crash from an old connection cannot notify or replace the new selec
   assert.equal(h.errors.length, 0);
   assert.ok(h.status().includes(" b ·"));
   assert.equal(h.stores.length, 0);
+});
+
+test("apply command refuses a connection changed during settings snapshot", async () => {
+  let gate,
+    entered,
+    waitOnce = false;
+  const methods = [];
+  const h = await harness({
+    stored: "cached",
+    snapshot: async () => {
+      if (waitOnce) {
+        waitOnce = false;
+        entered.resolve();
+        await gate.promise;
+      }
+      return "";
+    },
+    request: async (method) => {
+      methods.push(method);
+      return undefined;
+    },
+  });
+  await h.select("a");
+  methods.length = 0;
+  gate = deferred();
+  entered = deferred();
+  waitOnce = true;
+  const applying = h.invoke("ibcmd.apply");
+  await entered.promise;
+  await h.select("b");
+  gate.resolve();
+  await applying;
+  assert.ok(!methods.includes("config/apply"));
+  assert.ok(!methods.includes("config/apply/prepare"));
+});
+
+test("pending snapshot failure after committed import preserves success", async () => {
+  let published = false;
+  const h = await harness({
+    stored: "cached",
+    source: "file-db",
+    snapshot: async () => {
+      if (published) throw new Error("unreadable settings");
+      return "";
+    },
+    request: async (method) => {
+      if (method === "objects/import/prepare")
+        return {
+          plan: "confirmed",
+          preflight: {
+            ready: true,
+            files: ["CommonModules/Example/Ext/Module.bsl"],
+            missingReferences: [],
+          },
+        };
+      if (method === "objects/import") {
+        published = true;
+        return { report: {} };
+      }
+    },
+  });
+  await h.select("b");
+  // runImport expects its own confirmation label.
+  await h.invoke("ibcmd.importChanged");
+  assert.equal(published, true);
+  assert.deepEqual(h.errors, []);
+  assert.ok(h.infos.some((message) => message.includes("CONFIGSAVE")));
+});
+
+test("Edit preserves an omitted inherited server and excludes file databases", async () => {
+  const text =
+    'db-server="effective-host"\n[[database]]\nname="a"\nplatform="8.3.27"\n';
+  const h = await harness({
+    text,
+    listed: [
+      { id: "a", name: "a", platform: "8.3.27", source: "mssql" },
+      { id: "file", name: "file", source: "file-db" },
+      { id: "unknown", name: "unknown", source: "future-source" },
+    ],
+    input: async (options) => {
+      if (options.prompt.startsWith("SQL Server")) {
+        assert.equal(options.value, "");
+        assert.equal(options.validateInput(""), undefined);
+      }
+      return options.value;
+    },
+  });
+  await h.edit("a");
+  assert.deepEqual(h.errors, []);
+  assert.equal(h.saved.length, 1);
+  assert.equal(
+    require("../out/config").readConfig(h.saved[0])[0].server,
+    undefined,
+  );
+  assert.deepEqual(Array.from(h.offered[0]), ["a"]);
+});
+test("Edit copies inherited offline rows with its source intact", async () => {
+  const h = await harness({
+    listed: [
+      {
+        id: "a",
+        name: "a",
+        platform: "8.3.27",
+        source: "rows-dir",
+        rowsDir: "/synthetic/original/rows",
+      },
+    ],
+    input: async (options) => options.value,
+  });
+  await h.edit("a");
+  assert.deepEqual(h.errors, []);
+  assert.equal(h.saved.length, 1);
+  assert.equal(
+    require("../out/config").readConfig(h.saved[0])[0]["rows-dir"],
+    "/synthetic/original/rows",
+  );
+});
+
+test("Edit refuses inherited offline entries without a source directory", async () => {
+  const h = await harness({
+    listed: [{ id: "a", name: "a", platform: "8.3.27", source: "rows-dir" }],
+    input: async (options) => options.value,
+  });
+  await h.edit("a");
+  assert.equal(h.saved.length, 0);
+  assert.equal(h.errors.length, 1);
+});
+
+test("current startup and connect crashes report one sanitized error", async () => {
+  for (const startup of [true, false]) {
+    let initialized = 0;
+    const h = await harness({
+      initialize: async (client) => {
+        if (startup && ++initialized === 2) {
+          client.onCrash();
+          throw new Error("ENOENT synthetic-private-path");
+        }
+        return {};
+      },
+      connect: async (_, __, crash) => {
+        crash();
+        throw new Error("synthetic-private-server-exit");
+      },
+    });
+    await h.select();
+    assert.equal(h.errors.length, 1);
+    assert.ok(!h.errors[0].includes("synthetic-private"));
+    assert.ok(h.status().includes("disconnected"));
+    assert.equal(h.stores.length, 0);
+  }
+});
+test("a late crash from an old connection cannot notify or replace the new selection", async () => {
+  const started = deferred(),
+    finish = deferred();
+  const h = await harness({
+    connect: async (params, _, crash) => {
+      if (params.infobase === "a") {
+        started.resolve();
+        await finish.promise;
+        crash();
+        throw new Error("synthetic old crash");
+      }
+      return {};
+    },
+  });
+  const selecting = h.select();
+  await started.promise;
+  await h.select("b");
+  finish.resolve();
+  await selecting;
+  assert.equal(h.errors.length, 0);
+  assert.ok(h.status().includes(" b ·"));
+  assert.equal(h.stores.length, 0);
+});
+
+test("apply-capable client rejects protocol 1.1 before connecting", async () => {
+  const versions = [];
+  const h = await harness({
+    initialize: async (_, params) => {
+      versions.push(params.protocolVersion);
+      if (params.protocolVersion !== "1.1")
+        throw new Error("unsupported protocol");
+      return {};
+    },
+  });
+  await h.select();
+  assert.deepEqual(versions, ["1.3"]);
+  assert.equal(h.stores.length, 0);
+  assert.equal(h.errors.length, 1);
 });

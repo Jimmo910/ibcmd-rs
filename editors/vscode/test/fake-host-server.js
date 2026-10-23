@@ -177,6 +177,22 @@ process.stdin.on("data", (chunk) => {
       else reply();
       continue;
     }
+    if (m.method === "config/apply/prepare") {
+      send(m.id, {
+        backend: "own",
+        modes: ["exclusive"],
+        warning: "synthetic exclusive warning",
+      });
+      continue;
+    }
+    if (m.method === "config/apply") {
+      if (m.params.confirm !== true || m.params.mode !== "exclusive")
+        throw new Error("Apply lacked consent");
+      if (process.env.IBCMD_FAKE_APPLY_GATE)
+        fs.writeFileSync(process.env.IBCMD_FAKE_APPLY_GATE, "applied");
+      send(m.id, { backend: "own", report: {} });
+      continue;
+    }
     if (m.method === "config/pending") {
       if (process.env.IBCMD_FAKE_MODE === "crash") process.exit(9);
       if (process.env.IBCMD_FAKE_MODE === "error") {

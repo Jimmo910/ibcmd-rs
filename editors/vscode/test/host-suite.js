@@ -17,6 +17,7 @@ exports.run = async () => {
     "select",
     "refresh",
     "forgetPassword",
+    "apply",
   ])
     assert.ok(all.includes(`ibcmd.${c}`));
   const f = vscode.workspace.workspaceFolders[0];
@@ -35,6 +36,7 @@ exports.run = async () => {
   const info = vscode.window.showInformationMessage;
   const error = vscode.window.showErrorMessage;
   const progress = vscode.window.withProgress;
+  const warning = vscode.window.showWarningMessage;
   const errors = [];
   let values = [
     "УХ разработка",
@@ -651,6 +653,29 @@ exports.run = async () => {
       api.objectDecoration(vscode.Uri.file(path.join(sibling, "File.xml"))),
       undefined,
     );
+    pick = "fake/a";
+    // Apply UI consent path against the clearly synthetic own-backend contract.
+    process.env.IBCMD_FAKE_MODE = "pending";
+    await vscode.commands.executeCommand("ibcmd.select");
+    const applyGate = path.join(f.uri.fsPath, "apply-consent-gate");
+    process.env.IBCMD_FAKE_APPLY_GATE = applyGate;
+    // Reconnect so the server inherits only this test's external gate path.
+    await vscode.commands.executeCommand("ibcmd.select");
+    vscode.window.showWarningMessage = async () => undefined;
+    await vscode.commands.executeCommand("ibcmd.apply");
+    await assert.rejects(fs.access(applyGate));
+    vscode.window.showWarningMessage = async (message) => {
+      assert.ok(message.includes("fake/a"));
+      assert.ok(message.includes("exclusive"));
+      return "Apply exclusively";
+    };
+    await vscode.commands.executeCommand("ibcmd.apply");
+    assert.equal(await fs.readFile(applyGate, "utf8"), "applied");
+    delete process.env.IBCMD_FAKE_APPLY_GATE;
+    vscode.window.showWarningMessage = warning;
+    console.log(
+      "Apply UI: declined consent prevents execution; accepted consent invokes exclusive own RPC (synthetic only).",
+    );
     process.env.IBCMD_FAKE_MODE = "slow";
     pick = "fake/a";
     const slow = vscode.commands.executeCommand("ibcmd.select");
@@ -989,6 +1014,8 @@ exports.run = async () => {
     vscode.window.showInformationMessage = info;
     vscode.window.showErrorMessage = error;
     vscode.window.withProgress = progress;
+    vscode.window.showWarningMessage = warning;
+    delete process.env.IBCMD_FAKE_APPLY_GATE;
     delete process.env.IBCMD_FAKE_CONNECT_GATE;
     delete process.env.IBCMD_FAKE_LIST_GATE;
     delete process.env.IBCMD_FAKE_MODE;

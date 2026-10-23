@@ -20,6 +20,7 @@
 //! its next step (`crate::cancel`) and a queued one before it starts. stdout
 //! carries the protocol only; the engine's own diagnostics go to stderr.
 
+mod apply;
 pub mod infobases;
 pub mod rpc;
 
@@ -43,7 +44,7 @@ use rpc::{RpcError, codes};
 /// served when its major is this one and its minor is not above this one
 /// (see `initialize`); the editor extension and the executable are released
 /// together, so the check catches a mismatched pair.
-pub const PROTOCOL_VERSION: (u32, u32) = (1, 2);
+pub const PROTOCOL_VERSION: (u32, u32) = (1, 3);
 
 /// The methods a client may call.
 pub const METHODS: &[&str] = &[
@@ -58,6 +59,8 @@ pub const METHODS: &[&str] = &[
     "objects/import/prepare",
     "source/read",
     "config/pending",
+    "config/apply",
+    "config/apply/prepare",
 ];
 
 /// The stack of the worker thread: the export walks deeply nested sources
@@ -454,6 +457,8 @@ impl State {
             "objects/import/prepare" => self.prepare_import(parse(params)?),
             "source/read" => self.read(parse(params)?),
             "config/pending" => self.pending(parse(params)?),
+            "config/apply" => self.apply_config(parse(params)?),
+            "config/apply/prepare" => self.prepare_apply(parse(params)?),
             other => Err(RpcError::new(
                 codes::METHOD_NOT_FOUND,
                 format!("no method {other}"),
@@ -849,6 +854,16 @@ impl State {
 
     fn pending(&mut self, params: InfobaseParams) -> Result<Value, RpcError> {
         let session = self.session(&params.infobase)?;
+        if let ConfigSource::FileDb(path) = session.configuration.source() {
+            let mut db = ibcmd_filedb::FileDb::open(path).map_err(|e| failure(e.into()))?;
+            let rows = db
+                .config_headers("CONFIGSAVE")
+                .map_err(|e| failure(e.into()))?;
+            return Ok(
+                json!({"pending": !rows.is_empty(), "stagedRows": rows.len(),
+                "conclusive": true, "needsRestructuring": null}),
+            );
+        }
         let ConfigSource::Database { sql, database } = session.configuration.source() else {
             return Err(offline("config/pending", session));
         };

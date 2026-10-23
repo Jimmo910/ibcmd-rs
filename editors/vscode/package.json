@@ -24,7 +24,7 @@
   },
   "scripts": {
     "compile": "tsc -p .",
-    "test": "npm run compile && node --test test/object-status.test.js test/core.test.js test/real.test.js test/import.test.js test/connection.test.js test/object-view.test.js test/configuration-tree.test.js test/database-files.test.js",
+    "test": "npm run compile && node --test test/object-status.test.js test/core.test.js test/real.test.js test/import.test.js test/connection.test.js test/object-view.test.js test/configuration-tree.test.js test/database-files.test.js test/apply.test.js",
     "test:host": "npm run bundle && node test/host.js",
     "format": "prettier --write src test scripts/*.cjs package.json tsconfig.json",
     "format:check": "prettier --check src test scripts/*.cjs package.json tsconfig.json",
@@ -33,7 +33,8 @@
     "bundle": "npm run compile && node scripts/build.cjs",
     "package": "npm run bundle && node scripts/python.cjs scripts/package.py",
     "test:package": "npm run compile && node --test test/executable.test.js test/process-watchdog.test.js && node scripts/python.cjs scripts/test_package.py",
-    "test:installed": "node test/installed.js"
+    "test:installed": "node test/installed.js",
+    "test:native-apply": "npm run compile && node test/native-apply.js"
   },
   "contributes": {
     "commands": [
@@ -102,6 +103,10 @@
       {
         "command": "ibcmd.source.compare",
         "title": "ibcmd-rs: Сравнить с базой"
+      },
+      {
+        "command": "ibcmd.apply",
+        "title": "ibcmd-rs: Apply CONFIGSAVE"
       }
     ],
     "configuration": {
@@ -194,6 +199,15 @@
           "default": "",
           "scope": "machine",
           "description": "Trusted executable override. Empty uses bundled binary, then ibcmd-rs on PATH. Never a shell command."
+        },
+        "ibcmd.nativeExecutables": {
+          "type": "object",
+          "default": {},
+          "scope": "machine",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Absolute native ibcmd executable paths keyed by bound platform version. File-db apply only; user must verify each executable matches the bound platform."
         }
       }
     },
