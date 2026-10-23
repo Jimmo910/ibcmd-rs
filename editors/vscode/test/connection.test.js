@@ -14,10 +14,12 @@ function deferred() {
 }
 async function harness({
   stored,
-  initialize = async () => ({}),
   input = async () => "synthetic-new",
   connect = async () => ({}),
   store = async () => {},
+  listed,
+  text = "",
+  initialize = async () => ({}),
 } = {}) {
   const commands = new Map(),
     stores = [],
@@ -33,12 +35,17 @@ async function harness({
   let picked = "a",
     cancel = () => {};
   const noEvent = () => ({ dispose() {} });
-  const bases = ["a", "b"].map((id) => ({
-    id,
-    name: id,
-    source: "mssql",
-    platform: "8.3.27",
-  }));
+  const bases =
+    listed ??
+    ["a", "b"].map((id) => ({
+      id,
+      name: id,
+      source: "mssql",
+      platform: "8.3.27",
+    }));
+  const saved = [],
+    errors = [],
+    offered = [];
   const values = {
     executable: "synthetic",
     connections: ["a", "b"],
@@ -74,12 +81,17 @@ async function harness({
   }
   const vscode = {
     StatusBarAlignment: { Left: 1 },
+    ConfigurationTarget: { WorkspaceFolder: 3 },
     ProgressLocation: { Notification: 1 },
     workspace: {
       isTrusted: true,
+      textDocuments: [],
       workspaceFolders: [f],
       getConfiguration: () => ({
         get: (key, fallback) => values[key] ?? fallback,
+        update: async (key, value) => {
+          values[key] = value;
+        },
       }),
       onDidChangeConfiguration: noEvent,
       onDidChangeWorkspaceFolders: noEvent,
@@ -99,9 +111,19 @@ async function harness({
     window: {
       createStatusBarItem: () => ({ text: "", show() {}, dispose() {} }),
       showInputBox: input,
-      showQuickPick: async (items) =>
-        (await items).find((item) => item.base.id === picked),
-      showErrorMessage() {},
+      showQuickPick: async (items) => {
+        items = await items;
+        offered.push(
+          items.filter((item) => item.base).map((item) => item.base.id),
+        );
+        return (
+          items.find((item) => item.base?.id === picked) ??
+          items.find((item) => item.value === "windows")
+        );
+      },
+      showErrorMessage(message) {
+        errors.push(message);
+      },
       showInformationMessage() {},
       withProgress: (_, task) => task({}, token),
     },
@@ -119,7 +141,15 @@ async function harness({
       if (id === "vscode") return vscode;
       if (id === "./rpc")
         return { RpcClient, RpcError: class extends Error {} };
-      if (id === "./config") return { snapshot: async () => "" };
+      if (id === "./config")
+        return {
+          ...require("../out/config"),
+          snapshot: async () => text,
+          saveConfig: async (_, expected, next) => {
+            assert.equal(expected, text);
+            saved.push(next);
+          },
+        };
       if (id === "./status") return require("../out/status");
       if (id === "./import") return require("../out/import");
       return require(id);
@@ -129,6 +159,7 @@ async function harness({
     subscriptions: [],
     secrets: {
       get: async () => stored,
+      delete: async () => {},
       store: async (key, value) => {
         stores.push({ key, value });
         await store();
@@ -139,6 +170,13 @@ async function harness({
   return {
     stores,
     clients,
+    saved,
+    errors,
+    offered,
+    edit: (id) => {
+      picked = id;
+      return commands.get("ibcmd.edit")();
+    },
     status: api.status,
     cancel: () => cancel(),
     select: (id = "a") => {
@@ -284,4 +322,63 @@ test("import-capable client advertises 1.2 and cannot connect to a 1.1-only serv
   assert.deepEqual(versions, ["1.2"]);
   assert.equal(connections, 0);
   assert.equal(h.stores.length, 0);
+});
+
+test("Edit preserves an omitted inherited server and excludes file databases", async () => {
+  const text =
+    'db-server="effective-host"\n[[database]]\nname="a"\nplatform="8.3.27"\n';
+  const h = await harness({
+    text,
+    listed: [
+      { id: "a", name: "a", platform: "8.3.27", source: "mssql" },
+      { id: "file", name: "file", source: "file-db" },
+      { id: "unknown", name: "unknown", source: "future-source" },
+    ],
+    input: async (options) => {
+      if (options.prompt.startsWith("SQL Server")) {
+        assert.equal(options.value, "");
+        assert.equal(options.validateInput(""), undefined);
+      }
+      return options.value;
+    },
+  });
+  await h.edit("a");
+  assert.deepEqual(h.errors, []);
+  assert.equal(h.saved.length, 1);
+  assert.equal(
+    require("../out/config").readConfig(h.saved[0])[0].server,
+    undefined,
+  );
+  assert.deepEqual(Array.from(h.offered[0]), ["a"]);
+});
+test("Edit copies inherited offline rows with its source intact", async () => {
+  const h = await harness({
+    listed: [
+      {
+        id: "a",
+        name: "a",
+        platform: "8.3.27",
+        source: "rows-dir",
+        rowsDir: "/synthetic/original/rows",
+      },
+    ],
+    input: async (options) => options.value,
+  });
+  await h.edit("a");
+  assert.deepEqual(h.errors, []);
+  assert.equal(h.saved.length, 1);
+  assert.equal(
+    require("../out/config").readConfig(h.saved[0])[0]["rows-dir"],
+    "/synthetic/original/rows",
+  );
+});
+
+test("Edit refuses inherited offline entries without a source directory", async () => {
+  const h = await harness({
+    listed: [{ id: "a", name: "a", platform: "8.3.27", source: "rows-dir" }],
+    input: async (options) => options.value,
+  });
+  await h.edit("a");
+  assert.equal(h.saved.length, 0);
+  assert.equal(h.errors.length, 1);
 });

@@ -127,6 +127,12 @@ code --extensionDevelopmentPath="$PWD" \
 Object trees, export/import/apply UI, VSIX/Marketplace delivery and live SQL
 verification are outside this connection-only candidate.
 
+Edit Connection supports SQL and read-only rows-directory entries. An omitted server
+stays omitted so normal `db-server`/environment resolution still applies. Copying an
+inherited rows-directory entry keeps its resolved source directory. File databases
+and unknown source types are excluded from this editor; edit their settings using
+the appropriate source-specific tooling instead.
+
 ### Selected and changed import (#382)
 
 For a Unix file database, add a fixed `[[database]]` entry with `db-path` in

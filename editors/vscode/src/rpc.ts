@@ -1,5 +1,17 @@
 import { spawn, ChildProcessWithoutNullStreams } from "node:child_process";
 
+export function serverEnvironment(
+  source: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(source).filter(([key]) => {
+      const name = platform === "win32" ? key.toUpperCase() : key;
+      return name !== "IBCMD_DB_PSW" && name !== "IBCMD_RS_CONFIG";
+    }),
+  );
+}
+
 export class RpcError extends Error {
   constructor(public code: number) {
     super(`ibcmd-rs request failed (${code})`);
@@ -10,6 +22,7 @@ export class RpcClient {
   private buffer: Buffer = Buffer.alloc(0);
   private sequence = 0;
   private dead = false;
+  private disposing = false;
   private waiting = new Map<
     number,
     {
@@ -26,9 +39,7 @@ export class RpcClient {
     serverArgs: string[] = ["serve", "--stdio"],
   ) {
     // No shell, argv credentials, trace output, or server stderr/log forwarding.
-    const env = { ...process.env };
-    delete env.IBCMD_DB_PSW;
-    delete env.IBCMD_RS_CONFIG;
+    const env = serverEnvironment(process.env);
     this.child = spawn(executable, serverArgs, {
       cwd,
       env,
@@ -145,10 +156,11 @@ export class RpcClient {
     this.waiting.clear();
     // A broken input pipe can leave a live server with no usable transport.
     if (this.child.exitCode === null && !this.child.killed) this.child.kill();
-    this.onCrash();
+    if (!this.disposing) this.onCrash();
   }
   async dispose() {
-    if (this.dead) return;
+    if (this.dead || this.disposing) return;
+    this.disposing = true;
     try {
       await this.request("shutdown", {}, undefined, 1000);
       this.send({ jsonrpc: "2.0", method: "exit" });

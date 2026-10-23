@@ -469,8 +469,8 @@ export async function activate(context: vscode.ExtensionContext) {
     const old = existing
       ? await pick(
           f,
-          bases,
-          "Edit connection (inherited entries are copied into workspace TOML)",
+          bases.filter((b) => b.source === "mssql" || b.source === "rows-dir"),
+          "Edit SQL/offline connection (inherited entries are copied into workspace TOML)",
         )
       : undefined;
     if (existing && !old) return;
@@ -482,12 +482,12 @@ export async function activate(context: vscode.ExtensionContext) {
     )
       throw new Error("Save TOML before editing");
     const previous = old ? (metadata(f)[old.id] ?? {}) : {};
-    async function input(prompt: string, value = "") {
+    async function input(prompt: string, value = "", required = true) {
       return vscode.window.showInputBox({
         prompt,
         value,
         ignoreFocusOut: true,
-        validateInput: (v) => (v.trim() ? undefined : "Required"),
+        validateInput: (v) => (!required || v.trim() ? undefined : "Required"),
       });
     }
     const friendly = await input(
@@ -496,8 +496,9 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     if (friendly === undefined) return;
     const server = await input(
-      "SQL Server (host or host\\instance)",
-      old?.server || "localhost",
+      "SQL Server (host or host\\instance; blank inherits settings)",
+      old ? (old.server ?? "") : "localhost",
+      false,
     );
     if (server === undefined) return;
     const name = await input(
@@ -535,12 +536,19 @@ export async function activate(context: vscode.ExtensionContext) {
       });
       if (password === undefined) return;
     }
+    const local = readLocal(expected, old?.id);
+    if (old?.source === "rows-dir" && !local && !old.rowsDir)
+      throw new Error(
+        "Inherited rows directory is missing; reload before editing",
+      );
     const database: Database = {
-      server: server.trim(),
+      ...(server.trim() ? { server: server.trim() } : {}),
+      ...(old?.source === "rows-dir" && !local
+        ? { "rows-dir": old.rowsDir }
+        : {}),
       name: name.trim(),
       platform: platform.trim(),
     };
-    const local = readLocal(expected, old?.id);
     const next = editConfig(expected, local ? old?.id : undefined, database);
     // Validate the exact platform with the real server before writing the file. No login/query.
     const validator = new RpcClient(
@@ -556,6 +564,7 @@ export async function activate(context: vscode.ExtensionContext) {
             name: database.name,
             server: database.server,
             platform: database.platform,
+            ...(database["rows-dir"] ? { rowsDir: database["rows-dir"] } : {}),
           },
         ],
       });
