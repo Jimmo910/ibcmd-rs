@@ -3,7 +3,8 @@
 ibcmd-rs reimplements 1C:Enterprise's native `ibcmd`: configuration export,
 import and apply between XML and SQL Server or file infobases, and `.cf`/XML
 conversion without the platform. Users read `README.md` (Russian). The
-workflow, the AI policy and the review process are in `CONTRIBUTING.md`; test
+workflow, the AI policy and the review process are in `CONTRIBUTING.md`
+(Russian); test
 boundaries in `docs/testing.md`; merge and release gates in
 `docs/release-criteria.md`; parity measurement in `docs/parity-protocol.md`.
 
