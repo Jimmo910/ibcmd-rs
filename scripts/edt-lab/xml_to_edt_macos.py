@@ -83,6 +83,7 @@ def write_launcher_ini(args) -> Path:
         raise Error("Installed launcher INI must have exactly one JVM section")
     split = lines.index("-vmargs")
     launcher, vmargs = lines[:split], lines[split + 1:]
+    launcher = [line.replace("../Eclipse/", str(args.edt_exe.parent) + "/") for line in launcher]
     # Installed debug tracing prefixes the version command with framework dumps.
     # Disable only that opt-in trace in this retained copy; errors/logs stay gated.
     vmargs = [line for line in vmargs if line != "-Dosgi.debug" and not line.startswith("-Dosgi.debug=")]

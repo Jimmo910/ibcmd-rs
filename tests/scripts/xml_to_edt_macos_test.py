@@ -47,7 +47,7 @@ class Controls(unittest.TestCase):
                    java.parent.parent / "release"]
         for path in [root / "ours", *runtime]:
             write(path)
-        write(edt.parent / "1cedt.ini", b"-startup\nsynthetic.jar\n-vmargs\n-Dosgi.debug=synthetic.options\n-Xmx16g\n")
+        write(edt.parent / "1cedt.ini", b"-startup\n../Eclipse/plugins/synthetic.jar\n-vmargs\n-Dosgi.debug=synthetic.options\n-Xmx16g\n")
         plugins = edt.parent / "plugins"
         write(plugins / "model.jar", b"synthetic; never loaded")
         manifest = {"schema_version": 1, "status": "INVENTORIED_NOT_RUNTIME_VERIFIED",
@@ -264,6 +264,7 @@ class Controls(unittest.TestCase):
         self.assertNotIn("-vm", argv)
         self.assertNotIn("-Dosgi.debug=synthetic.options", cap.ini.read_text())
         ini = cap.ini.read_text().splitlines()
+        self.assertEqual(ini[ini.index("-startup") + 1], str(args.edt_exe.parent / "plugins/synthetic.jar"))
         self.assertEqual(ini[ini.index("-vm") + 1], str(args.edt_vm))
         self.assertEqual(ini[ini.index("-user") + 1], str(args.run / "user"))
         self.assertIn(f"-Duser.home={args.run / 'home'}", argv)
