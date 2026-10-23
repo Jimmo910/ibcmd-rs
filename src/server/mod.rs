@@ -547,6 +547,13 @@ impl State {
 
     fn connect(&mut self, params: ConnectParams) -> Result<Value, RpcError> {
         let entry = self.entry(&params.infobase)?.clone();
+        if params.auth == Some(infobases::AuthMode::Windows)
+            && (params.user.is_some() || params.password.is_some())
+        {
+            return Err(RpcError::invalid_params(
+                "Windows authentication does not accept user or password",
+            ));
+        }
         let login = Login {
             auth: params.auth,
             user: params.user.filter(|user| !user.trim().is_empty()),
