@@ -37,7 +37,29 @@ pub(crate) fn import(
     Ok(stage.report(
         config,
         source_root,
-        source_version,
+        Some(source_version),
+        "postgres-configsave-stage",
+        (before, after),
+        None,
+    ))
+}
+
+/// `infobase config load <file.cf>` into a PostgreSQL infobase (#353).
+pub(crate) fn load_cf(
+    config: &ConnectionConfig,
+    input: &std::path::Path,
+) -> Result<InfobaseConfigImportReport> {
+    let target = config
+        .postgres()?
+        .ok_or_else(|| anyhow!("no PostgreSQL database"))?;
+    let mut connection = PgConnection::connect(&target)?;
+    let stage = crate::file_infobase::plan_cf_stage(read_rows(&mut connection, "config")?, input)?;
+    let before = write_stage(&mut connection, &stage.rows)
+        .with_context(|| format!("не удалось записать configsave базы {}", target.database))?;
+    let after = stage.rows.len();
+    Ok(stage.load_report(
+        config,
+        input,
         "postgres-configsave-stage",
         (before, after),
         None,

@@ -206,6 +206,10 @@ const SAVE_OPTIONS: &[OptSpec] = &[
     valued(Opt::Extension, &["extension"], Some('e')),
 ];
 
+/// `config load`: the main configuration replaced by a `.cf`; an
+/// extension's is refused.
+const LOAD_OPTIONS: &[OptSpec] = &[valued(Opt::Extension, &["extension"], Some('e'))];
+
 const APPLY_OPTIONS: &[OptSpec] = &[
     valued(Opt::Extension, &["extension"], Some('e')),
     flag(Opt::Force, &["force"], Some('F')),
@@ -236,6 +240,8 @@ pub enum NodeKind {
     Apply,
     /// `infobase config save`.
     Save,
+    /// `infobase config load`.
+    Load,
     /// A native command ibcmd-rs does not implement yet.
     Unsupported,
 }
@@ -279,7 +285,13 @@ pub static INFOBASE: Node = Node {
             kind: NodeKind::Group,
             options: CONFIG_OPTIONS,
             children: &[
-                unsupported("load", "Загрузка конфигурации"),
+                Node {
+                    name: "load",
+                    summary: "Загрузка конфигурации",
+                    kind: NodeKind::Load,
+                    options: LOAD_OPTIONS,
+                    children: &[],
+                },
                 Node {
                     name: "save",
                     summary: "Выгрузка конфигурации",
@@ -577,6 +589,14 @@ pub struct ImportFilesRequest {
 }
 
 /// `infobase config save [--db] <file>`.
+/// `infobase config load <file.cf>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadRequest {
+    pub common: Common,
+    /// The `.cf` as given.
+    pub path: OsString,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaveRequest {
     pub common: Common,
@@ -595,6 +615,7 @@ pub enum Invocation {
     ImportFiles(ImportFilesRequest),
     Apply(ApplyRequest),
     Save(SaveRequest),
+    Load(LoadRequest),
 }
 
 /// The tokens of one command line, resolved against the tree.
@@ -765,7 +786,8 @@ pub fn parse_infobase(args: &[OsString]) -> Result<Invocation, Refusal> {
         | NodeKind::Import
         | NodeKind::ImportFiles
         | NodeKind::Apply
-        | NodeKind::Save => {}
+        | NodeKind::Save
+        | NodeKind::Load => {}
     }
     if node.kind == NodeKind::Apply {
         return parse_apply(&scan);
@@ -775,6 +797,9 @@ pub fn parse_infobase(args: &[OsString]) -> Result<Invocation, Refusal> {
     }
     if node.kind == NodeKind::Save {
         return parse_save(&scan);
+    }
+    if node.kind == NodeKind::Load {
+        return parse_load(&scan);
     }
     if let Some(error) = scan.error.clone() {
         return Err(error);
@@ -1065,6 +1090,35 @@ fn parse_save(scan: &Scan) -> Result<Invocation, Refusal> {
         database_configuration: scan.has(Opt::Db),
         path,
     }))
+}
+
+/// `infobase config load <file>`: as `config save`, without `--db`.
+fn parse_load(scan: &Scan) -> Result<Invocation, Refusal> {
+    if let Some(error) = scan.error.clone() {
+        return Err(error);
+    }
+    for opt in [Opt::Pid, Opt::Remote] {
+        if let Some(spelled) = scan.spelled(opt) {
+            return Err(Refusal::UnsupportedServer(spelled.to_string()));
+        }
+    }
+    if let Some(spelled) = scan.spelled(Opt::Extension) {
+        return Err(Refusal::UnsupportedOption {
+            option: spelled.to_string(),
+            command: scan.command(),
+        });
+    }
+    let common = common(scan)?;
+    let path = match scan.arguments.as_slice() {
+        [] => {
+            return Err(Refusal::MissingValue(
+                "путь к файлу конфигурации".to_string(),
+            ));
+        }
+        [path] => path.clone(),
+        [_, extra, ..] => return Err(Refusal::Parse(extra.to_string_lossy().into_owned())),
+    };
+    Ok(Invocation::Load(LoadRequest { common, path }))
 }
 
 /// The DBMS the platform knows: MSSQLServer is served, the rest refused.
@@ -1731,7 +1785,11 @@ mod tests {
                     "{path:?}: {result:?}"
                 ),
                 // served: without its path (or directory) it asks for one
-                NodeKind::Export | NodeKind::Import | NodeKind::ImportFiles | NodeKind::Save => {
+                NodeKind::Export
+                | NodeKind::Import
+                | NodeKind::ImportFiles
+                | NodeKind::Save
+                | NodeKind::Load => {
                     assert!(
                         matches!(result, Err(Refusal::MissingValue(_))),
                         "{path:?}: {result:?}"

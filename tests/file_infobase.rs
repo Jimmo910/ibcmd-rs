@@ -274,3 +274,23 @@ fn broken_files_fail_closed() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("1Cv8.1CD"));
 }
+
+#[test]
+fn a_cf_loaded_into_a_file_infobase_is_staged_whole() {
+    // #353: the .cf's elements staged in CONFIGSAVE as they are; the export
+    // publishes the stage, which is `tiny-source` (the versions of
+    // `ConfigDumpInfo.xml` are those of the infobase the file was saved of).
+    let dir = scratch("load-cf");
+    let db = infobase(&dir, "empty");
+    ok(&run(&[
+        "infobase".as_ref(),
+        "config".as_ref(),
+        "load".as_ref(),
+        &db_path(&db),
+        fixtures().join("tiny.cf").as_os_str(),
+    ]));
+    assert!(ibcmd_filedb::backup_file(&db).is_file());
+    let out = dir.join("xml");
+    ok(&export(&db, &out));
+    assert_same_tree(&fixtures().join("tiny-xml"), &out, &["ConfigDumpInfo.xml"]);
+}

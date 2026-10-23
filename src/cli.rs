@@ -875,6 +875,23 @@ pub struct InfobaseConfigSaveArgs {
     pub output: PathBuf,
 }
 
+/// `infobase config load <file.cf>` (#353): the drop-in's arguments.
+#[derive(Debug, Clone)]
+pub struct InfobaseConfigLoadArgs {
+    pub settings: Option<PathBuf>,
+    pub native_config: Option<PathBuf>,
+    /// `--db-path`: a file infobase in place of a DBMS connection.
+    pub db_path: Option<PathBuf>,
+    pub dbms: Option<String>,
+    pub db_server: Option<String>,
+    pub db_name: Option<String>,
+    pub db_user: Option<String>,
+    pub db_pwd: Option<String>,
+    pub db_pwd_env: String,
+    /// The `.cf` to stage.
+    pub input: PathBuf,
+}
+
 /// Research commands under `infobase config` that run the installed
 /// platform: `ibcmd-rs infobase config roundtrip|sweep ...`.
 #[cfg(feature = "platform-oracle")]

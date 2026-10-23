@@ -22,9 +22,9 @@ use walkdir::WalkDir;
 use crate::adapters::mssql_legacy::MssqlLegacyAdapter;
 use crate::cli::{
     InfobaseConfigExportArgs, InfobaseConfigFormat, InfobaseConfigImportArgs,
-    InfobaseConfigSaveArgs, InfobaseConfigSourceVersion, InfobaseImportStageMode,
-    InfobaseImportVerify, MssqlDumpConfigArgs, MssqlDumpExtensionArgs, MssqlExtensionImage,
-    MssqlStageSourceObjectsArgs,
+    InfobaseConfigLoadArgs, InfobaseConfigSaveArgs, InfobaseConfigSourceVersion,
+    InfobaseImportStageMode, InfobaseImportVerify, MssqlDumpConfigArgs, MssqlDumpExtensionArgs,
+    MssqlExtensionImage, MssqlStageSourceObjectsArgs,
 };
 use crate::legacy_version::LegacyVersionAxes;
 use crate::platform::PlatformSpec;
@@ -573,6 +573,45 @@ fn dump_args(
         base: None,
         sync: false,
     }
+}
+
+impl InfobaseConfigLoadArgs {
+    fn connection(&self) -> ConnectionRequest<'_> {
+        ConnectionRequest {
+            settings: self.settings.as_deref(),
+            native_config: self.native_config.as_deref(),
+            format: None,
+            platform: None,
+            source_version: None,
+            db_path: self.db_path.as_deref(),
+            dbms: self.dbms.as_deref(),
+            db_server: self.db_server.as_deref(),
+            db_name: self.db_name.as_deref(),
+            db_user: self.db_user.as_deref(),
+            db_pwd: self.db_pwd.as_deref(),
+            db_pwd_env: &self.db_pwd_env,
+            // A .cf holds the stored rows: no XML format is read.
+            need: PlatformNeed::Given,
+        }
+    }
+}
+
+/// `infobase config load <file.cf>` (#353): the file's elements staged in
+/// `ConfigSave` for `config apply`, in a file infobase or on PostgreSQL. On
+/// SQL Server `mssql-load-config --script-only` writes the stage's scripts.
+pub fn load_config(args: &InfobaseConfigLoadArgs) -> Result<InfobaseConfigImportReport> {
+    let config = resolve_connection(args.connection())?;
+    let input = absolute_path(&args.input)?;
+    if config.file_infobase.is_some() {
+        return crate::file_infobase::load_cf(&config, &input);
+    }
+    if config.postgres()?.is_some() {
+        return crate::postgres_infobase::load_cf(&config, &input);
+    }
+    ensure_mssql(&config.dbms)?;
+    bail!(
+        "загрузка .cf в базу SQL Server этой версией не выполняется: сценарии подготовки пишет `ibcmd-rs mssql-load-config --script-only`"
+    )
 }
 
 pub fn import_config(args: &InfobaseConfigImportArgs) -> Result<InfobaseConfigImportReport> {

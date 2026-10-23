@@ -10,6 +10,7 @@ the `.1CD` files are gzip-compressed (`gzip -9 -n`).
 | `de-empty.1CD.gz` | `ibcmd infobase create --db-path=de-empty --locale=de_DE --create-database`: a collation ibcmd-rs does not write. |
 | `tiny-source/` | The XML of `empty` (`ibcmd infobase config export`) with one common module added by hand (`ФайловаяБазаПроверка`, own uuid and text). |
 | `tiny.1CD.gz` | `ibcmd infobase create --db-path=tiny --create-database --import=tiny-source --apply --force`. |
+| `tiny.cf` | 8.5.1.1529 (Windows): `ibcmd infobase config save --db-path=<tiny> tiny.cf` of an infobase made from `tiny-source` as `tiny.1CD.gz` is. |
 | `tiny-xml/` | `ibcmd infobase config export --db-path=tiny tiny-xml` — what the export of `tiny` must reproduce byte for byte. |
 
 The format evidence these files back is in

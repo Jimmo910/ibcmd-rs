@@ -147,7 +147,7 @@ fn every_native_infobase_command_is_served_or_refused_by_name() {
                 assert_malformed(&args, "Указана неполная команда");
             }
             // served: without its path it asks for one
-            NodeKind::Export | NodeKind::Import | NodeKind::Save => {
+            NodeKind::Export | NodeKind::Import | NodeKind::Save | NodeKind::Load => {
                 assert_malformed(&args, "Не указано значение параметра");
             }
             // served: without its directory it asks for one

@@ -15,6 +15,7 @@ tests/fixtures/template-physical-preservation/*.xml -text whitespace=cr-at-eol
 
 tests/fixtures/template-physical-preservation/provenance.json -text whitespace=cr-at-eol
 tests/fixtures/file-infobase/*.gz binary
+tests/fixtures/file-infobase/*.cf binary
 tests/fixtures/file-infobase/tiny-xml/** -text whitespace=cr-at-eol
 tests/fixtures/file-infobase/tiny-source/** -text whitespace=cr-at-eol
 src/load/seeds/** -text
