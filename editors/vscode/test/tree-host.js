@@ -10,6 +10,11 @@ const { runTests } = require("@vscode/test-electron");
   const dir = await fs.mkdtemp(path.join(root, "tree-host-"));
   const workspace = path.join(dir, "workspace");
   await fs.mkdir(workspace);
+  await fs.cp(
+    path.resolve(__dirname, "../../../tests/fixtures/file-infobase/tiny-xml"),
+    path.join(workspace, "исходники"),
+    { recursive: true },
+  );
   await runTests({
     extensionDevelopmentPath: path.resolve(__dirname, ".."),
     extensionTestsPath: path.join(__dirname, "tree-host-suite.js"),
