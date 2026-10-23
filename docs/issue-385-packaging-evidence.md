@@ -159,3 +159,11 @@ No new local host, Cargo, native, SQL or ERP process was started. Fresh host cov
 for this follow-up is explicitly pending the current #485 → #357 → #483 queue;
 earlier host runs do not validate this new path. Do not attribute donor host
 coverage to this branch. Ordinary exact-head CI and owner acceptance remain pending.
+
+### Interrupted Windows installed-host investigation (2026-10-23)
+
+Fork run `39939946627`, exact head `b273223e7b169e2fd19f476c7bd44b25abf15663`, was deliberately cancelled after its assigned Windows installed-host step remained active from 12:06:36 to 13:54:06 UTC. This is an interrupted diagnostic run, not an acceptance pass or an assertion failure. Linux passed; Windows package tests, formatting, 45 client tests, release binary build and duplicate VSIX hash comparison completed before the stall.
+
+Terminal job logs confirm successful VSIX installation at 12:07:12 UTC, GUI extension-host startup at 12:07:14 and fixture inventory/export at 12:07:16. The unresolved wait is later in the suite, not the runner queue or installer. The old harness did not record finer phases, so a specific configuration/picker/activation wait is not yet proven. Retained local log: `/Volumes/Work/Dev/ibcmd-rs-lab/logs/issue-385-interrupted-windows-job.log`.
+
+The follow-up keeps every installed-tree and override assertion. An independent supervisor enforces an eight-minute whole-run deadline, including synchronous child hangs, and terminates only its spawned process tree. Installer and fixture CLI calls have 120/60-second deadlines; the workflow step has a 15-minute backstop. Phase JSONL and isolated editor logs are uploaded on failure, along with already-built VSIX artifacts. Local subprocess regressions cover success, nonzero exit, spawn failure, synchronous infinite-loop termination and descendant termination. Independent review found no blocking correctness issue; its phase-granularity suggestion was addressed with separate markers for every settings update. Windows process-tree termination and full installed acceptance still require the new-head CI run; no unchanged-code rerun was requested.

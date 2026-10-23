@@ -67,6 +67,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Repeated VSIX packaging failed' }
           if ((Get-FileHash ../../target/vsix/ibcmd-rs-win32-x64.vsix).Hash -ne (Get-FileHash ../../target/vsix/repeated.vsix).Hash) { throw 'Non-reproducible VSIX' }
       - name: Install packaged Windows extension in clean editor and verify offline tree
+        timeout-minutes: 15
         if: runner.os == 'Windows'
         shell: pwsh
         working-directory: editors/vscode
@@ -77,7 +78,7 @@ jobs:
           npm run test:installed
           if ($LASTEXITCODE -ne 0) { throw 'Installed extension acceptance failed' }
       - uses: actions/upload-artifact@v4
-        if: runner.os == 'Windows'
+        if: always() && runner.os == 'Windows'
         with:
           name: vscode-win32-x64
           path: |
@@ -88,5 +89,8 @@ jobs:
         if: always() && runner.os == 'Windows'
         with:
           name: vscode-installed-acceptance
-          path: ${{ runner.temp }}/ibcmd-installed-host/**/acceptance.json
+          path: |
+            ${{ runner.temp }}/ibcmd-installed-host/**/acceptance.json
+            ${{ runner.temp }}/ibcmd-installed-host/**/phases.jsonl
+            ${{ runner.temp }}/ibcmd-installed-host/**/user-data/logs/**
           if-no-files-found: warn
