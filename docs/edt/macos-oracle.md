@@ -244,3 +244,59 @@ candidate output exists, so all candidate-dependent route results are blocked.
 An empty or unrelated output is never substituted. Fresh captures remain at
 `fixtures/issue357-current-server-dcs-001` and
 `fixtures/issue356-current-server-dcs-001`; no BSP/UH acceptance is implied.
+
+## Fixed nonempty candidate: forward and unchanged return
+
+The subsequent `fixtures/issue357-current-server-dcs-002` capture uses the fixed
+candidate built from source head `5e5b5bcdb2a2e56c685ea25d2893ac34734c1434`,
+SHA-256 `6da274e498d6b21ef017c00bc8698cf6c14596d996604acce40a77bfe8431016`.
+The immutable build receipt records Rust 1.95.0, two jobs, locked/offline build
+and the exact executable hash. These are candidate-code evidence, separate from
+the #358 capture-tool branch; this PR does not add those production codec fixes.
+Historical failed capture reports above remain unchanged.
+
+The installed serializer comparison now matches all 18 files exactly. Unchanged
+return matches all 19 original native files, including ConfigDumpInfo.xml, with
+original tree hash `efc5814c4b31e7c8892511003e591fe0f0567a9f0d1d69e3a2594ada60b51a72`.
+All terminal tree/tool/installation/INI guards pass with empty audit errors.
+Structured diagnostics match 24 versus 24 with no additions/removals (14 Code
+style / 10 UI style rows); raw export/validation phase error multisets also match.
+The strict result remains **FAIL**: the fatal/headless SDK records and
+unclassified style categories have not been waived.
+
+The new raw [installed forward](../evidence/edt-current-dcs-fixed/installed-forward-serializer.json)
+and [unchanged return](../evidence/edt-current-dcs-fixed/unchanged-return.json)
+reports each retain all 19 union paths. Forward has 16 all-equal and three
+EDT=candidate-only rows; return has 16 all-equal and three native=candidate-only
+rows. These are serializer/storage distinctions retained in the raw reports,
+not normalized equivalence. Local command receipts, driver source, candidate
+hash and input before/after inventories are retained at
+`logs/issue358-three-way-current-dcs-fixed-001`.
+
+The existing fresh native reference is reused only after full file/size/hash
+inventory equality between its actual installed-EDT export input and this new
+authentic export, unchanged native reference inventory, and successful prior
+native create/import/export command receipts. That explicit binding is retained
+in `native-reference-reuse.json`. No additional native database or JVM is needed
+merely to repeat those identical bytes. This remains the legacy model exercised
+against installed EDT 2026.2.1.3 on one public fixture, not unrestricted current
+schema support or BSP/UH acceptance.
+
+The independent fixed direct reader attempt is now captured at
+`fixtures/issue356-current-server-dcs-fixed-direct-002`. Native-reference reuse
+binding succeeded against complete project/export/native inventories, command
+receipts and code/build hashes. The same fixed candidate then exited 2 before
+atomic output because genuine current
+`FilterProbe.ListForm/Attributes/Список/ExtInfo/ListSettings.dcss` uses LF while
+the pinned DCSS reader requires CRLF. Every direct source/candidate/receipt guard
+passed, and `ours-xml` does not exist. The earlier `fixed-direct-001` stopped at a
+receipt-route check before conversion and is retained separately.
+
+The [fixed accounting report](../evidence/edt-current-dcs-fixed/accounting.json)
+records that exact next codec blocker, successful immutable native-reference
+binding, the two complete raw reports, all terminal audits and the unchanged
+strict diagnostic verdict. It explicitly sets `all_three_routes_completed`
+and every unrestricted/current-schema/BSP/UH acceptance claim to false. No raw
+direct report is produced from a missing, empty or older candidate. The next
+DCSS lexical fix belongs to the shared codec owners; this capture-tool branch
+preserves the reproduction and does not relax the CRLF guard itself.
