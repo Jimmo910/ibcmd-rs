@@ -1210,6 +1210,7 @@ fn capture_inventory(
     let mut identities = BTreeSet::new();
     let mut directory_spellings = BTreeMap::<String, String>::new();
     for entry in WalkDir::new(&anchor.path).follow_links(false) {
+        crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
         let entry = entry.map_err(|error| SourceChangeError::Io(error.to_string()))?;
         if entry.path() == anchor.path {
             continue;
@@ -1484,6 +1485,7 @@ fn path_is_within_windows(candidate: &Path, root: &Path) -> bool {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceChangeError {
+    Cancelled(crate::cancel::Cancelled),
     InvalidInventoryLimits,
     SourceRootIsNotDirectory,
     NonUnicodePath,
@@ -1511,6 +1513,7 @@ pub enum SourceChangeError {
 impl Display for SourceChangeError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Cancelled(error) => Display::fmt(error, formatter),
             Self::InvalidInventoryLimits => {
                 formatter.write_str("source inventory limits must be positive")
             }
@@ -1587,11 +1590,66 @@ impl Display for SourceChangeError {
     }
 }
 
-impl Error for SourceChangeError {}
+impl Error for SourceChangeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Cancelled(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_census_and_held_reads_preserve_typed_cancellation() {
+        const CHILD: &str = "IBCMD_SOURCE_CANCELLATION_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mssql_source_change::tests::source_census_and_held_reads_preserve_typed_cancellation", "--nocapture"])
+                .env(CHILD, "1").status().unwrap();
+            assert!(status.success());
+            return;
+        }
+        struct Scratch(PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = std::env::temp_dir().join(format!("source-cancel-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let scratch = Scratch(root);
+        fs::write(scratch.0.join("body.bsl"), vec![b'x'; 128 * 1024]).unwrap();
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let scope = crate::cancel::scope(flag.clone());
+        let error = HeldSourceRoot::open(&scratch.0, SourceInventoryLimits::default())
+            .err()
+            .expect("census cancelled");
+        assert!(matches!(error, SourceChangeError::Cancelled(_)));
+        assert!(crate::cancel::is_cancelled(&anyhow::Error::from(error)));
+        flag.store(false, std::sync::atomic::Ordering::Relaxed);
+        let held = HeldSourceRoot::open(&scratch.0, SourceInventoryLimits::default()).unwrap();
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        let error = held.source_bytes("body.bsl").unwrap_err();
+        assert!(matches!(error, SourceChangeError::Cancelled(_)));
+        assert!(crate::cancel::is_cancelled(
+            &anyhow::Error::from(error).context("held read")
+        ));
+        drop(scope);
+    }
+
+    #[test]
+    fn typed_source_cancellation_survives_context_without_masking_io() {
+        let error = anyhow::Error::from(SourceChangeError::Cancelled(crate::cancel::Cancelled))
+            .context("source inventory");
+        assert!(crate::cancel::is_cancelled(&error));
+        let io = anyhow::Error::from(SourceChangeError::Io("the operation was cancelled".into()))
+            .context("real I/O failure");
+        assert!(!crate::cancel::is_cancelled(&io));
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
