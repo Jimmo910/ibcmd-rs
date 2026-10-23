@@ -115,8 +115,14 @@ fn read_bin(bin: &[u8]) -> Option<Distribution> {
         "0" => None,
         "1" => {
             let id = next()?.plain()?.to_owned();
+            if !identifier(&id) {
+                return None;
+            }
             let self_store = flag(next()?.plain()?)?;
             let version = next()?.plain()?.to_owned();
+            if !identifier(&version) {
+                return None;
+            }
             let release = next()?.quoted()?;
             let provider = next()?.quoted()?;
             let name = next()?.quoted()?;
@@ -127,6 +133,9 @@ fn read_bin(bin: &[u8]) -> Option<Distribution> {
                 let parent_mode = mode_value_of(PARENT_MODES, next()?.plain()?)?;
                 let user = next()?.plain()?.to_owned();
                 let parent = next()?.plain()?.to_owned();
+                if !identifier(&user) || !identifier(&parent) {
+                    return None;
+                }
                 items.push(Item {
                     user,
                     parent,
@@ -160,6 +169,18 @@ fn read_bin(bin: &[u8]) -> Option<Distribution> {
         distributive,
         supplier,
     })
+}
+
+fn identifier(value: &str) -> bool {
+    formats_xml::children::parse_uuid(value)
+        .is_ok_and(|uuid| formats_xml::children::format_uuid(&uuid) == value)
+}
+
+fn checked_identifier(value: String, field: &str) -> Result<String, String> {
+    if !identifier(&value) {
+        return Err(format!("{EDT_FILE}: malformed {field} UUID"));
+    }
+    Ok(value)
 }
 
 fn mode_value_of(table: &[(&'static str, Option<&str>)], value: &str) -> Option<&'static str> {
@@ -382,11 +403,11 @@ fn read_distr(source: &[u8]) -> Result<Distribution, String> {
                         let mut field = |key: &str| {
                             take(&mut attrs, key).ok_or_else(|| fail(&format!("no {key}")))
                         };
-                        let id = field("id")?;
+                        let id = checked_identifier(field("id")?, "id")?;
                         let release = field("configRelease")?;
                         let provider = field("providerName")?;
                         let name = field("configName")?;
-                        let version = field("configVersion")?;
+                        let version = checked_identifier(field("configVersion")?, "configVersion")?;
                         let self_store = take(&mut attrs, "storeMode").is_some();
                         supplier = Some(Supplier {
                             id,
@@ -402,9 +423,14 @@ fn read_distr(source: &[u8]) -> Result<Distribution, String> {
                         let supplier = supplier
                             .as_mut()
                             .ok_or_else(|| fail("an item outside its supplier"))?;
-                        let user = take(&mut attrs, "userId").ok_or_else(|| fail("no userId"))?;
-                        let parent =
-                            take(&mut attrs, "parentId").ok_or_else(|| fail("no parentId"))?;
+                        let user = checked_identifier(
+                            take(&mut attrs, "userId").ok_or_else(|| fail("no userId"))?,
+                            "userId",
+                        )?;
+                        let parent = checked_identifier(
+                            take(&mut attrs, "parentId").ok_or_else(|| fail("no parentId"))?,
+                            "parentId",
+                        )?;
                         let user_mode =
                             mode_value(USER_MODES, take(&mut attrs, "userMode").as_deref())
                                 .ok_or_else(|| fail("an unknown userMode"))?;

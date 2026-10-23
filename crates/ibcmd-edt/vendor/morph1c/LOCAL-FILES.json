@@ -86,7 +86,7 @@
     "DesignRecord validation binds the already-native current chart counterpart before restoring separate Enum/Value records; dotted literal payloads and unrelated projected values are never projected twice",
     "CURRENT DynamicList availability includes effective main-table CommonAttributes with content/autoUse/separation and family-specific SDK policies; calculated-field availability consumes CURRENT Configuration compatibility >8.3.18, with root mode and common definitions in dependency digests",
     "CURRENT chart design projection retains validated Designer names-only factory presence while replacing values with freshly computed native defaults; EDT hidden source spelling is cleared",
-    "EDT 2026.1 Configuration.distr reads as the root ParentConfigurations.bin in the .distr item order and is written back as .distr; only the witnessed supplier shapes and item modes are accepted"
+    "EDT 2026.1 Configuration.distr reads as the root ParentConfigurations.bin in the .distr item order and is written back as .distr; only the witnessed supplier shapes, canonical UUID identifiers and item modes are accepted"
   ],
   "files": [
     {
@@ -2643,7 +2643,7 @@
     },
     {
       "path": "crates/pipeline/src/ext_read/parent_distribution.rs",
-      "sha256": "cd7bd6fda7d1fd571ef3e60909322d6b0a0416d4fa1bcab60f56c1756fdf6a4c"
+      "sha256": "531692403564616ad480953a7cb25ba541f2e92db142d48d4502ee43b274b762"
     },
     {
       "path": "crates/pipeline/src/flowchart_read.rs",

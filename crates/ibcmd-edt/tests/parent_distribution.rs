@@ -140,3 +140,29 @@ fn real_distr_files_match_their_native_supplier_lists() {
         );
     }
 }
+
+#[test]
+fn invalid_distribution_identifiers_are_refused_before_conversion() {
+    let edt = tempfile::tempdir().unwrap();
+    write(Format::Edt, &seed(), edt.path());
+    for (key, valid) in [
+        ("id", "0c936e66-8c83-43b3-bd07-a9cf3260d84d"),
+        ("configVersion", "8a0205a6-ec03-469c-a93c-74578d3c2838"),
+        ("userId", "d95fcb37-fc65-466d-93e2-489f41683276"),
+        ("parentId", "d95fcb37-fc65-466d-93e2-489f41683276"),
+    ] {
+        for invalid in ["", "not-a-uuid", "d95fcb37-fc65-466d-93e2-489f41683276,0"] {
+            let text = DISTR.replacen(
+                &format!("{key}=\"{valid}\""),
+                &format!("{key}=\"{invalid}\""),
+                1,
+            );
+            assert_ne!(text, DISTR);
+            std::fs::write(root_dir(edt.path()).join("Configuration.distr"), text).unwrap();
+            assert!(
+                read_config(Format::Edt, edt.path(), &options()).is_err(),
+                "accepted {key}={invalid:?}"
+            );
+        }
+    }
+}
