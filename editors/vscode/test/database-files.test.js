@@ -371,8 +371,8 @@ test("group comparison discovers checkout-only objects and excludes other types"
   let choices;
   const source = new core.DatabaseSource(
     {
-      request: async (method, params) => {
-        requests.push({ method, params });
+      request: async (method, params, signal, timeout) => {
+        requests.push({ method, params, signal, timeout });
         const rows = [
           {
             object: "Catalog.Removed",
@@ -466,6 +466,10 @@ test("group comparison discovers checkout-only objects and excludes other types"
     await commands.get("ibcmd.source.compare")(group);
     assert.equal(requests.length, 1);
     assert.equal(requests[0].params.objects, undefined);
+    assert.ok(
+      Number.isFinite(requests[0].timeout) && requests[0].timeout >= 600000,
+    );
+    assert.ok(requests[0].signal instanceof AbortSignal);
     assert.deepEqual(
       Array.from(choices, (item) => item.difference.path),
       ["Catalogs/Removed.xml"],

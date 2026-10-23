@@ -4,6 +4,7 @@ import { ConfigurationView } from "./configuration-view";
 import { DatabaseFiles, Difference, differences } from "./database-files";
 import {
   DatabaseSource,
+  SOURCE_OPERATION_TIMEOUT,
   Node,
   XmlSource,
   groupContains,
@@ -134,6 +135,7 @@ export function registerDatabaseCommands(
                 sourceDir,
               },
               abort.signal,
+              group ? SOURCE_OPERATION_TIMEOUT : undefined,
             ),
             group ? (name) => groupContains(node, name) : undefined,
           );
