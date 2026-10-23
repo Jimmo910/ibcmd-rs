@@ -194,7 +194,7 @@ pub struct HeldSourceRoot {
 
 #[derive(Debug)]
 struct ConsumedSourceFile {
-    original: Arc<OriginalFile>,
+    witness: files::OriginalFileWitness,
     bytes: Arc<Vec<u8>>,
 }
 
@@ -298,7 +298,9 @@ impl HeldSourceRoot {
                 .baseline
                 .file(path)?
                 .ok_or(SourceChangeError::HeldRootChanged)?;
-            consumed.original.require_digest(&expected.sha256)?;
+            let current = self.anchor.open_file(path)?;
+            current.require_witness(&consumed.witness)?;
+            current.require_digest(&expected.sha256)?;
         }
         drop(consumed);
         for source in self.baseline.files() {
@@ -346,7 +348,8 @@ impl HeldSourceRoot {
             .map_err(|e| SourceChangeError::Io(e.to_string()))?;
         if let Some(consumed) = consumed.get(path) {
             // Immutable returned bytes remain bound to the original digest;
-            // require_unchanged checks originals once at the publication gate.
+            // require_unchanged reopens anchored names and validates stamps, ancestry
+            // and digests once at the publication gate.
             return Ok(consumed.bytes.clone());
         }
         let original = match &source.original {
@@ -371,7 +374,7 @@ impl HeldSourceRoot {
         consumed.insert(
             path.to_owned(),
             ConsumedSourceFile {
-                original,
+                witness: original.witness(),
                 bytes: bytes.clone(),
             },
         );
@@ -1752,8 +1755,12 @@ mod tests {
             Err(SourceChangeError::HeldRootChanged)
         ));
         drop(held);
-        fs::remove_file(&first).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_file(&first).unwrap();
+        }
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]
@@ -2617,7 +2624,9 @@ mod tests {
         fs::write(root.join("CommonModules/Work/Ext/Module.bsl"), "bad").unwrap();
         assert_eq!(verified.bytes(), b"new");
         drop(held);
-        fs::remove_dir_all(root).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]
@@ -2644,7 +2653,9 @@ mod tests {
                 | Err(SourceChangeError::PathEscapesRoot(_))
         ));
         drop(held);
-        fs::remove_dir_all(base).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(base).unwrap();
+        }
     }
 
     #[test]
@@ -2697,7 +2708,9 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(error, SourceChangeError::InventoryLimit(_)));
-        fs::remove_dir_all(root).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[cfg(windows)]
@@ -2733,12 +2746,16 @@ mod tests {
                 HeldSourceRoot::open(&real, SourceInventoryLimits::default()),
                 Err(SourceChangeError::LinkOrReparsePoint(_))
             ));
-            fs::remove_file(&entry_link).unwrap();
+            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                fs::remove_file(&entry_link).unwrap();
+            }
         }
-        if root_link.exists() {
+        if root_link.exists() && std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
             fs::remove_dir(&root_link).unwrap();
         }
-        fs::remove_dir_all(base).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(base).unwrap();
+        }
     }
 }
 
@@ -2748,6 +2765,57 @@ mod original_source_tests;
 #[cfg(test)]
 mod traversal_budget_tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn source_xml_custody_is_bounded_under_low_fd_limit() {
+        const CHILD: &str = "IBCMD_LOW_FD_SOURCE_CHILD";
+        const TEST: &str = "mssql_source_change::traversal_budget_tests::source_xml_custody_is_bounded_under_low_fd_limit";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "ulimit -S -n 128 && exec \"$1\" --exact \"$2\" --nocapture",
+                    "source-fd-regression",
+                ])
+                .arg(std::env::current_exe().unwrap())
+                .arg(TEST)
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+            return;
+        }
+        let root = root();
+        fs::create_dir(root.join("CommonModules")).unwrap();
+        let template = include_str!(
+            "../tests/fixtures/file-infobase/tiny-xml/CommonModules/ФайловаяБазаПроверка.xml"
+        );
+        for i in 0..1024 {
+            fs::write(
+                root.join(format!("CommonModules/Module{i}.xml")),
+                template.replace("ФайловаяБазаПроверка", &format!("Module{i}")),
+            )
+            .unwrap();
+        }
+        let held = HeldSourceRoot::open(&root, SourceInventoryLimits::default()).unwrap();
+        let xml = (0..1024)
+            .map(|i| {
+                let path = format!("CommonModules/Module{i}.xml");
+                (root.join(&path), held.source_bytes(&path).unwrap())
+            })
+            .collect::<Vec<_>>();
+        let index =
+            crate::metadata_model::index::ConfigIndex::build_from_files(&root, &xml).unwrap();
+        assert_eq!(index.objects.len(), 1024);
+        held.require_unchanged().unwrap();
+    }
+
     struct Scratch(PathBuf);
     impl std::ops::Deref for Scratch {
         type Target = Path;
@@ -2768,6 +2836,86 @@ mod traversal_budget_tests {
         fs::create_dir(&root).unwrap();
         Scratch(root)
     }
+    #[test]
+    fn consumed_cache_revalidates_file_and_ancestor_witnesses() {
+        for mutation in ["rewrite", "replace", "ancestor"] {
+            let root = root();
+            fs::create_dir(root.join("nested")).unwrap();
+            let path = root.join("nested/body.bsl");
+            fs::write(&path, b"original").unwrap();
+            let held = HeldSourceRoot::open(&root, SourceInventoryLimits::default()).unwrap();
+            let bytes = held.source_bytes("nested/body.bsl").unwrap();
+            assert!(Arc::ptr_eq(
+                &bytes,
+                &held.source_bytes("nested/body.bsl").unwrap()
+            ));
+            held.require_unchanged().unwrap();
+            match mutation {
+                "rewrite" => {
+                    fs::write(&path, b"different").unwrap();
+                    fs::write(&path, b"original").unwrap();
+                }
+                "replace" => {
+                    fs::rename(&path, root.join("original.bsl")).unwrap();
+                    fs::write(&path, b"original").unwrap();
+                }
+                "ancestor" => {
+                    fs::rename(root.join("nested"), root.join("old")).unwrap();
+                    fs::create_dir(root.join("nested")).unwrap();
+                    fs::rename(root.join("old/body.bsl"), &path).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            // Cache hits must still return the originally admitted immutable bytes;
+            // only the final guard authorizes publication, and must reject mutation.
+            assert!(Arc::ptr_eq(
+                &bytes,
+                &held.source_bytes("nested/body.bsl").unwrap()
+            ));
+            assert!(held.require_unchanged().is_err(), "{mutation}");
+        }
+    }
+
+    #[test]
+    fn consumed_cache_rejects_ancestor_rebinding_with_unchanged_leaf() {
+        let root = root();
+        fs::create_dir_all(root.join("nested/inner")).unwrap();
+        let path = root.join("nested/inner/body.bsl");
+        fs::write(&path, b"original").unwrap();
+        let held = HeldSourceRoot::open(&root, SourceInventoryLimits::default()).unwrap();
+        held.source_bytes("nested/inner/body.bsl").unwrap();
+        let before = fs::metadata(&path).unwrap();
+        let identity = held
+            .anchor
+            .open_file("nested/inner/body.bsl")
+            .unwrap()
+            .identity();
+        fs::rename(root.join("nested"), root.join("old")).unwrap();
+        fs::create_dir(root.join("nested")).unwrap();
+        fs::rename(root.join("old/inner"), root.join("nested/inner")).unwrap();
+        let after = fs::metadata(&path).unwrap();
+        assert_eq!(before.len(), after.len());
+        assert_eq!(before.modified().unwrap(), after.modified().unwrap());
+        assert_eq!(
+            identity,
+            held.anchor
+                .open_file("nested/inner/body.bsl")
+                .unwrap()
+                .identity()
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(
+                (before.ctime(), before.ctime_nsec()),
+                (after.ctime(), after.ctime_nsec())
+            );
+        }
+        #[cfg(windows)]
+        assert_eq!(before.created().unwrap(), after.created().unwrap());
+        assert!(held.require_unchanged().is_err());
+    }
+
     #[test]
     fn empty_directory_growth_is_bounded_during_initial_and_final_capture() {
         let root = root();
