@@ -71,3 +71,20 @@ Use permissions were not granted; README uses an explicitly labeled illustration
 GitHub Project 9 updates are unavailable to this account, per coordinator evidence;
 no denied board write was retried. Keep the full issue open and this partial-scope
 PR Draft until the owner's remaining acceptance is satisfied.
+
+## Windows checkout formatting regression
+
+Current-head Windows job [120334143270](https://github.com/Jimmo910/ibcmd-rs/actions/runs/39929553539/job/120334143270)
+failed `npm run format:check` at a3488081: `scripts/build.cjs` and
+`scripts/python.cjs` were converted to CRLF because the editor attributes covered
+only .ts/.js/.json. The same failure was reproduced locally with
+`git -c core.autocrlf=true checkout-index` in a retained external snapshot; both
+scripts contained CRLF and Prettier exited 1.
+
+Adding `.cjs text eol=lf` makes the identical forced checkout pass Prettier. A new
+package regression performs that checkout and asserts LF without CRLF in both
+scripts. All three Python archive/checkout tests, two Node executable tests,
+`format:check` and whitespace checks pass. Independent read-only review found no
+blocker. Formatter settings and checks are unchanged. Before/after snapshots are
+retained under `tmp/issue-385-crlf-{before,after}-*`; the failed Windows job log is
+`logs/issue-385-windows-a3488081.log`. Windows exact-head CI remains the final proof.
