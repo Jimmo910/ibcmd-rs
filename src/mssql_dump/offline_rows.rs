@@ -931,6 +931,7 @@ mod tests {
             rows_dir: Some(dir.clone()),
             file_infobase: None,
             postgres: None,
+            postgres_snapshot: None,
             model_export: false,
             legacy_export: false,
             output_dir: out.clone(),

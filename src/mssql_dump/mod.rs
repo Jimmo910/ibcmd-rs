@@ -982,6 +982,7 @@ mod fetch;
 mod file_infobase;
 mod postgres_infobase;
 pub(crate) use file_infobase::{FileInfobaseConfig, file_infobase_config};
+pub use postgres_infobase::PostgresExportSnapshot;
 mod form;
 mod form_body;
 mod form_extension;
@@ -2230,7 +2231,7 @@ fn dump_config_inner(
             }
             let target = args.postgres.as_ref().expect("checked above");
             Some(offline_rows::activate_shared(
-                postgres_infobase::load_published(target)?,
+                postgres_infobase::load_published(target, args.postgres_snapshot.as_ref())?,
             )?)
         }
         (None, None) => {
