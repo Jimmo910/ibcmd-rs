@@ -32,6 +32,27 @@ def external(path):
     return path
 
 
+
+def require_disjoint_installation(run, edt):
+    eclipse = edt.parent
+    contents = eclipse.parent
+    bundle = contents.parent
+    if edt.name != '1cedtcli' or eclipse.name != 'Eclipse' or contents.name != 'Contents' \
+            or bundle.suffix != '.app':
+        raise OracleError('EDT CLI must have the physical .app/Contents/Eclipse/1cedtcli layout')
+    # Eclipse is only one subtree: Resources, MacOS and bundle-root writes also
+    # mutate the installation outside its immutable payload inventory.
+    def contains(outer, inner):
+        if inner.is_relative_to(outer):
+            return True
+        # Existing ancestors can name the same directory with different case on
+        # macOS volumes; lexical ancestry alone does not establish disjointness.
+        return outer.exists() and any(ancestor.exists() and ancestor.samefile(outer)
+            for ancestor in (inner, *inner.parents))
+    if contains(bundle, run) or contains(run, bundle):
+        raise OracleError('Whole EDT app bundle and run must not overlap')
+
+
 def file_record(path):
     no_links(path)
     return {'path': str(path), 'bytes': path.stat().st_size, 'sha256': digest(path)}
@@ -106,8 +127,7 @@ def capture(args):
             raise OracleError('Selected JVM library must be an existing physical file')
     if args.run.exists() or not args.run.parent.is_dir():
         raise OracleError('Run must be new with existing external parent')
-    if args.run.is_relative_to(args.edt.parent) or args.edt.is_relative_to(args.run):
-        raise OracleError('Installation and run must not overlap')
+    require_disjoint_installation(args.run, args.edt)
     if not re.fullmatch(r'\d+\.\d+\.\d+\.\d+', args.edt_build):
         raise OracleError('Declare exact four-component installed build')
     if args.timeout < 1 or not 1 <= args.heap_gib <= 64:

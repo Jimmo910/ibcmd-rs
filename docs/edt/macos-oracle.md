@@ -46,7 +46,11 @@ opens the original ERP database, deletes fixtures, or changes security settings.
 ## Reproduce discovery and preparation
 
 Source `lab-env.sh` and use a new run name; existing evidence cannot be resumed
-or overwritten. No Rust build is required for this capture step.
+or overwritten. The run must be disjoint from the entire physical `.app`
+bundle, including its root, Contents, MacOS and Resources, and must not contain
+the bundle. Existing directory identities also reject case aliases on macOS.
+An invalid launcher layout or overlap is rejected before any capture output or
+process is created. No Rust build is required for this capture step.
 
 ```sh
 python3 -B scripts/edt-lab/prepare_macos.py discover \

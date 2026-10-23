@@ -39,6 +39,52 @@ class Controls(unittest.TestCase):
         with self.assertRaises(lab.OracleError):
             lab.external(link)
 
+    def test_whole_bundle_overlap_rejected_before_any_capture_output(self):
+        bundle = self.run / 'installed.app'
+        edt = bundle / 'Contents/Eclipse/1cedtcli'
+        edt.parent.mkdir(parents=True)
+        for directory in ('Contents/MacOS', 'Resources'):
+            (bundle / directory).mkdir(parents=True)
+        java = self.run / 'java'
+        for relative in ('capture', 'Contents/capture', 'Contents/MacOS/capture',
+                         'Contents/Eclipse/capture', 'Resources/capture'):
+            with self.subTest(relative=relative):
+                run = bundle / relative
+                args = SimpleNamespace(run=run, edt=edt, java=java)
+                with patch.object(lab.sys, 'platform', 'darwin'), \
+                     patch.object(lab, 'isolated_environment') as environment, \
+                     patch.object(lab, 'snapshot') as inventory, \
+                     patch.object(lab.subprocess, 'Popen') as launch:
+                    with self.assertRaisesRegex(lab.OracleError, 'Whole EDT app bundle'):
+                        lab.capture(args)
+                self.assertFalse(run.exists())
+                environment.assert_not_called()
+                inventory.assert_not_called()
+                launch.assert_not_called()
+
+    def test_bundle_ancestor_rejected_and_sibling_capture_allowed(self):
+        edt = self.run / 'installed.app/Contents/Eclipse/1cedtcli'
+        for run in (self.run, self.run / 'installed.app'):
+            with self.subTest(run=run):
+                with self.assertRaises(lab.OracleError):
+                    lab.require_disjoint_installation(run, edt)
+        lab.require_disjoint_installation(self.run / 'capture', edt)
+        lab.require_disjoint_installation(self.run / 'installed.app-capture', edt)
+
+    def test_physical_bundle_alias_rejected(self):
+        bundle = self.run / 'installed.app'
+        edt = bundle / 'Contents/Eclipse/1cedtcli'
+        edt.parent.mkdir(parents=True)
+        alias = self.run / 'INSTALLED.APP'
+        if not alias.exists():
+            self.skipTest('Volume uses case-sensitive directory names')
+        with self.assertRaises(lab.OracleError):
+            lab.require_disjoint_installation(alias / 'Contents/capture', edt)
+
+    def test_non_bundle_launcher_layout_rejected(self):
+        with self.assertRaises(lab.OracleError):
+            lab.require_disjoint_installation(self.run / 'capture', self.run / 'tool/1cedtcli')
+
     def test_environment_redirects_all_data_and_removes_java_injection(self):
         with patch.dict(os.environ, {'JAVA_TOOL_OPTIONS': '-Duser.home=/internal'}):
             env, receipt = lab.isolated_environment(self.run)
@@ -81,7 +127,7 @@ class Controls(unittest.TestCase):
         self.assertEqual(record['error_type'], 'KeyboardInterrupt')
 
     def test_changed_installation_prevents_terminal_discovery_receipt(self):
-        edt = self.run / 'tool/Contents/Eclipse/1cedtcli'
+        edt = self.run / 'tool.app/Contents/Eclipse/1cedtcli'
         edt.parent.mkdir(parents=True)
         edt.write_bytes(b'fake')
         edt.chmod(0o700)
