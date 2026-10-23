@@ -145,20 +145,20 @@ impl FilesSelection {
 
     /// Without `--partial`, refuses an object loaded whole that the target
     /// holds a body of and the directory does not: the platform removes such
-    /// a body (`deleted`), this stage would keep it. `target_has` tells the
-    /// target's rows by name (`None` when they were not read); the prepared
+    /// a body (`deleted`), this stage would keep it. `target_names` holds the
+    /// target's published rows (`None` when they were not read); the prepared
     /// objects are the ones `trim` kept.
     pub(super) fn refuse_removed_bodies(
         &self,
         root: &Path,
-        target_has: Option<&dyn Fn(&str) -> bool>,
+        target_names: Option<&[String]>,
         metadata_objects: &[PreparedMetadataObjectStage],
         common_modules: &[PreparedCommonModuleObjectStage],
     ) -> Result<(), FilesRefused> {
         if self.native != Some(false) || self.loaded.is_empty() {
             return Ok(());
         }
-        let Some(target_has) = target_has else {
+        let Some(target_names) = target_names else {
             return Err(unsupported(
                 "Загрузка невозможна: без --partial платформа удаляет тела загружаемых объектов, \
                  которых нет в каталоге, а строки базы для этой проверки не прочитаны; укажите \
@@ -175,12 +175,15 @@ impl FilesSelection {
                 .iter()
                 .map(|body| body.body_id.as_str())
                 .collect::<Vec<_>>();
-            removed.extend(removed_bodies(&object.object_id, &staged, target_has));
+            removed.extend(removed_bodies(&object.object_id, &staged, target_names));
         }
         for module in common_modules.iter().filter(|module| loaded(&module.xml)) {
-            if !module.has_module_body && target_has(&module.module_body_id) {
-                removed.push(module.module_body_id.clone());
-            }
+            let staged = if module.has_module_body {
+                vec![module.module_body_id.as_str()]
+            } else {
+                Vec::new()
+            };
+            removed.extend(removed_bodies(&module.module_id, &staged, target_names));
         }
         if removed.is_empty() {
             return Ok(());
@@ -358,27 +361,21 @@ fn is_owner_xml(relative: &str) -> bool {
     is_stage_metadata_xml(relative) || is_root_common_module_xml(relative)
 }
 
-/// The roles a body row of an object is stored under (`<object id>.<role>`),
-/// which a stage that loads an object whole could leave behind: hexadecimal
-/// numbers, none past `1d` in the БСП 8.5 corpus (`.1c`, `.1d` of a catalog
-/// are what the platform lists in `deleted`, `docs/import/import-files.md`).
-const ROLE_SUFFIXES: [&str; 30] = [
-    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "10", "11",
-    "12", "13", "14", "15", "16", "17", "18", "19", "1a", "1b", "1c", "1d",
-];
-
 /// The body rows of the object `object_id` the target holds and a whole
 /// load of it would not stage (`staged`): what the platform lists in
 /// `deleted` without `--partial`.
-fn removed_bodies(
-    object_id: &str,
-    staged: &[&str],
-    target_has: &dyn Fn(&str) -> bool,
-) -> Vec<String> {
-    ROLE_SUFFIXES
+fn removed_bodies(object_id: &str, staged: &[&str], target_names: &[String]) -> Vec<String> {
+    let prefix = format!("{}.", object_id.to_ascii_lowercase());
+    // Use what the target actually publishes, including roles beyond any
+    // measured corpus. A role we cannot load must be refused, not left over.
+    target_names
         .iter()
-        .map(|role| format!("{object_id}.{role}"))
-        .filter(|row| target_has(row) && !staged.contains(&row.as_str()))
+        .filter(|row| {
+            row.to_ascii_lowercase().starts_with(&prefix)
+                && row.len() > prefix.len()
+                && !staged.iter().any(|staged| staged.eq_ignore_ascii_case(row))
+        })
+        .cloned()
         .collect()
 }
 
@@ -904,12 +901,68 @@ mod tests {
 
     #[test]
     fn a_whole_load_without_partial_would_remove_the_bodies_the_directory_lacks() {
-        let target = ["o", "o.0", "o.3"];
-        let target_has = |name: &str| target.contains(&name);
-        assert_eq!(removed_bodies("o", &["o.0"], &target_has), ["o.3"]);
+        let target = list(&["o", "o.0", "o.3"]);
+        assert_eq!(removed_bodies("o", &["o.0"], &target), ["o.3"]);
         // the roles the platform lists for rows the target does not hold
         // (`.1c`, `.1d`) remove nothing
-        assert!(removed_bodies("o", &["o.0", "o.3"], &target_has).is_empty());
+        assert!(removed_bodies("o", &["o.0", "o.3"], &target).is_empty());
+    }
+
+    #[test]
+    fn a_whole_load_refuses_every_actual_target_body_role() {
+        let target = list(&["o", "o.0", "o.1e", "o.20", "other.20"]);
+        assert_eq!(removed_bodies("o", &["o.0"], &target), ["o.1e", "o.20"]);
+    }
+
+    #[test]
+    fn a_whole_load_sees_a_body_published_only_by_a_dynamic_alias() {
+        let generation = "06cb0442-0c47-4fad-986a-f08f28287c1b";
+        let owner = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+        let alias = format!("{owner}_dynupdate_{generation}.3");
+        let rows = std::collections::HashMap::from([(alias, std::sync::Arc::new(vec![1]))]);
+        let marker = format!("{{1,1,{generation}}}");
+        let aliases = crate::mssql_dump::dynamic_generation_aliases(
+            Some(marker.as_bytes()),
+            rows.keys().map(String::as_str),
+        )
+        .unwrap();
+        let target = super::super::file_import_target_row_names(&rows, &aliases);
+        assert_eq!(removed_bodies(owner, &[], &target), [format!("{owner}.3")]);
+    }
+
+    #[test]
+    fn final_prepared_rows_refuse_missing_target_bodies_only_without_partial() {
+        let tree = Scratch::new("final-body-rows", &["Catalogs/X.xml"]);
+        let object = PreparedMetadataObjectStage {
+            object_id: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa".to_owned(),
+            kind: "Catalog".to_owned(),
+            xml: tree.0.join("Catalogs/X.xml"),
+            properties: super::super::SimpleMetadataXmlProperties {
+                kind: "Catalog".to_owned(),
+                uuid: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa".to_owned(),
+                name: "X".to_owned(),
+                synonyms: Vec::new(),
+                comment: String::new(),
+            },
+            metadata_plain_bytes: 1,
+            metadata_blob: vec![1],
+            metadata_blob_sha256: "descriptor".to_owned(),
+            body_rows: Vec::new(),
+        };
+        let target = list(&["aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa.20"]);
+        for partial in [false, true] {
+            let selection = select_native(&tree.0, &list(&["Catalogs/X.xml"]), partial).unwrap();
+            let mut objects = vec![object.clone()];
+            selection
+                .trim(&tree.0, &mut objects, &mut Vec::new())
+                .unwrap();
+            let result = selection.refuse_removed_bodies(&tree.0, Some(&target), &objects, &[]);
+            if partial {
+                assert!(result.is_ok());
+            } else {
+                assert!(result.unwrap_err().message.contains(&target[0]));
+            }
+        }
     }
 
     #[test]
