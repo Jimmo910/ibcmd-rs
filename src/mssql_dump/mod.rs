@@ -16583,12 +16583,14 @@ fn parse_information_register_owner_fields<'a>(
     // Older owners stop before the slots later versions append: version 30
     // lacks the last two data-history slots, version 29 all three, version
     // 27 also both totals-slice flags. Two 8.3.27 corpora dump the missing
-    // ones as `false`, `false`, `DontUse`, `false`, `false`.
-    let missing = match (owner.len(), owner.first()?.trim()) {
-        (39, "33") => 0,
-        (37, "30") => 2,
-        (36, "29") => 3,
-        (34, "27") => 5,
+    // ones as `false`, `false`, `DontUse`, `false`, `false`. Version 32 has
+    // the 37 fields of version 30: ЗУП 3.1.18 stores 73 registers that way and
+    // 8.3.27.2214 dumps them with the same two missing slots.
+    let missing = match (owner.len(), owner.first()?.trim().parse::<u32>().ok()?) {
+        (39, 33) => 0,
+        (37, 30 | 32) => 2,
+        (36, 29) => 3,
+        (34, 27) => 5,
         _ => return None,
     };
     let generated_type_ids = owner[1..15]
