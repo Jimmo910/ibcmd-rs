@@ -309,3 +309,15 @@ release workflow packages the Windows release binary into a VSIX and includes it
 in the audited-artifact download/attachment path. No Marketplace/Open VSX publishing
 or publisher credentials are configured here. The owner must create accounts and
 perform publication; a release must still pass the repository release gates.
+
+## Source-specific editing and configuration views
+
+Edit Connection supports SQL and read-only rows-directory entries. Omitted servers
+continue to inherit normal settings, and copied inherited rows-directory entries
+retain their resolved directory. File databases and unknown source types are
+excluded from this editor. The TOML writer also refuses `db-path` replacements,
+including when a local entry changes source while a prompt is open.
+
+Without a native comparison baseline, object status and tree requests both use the
+active configuration. With a native baseline, both use main configuration and the
+server's version-evidence path. Missing version evidence remains unknown.

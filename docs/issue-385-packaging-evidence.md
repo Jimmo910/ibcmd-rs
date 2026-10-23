@@ -88,3 +88,48 @@ scripts. All three Python archive/checkout tests, two Node executable tests,
 blocker. Formatter settings and checks are unchanged. Before/after snapshots are
 retained under `tmp/issue-385-crlf-{before,after}-*`; the failed Windows job log is
 `logs/issue-385-windows-a3488081.log`. Windows exact-head CI remains the final proof.
+
+## Actual Codex findings follow-up
+
+Read the actual inline findings from the review of a3488081, rather than treating
+an automation summary or later sampling error as a completed clean review:
+
+- [4358230173](https://github.com/Untru/ibcmd-rs/pull/508#discussion_r4358230173):
+  file-db Edit could preserve `db-path` while adding `server`, yielding invalid
+  settings. Reused reviewed source and unit-test portions of #477 donor
+  `b6aca400fd7fddc556b7a5dc20aa579e94127651`; adapted the connection harness to retain
+  this branch's object-view and executable resolver mocks. File-db/unknown sources
+  are excluded, the writer guards `db-path`, and supported inherited server/rows
+  semantics remain intact. Shared Windows env and intentional-dispose corrections
+  are retained from the same reviewed donor. Donor branches were not modified.
+- [4358230185](https://github.com/Untru/ibcmd-rs/pull/508#discussion_r4358230185):
+  without native baseline, status used active but tree used main. Tree now selects
+  main only when the native baseline exists, matching existing server dispatch.
+  The #484 owner confirmed this contract. No Rust or protocol change was needed.
+- [4358230193](https://github.com/Untru/ibcmd-rs/pull/508#discussion_r4358230193):
+  both editor workflow filters now cover `src/**`, `crates/**`, Cargo manifests/lock,
+  editor-server tests and their common/fixture dependencies. Parsed both trigger
+  lists and verified nine concrete backend/client/dependency path cases, including
+  stored_objects, native_export_status, mssql_dump and ibcmd-xml. Retained parsed
+  inputs: `tmp/issue-385-editor-workflow-triggers.json`.
+
+Before-source tests reproduced both the missing file-db guard and active/main
+mismatch in `logs/issue-385-review-regressions-before.log`. Final integrated checks:
+42 client unit/real CLI tests, 2 executable tests, 3 packaging/Windows-checkout
+checks, formatting and whitespace all pass. Independent integrated review found
+no blocker; original assertions and the 7825043c LF correction are preserved.
+
+The planner-granted isolated VS Code host run exited 0 on 2026-10-23 10:11:53 UTC.
+It verifies a mixed real-server MSSQL/file-db list: the picker excludes file-db,
+TOML stays byte-identical, and real `settings show` still accepts it. The full
+existing connection/tree/cancellation suite also passed. The host slot was released;
+no Cargo/native/SQL or ERP run started. Retained evidence:
+
+- `logs/issue-385-review-client-green.log`
+- `logs/issue-385-review-host.log`
+- `tmp/issue-385-review-host/host-IgcFAL/workspace/file-db-edit-evidence.toml`
+
+This is local client/server-contract evidence, not a new native CONFIGSAVE oracle
+or live SQL login. Exact-head fork CI must still validate Windows packaging and
+installation. Existing publication, screenshot and release acceptance limits remain.
+No additional bot review request or manual workflow rerun was sent.
