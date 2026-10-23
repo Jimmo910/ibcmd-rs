@@ -36,7 +36,8 @@
 //! newlines are canonicalized (§1.6): the two dialects differ ONLY in the newline convention
 //! INSIDE text nodes (multi-line `<query>`) — Designer stores the cf-verbatim text (LF on the
 //! s15 witness), EDT re-normalizes text newlines to CRLF on export; STRUCTURAL newlines
-//! (between tags) are CRLF in BOTH. So an EDT read canonicalizes text-node CRLF→LF
+//! (between tags) are CRLF in the legacy witnesses. Current EDT LF separators
+//! use a source-only owner facet and independent structural projection. So an EDT read canonicalizes text-node CRLF→LF
 //! ([`transcode_text_node_newlines`]); a Designer read stays verbatim (it IS the ground
 //! truth). On write: EDT re-normalizes text nodes to CRLF, Designer emits the canonical
 //! verbatim (+BOM). The cf re-serializer is text-node CRLF↔LF agnostic anyway (a spec parse
@@ -109,7 +110,12 @@ pub fn attach_dcs_bodies(
                 })?;
                 let stripped = bytes.strip_prefix(BOM).unwrap_or(&bytes);
                 let body = match format {
-                    Format::Edt => crate::sdk_body_projection::dcs_alias(&crate::sdk_body_projection::text_newlines(stripped, false)?, false)?,
+                    Format::Edt => {
+                        let canonical = if current_edt_lf(stripped) {
+                            crate::sdk_body_projection::dcs_structural_newlines(stripped, true)?
+                        } else { stripped.to_vec() };
+                        crate::sdk_body_projection::dcs_alias(&crate::sdk_body_projection::text_newlines(&canonical, false)?, false)?
+                    },
                     _ => stripped.to_vec(),
                 };
                 if !obj.templates.is_empty() {
@@ -121,6 +127,7 @@ pub fn attach_dcs_bodies(
                             .into(),
                     });
                 }
+                obj.source_dcs_edt_lf = format == Format::Edt && current_edt_lf(stripped);
                 obj.templates.push(Template {
                     pages: Vec::new(),
                     resources: Vec::new(),
@@ -161,7 +168,12 @@ pub fn attach_dcs_bodies(
         // normalization (module docs) → undo it; Designer bodies are already canonical.
         let stripped = bytes.strip_prefix(BOM).unwrap_or(&bytes);
         let body = match format {
-            Format::Edt => crate::sdk_body_projection::dcs_alias(&crate::sdk_body_projection::text_newlines(stripped, false)?, false)?,
+            Format::Edt => {
+                        let canonical = if current_edt_lf(stripped) {
+                            crate::sdk_body_projection::dcs_structural_newlines(stripped, true)?
+                        } else { stripped.to_vec() };
+                        crate::sdk_body_projection::dcs_alias(&crate::sdk_body_projection::text_newlines(&canonical, false)?, false)?
+                    },
             _ => stripped.to_vec(),
         };
         // §1.0: the descriptor read must not populate the child's templates — only this pass does.
@@ -174,6 +186,7 @@ pub fn attach_dcs_bodies(
                     .into(),
             });
         }
+        child.source_dcs_edt_lf = format == Format::Edt && current_edt_lf(stripped);
         child.templates.push(Template {
             pages: Vec::new(),
             resources: Vec::new(),
@@ -231,6 +244,14 @@ fn is_dcs_template_child(child: &MetadataObject) -> bool {
         && matches!(child.get(F_TEMPLATE_TYPE), Some(PropertyValue::Enum(t)) if t.as_str() == TEMPLATE_TYPE_DCS)
 }
 
+fn current_edt_lf(body: &[u8]) -> bool {
+    body.starts_with(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+}
+fn edt_dcs_body(body: &[u8], source_lf: bool) -> Result<Vec<u8>, ConvertError> {
+    let bytes = crate::sdk_body_projection::text_newlines(&crate::sdk_body_projection::dcs_alias(body, true)?, true)?;
+    if source_lf { crate::sdk_body_projection::dcs_structural_newlines(&bytes, false) } else { Ok(bytes) }
+}
+
 /// Write-side mirror of [`attach_dcs_bodies`]: emit each DCS template child's schema body beside the
 /// host descriptor just written, in the TARGET format's layout (mirror of the read-side attach — a
 /// cross-format convert must re-emit the schema body, else the compiled Report carries an
@@ -269,7 +290,7 @@ pub fn write_dcs_bodies(
                     v.extend_from_slice(body);
                     v
                 } else {
-                    crate::sdk_body_projection::text_newlines(&crate::sdk_body_projection::dcs_alias(body, true)?, true)?
+                    edt_dcs_body(body, obj.source_dcs_edt_lf)?
                 };
                 crate::form_write::write_file(&path, &bytes)?;
             }
@@ -299,7 +320,7 @@ pub fn write_dcs_bodies(
             v.extend_from_slice(body);
             v
         } else {
-            crate::sdk_body_projection::text_newlines(&crate::sdk_body_projection::dcs_alias(body, true)?, true)?
+            edt_dcs_body(body, child.source_dcs_edt_lf)?
         };
         crate::form_write::write_file(&path, &bytes)?;
     }

@@ -580,6 +580,11 @@ fn attach_form_body_current(
             _ => None,
         };
 
+        body.source_module_scaffold_edt_lf = format == Format::Edt
+            && module
+                .as_deref()
+                .is_some_and(crate::module_read::is_lf_empty_form_module_scaffold);
+
         // The form HELP is a sidecar too — EDT `Forms/<F>/Help/<lang>.html`, Designer
         // `Forms/<F>/Ext/Help.xml` + `Ext/Help/<lang>.html` — the SAME layout/encodings as the
         // OBJECT help, only anchored at the form (`crate::help_read::read_help_sidecar` is reused
@@ -660,16 +665,17 @@ fn attach_edt_conditional_appearance(
         path: path.display().to_string(),
         reason: e.to_string(),
     })?;
-    let (ca_items, ca_without_lf_pal) =
-        formats_xml::form::read_conditional_appearance_dcssca(&bytes).map_err(|e| {
+    let document =
+        formats_xml::form::read_conditional_appearance_dcssca_with_framing(&bytes).map_err(|e| {
             ConvertError::Read {
                 kind: kind.to_string(),
                 object: format!("{owner}.{form_name}"),
                 reason: format!("ConditionalAppearance.dcssca: {e}"),
             }
         })?;
-    body.conditional_appearance = ca_items;
-    body.ca_envelope_without_lf_pal = ca_without_lf_pal;
+    body.conditional_appearance = document.items;
+    body.ca_envelope_without_lf_pal = document.envelope_without_lf_pal;
+    body.source_dcssca_lf = document.source_edt_lf;
     Ok(())
 }
 

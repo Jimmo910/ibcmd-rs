@@ -1173,10 +1173,12 @@ pub(crate) fn same_body_bytes(path: &str, a: &[u8], b: &[u8]) -> Result<bool, Ed
         // The strict typed codec consumes the complete known sidecar, including
         // every value and ordered item. Empty-element/indentation spelling is
         // physical; unknown fields, attributes and namespaces remain errors.
-        return Ok(formats_xml::form::read_conditional_appearance_dcssca(a)
-            .map_err(EdtError::source)?
-            == formats_xml::form::read_conditional_appearance_dcssca(b)
-                .map_err(EdtError::source)?);
+        let left = formats_xml::form::read_conditional_appearance_dcssca_with_framing(a)
+            .map_err(EdtError::source)?;
+        let right = formats_xml::form::read_conditional_appearance_dcssca_with_framing(b)
+            .map_err(EdtError::source)?;
+        return Ok(left.items == right.items
+            && left.envelope_without_lf_pal == right.envelope_without_lf_pal);
     }
     let mobile_format = match path {
         "Ext/MobileClientSignature.bin"

@@ -24,12 +24,19 @@ pub(crate) const DCSS_ROOT_NS: &[(&str, &str)] = &[
 /// Прочитать байты `ListSettings.dcss` → [`DcsListSettings`] (byte-exact-обратимо).
 /// §1.0: envelope/корень/ns сверяются, каждый узел claim'ится или ошибка (не Blob, не skip).
 pub fn read_list_settings_dcss(bytes: &[u8]) -> Result<DcsListSettings, FormError> {
-    let descriptor = parse(bytes)?;
+    let edt_lf = bytes
+        .strip_prefix(DCSS_DECL.as_bytes())
+        .is_some_and(|rest| rest.starts_with(b"\n"));
+    let descriptor = if edt_lf {
+        crate::read::with_verbatim_in_text_eol(|| parse(bytes))
+    } else {
+        parse(bytes)
+    }?;
     let env = descriptor.bytes_env;
     if env.bom {
         return Err(FormError::Envelope("dcss: unexpected BOM".into()));
     }
-    if env.eol != EolStyle::Crlf {
+    if env.eol != EolStyle::Crlf && !edt_lf {
         return Err(FormError::Envelope(format!(
             "dcss: must be CRLF, found {:?}",
             env.eol
@@ -86,6 +93,7 @@ pub fn read_list_settings_dcss(bytes: &[u8]) -> Result<DcsListSettings, FormErro
     default_ns_to_dcsset(&mut root);
     let mut ls = read_designer_list_settings(&root)?;
     ls.envelope_without_pal = envelope_without_pal;
+    ls.source_edt_lf = edt_lf;
     super::super::read::mark_edt_dcs_list(&mut ls);
     // §1.0 тотальность по всему дереву сайдкара.
     let leftover = root.unclaimed_count();
@@ -120,5 +128,9 @@ pub fn write_list_settings_dcss(ls: &DcsListSettings) -> Vec<u8> {
         root.push(c);
     }
     super::super::write::bind_dcs_type_qname_depth(&mut root, false);
-    render(&dcss_envelope(), &root)
+    let mut envelope = dcss_envelope();
+    if ls.source_edt_lf {
+        envelope.eol = "\n";
+    }
+    render(&envelope, &root)
 }

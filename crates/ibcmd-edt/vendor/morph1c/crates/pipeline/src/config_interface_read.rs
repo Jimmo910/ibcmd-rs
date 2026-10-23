@@ -25,7 +25,7 @@
 //!   панели на platform-uuid и несёт список `<panelDef>`; EDT (`g5.1c.ru/v8/dt/cai`,
 //!   атрибутный) зовёт панели ИМЕНАМИ и перечисляет неразмещённые `<unset>`. Связка —
 //!   [`STANDARD_CLIENT_PANELS`]; ОБЕ проекции выводимы из одного канона (§1.6):
-//!   designer-`<panelDef>`-список ОБЯЗАН быть полной таблицей в её порядке, EDT-`<unset>`
+//!   designer-`<panelDef>` хранит объявленное упорядоченное подмножество таблицы, EDT-`<unset>`
 //!   ОБЯЗАН быть дополнением размещённых панелей в порядке таблицы (§1.0-проверяется);
 //!   `displayType="PictureAndText"` witnessed ТОЛЬКО у SectionPanel — константа проекции.
 
@@ -33,13 +33,13 @@ use std::path::Path;
 
 use formats_xml::registry::Format;
 use morph1c_core::ir::{
-    CaiGroup, CaiPanel, ClientApplicationInterface, CommandInterface, HomePageItem,
+    CaiGroup, CaiPanel, CaiRegion, ClientApplicationInterface, CommandInterface, HomePageItem,
     HomePageWorkArea, MetadataObject, RoleVisibility, STANDARD_CLIENT_PANELS,
 };
 use morph1c_core::version::FormatVersion;
 
-use crate::standalone_content_read::{bool_text, name_text, parse_bool, parse_u64, Cursor};
 use crate::ConvertError;
+use crate::standalone_content_read::{Cursor, bool_text, name_text, parse_bool, parse_u64};
 
 /// UTF-8 BOM — Designer-файлы его несут, EDT нет (witnessed ERP, как все Ext-сайдкары).
 const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
@@ -117,7 +117,12 @@ pub(crate) fn write_config_interfaces(
     }
     let target = crate::sidecar_version::write_target();
     if let Some(ci) = &obj.root_command_interface {
-        write_file(format, ext_dir, ROOT_CI_FILES, &config_cmi_bytes(format, ci, target))?;
+        write_file(
+            format,
+            ext_dir,
+            ROOT_CI_FILES,
+            &config_cmi_bytes(format, ci, target),
+        )?;
     }
     if let Some(ci) = &obj.main_section_command_interface {
         write_file(
@@ -136,6 +141,8 @@ pub(crate) fn write_config_interfaces(
         write_file(format, ext_dir, HPWA_FILES, &bytes)?;
     }
     if let Some(cai) = &obj.client_application_interface {
+        validate_cai(cai)
+            .map_err(|reason| read_err(obj, &ext_dir.join(file_name(format, CAI_FILES)), reason))?;
         let bytes = match format {
             Format::Designer => serialize_cai_designer(cai),
             Format::Edt => serialize_cai_edt(cai),
@@ -522,8 +529,7 @@ fn serialize_hpwa_edt(hp: &HomePageWorkArea) -> Vec<u8> {
 
 /// Designer: пролог + корневой тег ЦЕЛИКОМ (версии НЕТ — witnessed ERP; диалект
 /// `managed-application/core`, `xsi:type="InterfaceLayouter"`).
-const CAI_DESIGNER_HEAD: &str =
-    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<ClientApplicationInterface \
+const CAI_DESIGNER_HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<ClientApplicationInterface \
      xmlns=\"http://v8.1c.ru/8.2/managed-application/core\" \
      xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" \
      xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" \
@@ -569,17 +575,17 @@ fn panel_uuid_for_name(name: &str) -> Result<&'static str, String> {
 
 /// Неразмещённые панели канона = таблица МИНУС размещённые, в порядке таблицы (§1.6:
 /// designer-`<panelDef>`-список и EDT-`<unset>`-список оба выводимы из канона).
-fn unset_panels(cai: &ClientApplicationInterface) -> Vec<&'static str> {
+fn unset_panels(cai: &ClientApplicationInterface) -> Vec<&str> {
     let used: Vec<&str> = cai
         .top
         .iter()
         .chain(cai.left.iter())
-        .flat_map(|group| &group.panels)
+        .flat_map(CaiRegion::panels)
         .map(|p| p.name.as_str())
         .collect();
-    STANDARD_CLIENT_PANELS
+    cai.available_panels
         .iter()
-        .map(|(n, _)| *n)
+        .map(String::as_str)
         .filter(|n| !used.contains(n))
         .collect()
 }
@@ -616,9 +622,38 @@ fn read_cai(
     Ok(Some(cai))
 }
 
-/// Разобрать Designer-байты → канон. Каждая панель обёрнута АНОНИМНОЙ `<group>` с ровно
-/// одним `<panel>` (структурный шум разметки — в каноне не представлен); `<panelDef>`-список
-/// §1.0-ОБЯЗАН быть полной таблицей [`STANDARD_CLIENT_PANELS`] в её порядке.
+/// Both witnessed shapes retain their identity: one direct panel or a group.
+fn validate_cai(cai: &ClientApplicationInterface) -> Result<(), String> {
+    let ordered: Vec<&str> = STANDARD_CLIENT_PANELS
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| {
+            cai.available_panels
+                .iter()
+                .any(|value| value.as_str() == *name)
+        })
+        .collect();
+    if !cai.available_panels.iter().map(String::as_str).eq(ordered) {
+        return Err("unknown, duplicate or reordered panel definitions (§1.0)".into());
+    }
+    for panel in cai.top.iter().chain(&cai.left).flat_map(CaiRegion::panels) {
+        panel_uuid_for_name(&panel.name)?;
+        if !cai.available_panels.contains(&panel.name) {
+            return Err("placed panel is missing from declared definitions (§1.0)".into());
+        }
+    }
+    Ok(())
+}
+
+fn designer_panel(cur: &mut Cursor<'_>, indent: &str) -> Result<CaiPanel, String> {
+    let id = name_text(cur.until(&format!("\">\r\n{indent}\t<uuid>"))?)?;
+    let uuid = name_text(cur.until(&format!("</uuid>\r\n{indent}</panel>\r\n"))?)?;
+    Ok(CaiPanel {
+        id,
+        name: panel_name_for_uuid(&uuid)?.to_owned(),
+    })
+}
+
 fn parse_cai_designer(bytes: &[u8]) -> Result<ClientApplicationInterface, String> {
     let body = bytes
         .strip_prefix(BOM)
@@ -626,58 +661,77 @@ fn parse_cai_designer(bytes: &[u8]) -> Result<ClientApplicationInterface, String
     let text = std::str::from_utf8(body).map_err(|e| format!("not UTF-8: {e}"))?;
     let mut cur = Cursor::new(text);
     cur.expect(CAI_DESIGNER_HEAD)?;
-    let mut groups: Vec<Option<CaiGroup>> = Vec::new();
+    let mut regions = Vec::new();
     for region in ["top", "left"] {
-        if !cur.try_expect(&format!("\t<{region}>\r\n\t\t<group id=\"")) {
-            groups.push(None);
+        if !cur.try_expect(&format!("\t<{region}>\r\n")) {
+            regions.push(None);
             continue;
         }
-        let id = name_text(cur.until("\">\r\n")?)?;
-        let mut panels = Vec::new();
-        while cur.try_expect("\t\t\t<group>\r\n\t\t\t\t<panel id=\"") {
-            let pid = name_text(cur.until("\">\r\n\t\t\t\t\t<uuid>")?)?;
-            let uuid = name_text(cur.until("</uuid>\r\n\t\t\t\t</panel>\r\n\t\t\t</group>\r\n")?)?;
-            panels.push(CaiPanel {
-                id: pid,
-                name: panel_name_for_uuid(&uuid)?.to_string(),
-            });
-        }
-        cur.expect(&format!("\t\t</group>\r\n\t</{region}>\r\n"))?;
-        groups.push(Some(CaiGroup { id, panels }));
+        let value = if cur.try_expect("\t\t<panel id=\"") {
+            CaiRegion::Panel(designer_panel(&mut cur, "\t\t")?)
+        } else {
+            cur.expect("\t\t<group id=\"")?;
+            let id = name_text(cur.until("\">\r\n")?)?;
+            let mut panels = Vec::new();
+            while cur.try_expect("\t\t\t<group>\r\n\t\t\t\t<panel id=\"") {
+                panels.push(designer_panel(&mut cur, "\t\t\t\t")?);
+                cur.expect("\t\t\t</group>\r\n")?;
+            }
+            cur.expect("\t\t</group>\r\n")?;
+            CaiRegion::Group(CaiGroup { id, panels })
+        };
+        cur.expect(&format!("\t</{region}>\r\n"))?;
+        regions.push(Some(value));
     }
-    // `<panelDef>`-список: ПОЛНАЯ таблица в её порядке (witnessed ERP; §1.0 — отклонение
-    // означает не смоделированную проекцию, не тихий пере-порядок).
-    for (_, uuid) in STANDARD_CLIENT_PANELS {
-        cur.expect(&format!("\t<panelDef id=\"{uuid}\"/>\r\n"))?;
+    let mut available_panels = Vec::new();
+    while cur.try_expect("\t<panelDef id=\"") {
+        let uuid = name_text(cur.until("\"/>\r\n")?)?;
+        available_panels.push(panel_name_for_uuid(&uuid)?.to_owned());
     }
     cur.expect("</ClientApplicationInterface>")?;
     cur.expect_eof()?;
-    let left = groups.pop().expect("two regions parsed");
-    let top = groups.pop().expect("two regions parsed");
-    Ok(ClientApplicationInterface { top, left })
+    let left = regions.pop().expect("two regions parsed");
+    let top = regions.pop().expect("two regions parsed");
+    let cai = ClientApplicationInterface {
+        top,
+        left,
+        available_panels,
+        edt_lf: false,
+    };
+    validate_cai(&cai)?;
+    Ok(cai)
 }
 
-/// Designer-байты из канона (обратная [`parse_cai_designer`]).
+fn write_designer_panel(out: &mut String, panel: &CaiPanel, indent: &str) {
+    out.push_str(&format!(
+        "{indent}<panel id=\"{}\">\r\n{indent}\t<uuid>",
+        panel.id
+    ));
+    out.push_str(panel_uuid_for_name(&panel.name).unwrap_or(&panel.name));
+    out.push_str(&format!("</uuid>\r\n{indent}</panel>\r\n"));
+}
+
 fn serialize_cai_designer(cai: &ClientApplicationInterface) -> Vec<u8> {
-    let mut out = String::new();
-    out.push_str(CAI_DESIGNER_HEAD);
-    for (region, group) in [("top", &cai.top), ("left", &cai.left)] {
-        let Some(group) = group else { continue };
-        out.push_str(&format!("\t<{region}>\r\n\t\t<group id=\""));
-        out.push_str(&group.id);
-        out.push_str("\">\r\n");
-        for p in &group.panels {
-            out.push_str("\t\t\t<group>\r\n\t\t\t\t<panel id=\"");
-            out.push_str(&p.id);
-            out.push_str("\">\r\n\t\t\t\t\t<uuid>");
-            // Канон гарантированно несёт witnessed-имя (парсеры §1.0-гейтят) — но чужой
-            // IR мог быть собран вручную: отказ громкий, не panic.
-            out.push_str(panel_uuid_for_name(&p.name).unwrap_or(&p.name));
-            out.push_str("</uuid>\r\n\t\t\t\t</panel>\r\n\t\t\t</group>\r\n");
+    let mut out = String::from(CAI_DESIGNER_HEAD);
+    for (region, value) in [("top", &cai.top), ("left", &cai.left)] {
+        let Some(value) = value else { continue };
+        out.push_str(&format!("\t<{region}>\r\n"));
+        match value {
+            CaiRegion::Panel(panel) => write_designer_panel(&mut out, panel, "\t\t"),
+            CaiRegion::Group(group) => {
+                out.push_str(&format!("\t\t<group id=\"{}\">\r\n", group.id));
+                for panel in &group.panels {
+                    out.push_str("\t\t\t<group>\r\n");
+                    write_designer_panel(&mut out, panel, "\t\t\t\t");
+                    out.push_str("\t\t\t</group>\r\n");
+                }
+                out.push_str("\t\t</group>\r\n");
+            }
         }
-        out.push_str(&format!("\t\t</group>\r\n\t</{region}>\r\n"));
+        out.push_str(&format!("\t</{region}>\r\n"));
     }
-    for (_, uuid) in STANDARD_CLIENT_PANELS {
+    for name in &cai.available_panels {
+        let uuid = panel_uuid_for_name(name).unwrap_or(name);
         out.push_str(&format!("\t<panelDef id=\"{uuid}\"/>\r\n"));
     }
     out.push_str("</ClientApplicationInterface>");
@@ -686,84 +740,122 @@ fn serialize_cai_designer(cai: &ClientApplicationInterface) -> Vec<u8> {
     bytes
 }
 
-// ---------------------------------------------------------------------------
-// ClientApplicationInterface — EDT-диалект
-// ---------------------------------------------------------------------------
+fn edt_panel(cur: &mut Cursor<'_>, eol: &str) -> Result<CaiPanel, String> {
+    let id = name_text(cur.until("\" name=\"")?)?;
+    let name = name_text(cur.until("\"")?)?;
+    panel_uuid_for_name(&name)?;
+    if name == SECTION_PANEL {
+        cur.expect(&format!(" displayType=\"{SECTION_DISPLAY_TYPE}\"/>{eol}"))?;
+    } else {
+        cur.expect(&format!("/>{eol}"))?;
+    }
+    Ok(CaiPanel { id, name })
+}
 
-/// Разобрать EDT-байты → канон. Панели — по ИМЕНИ; `displayType` witnessed ТОЛЬКО у
-/// SectionPanel (константа проекции); `<unset>` §1.0-ОБЯЗАН быть дополнением размещённых
-/// панелей в порядке таблицы, с таблично-верными id.
 fn parse_cai_edt(bytes: &[u8]) -> Result<ClientApplicationInterface, String> {
     if bytes.starts_with(BOM) {
         return Err("EDT sidecar carries a BOM (witnessed: it does NOT) — §1.0".into());
     }
     let text = std::str::from_utf8(bytes).map_err(|e| format!("not UTF-8: {e}"))?;
+    // Infer only the witnessed XML framing; no authored value is transcoded.
+    let edt_lf = text.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    let eol = if edt_lf { "\n" } else { "\r\n" };
     let mut cur = Cursor::new(text);
-    cur.expect(CAI_EDT_HEAD)?;
-    let mut groups: Vec<Option<CaiGroup>> = Vec::new();
+    cur.expect(&CAI_EDT_HEAD.replace("\r\n", eol))?;
+    let mut regions = Vec::new();
     for region in ["top", "left"] {
-        if !cur.try_expect(&format!("  <{region} xsi:type=\"cai:CaiGroup\" id=\"")) {
-            groups.push(None);
-            continue;
-        }
-        let id = name_text(cur.until("\">\r\n")?)?;
-        let mut panels = Vec::new();
-        while cur.try_expect("    <panels id=\"") {
-            let pid = name_text(cur.until("\" name=\"")?)?;
-            let name = name_text(cur.until("\"")?)?;
-            // §1.0: `displayType` — witnessed-константа SectionPanel; прочие панели без него.
-            if name == SECTION_PANEL {
-                cur.expect(&format!(" displayType=\"{SECTION_DISPLAY_TYPE}\"/>\r\n"))?;
-            } else {
-                cur.expect("/>\r\n")?;
+        let value = if cur.try_expect(&format!("  <{region} xsi:type=\"cai:CaiPanel\" id=\"")) {
+            Some(CaiRegion::Panel(edt_panel(&mut cur, eol)?))
+        } else if cur.try_expect(&format!("  <{region} xsi:type=\"cai:CaiGroup\" id=\"")) {
+            let id = name_text(cur.until(&format!("\">{eol}"))?)?;
+            let mut panels = Vec::new();
+            while cur.try_expect("    <panels id=\"") {
+                panels.push(edt_panel(&mut cur, eol)?);
             }
-            panel_uuid_for_name(&name)?; // §1.0: незнакомое имя — отказ уже на чтении.
-            panels.push(CaiPanel { id: pid, name });
+            cur.expect(&format!("  </{region}>{eol}"))?;
+            Some(CaiRegion::Group(CaiGroup { id, panels }))
+        } else {
+            None
+        };
+        regions.push(value);
+    }
+    let mut unset = Vec::new();
+    while cur.try_expect("  <unset id=\"") {
+        let id = name_text(cur.until("\" name=\"")?)?;
+        let name = name_text(cur.until(&format!("\"/>{eol}"))?)?;
+        if panel_uuid_for_name(&name)? != id.as_str() || unset.contains(&name) {
+            return Err("unknown/duplicate unset panel or mismatching identity (§1.0)".into());
         }
-        cur.expect(&format!("  </{region}>\r\n"))?;
-        groups.push(Some(CaiGroup { id, panels }));
+        unset.push(name);
     }
-    let left = groups.pop().expect("two regions parsed");
-    let top = groups.pop().expect("two regions parsed");
-    let cai = ClientApplicationInterface { top, left };
-    // `<unset>`-список: дополнение размещённых панелей в порядке таблицы, id — платформенный
-    // uuid панели (witnessed ERP; §1.0 — отклонение не смоделировано).
-    for name in unset_panels(&cai) {
-        let uuid = panel_uuid_for_name(name).expect("table name");
-        cur.expect(&format!("  <unset id=\"{uuid}\" name=\"{name}\"/>\r\n"))?;
-    }
-    cur.expect("</cai:ClientApplicationInterface>\r\n")?;
+    cur.expect(&format!("</cai:ClientApplicationInterface>{eol}"))?;
     cur.expect_eof()?;
+    let left = regions.pop().expect("two regions parsed");
+    let top = regions.pop().expect("two regions parsed");
+    let placed: Vec<&str> = top
+        .iter()
+        .chain(&left)
+        .flat_map(CaiRegion::panels)
+        .map(|panel| panel.name.as_str())
+        .collect();
+    if unset.iter().any(|name| placed.contains(&name.as_str())) {
+        return Err("placed panel also occurs in unset (§1.0)".into());
+    }
+    let available_panels = STANDARD_CLIENT_PANELS
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| placed.contains(name) || unset.iter().any(|value| value.as_str() == *name))
+        .map(str::to_owned)
+        .collect();
+    let cai = ClientApplicationInterface {
+        top,
+        left,
+        available_panels,
+        edt_lf,
+    };
+    validate_cai(&cai)?;
+    if unset.iter().map(String::as_str).ne(unset_panels(&cai)) {
+        return Err("reordered unset panel definitions (§1.0)".into());
+    }
     Ok(cai)
 }
 
-/// EDT-байты из канона (обратная [`parse_cai_edt`]).
+fn write_edt_panel(out: &mut String, panel: &CaiPanel, eol: &str) {
+    out.push_str(&format!(" id=\"{}\" name=\"{}\"", panel.id, panel.name));
+    if panel.name == SECTION_PANEL {
+        out.push_str(&format!(" displayType=\"{SECTION_DISPLAY_TYPE}\""));
+    }
+    out.push_str(&format!("/>{eol}"));
+}
+
 fn serialize_cai_edt(cai: &ClientApplicationInterface) -> Vec<u8> {
-    let mut out = String::new();
-    out.push_str(CAI_EDT_HEAD);
-    for (region, group) in [("top", &cai.top), ("left", &cai.left)] {
-        let Some(group) = group else { continue };
-        out.push_str(&format!("  <{region} xsi:type=\"cai:CaiGroup\" id=\""));
-        out.push_str(&group.id);
-        out.push_str("\">\r\n");
-        for p in &group.panels {
-            out.push_str("    <panels id=\"");
-            out.push_str(&p.id);
-            out.push_str("\" name=\"");
-            out.push_str(&p.name);
-            if p.name == SECTION_PANEL {
-                out.push_str(&format!("\" displayType=\"{SECTION_DISPLAY_TYPE}\"/>\r\n"));
-            } else {
-                out.push_str("\"/>\r\n");
+    let eol = if cai.edt_lf { "\n" } else { "\r\n" };
+    let mut out = CAI_EDT_HEAD.replace("\r\n", eol);
+    for (region, value) in [("top", &cai.top), ("left", &cai.left)] {
+        let Some(value) = value else { continue };
+        match value {
+            CaiRegion::Panel(panel) => {
+                out.push_str(&format!("  <{region} xsi:type=\"cai:CaiPanel\""));
+                write_edt_panel(&mut out, panel, eol);
+            }
+            CaiRegion::Group(group) => {
+                out.push_str(&format!(
+                    "  <{region} xsi:type=\"cai:CaiGroup\" id=\"{}\">{eol}",
+                    group.id
+                ));
+                for panel in &group.panels {
+                    out.push_str("    <panels");
+                    write_edt_panel(&mut out, panel, eol);
+                }
+                out.push_str(&format!("  </{region}>{eol}"));
             }
         }
-        out.push_str(&format!("  </{region}>\r\n"));
     }
     for name in unset_panels(cai) {
-        let uuid = panel_uuid_for_name(name).expect("table name");
-        out.push_str(&format!("  <unset id=\"{uuid}\" name=\"{name}\"/>\r\n"));
+        let uuid = panel_uuid_for_name(name).unwrap_or(name);
+        out.push_str(&format!("  <unset id=\"{uuid}\" name=\"{name}\"/>{eol}"));
     }
-    out.push_str("</cai:ClientApplicationInterface>\r\n");
+    out.push_str(&format!("</cai:ClientApplicationInterface>{eol}"));
     out.into_bytes()
 }
 
@@ -835,7 +927,11 @@ mod tests {
         let (from_dsn, v) = parse_hpwa_designer(&dsn).expect("designer parse");
         assert_eq!(v, ERP);
         assert_eq!(from_dsn, hp);
-        assert_eq!(serialize_hpwa_designer(&from_dsn, ERP), dsn, "designer byte-exact");
+        assert_eq!(
+            serialize_hpwa_designer(&from_dsn, ERP),
+            dsn,
+            "designer byte-exact"
+        );
 
         let edt = serialize_hpwa_edt(&hp);
         let from_edt = parse_hpwa_edt(&edt).expect("edt parse");
@@ -878,7 +974,11 @@ mod tests {
         let dsn = serialize_cai_designer(&cai);
         let from_dsn = parse_cai_designer(&dsn).expect("designer parse");
         assert_eq!(from_dsn, cai);
-        assert_eq!(serialize_cai_designer(&from_dsn), dsn, "designer byte-exact");
+        assert_eq!(
+            serialize_cai_designer(&from_dsn),
+            dsn,
+            "designer byte-exact"
+        );
 
         let edt = serialize_cai_edt(&cai);
         let from_edt = parse_cai_edt(&edt).expect("edt parse");
@@ -906,7 +1006,10 @@ mod tests {
             "00000000-0000-0000-0000-000000000000</uuid>",
         );
         let err = parse_cai_designer(bad.as_bytes()).unwrap_err();
-        assert!(err.contains("not a witnessed standard client panel"), "{err}");
+        assert!(
+            err.contains("not a witnessed standard client panel"),
+            "{err}"
+        );
         // panelDef-список не в порядке таблицы.
         let bad = dsn.replacen(
             "\t<panelDef id=\"b553047f-c9aa-4157-978d-448ecad24248\"/>\r\n",
@@ -973,7 +1076,11 @@ mod tests {
             dsn,
             "root CI designer byte-exact"
         );
-        assert_eq!(crate::cmi_read::serialize_edt(&ci_edt), edt, "root CI edt byte-exact");
+        assert_eq!(
+            crate::cmi_read::serialize_edt(&ci_edt),
+            edt,
+            "root CI edt byte-exact"
+        );
 
         // (b) MainSectionCommandInterface — cmi-кодек, placement `Manual`.
         let dsn = rd(&dsn_ext.join("MainSectionCommandInterface.xml"));
@@ -1003,7 +1110,11 @@ mod tests {
             dsn,
             "MSCI designer byte-exact"
         );
-        assert_eq!(crate::cmi_read::serialize_edt(&ci_edt), edt, "MSCI edt byte-exact");
+        assert_eq!(
+            crate::cmi_read::serialize_edt(&ci_edt),
+            edt,
+            "MSCI edt byte-exact"
+        );
 
         // (c) HomePageWorkArea.
         let dsn = rd(&dsn_ext.join("HomePageWorkArea.xml"));
@@ -1015,7 +1126,11 @@ mod tests {
         assert_eq!(hp_dsn.template, "TwoColumnsVariableWidth");
         assert_eq!((hp_dsn.left.len(), hp_dsn.right.len()), (10, 3));
         assert!(hp_dsn.left.iter().all(|i| i.height == 10));
-        assert_eq!(serialize_hpwa_designer(&hp_dsn, ERP), dsn, "hpwa designer byte-exact");
+        assert_eq!(
+            serialize_hpwa_designer(&hp_dsn, ERP),
+            dsn,
+            "hpwa designer byte-exact"
+        );
         assert_eq!(serialize_hpwa_edt(&hp_edt), edt, "hpwa edt byte-exact");
 
         // (d) ClientApplicationInterface.
@@ -1027,7 +1142,11 @@ mod tests {
         assert_eq!(cai_dsn.top.panels.len(), 2);
         assert_eq!(cai_dsn.left.panels.len(), 1);
         assert_eq!(cai_dsn.left.panels[0].name, "SectionPanel");
-        assert_eq!(serialize_cai_designer(&cai_dsn), dsn, "cai designer byte-exact");
+        assert_eq!(
+            serialize_cai_designer(&cai_dsn),
+            dsn,
+            "cai designer byte-exact"
+        );
         assert_eq!(serialize_cai_edt(&cai_edt), edt, "cai edt byte-exact");
     }
 
@@ -1062,8 +1181,8 @@ mod tests {
     impl Harvest {
         fn doc(&mut self, path: std::path::PathBuf) -> &formats_xml::Descriptor {
             self.cache.entry(path.clone()).or_insert_with(|| {
-                let bytes = std::fs::read(&path)
-                    .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+                let bytes =
+                    std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
                 formats_xml::parse(&bytes)
                     .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
             })
@@ -1202,11 +1321,14 @@ mod tests {
             let uuid = harvest.top_uuid("Subsystem", name);
             reg.insert_object_path(uuid, sub.clone());
         }
-        let img = formats_cf::cmi_body::build_config_command_interface_body_image_with(
-            &ci_root, &reg,
-        )
-        .expect("encode .a");
-        assert_eq!(img, rd(refs.join("ref_cfg_a.bin")), ".a byte-exact vs erp.cf");
+        let img =
+            formats_cf::cmi_body::build_config_command_interface_body_image_with(&ci_root, &reg)
+                .expect("encode .a");
+        assert_eq!(
+            img,
+            rd(refs.join("ref_cfg_a.bin")),
+            ".a byte-exact vs erp.cf"
+        );
 
         // (9) MainSectionCommandInterface → `<host>.9` (cmi-кодек, placement Manual).
         let msci = crate::cmi_read::parse_command_interface_with_placement(
@@ -1225,18 +1347,26 @@ mod tests {
                 harvest.feed_command_ref(cmd, &mut reg);
             }
         }
-        let img =
-            formats_cf::cmi_body::build_config_command_interface_body_image_with(&msci, &reg)
-                .expect("encode .9");
-        assert_eq!(img, rd(refs.join("ref_cfg_9.bin")), ".9 byte-exact vs erp.cf");
+        let img = formats_cf::cmi_body::build_config_command_interface_body_image_with(&msci, &reg)
+            .expect("encode .9");
+        assert_eq!(
+            img,
+            rd(refs.join("ref_cfg_9.bin")),
+            ".9 byte-exact vs erp.cf"
+        );
 
         // (8) HomePageWorkArea → `<host>.8` (форм-ссылки — form roster из фикстуры).
-        let (hp, _) = parse_hpwa_designer(&rd(fix.join("Ext/HomePageWorkArea.xml")))
-            .expect("hpwa parses");
+        let (hp, _) =
+            parse_hpwa_designer(&rd(fix.join("Ext/HomePageWorkArea.xml"))).expect("hpwa parses");
         let mut roster = formats_cf::FormRoster::default();
         for it in hp.left.iter().chain(hp.right.iter()) {
             let seg: Vec<&str> = it.form.split('.').collect();
-            assert_eq!(seg.len(), 4, "witnessed Kind.Name.Form.FormName: {}", it.form);
+            assert_eq!(
+                seg.len(),
+                4,
+                "witnessed Kind.Name.Form.FormName: {}",
+                it.form
+            );
             assert_eq!(seg[2], "Form");
             let uuid = harvest.form_uuid(seg[0], seg[1], seg[3]);
             roster.insert(it.form.clone(), uuid);
@@ -1247,13 +1377,21 @@ mod tests {
             &roster,
         )
         .expect("encode .8");
-        assert_eq!(img, rd(refs.join("ref_cfg_8.bin")), ".8 byte-exact vs erp.cf");
+        assert_eq!(
+            img,
+            rd(refs.join("ref_cfg_8.bin")),
+            ".8 byte-exact vs erp.cf"
+        );
 
         // (b) ClientApplicationInterface → `<host>.b` (реестры не нужны).
         let cai = parse_cai_designer(&rd(fix.join("Ext/ClientApplicationInterface.xml")))
             .expect("cai parses");
         let img = formats_cf::cai_body::build_client_application_interface_body_image(&cai)
             .expect("encode .b");
-        assert_eq!(img, rd(refs.join("ref_cfg_b.bin")), ".b byte-exact vs erp.cf");
+        assert_eq!(
+            img,
+            rd(refs.join("ref_cfg_b.bin")),
+            ".b byte-exact vs erp.cf"
+        );
     }
 }

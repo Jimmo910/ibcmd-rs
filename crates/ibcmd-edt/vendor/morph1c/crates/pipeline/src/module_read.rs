@@ -232,6 +232,64 @@ pub(crate) fn reencode_module_for_format(source: &str, format: Format) -> Vec<u8
     bytes
 }
 
+/// Recognize the witnessed empty editor scaffold, never arbitrary BSL code.
+/// Every current line must be ASCII framing or a balanced Russian region directive;
+/// identifiers are retained verbatim. CR, comments, literals and other directives
+/// are deliberately outside this narrow serialization witness.
+pub(crate) fn is_lf_empty_form_module_scaffold(source: &str) -> bool {
+    if !source.contains('\n') || source.contains('\r') {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut regions = 0usize;
+    for line in source.split('\n') {
+        let line = line.trim_matches([' ', '\t']);
+        if line.is_empty() {
+            continue;
+        }
+        if line == "#КонецОбласти" {
+            let Some(parent) = depth.checked_sub(1) else {
+                return false;
+            };
+            depth = parent;
+            continue;
+        }
+        let Some(name) = line.strip_prefix("#Область") else {
+            return false;
+        };
+        if !name.starts_with([' ', '\t']) {
+            return false;
+        }
+        let name = name.trim_matches([' ', '\t']);
+        let mut chars = name.chars();
+        if !chars.next().is_some_and(|c| {
+            c == '_' || c.is_ascii_alphabetic() || matches!(c, 'А'..='я' | 'Ё' | 'ё')
+        }) || !chars
+            .all(|c| c == '_' || c.is_ascii_alphanumeric() || matches!(c, 'А'..='я' | 'Ё' | 'ё'))
+        {
+            return false;
+        }
+        depth += 1;
+        regions += 1;
+    }
+    depth == 0 && regions != 0
+}
+
+/// Current EDT's empty module scaffold uses LF; the native exporter frames that
+/// scaffold with CRLF. Retain the generic module encoder's verbatim contract and
+/// project only this source-bound, freshly revalidated form-only syntax class.
+pub(crate) fn reencode_form_module_for_format(
+    source: &str,
+    format: Format,
+    source_lf_scaffold: bool,
+) -> Vec<u8> {
+    if format == Format::Designer && source_lf_scaffold && is_lf_empty_form_module_scaffold(source)
+    {
+        return reencode_module_for_format(&source.replace('\n', "\r\n"), format);
+    }
+    reencode_module_for_format(source, format)
+}
+
 /// Re-encode a module BODY (text or protected binary) for `format`'s on-disk sidecar.
 ///
 /// * `Text` → per-format BOM convention ([`reencode_module_for_format`]: Designer +BOM, EDT bare).

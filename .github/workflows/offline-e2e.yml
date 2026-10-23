@@ -168,6 +168,8 @@ jobs:
         run: |
           python tests/scripts/edt_oracle_test.py
           if ($LASTEXITCODE -ne 0) { throw 'edt_oracle_test failed' }
+          python tests/scripts/xml_to_edt_macos_test.py
+          if ($LASTEXITCODE -ne 0) { throw 'xml_to_edt_macos_test failed' }
           python tests/scripts/edt_warm_context_test.py
           if ($LASTEXITCODE -ne 0) { throw 'edt_warm_context_test failed' }
           python tests/scripts/edt_release_audit_test.py

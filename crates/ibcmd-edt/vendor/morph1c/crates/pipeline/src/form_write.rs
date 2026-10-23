@@ -357,9 +357,10 @@ fn write_form_bodies_current(
                 if !form.body.conditional_appearance.is_empty() {
                     write_file(
                         &crate::form_read::conditional_appearance_sidecar_path(form_dir),
-                        &formats_xml::form::write_conditional_appearance_dcssca(
+                        &formats_xml::form::write_conditional_appearance_dcssca_with_framing(
                             &form.body.conditional_appearance,
                             form.body.ca_envelope_without_lf_pal,
+                            form.body.source_dcssca_lf,
                         ),
                     )?;
                 }
@@ -388,7 +389,11 @@ fn write_form_bodies_current(
                 })?;
             write_file(
                 &module_out,
-                &crate::module_read::reencode_module_for_format(source, format),
+                &crate::module_read::reencode_form_module_for_format(
+                    source,
+                    format,
+                    form.body.source_module_scaffold_edt_lf,
+                ),
             )?;
         }
 
