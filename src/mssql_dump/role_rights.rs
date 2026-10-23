@@ -840,6 +840,9 @@ pub(super) fn parse_configuration_root_object_rights(
         }
         let name = role_right_name(right_uuid)?;
         if is_configuration_mode_right(name) {
+            if entries.iter().any(|entry| entry.name == name) {
+                return None;
+            }
             mode_rights_seen += 1;
         }
         if name == "SaveUserData" {
