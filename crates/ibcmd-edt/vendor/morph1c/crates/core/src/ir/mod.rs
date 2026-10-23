@@ -254,6 +254,10 @@ pub struct ConfigBlob {
     /// it only while the canonical bytes match the recorded complete model.
     #[serde(skip)]
     pub mobile_signature_lexical: Option<MobileSignatureLexical>,
+    /// The EDT source kept this sidecar as `Configuration.distr` (EDT 2026.1);
+    /// an EDT write spells it so again. Excluded from semantic fingerprints.
+    #[serde(skip)]
+    pub edt_distribution: bool,
 }
 
 /// Complete opaque directory resources owned by the root parent binary attachment.

@@ -85,7 +85,8 @@
     "Chart numeric projection follows SDK EFloat/EDouble rounding and integral long conversion; closed CURRENT numeric records preserve genuinely lossy binary64 values alongside existing chart design/item records, and lexical fraction widths never replay old values",
     "DesignRecord validation binds the already-native current chart counterpart before restoring separate Enum/Value records; dotted literal payloads and unrelated projected values are never projected twice",
     "CURRENT DynamicList availability includes effective main-table CommonAttributes with content/autoUse/separation and family-specific SDK policies; calculated-field availability consumes CURRENT Configuration compatibility >8.3.18, with root mode and common definitions in dependency digests",
-    "CURRENT chart design projection retains validated Designer names-only factory presence while replacing values with freshly computed native defaults; EDT hidden source spelling is cleared"
+    "CURRENT chart design projection retains validated Designer names-only factory presence while replacing values with freshly computed native defaults; EDT hidden source spelling is cleared",
+    "EDT 2026.1 Configuration.distr reads as the root ParentConfigurations.bin in the .distr item order and is written back as .distr; only the witnessed supplier shapes and item modes are accepted"
   ],
   "files": [
     {
@@ -158,7 +159,7 @@
     },
     {
       "path": "crates/core/src/ir/mod.rs",
-      "sha256": "62934d6f16cc8b742b17b1c1586e3b8e4024e672823a43ac52cf3c1c2e687e7f"
+      "sha256": "f7c98097a765c89aaeee1328604fcfde5e0d7093a2824aebdcc421f176aab0b0"
     },
     {
       "path": "crates/core/src/ir/semantic_view.rs",
@@ -2634,11 +2635,15 @@
     },
     {
       "path": "crates/pipeline/src/ext_read.rs",
-      "sha256": "0a44af9a5d409567e1b9f1adc9a53aafdc307e8feaeaa6b3e8864aa8e1c87657"
+      "sha256": "e4d2333feb9d209646d4efcd7a865ff17dc1331bcace7f9d9eb61281d981a0ba"
     },
     {
       "path": "crates/pipeline/src/ext_read/mobile_signature.rs",
       "sha256": "057894426fd1e137853a9702567516c07f6609b5b4b51c7d6959e88e69bbd521"
+    },
+    {
+      "path": "crates/pipeline/src/ext_read/parent_distribution.rs",
+      "sha256": "cd7bd6fda7d1fd571ef3e60909322d6b0a0416d4fa1bcab60f56c1756fdf6a4c"
     },
     {
       "path": "crates/pipeline/src/flowchart_read.rs",
