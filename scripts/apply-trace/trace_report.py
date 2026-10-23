@@ -1353,6 +1353,7 @@ def main(argv=None):
     ap.add_argument("--events", default="", help="events.tsv")
     ap.add_argument("--xml", default="", help="events.xml.gz (raw XE events); converted to <out>/events.tsv first")
     ap.add_argument("--max-statement-kb", type=int, default=1024)
+    ap.add_argument("--keep-intermediate", action="store_true", help="retain parsed events.tsv after compression (no file cleanup)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--meta", default="")
     ap.add_argument("--focus-db", default="", help="keep only the sessions that touched this database (traces taken with -AllDatabases)")
@@ -1405,7 +1406,8 @@ def main(argv=None):
         # the parsed events stay for later questions, compressed
         with open(events_path, "rb") as src, gzip.open(events_path + ".gz", "wb", compresslevel=6) as dst:
             shutil.copyfileobj(src, dst)
-        os.remove(events_path)
+        if not args.keep_intermediate:
+            os.remove(events_path)
     print(f"report: {len(events)} events, {len(stmts)} statements, {len(groups)} groups, {len(txs)} transactions -> {args.out}")
     return 0
 

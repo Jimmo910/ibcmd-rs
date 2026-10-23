@@ -22,6 +22,7 @@ trace).  No sqlcmd, no bcp, no pip packages.
 | `export-xel.ps1 -Pattern <.xel files> -OutDir <dir> [-Report]` | recovers a trace from the `.xel` files when a run's report step failed |
 | `compare_traces.py --capture <label>=<dir> ...` | the writes of several captured runs side by side, one line per (table, operation, row-name shape): statements / rows / bytes per run, and the DDL verbs |
 | `blobstore.py rebuild\|merge\|verify\|stats <dir>` | maintenance of the content-addressed blob store shared by snapshots (see "Blob store") |
+| `check_capture.py <capture>` | bounded offline artifact/completeness gate; never certifies semantic acceptance |
 | `tests/` | offline unit tests: `python -m unittest discover -s scripts/apply-trace/tests` |
 | `lab/` | the case wrappers of the 0.4 trace track (stage, apply, path experiment, УХ plan); **not part of the kit**: they use `sqlcmd` and the lab paths `F:\ibcmd\lab\04\...`, see the last section |
 
@@ -230,3 +231,11 @@ experiment: `run_paths*.ps1`, `make_case1*_tree*.ps1`, `stage_vs_config.ps1`), 1
 | `validate_sparse_import.ps1`, `check_stage.py` | native staging from a sparse base directory; the `versions` completeness test of a stage |
 | `stage_vs_config.ps1`, `dump_rows.ps1`, `row_sha.ps1`, `probe_stages.ps1`, `find_refs.ps1` | read-only row comparisons (ConfigSave against Config, decoded rows, hashes, which rows of a stage differ, which rows mention a guid) |
 | `run_uh_case1.ps1` | the ERP УХ case 1 (prepared) |
+
+## Remaining ERP УХ acceptance (#336)
+
+See [the case 2/3 runbook](../../docs/apply/uh-remaining-traces.md). For captures that must
+remain independently auditable, use `capture.ps1 -KeepXel -KeepRaw`: this retains both
+the original XE files, `trace/events.xml.gz`, and the intermediate `trace/events.tsv`.
+Direct `trace_report.py --xml` calls can use `--keep-intermediate` for the same retention.
+The default behavior stays unchanged.
