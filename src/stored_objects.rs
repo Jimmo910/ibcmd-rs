@@ -1479,6 +1479,8 @@ fn export_args(
             ConfigSource::FileDb(path) => Some(path.clone()),
             _ => None,
         },
+        postgres: None,
+        postgres_snapshot: None,
         model_export: false,
         legacy_export: false,
         output_dir: PathBuf::from(MEMORY_ROOT),

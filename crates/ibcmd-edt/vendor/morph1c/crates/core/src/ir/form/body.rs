@@ -68,6 +68,16 @@ pub struct FormRootPresence {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FormBody {
+    /// Witnessed EDT source line framing only. New bodies keep the legacy CRLF
+    /// default; current installed EDT LF sources retain LF on same-dialect write.
+    /// Excluded from semantic fingerprints and serialization like wire ordering.
+    #[serde(skip)]
+    pub source_edt_lf: bool,
+    /// Attached EDT module is a pure-LF empty region scaffold. This source-only
+    /// framing capability never changes the current module String or its digest.
+    /// Designer emission revalidates the complete current scaffold before use.
+    #[serde(skip)]
+    pub source_module_scaffold_edt_lf: bool,
     /// Native merged event spelling only. Owner lists remain ordered semantic
     /// data; replay requires both current owner/name orders to remain identical.
     #[serde(skip)]
@@ -159,6 +169,10 @@ pub struct FormBody {
     /// emission, outside semantic serialization and provenance fingerprints.
     #[serde(skip)]
     pub ca_envelope_without_lf_pal: bool,
+    /// Declaration-bound LF framing of the EDT conditional-appearance sidecar.
+    /// Source-only spelling, never a semantic value or a sidecar-presence flag.
+    #[serde(skip)]
+    pub source_dcssca_lf: bool,
     /// Параметры формы (`<parameters>`/`<Parameters>`) в исходном порядке.
     pub parameters: Vec<FormParameter>,
     /// Пользовательские команды формы (`<formCommands>` EDT / `<Commands><Command>`
@@ -447,6 +461,8 @@ impl FormBody {
             native_event_order: None,
             picture_semantics: None,
             picture_resource_selection: None,
+            source_edt_lf: false,
+            source_module_scaffold_edt_lf: false,
             source_wire_order: None,
             source_xml221_default_presence: None,
             designer_checkbox_auto_presence: std::collections::BTreeMap::new(),
@@ -455,6 +471,7 @@ impl FormBody {
             availability_source_dependency: None,
             availability_source_form_dependency: None,
             ca_envelope_without_lf_pal: false,
+            source_dcssca_lf: false,
             title: None,
             attributes: Vec::new(),
             events: Vec::new(),

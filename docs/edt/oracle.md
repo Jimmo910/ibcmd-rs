@@ -1,5 +1,9 @@
 # Installed EDT oracle laboratory
 
+For the current macOS installed-tool baseline and external-only capture workflow,
+see [macos-oracle.md](macos-oracle.md). Historical Windows evidence below retains
+its original exact versions and does not establish current Mac acceptance.
+
 `scripts/edt-lab/oracle.py` is a laboratory tool, outside the production
 dependency graph. It explicitly starts installed `1cedtcli.exe`. The product's
 `convert` and `source-three-way-oracle` stay offline and never locate EDT/JVM.

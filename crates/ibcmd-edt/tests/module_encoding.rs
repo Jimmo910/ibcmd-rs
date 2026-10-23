@@ -201,7 +201,14 @@ fn public_unchanged_return_preserves_module_bytes_and_forged_edit_rejects() {
 fn form_module_preserves_double_prefix_and_all_body_whitespace() {
     use morph1c_core::ir::{FormBody, NamedFormBody};
     use morph1c_pipeline::{attach_form_body, write_form_bodies};
-    let dir = tempfile::tempdir().unwrap();
+    // This focused regression retains its fixture even after an assertion fails.
+    struct Retained(std::path::PathBuf);
+    impl Retained {
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    let dir = Retained(tempfile::tempdir().unwrap().keep());
     for (i, format) in [Format::Designer, Format::Edt].into_iter().enumerate() {
         for (j, text) in [
             "",

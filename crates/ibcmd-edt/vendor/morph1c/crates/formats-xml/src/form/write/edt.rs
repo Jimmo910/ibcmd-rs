@@ -9,7 +9,12 @@ use super::*;
 pub(crate) fn write_edt(body: &FormBody) -> Result<Vec<u8>, FormError> {
     let mut root = edt_root(body)?;
     super::super::wire_order::apply(FormDialect::Edt, body, &mut root)?;
-    Ok(render(&edt_envelope(), &root))
+    let mut envelope = edt_envelope();
+    if body.source_edt_lf {
+        envelope.eol = "\n";
+        envelope.text_eol = "\n";
+    }
+    Ok(render(&envelope, &root))
 }
 
 pub(crate) fn edt_root(body: &FormBody) -> Result<OutElement, FormError> {

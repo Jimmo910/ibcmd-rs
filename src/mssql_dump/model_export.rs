@@ -613,11 +613,40 @@ impl ModelExport {
 /// Resolves the export's published storage view, including a completed stage
 /// for the main configuration, then reads the root service row and its Configuration row.
 pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> Result<bool> {
+    configuration_compatibility_with_snapshot(args).map(|(compatible, _)| compatible)
+}
+
+/// Return any PostgreSQL probe rows to the resolving operation, never a global cache.
+pub(crate) fn configuration_compatibility_with_snapshot(
+    args: &MssqlDumpConfigArgs,
+) -> Result<(bool, Option<PostgresExportSnapshot>)> {
+    if args.rows_dir.is_none()
+        && args.file_infobase.is_none()
+        && let Some(target) = &args.postgres
+    {
+        let (rows, snapshot) = super::postgres_infobase::load_for_probe(target)?;
+        let read = |name: &str| -> Result<crate::metadata_model::brace::Brace> {
+            let names = BTreeSet::from([name.to_owned()]);
+            let row = rows
+                .rows_named(
+                    &args.database,
+                    MssqlConfigurationTableRole::Current.sql_name(),
+                    &names,
+                )?
+                .into_iter()
+                .find(|row| row.file_name == name)
+                .ok_or_else(|| anyhow!("the Config table has no `{name}` row"))?;
+            let text = inflate_raw_deflate(&row.binary)
+                .with_context(|| format!("failed to inflate the `{name}` row"))?;
+            parse_row(&text).with_context(|| format!("failed to parse the `{name}` row"))
+        };
+        return Ok((configuration_compatibility_from_read(read)?, Some(snapshot)));
+    }
     let _offline = match (&args.rows_dir, &args.file_infobase) {
         (Some(dir), _) => Some(offline_rows::activate(dir)?),
-        (None, Some(path)) => Some(offline_rows::activate_rows(super::file_infobase::load(
-            path,
-        )?)?),
+        (None, Some(path)) => Some(offline_rows::activate_shared(
+            super::file_infobase::read_rows(path)?,
+        )?),
         (None, None) => None,
     };
     let password = sql_password(
@@ -626,8 +655,9 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
         &args.sql_pwd_env,
     );
     // `--rows-dir` answers every read from its folder; no login is needed.
-    let sql = if args.rows_dir.is_some() || args.file_infobase.is_some() {
-        crate::sql::SqlExec::detached("the rows come from a folder or a file infobase")
+    let sql = if args.rows_dir.is_some() || args.file_infobase.is_some() || args.postgres.is_some()
+    {
+        crate::sql::SqlExec::detached("the rows come from a folder, a file infobase or PostgreSQL")
     } else {
         crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
             sqlcmd: args.sqlcmd.as_deref(),
@@ -639,7 +669,10 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
             trust_server_certificate: true,
         })?
     };
-    configuration_compatibility_from_storage(&sql, &args.database, args.main_configuration)
+    Ok((
+        configuration_compatibility_from_storage(&sql, &args.database, args.main_configuration)?,
+        None,
+    ))
 }
 
 fn configuration_compatibility_from_storage(
@@ -675,6 +708,12 @@ fn configuration_compatibility_from_storage(
     if headers.is_empty() {
         return Ok(false);
     }
+    configuration_compatibility_from_read(read)
+}
+
+fn configuration_compatibility_from_read(
+    read: impl Fn(&str) -> Result<crate::metadata_model::brace::Brace>,
+) -> Result<bool> {
     let uuid = crate::metadata_model::root::export::root_configuration_uuid(&read("root")?)?;
     let shape = crate::metadata_model::root::export::stored_shape(&read(&uuid)?)?;
     Ok(shape == crate::metadata_model::root::ConfigurationShape::V76)

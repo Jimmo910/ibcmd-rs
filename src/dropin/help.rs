@@ -52,8 +52,9 @@ pub fn infobase_help(program: &str) -> String {
         параметрами
 
     --dbms=<kind>
-        Тип СУБД, в которой размещается информационная база.
-        Поддерживается только MSSQLServer
+        Тип СУБД, в которой размещается информационная база:
+        MSSQLServer или PostgreSQL (на PostgreSQL выполняются config
+        export, config import и config load)
 
     --database-server=<server> | --db-server=<server>
         Имя сервера СУБД: server, server\\instance, server/instance или
@@ -265,6 +266,16 @@ pub fn infobase_help(program: &str) -> String {
                 <path>
                     путь к файлу конфигурации
 
+            load
+                Загрузка конфигурации из файла .cf: элементы файла
+                записываются как есть в подготовку загрузки (ConfigSave) вместе
+                со списком строк базы, которых в файле нет; применяет загрузку
+                штатный config apply. Файловая база (--db-path), PostgreSQL и
+                SQL Server
+
+                <path>
+                    путь к файлу конфигурации
+
 Параметры ibcmd-rs (у ibcmd их нет):
 
     --report=<file>
@@ -352,7 +363,7 @@ pub fn overview(program: &str) -> String {
 
 Поддерживаемые режимы:
 
-{infobase:<23}{summary}: config export, config import, config import files, config apply, config save
+{infobase:<23}{summary}: config export, config import, config import files, config apply, config save, config load
 
 Не поддерживаются в этой версии ibcmd-rs (планируются в следующих):
 
@@ -398,9 +409,9 @@ mod tests {
         assert!(!help.contains("config support disable"));
         // apply is served: described with its words, not listed as refused
         assert!(!help.contains("ibcmd infobase config apply"));
-        // so is save; load is not
+        // so are save and load (#353)
         assert!(!help.contains("ibcmd infobase config save"));
-        assert!(help.contains("ibcmd infobase config load"));
+        assert!(!help.contains("ibcmd infobase config load"));
         assert!(help.contains("путь к файлу конфигурации"));
         for word in [
             "--dynamic=<auto|disable|prompt|force>",

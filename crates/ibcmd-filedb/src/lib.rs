@@ -19,6 +19,7 @@ mod blob;
 mod config;
 mod descr;
 mod error;
+mod extensions;
 pub mod index;
 mod lock;
 mod object;
@@ -36,6 +37,7 @@ use std::path::{Path, PathBuf};
 pub use config::ConfigRow;
 pub use descr::{Field, FieldKind, Table};
 pub use error::{Error, Result};
+pub use extensions::ExtensionRegistryRow;
 pub use index::Collation;
 pub use read_limits::ReadLimits;
 pub use record::Timestamp;
@@ -182,6 +184,12 @@ impl FileDb {
         self.tables.values()
     }
 
+    /// The measured 8.3.27 extension registry, with next-generation states
+    /// rejected before any image is selected.
+    pub fn extension_registry(&mut self) -> Result<Vec<ExtensionRegistryRow>> {
+        extensions::read_registry(&mut self.pager, &self.tables)
+    }
+
     pub fn table(&self, name: &str) -> Option<&Table> {
         self.tables.get(name)
     }
@@ -190,6 +198,35 @@ impl FileDb {
     /// order. Parts of one row are separate values with the same name.
     pub fn config_rows(&mut self, table: &str) -> Result<Vec<ConfigRow>> {
         read_rows(&mut self.pager, &self.tables, table, true)
+    }
+
+    /// Refuses oversized physical objects before allocating their contents.
+    /// Free records and unused blob blocks count toward the physical budget.
+    /// The same limit separately bounds retained binary values, including
+    /// repeated references to a shared blob chain.
+    pub fn config_rows_bounded(
+        &mut self,
+        name: &str,
+        max_bytes: u64,
+        max_rows: usize,
+    ) -> Result<Vec<ConfigRow>> {
+        let table = config_table(&self.tables, name)?;
+        let records = object::Object::open(&mut self.pager, table.records_page)?;
+        let blobs = object::Object::open(&mut self.pager, table.blob_page)?;
+        let row_budget = max_rows
+            .saturating_add(1)
+            .saturating_mul(table.record_size()) as u64;
+        if records.len > row_budget || records.len.saturating_add(blobs.len) > max_bytes {
+            return Err(Error::Refused(format!(
+                "{name}: physical extension storage exceeds its read budget"
+            )));
+        }
+        Ok(
+            config::read_records_bounded(&mut self.pager, &table, true, max_bytes)?
+                .into_iter()
+                .map(|record| record.row)
+                .collect(),
+        )
     }
 
     /// Row headers without the binary data.

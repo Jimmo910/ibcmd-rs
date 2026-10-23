@@ -233,6 +233,10 @@ pub enum DcsParamValue {
 /// (227 сайдкаров на 229 динсписков SSL; ×2 без файла — ровно те, у кого Designer-тег пуст).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct DcsListSettings {
+    /// Declaration-bound current EDT sidecar framing only. Legacy/new settings
+    /// keep CRLF; this source-only facet never enters semantic serialization.
+    #[serde(skip)]
+    pub source_edt_lf: bool,
     /// ERP-флавор конверта `.dcss`: корень БЕЗ `xmlns:pal` (ценз ERP 3673/3673; SSL несёт
     /// pal). Presence-бит для byte-exact re-emit; `false` = SSL-флавор.
     /// Source-only namespace spelling; retained for same-format emission,
@@ -279,7 +283,12 @@ impl DcsListSettings {
     /// Настроек НЕТ ни одной (все регионы пусты) — сериализуется как Designer `<ListSettings/>`
     /// и НЕ порождает EDT-сайдкара `.dcss` (платформа файл не создаёт).
     pub fn is_empty(&self) -> bool {
-        *self == Self::default()
+        // The lexical LF facet cannot create semantic settings or a sidecar.
+        let empty = Self {
+            source_edt_lf: self.source_edt_lf,
+            ..Self::default()
+        };
+        *self == empty
     }
 
     /// Настройки — ПЛАТФОРМЕННЫЙ ДЕФОЛТ: три пустые группы (filter/order/conditionalAppearance),

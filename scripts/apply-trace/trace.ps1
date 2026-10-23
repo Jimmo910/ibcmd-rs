@@ -204,6 +204,7 @@ if (-not $NoReport) {
     if (-not $py) { Write-Log 'python not found: events.xml.gz is written, the report is skipped'; return }
     $env:PYTHONIOENCODING = 'utf-8'
     $reportArgs = @('--xml', $xmlPath, '--max-statement-kb', $MaxStatementKB, '--meta', (Join-Path $OutDir 'trace-meta.json'), '--out', $OutDir)
+    if ($KeepRaw) { $reportArgs += '--keep-intermediate' }
     # without the database filter the trace holds every non-system session: keep those that touched the database
     if ($AllDatabases -or $Predicate) { $reportArgs += @('--focus-db', $Database) }
     & $py.Source (Join-Path $PSScriptRoot 'trace_report.py') @reportArgs

@@ -25,6 +25,7 @@
 //! as well as its own client.
 
 pub mod mssql;
+pub mod postgres;
 mod value;
 
 use std::path::{Path, PathBuf};

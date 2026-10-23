@@ -1,6 +1,6 @@
 //! Narrow SDK projections over source XML. Unchanged markup is never reserialized.
 use crate::ConvertError;
-use quick_xml::{events::Event, Reader};
+use quick_xml::{Reader, events::Event};
 use std::collections::{BTreeMap, HashMap};
 fn error(reason: impl Into<String>) -> ConvertError {
     ConvertError::Read {
@@ -176,6 +176,119 @@ pub(crate) fn text_newlines(body: &[u8], to_crlf: bool) -> Result<Vec<u8>, Conve
         return Err(error("incomplete template root"));
     }
     append(&mut out, &body[end..])?;
+    Ok(out)
+}
+
+/// Project only whitespace in element-only content. Mixed content, CDATA and
+/// xml:space-preserved scopes retain every byte. LF source must be uniform in
+/// eligible structural runs; one lexical bit cannot preserve mixed separators.
+pub(crate) fn dcs_structural_newlines(body: &[u8], to_crlf: bool) -> Result<Vec<u8>, ConvertError> {
+    struct Frame {
+        name: String,
+        children: bool,
+        text: bool,
+        preserve: bool,
+        whitespace: Vec<(usize, usize)>,
+    }
+    let mut cursor = MarkupCursor { body, offset: 0 };
+    let mut stack: Vec<Frame> = Vec::new();
+    let mut edits = Vec::new();
+    let mut end = 0;
+    while let Some((start, next)) = cursor.next()? {
+        let run = &body[end..start];
+        if run.iter().all(u8::is_ascii_whitespace) {
+            if let Some(frame) = stack.last_mut() {
+                push(&mut frame.whitespace, (end, start))?;
+            } else {
+                push(&mut edits, (end, start))?;
+            }
+        } else if let Some(frame) = stack.last_mut() {
+            frame.text = true;
+        }
+        let token = &body[start..next];
+        match token.get(1) {
+            Some(b'!') => {
+                if token.starts_with(b"<![CDATA[") {
+                    if let Some(frame) = stack.last_mut() {
+                        frame.text = true;
+                    }
+                }
+            }
+            Some(b'?') => {}
+            Some(b'/') => {
+                let name = std::str::from_utf8(&token[2..token.len() - 1])
+                    .map_err(|e| error(e.to_string()))?
+                    .trim();
+                let frame = stack
+                    .pop()
+                    .ok_or_else(|| error("DCS closing tag has no owner"))?;
+                if frame.name != name {
+                    return Err(error("DCS closing tag mismatch"));
+                }
+                if frame.children && !frame.text && !frame.preserve {
+                    for span in frame.whitespace {
+                        push(&mut edits, span)?;
+                    }
+                }
+            }
+            _ => {
+                if let Some(parent) = stack.last_mut() {
+                    parent.children = true;
+                }
+                let empty = token.ends_with(b"/>");
+                let el = body_start_tag(token, empty)?;
+                let inherited = stack.last().is_some_and(|p| p.preserve);
+                let preserve = match el
+                    .attrs
+                    .iter()
+                    .find(|a| a.name == "xml:space")
+                    .map(|a| a.value.as_str())
+                {
+                    Some("preserve") => true,
+                    Some("default") => false,
+                    Some(_) => return Err(error("unsupported xml:space value")),
+                    None => inherited,
+                };
+                if !empty {
+                    let name = if el.prefix.is_empty() {
+                        el.local
+                    } else {
+                        format!("{}:{}", el.prefix, el.local)
+                    };
+                    push(
+                        &mut stack,
+                        Frame {
+                            name,
+                            children: false,
+                            text: false,
+                            preserve,
+                            whitespace: Vec::new(),
+                        },
+                    )?;
+                }
+            }
+        }
+        end = next;
+    }
+    if !stack.is_empty() {
+        return Err(error("incomplete DCS root"));
+    }
+    if body[end..].iter().all(u8::is_ascii_whitespace) {
+        push(&mut edits, (end, body.len()))?;
+    }
+    edits.sort_unstable_by_key(|s| s.0);
+    let mut out = output(body.len())?;
+    let mut emitted = 0;
+    for (start, end) in edits {
+        let run = &body[start..end];
+        if to_crlf && run.contains(&b'\r') {
+            return Err(error("mixed structural EOL in current LF DCS source"));
+        }
+        append(&mut out, &body[emitted..start])?;
+        append_newlines(&mut out, run, to_crlf)?;
+        emitted = end;
+    }
+    append(&mut out, &body[emitted..])?;
     Ok(out)
 }
 

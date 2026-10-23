@@ -12,6 +12,7 @@ pub mod dropin;
 pub mod dump_sources;
 pub mod extension;
 pub mod external;
+mod file_extension_export;
 mod file_identity;
 pub mod file_import;
 mod file_infobase;
@@ -51,6 +52,7 @@ pub mod native_export_status;
 pub mod parallel;
 pub mod plan;
 pub mod platform;
+mod postgres_infobase;
 #[cfg(feature = "platform-oracle")]
 pub mod probe;
 #[cfg(feature = "platform-oracle")]

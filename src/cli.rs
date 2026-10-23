@@ -884,6 +884,25 @@ pub struct InfobaseConfigSaveArgs {
     pub output: PathBuf,
 }
 
+/// `infobase config load <file.cf>` (#353): the drop-in's arguments.
+#[derive(Debug, Clone)]
+pub struct InfobaseConfigLoadArgs {
+    pub settings: Option<PathBuf>,
+    pub native_config: Option<PathBuf>,
+    /// `--db-path`: a file infobase in place of a DBMS connection.
+    pub db_path: Option<PathBuf>,
+    pub dbms: Option<String>,
+    pub db_server: Option<String>,
+    pub db_name: Option<String>,
+    pub db_user: Option<String>,
+    pub db_pwd: Option<String>,
+    pub db_pwd_env: String,
+    /// `--sqlcmd`: sqlcmd.exe in place of the built-in SQL Server client.
+    pub sqlcmd: Option<PathBuf>,
+    /// The `.cf` to stage.
+    pub input: PathBuf,
+}
+
 /// Research commands under `infobase config` that run the installed
 /// platform: `ibcmd-rs infobase config roundtrip|sweep ...`.
 #[cfg(feature = "platform-oracle")]
@@ -1769,6 +1788,14 @@ pub struct MssqlDumpConfigArgs {
     /// itself. No server or platform is used.
     #[arg(long, conflicts_with = "rows_dir")]
     pub file_infobase: Option<PathBuf>,
+    /// The PostgreSQL database `infobase config export --dbms=PostgreSQL`
+    /// reads (#369): its rows answer every read, as a file infobase's do.
+    /// Not a command-line option.
+    #[arg(skip)]
+    pub postgres: Option<crate::sql::postgres::PgTarget>,
+    /// One operation's retained PostgreSQL probe rows; never a CLI option.
+    #[arg(skip)]
+    pub postgres_snapshot: Option<crate::mssql_dump::PostgresExportSnapshot>,
     /// Write every descriptor through the metadata model (the default for a
     /// full export; kept for scripts that pass it).
     #[arg(long, hide = true, conflicts_with = "legacy_export")]
