@@ -13093,7 +13093,8 @@ fn formats_form_attribute_type_description_settings_from_element_type() {
         }])
     );
 
-    let xml = format_form_attributes_xml(&[attribute]);
+    let mut attributes = [attribute];
+    let xml = format_form_attributes_xml(&attributes);
     assert!(
         xml.contains(r#"<Settings xsi:type="v8:TypeDescription">"#),
         "{xml}"
@@ -13102,17 +13103,20 @@ fn formats_form_attribute_type_description_settings_from_element_type() {
     assert!(xml.contains("<v8:StringQualifiers>"), "{xml}");
     assert!(!xml.contains(r#"<Settings xsi:type="v8:TypeDescription"/>"#));
 
-    assert_eq!(
-        format_type_description_value_types_xml(
-            &[ConstantValueType::Reference {
-                reference: "d5p1:TextDocument".to_string()
-            }],
-            "\t"
-        ),
-        concat!(
-            "\t<v8:Type xmlns:d5p1=\"http://v8.1c.ru/8.1/data/txtedt\">",
-            "d5p1:TextDocument</v8:Type>\r\n"
-        )
+    // Exercise the actual Settings caller at its declaration depth, keeping
+    // the native d5 QName and URI rather than rendering an unparented fragment.
+    attributes[0].type_description_settings = Some(vec![ConstantValueType::Reference {
+        reference: "d5p1:TextDocument".to_owned(),
+    }]);
+    let xml = format_form_attributes_xml(&attributes);
+    assert!(
+        xml.contains(concat!(
+            "\t\t\t<Settings xsi:type=\"v8:TypeDescription\">\r\n",
+            "\t\t\t\t<v8:Type xmlns:d5p1=\"http://v8.1c.ru/8.1/data/txtedt\">",
+            "d5p1:TextDocument</v8:Type>\r\n",
+            "\t\t\t</Settings>\r\n"
+        )),
+        "{xml}"
     );
 }
 
@@ -80506,4 +80510,131 @@ fn form_root_read_only_uses_its_own_head_flag_and_native_xml_position() {
     let mut unsupported = vec!["1"; 18];
     unsupported[0] = "99";
     assert_eq!(extract_form_read_only(&unsupported), None);
+}
+
+#[test]
+fn type_spelling_binds_common_command_builtin_namespaces() {
+    for (id, name, namespace) in [
+        (
+            "151f8778-e2d0-496a-9f02-d9ffd93b57ec",
+            "fd:FormattedDocument",
+            "http://v8.1c.ru/8.2/data/formatted-document",
+        ),
+        (
+            "48510817-200c-48c2-9973-06cf90840514",
+            "pdfdoc:PDFDocument",
+            "http://v8.1c.ru/8.3/data/pdf",
+        ),
+        (
+            "43dc7f37-5b1d-42a7-8f28-f545080d0255",
+            "pl:Planner",
+            "http://v8.1c.ru/8.3/data/planner",
+        ),
+        (
+            "2957f638-fc52-4bbb-9bd5-614550730ca6",
+            "d5p1:Dendrogram",
+            "http://v8.1c.ru/8.2/data/chart",
+        ),
+    ] {
+        let types = parse_common_command_parameter_types(
+            &format!(r##"{{"Pattern",{{"#",{id}}}}}"##),
+            &BTreeMap::new(),
+        );
+        assert_eq!(types.len(), 1);
+        let mut xml = String::new();
+        format_common_command_parameter_type_xml(&mut xml, &types);
+        let prefix = name.split_once(':').unwrap().0;
+        assert!(
+            xml.contains(&format!(
+                "<v8:Type xmlns:{prefix}=\"{namespace}\">{name}</v8:Type>"
+            )),
+            "{xml}"
+        );
+    }
+}
+
+#[test]
+fn type_spelling_uses_form_declaration_depth() {
+    let types = [ConstantValueType::Reference {
+        reference: "d7p1:Dendrogram".to_owned(),
+    }];
+    for (indent, depth) in [(3, 5), (5, 7), (6, 8)] {
+        let xml = format_form_metadata_types_xml_with_indent(&types, &"\t".repeat(indent));
+        let expected = format!(
+            "<v8:Type xmlns:d{depth}p1=\"http://v8.1c.ru/8.2/data/chart\">d{depth}p1:Dendrogram</v8:Type>"
+        );
+        assert!(xml.contains(&expected), "{xml}");
+    }
+    for (indent, depth) in [(4, 5), (6, 7)] {
+        let xml = format_type_description_value_types_xml(&types, &"\t".repeat(indent));
+        let expected = format!(
+            "<v8:Type xmlns:d{depth}p1=\"http://v8.1c.ru/8.2/data/chart\">d{depth}p1:Dendrogram</v8:Type>"
+        );
+        assert!(xml.contains(&expected), "{xml}");
+    }
+}
+
+#[test]
+fn type_spelling_rebases_form_filter_without_named_aliases() {
+    let types = [ConstantValueType::Reference {
+        reference: "d7p1:Filter".to_owned(),
+    }];
+    let xml = format_form_metadata_types_xml(&types);
+    assert!(
+        xml.contains("<v8:Type xmlns:d5p1=\"http://v8.1c.ru/8.2/misc\">d5p1:Filter</v8:Type>"),
+        "{xml}"
+    );
+    for name in ["dcsset:Filter", "cfg:Filter"] {
+        let xml = format_form_metadata_types_xml(&[ConstantValueType::Reference {
+            reference: name.to_owned(),
+        }]);
+        assert!(xml.contains(&format!(">{name}</v8:Type>")), "{xml}");
+    }
+}
+
+#[test]
+fn type_spelling_keeps_event_subscription_type_ids() {
+    let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let xml = format_event_subscription_source_xml(
+        &MetadataHeader {
+            uuid: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".to_owned(),
+            name: "UnknownSource".to_owned(),
+            synonyms: Vec::new(),
+            comment: String::new(),
+            template_type_code: None,
+        },
+        &EventSubscriptionProperties {
+            source_types: vec![ConstantValueType::TypeId {
+                type_id: id.to_owned(),
+            }],
+            event: "BeforeWrite".to_owned(),
+            handler: "CommonModule.Handlers.BeforeWrite".to_owned(),
+        },
+        InfobaseConfigSourceVersion::V2_20,
+    );
+    assert!(
+        xml.contains(&format!("<v8:TypeId>{id}</v8:TypeId>")),
+        "{xml}"
+    );
+}
+
+#[test]
+fn type_spelling_uses_generic_declaration_depth() {
+    let types = [ConstantValueType::Reference {
+        reference: "d7p1:Dendrogram".to_owned(),
+    }];
+    for (indent, depth) in [(3, 5), (5, 7), (6, 8)] {
+        let xml = format_metadata_types_xml_with_indent(&types, &"\t".repeat(indent));
+        let expected = format!(
+            "<v8:Type xmlns:d{depth}p1=\"http://v8.1c.ru/8.2/data/chart\">d{depth}p1:Dendrogram</v8:Type>"
+        );
+        assert!(xml.contains(&expected), "{xml}");
+    }
+    let xml = format_constant_type_member_xml(&types[0]);
+    assert!(
+        xml.contains(
+            "<v8:Type xmlns:d5p1=\"http://v8.1c.ru/8.2/data/chart\">d5p1:Dendrogram</v8:Type>"
+        ),
+        "{xml}"
+    );
 }

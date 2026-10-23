@@ -43316,7 +43316,8 @@ fn format_common_command_parameter_type_xml_with_indent(
     }
     xml.push_str(&format!("{indent}<CommandParameterType>\r\n"));
     for value_type in types {
-        let tag_name = match value_type {
+        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 2);
+        let tag_name = match &value_type {
             ConstantValueType::ReferenceTypeSet { .. } => "TypeSet",
             // A type identifier the configuration resolves to no name is
             // echoed verbatim, exactly as a form pattern echoes one. Evidence:
@@ -43327,9 +43328,10 @@ fn format_common_command_parameter_type_xml_with_indent(
             ConstantValueType::TypeId { .. } => "TypeId",
             _ => "Type",
         };
+        let namespace_attr = metadata_type_xml_namespace_attr(&value_type);
         xml.push_str(&format!(
-            "{indent}\t<v8:{tag_name}>{}</v8:{tag_name}>\r\n",
-            escape_xml_text(&metadata_type_xml_name(value_type))
+            "{indent}\t<v8:{tag_name}{namespace_attr}>{}</v8:{tag_name}>\r\n",
+            escape_xml_text(&metadata_type_xml_name(&value_type))
         ));
     }
     xml.push_str(&format!("{indent}</CommandParameterType>\r\n"));
@@ -43572,11 +43574,17 @@ fn format_event_subscription_source_xml(
     let mut xml = format_full_metadata_source_xml("EventSubscription", header, source_version);
     let mut insert = String::from("\t\t\t<Source>\r\n");
     let source_types = sorted_event_subscription_source_types(&event_subscription.source_types);
+    let type_indent = "\t\t\t\t";
     for source_type in source_types {
-        let reference = metadata_type_xml_name(source_type);
-        let tag = event_subscription_source_type_tag(&reference);
+        let source_type = scoped_value_type(source_type, type_indent.matches('\t').count() + 1);
+        let reference = metadata_type_xml_name(&source_type);
+        let tag = match &source_type {
+            ConstantValueType::TypeId { .. } => metadata_type_xml_tag(&source_type),
+            _ => event_subscription_source_type_tag(&reference),
+        };
+        let namespace_attr = metadata_type_xml_namespace_attr(&source_type);
         insert.push_str(&format!(
-            "\t\t\t\t<v8:{tag}>{}</v8:{tag}>\r\n",
+            "{type_indent}<v8:{tag}{namespace_attr}>{}</v8:{tag}>\r\n",
             escape_xml_element_text(&reference)
         ));
     }
@@ -45635,7 +45643,7 @@ fn format_form_metadata_types_xml_with_indent(
     let nested2 = format!("{nested}\t");
     let mut xml = format!("{indent}<Type>\r\n");
     for value_type in value_types {
-        let value_type = form_scoped_value_type(value_type);
+        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 2);
         let tag_name = form_metadata_type_xml_tag(&value_type);
         let namespace_attr = form_metadata_type_xml_namespace_attr(&value_type);
         xml.push_str(&format!(
@@ -45715,7 +45723,7 @@ fn format_type_description_value_types_xml(
         // and its namespace declarations just like the attribute's own Type.
         // The generic table omits the txtedt declaration, which would leave a
         // `d5p1:TextDocument` value with an unbound prefix.
-        let value_type = form_scoped_value_type(value_type);
+        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 1);
         let tag_name = form_metadata_type_xml_tag(&value_type);
         let namespace_attr = form_metadata_type_xml_namespace_attr(&value_type);
         xml.push_str(&format!(
@@ -45786,11 +45794,12 @@ fn format_metadata_types_xml_with_indent(
     let nested2 = format!("{nested}\t");
     let mut xml = format!("{indent}<Type>\r\n");
     for value_type in value_types {
-        let tag_name = metadata_type_xml_tag(value_type);
-        let namespace_attr = metadata_type_xml_namespace_attr(value_type);
+        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 2);
+        let tag_name = metadata_type_xml_tag(&value_type);
+        let namespace_attr = metadata_type_xml_namespace_attr(&value_type);
         xml.push_str(&format!(
             "{nested}<v8:{tag_name}{namespace_attr}>{}</v8:{tag_name}>\r\n",
-            metadata_type_xml_name(value_type)
+            metadata_type_xml_name(&value_type)
         ));
     }
 
@@ -45885,45 +45894,30 @@ fn metadata_type_xml_tag(value_type: &ConstantValueType) -> &'static str {
     }
 }
 
-/// A `d<N>p1` prefix is the 1-based depth of the element carrying the inline
-/// declaration, so one type id is `d7p1:X` under a metadata root
-/// (`<MetaDataObject>/<DataProcessor>/<ChildObjects>/<Attribute>/<Properties>/
-/// <Type>/<v8:Type>`) and `d5p1:X` under a form
-/// (`<Form>/<Attributes>/<Attribute>/<Type>/<v8:Type>`). Only the five
-/// namespaces the form document declares at that depth are re-spelled
-/// (`form_data_processor_builtin_type_namespace_attribute`); every other name
-/// -- `dcsset:Filter`, `d7p1:ConditionalAppearance` and the canonical `fd:`,
-/// `pdfdoc:`, `pl:` -- keeps the spelling its own record carries.
-fn form_scoped_type_reference(reference: &str) -> std::borrow::Cow<'_, str> {
-    let (prefix, local) = match reference.split_once(':') {
-        Some((prefix, local)) => (prefix, local),
-        None => return std::borrow::Cow::Borrowed(reference),
+/// A generated prefix records the declaration element's 1-based depth.
+/// Rebase schema-known generated names to that depth; canonical names keep
+/// their own prefix and namespace.
+fn scoped_type_reference(reference: &str, depth: usize) -> std::borrow::Cow<'_, str> {
+    let Some((prefix, local)) = reference.split_once(':') else {
+        return std::borrow::Cow::Borrowed(reference);
     };
-    let rebased = ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_namespace_uri_ignoring_prefix(reference)
-        .is_some_and(|namespace| {
-            matches!(
-                namespace,
-                "http://v8.1c.ru/8.2/data/chart"
-                    | "http://v8.1c.ru/8.2/data/data-analysis"
-                    | "http://v8.1c.ru/8.2/data/geo"
-                    | "http://v8.1c.ru/8.2/data/graphscheme"
-                    | "http://v8.1c.ru/8.1/data/txtedt"
-            )
-        });
-    if rebased && prefix != "d5p1" {
-        std::borrow::Cow::Owned(format!("d5p1:{local}"))
+    let generated = ibcmd_schema::metadata_storage_facts::generated_type_prefix(prefix)
+        && ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_namespace_uri_ignoring_prefix(reference).is_some();
+    let target_prefix = format!("d{depth}p1");
+    if generated && prefix != target_prefix {
+        std::borrow::Cow::Owned(format!("{target_prefix}:{local}"))
     } else {
         std::borrow::Cow::Borrowed(reference)
     }
 }
 
-fn form_scoped_value_type(value_type: &ConstantValueType) -> ConstantValueType {
+fn scoped_value_type(value_type: &ConstantValueType, depth: usize) -> ConstantValueType {
     match value_type {
         ConstantValueType::Reference { reference } => ConstantValueType::Reference {
-            reference: form_scoped_type_reference(reference).into_owned(),
+            reference: scoped_type_reference(reference, depth).into_owned(),
         },
         ConstantValueType::ReferenceTypeSet { reference } => ConstantValueType::ReferenceTypeSet {
-            reference: form_scoped_type_reference(reference).into_owned(),
+            reference: scoped_type_reference(reference, depth).into_owned(),
         },
         other => other.clone(),
     }
@@ -45951,63 +45945,47 @@ fn metadata_type_xml_name(value_type: &ConstantValueType) -> String {
     }
 }
 
-fn metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> &'static str {
+fn metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> String {
     match value_type {
         ConstantValueType::Reference { reference }
         | ConstantValueType::ReferenceTypeSet { reference }
             if reference == DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME =>
         {
-            DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE
+            DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE.to_owned()
         }
         ConstantValueType::Reference { reference }
         | ConstantValueType::ReferenceTypeSet { reference }
             if reference.starts_with("mxl:") =>
         {
-            r#" xmlns:mxl="http://v8.1c.ru/8.2/data/spreadsheet""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "d7p1:Chart" =>
-        {
-            r#" xmlns:d7p1="http://v8.1c.ru/8.2/data/chart""#
+            r#" xmlns:mxl="http://v8.1c.ru/8.2/data/spreadsheet""#.to_owned()
         }
         ConstantValueType::Reference { reference }
         | ConstantValueType::ReferenceTypeSet { reference } => {
-            ibcmd_xml::metadata::data_processor_builtin_type_namespace_attribute(reference)
-                .unwrap_or_default()
+            ibcmd_xml::metadata::data_processor_builtin_type_namespace_attribute_for_qname(
+                reference,
+            )
+            .unwrap_or_default()
         }
-        _ => "",
+        _ => String::new(),
     }
 }
 
-/// The declaration a form body needs for `value_type`.
-///
-/// Two names escape the document-scoped rule and are answered here: the
-/// settings composer is bound at the form root and stays bare, and
-/// `d7p1:ConditionalAppearance` is a measured exception the form spells with
-/// the root's prefix (`enc` entext is not a table entry, so no lookup can
-/// restore it). Everything else -- `mxl:`, the six generated namespaces in
-/// `d5p1`, and the canonical `fd`/`pdfdoc`/`pl` -- is answered by the shared
-/// tables, the root declaration first because it is the spelling every other
-/// document uses.
-fn form_metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> &'static str {
+/// The inline binding a form body needs. SettingsComposer is root-bound;
+/// ConditionalAppearance retains its measured spelling. Other bindings use
+/// the shared XML renderer after the QName has been set from its depth.
+
+fn form_metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> String {
     let reference = match value_type {
         ConstantValueType::Reference { reference }
         | ConstantValueType::ReferenceTypeSet { reference } => reference.as_str(),
         _ => "",
     };
     match reference {
-        DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME => "",
-        "d7p1:ConditionalAppearance" => r#" xmlns:d7p1="http://v8.1c.ru/8.3/data/entext""#,
-        _ => {
-            let root_bound = metadata_type_xml_namespace_attr(value_type);
-            if root_bound.is_empty() {
-                ibcmd_xml::metadata::form_data_processor_builtin_type_namespace_attribute(reference)
-                    .unwrap_or_default()
-            } else {
-                root_bound
-            }
+        DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME => String::new(),
+        "d7p1:ConditionalAppearance" => {
+            r#" xmlns:d7p1="http://v8.1c.ru/8.3/data/entext""#.to_owned()
         }
+        _ => metadata_type_xml_namespace_attr(value_type),
     }
 }
 
@@ -46038,7 +46016,9 @@ fn format_constant_type_xml(value_type: &ConstantValueType) -> String {
 }
 
 fn format_constant_type_member_xml(value_type: &ConstantValueType) -> String {
-    match value_type {
+    // MetaDataObject / Constant / Properties / Type / v8:Type.
+    let value_type = scoped_value_type(value_type, 5);
+    match &value_type {
         ConstantValueType::Boolean => "\t\t\t\t<v8:Type>xs:boolean</v8:Type>\r\n".to_string(),
         ConstantValueType::String {
             length,
@@ -46088,14 +46068,14 @@ fn format_constant_type_member_xml(value_type: &ConstantValueType) -> String {
         ),
         ConstantValueType::Reference { reference, .. } => {
             let tag = constant_reference_type_tag(reference);
-            let namespace_attr = metadata_type_xml_namespace_attr(value_type);
+            let namespace_attr = metadata_type_xml_namespace_attr(&value_type);
             format!(
                 "\t\t\t\t<v8:{tag}{namespace_attr}>{}</v8:{tag}>\r\n",
                 escape_xml_text(reference)
             )
         }
         ConstantValueType::ReferenceTypeSet { reference, .. } => {
-            let namespace_attr = metadata_type_xml_namespace_attr(value_type);
+            let namespace_attr = metadata_type_xml_namespace_attr(&value_type);
             format!(
                 "\t\t\t\t<v8:TypeSet{namespace_attr}>{}</v8:TypeSet>\r\n",
                 escape_xml_text(reference)

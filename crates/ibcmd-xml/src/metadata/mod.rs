@@ -186,6 +186,16 @@ pub fn form_data_processor_builtin_type_namespace_attribute(
     )
 }
 
+/// Declares a schema-known processor type using the supplied QName prefix.
+/// Generated d<N>p1 prefixes can name the declaring element at any depth.
+pub fn data_processor_builtin_type_namespace_attribute_for_qname(
+    reference: &str,
+) -> Option<String> {
+    let namespace = ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_namespace_uri_ignoring_prefix(reference)?;
+    let (prefix, _) = reference.split_once(':')?;
+    Some(format!(" xmlns:{prefix}=\"{namespace}\""))
+}
+
 /// A FilterCriterion with an empty type pattern keeps the Type property as
 /// a self-closing element, at the standard metadata property indentation.
 /// Populated patterns retain their existing typed children and qualifiers.
