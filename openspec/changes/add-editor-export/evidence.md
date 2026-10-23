@@ -51,3 +51,39 @@ transactional; retained original bytes support recovery, and inventory is last.
 The PR remains Draft and uses `Refs #381`; this evidence does not close the issue.
 Project 9 writes were denied to the parent account; fields may remain stale and
 were not retried through another route.
+
+## Representative ERP selection and read-cost regression
+
+Supplemental read-only evidence uses the authorized external disposable ERP
+2.5.27.70 copy, not ERP UH. A document selected by median descriptor XML size
+(79,293 bytes among 747 documents) owns 14 exported files / 289,495 bytes.
+The fresh native 8.5.1.1592 recursive selected export took 31.720 s including
+process startup. The initial debug RPC reached the unchanged 180 s bound
+before staging files. Its failed artifacts and native reference are retained.
+
+The clean release baseline at `babdfeb7` took 43.985 s for the same RPC
+selection, excluding separately measured initialization (0.437 s) and connection
+(3.703 s). Its 14 assets matched the fresh native selection byte for byte, and
+its inventory matched the retained native-query-bound inventory. The native
+query was retained, not freshly rerun. The database, selected source files and
+source inventory were unchanged. Release binary SHA-256:
+`0cba0c203d50cdfee3297540c55ecfa437ef4fad43391606ba3ba6f315edaa89`.
+These differently bounded timings are not a native speedup claim.
+
+A discriminating regression counted six full raw CONFIG/CONFIGSAVE loads during
+one selected request; the converter already emitted only the selected module
+files. The operation-local raw-row scope reduces that count to two: one shared
+immutable read for planning/conversion and one independent final inventory read.
+It does not cache SQL reads or change active-generation/CONFIGSAVE publication.
+The guard is thread-bound, refuses nesting, checks typed cancellation and uses
+canonical data-file identity; other databases cannot replace its rows.
+Six controls cover the work count and actual converter file set, aliases and
+cross-database isolation, error/cancellation cleanup, completed/incomplete stages,
+and a mid-operation database mutation rejected before inventory publication.
+The existing dynamic-generation fixture additionally compares scoped/fresh rows.
+The red six-versus-two result is retained alongside the passing controls.
+
+Private evidence stays under external lab fixtures/logs. No document names,
+configuration XML/CF, or business data are included in this repository.
+The patched release measurement is recorded in the Draft PR after its quiet run;
+ERP UH latency and live SQL acceptance remain open.

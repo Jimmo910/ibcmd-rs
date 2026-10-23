@@ -114,10 +114,15 @@ pub(super) fn activate(dir: &Path) -> Result<OfflineRowsGuard> {
 
 /// Makes `rows` the Config table of this process until the guard drops.
 pub(super) fn activate_rows(rows: OfflineRows) -> Result<OfflineRowsGuard> {
+    activate_shared(Arc::new(rows))
+}
+
+/// Install operation-owned immutable raw rows; each caller retains its own view scope.
+pub(super) fn activate_shared(rows: Arc<OfflineRows>) -> Result<OfflineRowsGuard> {
     let mut active = ACTIVE
         .write()
         .map_err(|_| anyhow!("offline rows lock is poisoned"))?;
-    *active = Some(Arc::new(rows));
+    *active = Some(rows);
     Ok(OfflineRowsGuard { _private: () })
 }
 

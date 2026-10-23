@@ -209,6 +209,18 @@ jobs:
           CARGO_NET_OFFLINE: "true"
         run: cargo test --locked -p ibcmd-rs --lib configuration_ --no-default-features
 
+      - name: Test editor export read scope offline
+        env:
+          CARGO_NET_OFFLINE: "true"
+          IBCMD_TEST_KEEP_FIXTURES: "1"
+        run: cargo test --locked -p ibcmd-rs --lib read_scope_tests --no-default-features
+
+      - name: Test scoped active-generation rows offline
+        env:
+          CARGO_NET_OFFLINE: "true"
+          IBCMD_TEST_KEEP_FIXTURES: "1"
+        run: cargo test --locked -p ibcmd-rs --lib snapshot_uses_active_generation_and_preserves_no_marker_semantics --no-default-features
+
       - name: Retain binary for failed release boundary investigation
         if: failure()
         uses: actions/upload-artifact@v4

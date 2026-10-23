@@ -31,7 +31,16 @@ impl StoredConfiguration {
             bail!("export staging and source directories must not overlap");
         }
         let view = self.main_view_mut();
+        progress(0, 4, "editor export: read inventory");
+        let read_scope = match &view.source {
+            ConfigSource::FileDb(path) => {
+                let _engine = engine();
+                Some(crate::mssql_dump::FileDbReadScope::begin(path)?)
+            }
+            _ => None,
+        };
         let before = view.native_config_dump_info()?;
+        progress(1, 4, "editor export: resolve selection");
         let current = ConfigDumpInfo::parse(&before)?;
         let snapshot = crate::native_export_status::ConfigDumpInfoSnapshot::parse(&before)?;
         let owners = snapshot.owners();
@@ -171,6 +180,7 @@ impl StoredConfiguration {
         if let Some(bytes) = reference_bytes {
             original.insert("ConfigDumpInfo.xml".into(), sha256_hex(&bytes));
         }
+        progress(2, 4, "editor export: convert selection");
         for exported in view.export(&names.iter().cloned().collect::<Vec<_>>(), progress)? {
             for name in local_files(source, &exported.object)?.keys() {
                 if !exported.files.contains_key(name) {
@@ -204,6 +214,9 @@ impl StoredConfiguration {
             }
         }
         removed.retain(|name| !files.contains(name));
+        // Keep final validation independent of the operation's immutable input.
+        drop(read_scope);
+        progress(3, 4, "editor export: verify inventory");
         if view.native_config_dump_info()? != before {
             bail!("Database changed during export; retry");
         }
@@ -260,3 +273,7 @@ fn collect_editor_files(root: &Path, directory: &Path) -> Result<BTreeMap<String
     }
     Ok(files)
 }
+
+#[cfg(test)]
+#[path = "editor_export_scope_tests.rs"]
+mod read_scope_tests;
