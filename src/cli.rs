@@ -1765,6 +1765,9 @@ pub struct MssqlDumpConfigArgs {
     /// Not a command-line option.
     #[arg(skip)]
     pub postgres: Option<crate::sql::postgres::PgTarget>,
+    /// One operation's retained PostgreSQL probe rows; never a CLI option.
+    #[arg(skip)]
+    pub postgres_snapshot: Option<crate::mssql_dump::PostgresExportSnapshot>,
     /// Write every descriptor through the metadata model (the default for a
     /// full export; kept for scripts that pass it).
     #[arg(long, hide = true, conflicts_with = "legacy_export")]

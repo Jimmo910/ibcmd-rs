@@ -17,36 +17,70 @@ use anyhow::{Context, Result, bail};
 use super::offline_rows::OfflineRows;
 use crate::sql::postgres::{PgConnection, PgTarget, decode_bytea};
 
-/// The rows the platform probe of an export read (database, rows): the
-/// export of the same command publishes them instead of reading the
-/// database a second time.
-static PROBED: Mutex<Option<(String, Arc<OfflineRows>)>> = Mutex::new(None);
-
-fn probe_key(target: &PgTarget) -> String {
-    format!(
-        "{}:{}/{}@{}",
-        target.host, target.port, target.database, target.user
-    )
+/// A single export operation's retained PostgreSQL rows. Clones share the same
+/// single-use slot; neither a target key nor credentials enter shared state.
+#[derive(Clone)]
+pub struct PostgresExportSnapshot {
+    rows: Arc<Mutex<Option<Arc<OfflineRows>>>>,
 }
 
-/// The published rows for the platform probe (`settle_platform`), kept for
-/// the export that follows it.
-pub(crate) fn load_for_probe(target: &PgTarget) -> Result<Arc<OfflineRows>> {
+impl std::fmt::Debug for PostgresExportSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PostgresExportSnapshot")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PostgresExportSnapshot {
+    fn new(rows: Arc<OfflineRows>) -> Self {
+        Self {
+            rows: Arc::new(Mutex::new(Some(rows))),
+        }
+    }
+
+    fn take_rows(&self) -> Result<Option<Arc<OfflineRows>>> {
+        Ok(self
+            .rows
+            .lock()
+            .map_err(|_| anyhow::anyhow!("PostgreSQL snapshot lock is poisoned"))?
+            .take())
+    }
+
+    /// Move the snapshot out of a resolved connection before export preflight.
+    /// All connection clones then lose access, including when preflight fails.
+    pub(crate) fn transfer(&self) -> Result<Option<Self>> {
+        Ok(self.take_rows()?.map(Self::new))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn synthetic(label: &[u8]) -> Self {
+        Self::new(Arc::new(OfflineRows::from_memory([(
+            "root".to_owned(),
+            Arc::new(label.to_vec()),
+        )])))
+    }
+}
+
+/// Read one snapshot for this probe and retain it only in its returned carrier.
+pub(super) fn load_for_probe(
+    target: &PgTarget,
+) -> Result<(Arc<OfflineRows>, PostgresExportSnapshot)> {
     let rows = Arc::new(load(target, false)?);
-    if let Ok(mut probed) = PROBED.lock() {
-        *probed = Some((probe_key(target), Arc::clone(&rows)));
-    }
-    Ok(rows)
+    let snapshot = PostgresExportSnapshot::new(Arc::clone(&rows));
+    Ok((rows, snapshot))
 }
 
-/// The published rows for an export: those its probe read, else the
-/// database's.
-pub(crate) fn load_published(target: &PgTarget) -> Result<Arc<OfflineRows>> {
-    let probed = PROBED.lock().ok().and_then(|mut probed| probed.take());
-    match probed {
-        Some((key, rows)) if key == probe_key(target) => Ok(rows),
-        _ => Ok(Arc::new(load(target, false)?)),
+/// Consume this export's snapshot once, or read a fresh one when it had no probe.
+pub(super) fn load_published(
+    target: &PgTarget,
+    snapshot: Option<&PostgresExportSnapshot>,
+) -> Result<Arc<OfflineRows>> {
+    if let Some(snapshot) = snapshot
+        && let Some(rows) = snapshot.take_rows()?
+    {
+        return Ok(rows);
     }
+    Ok(Arc::new(load(target, false)?))
 }
 
 /// The configuration the database publishes, as offline rows; with
@@ -131,15 +165,96 @@ mod tests {
             "root".to_owned(),
             Arc::new(b"probe".to_vec()),
         )]));
-        *PROBED.lock().unwrap() = Some((probe_key(&target), Arc::clone(&rows)));
+        let snapshot = PostgresExportSnapshot::new(Arc::clone(&rows));
+        let transferred = snapshot.transfer().unwrap().unwrap();
         // Port 1 refuses a connection: the rows can only be the probe's.
-        let published = load_published(&target).unwrap();
+        let published = load_published(&target, Some(&transferred)).unwrap();
         assert!(Arc::ptr_eq(&published, &rows));
-        assert!(PROBED.lock().unwrap().is_none());
-        assert!(load_published(&target).is_err());
+        assert!(snapshot.take_rows().unwrap().is_none());
+        assert!(load_published(&target, Some(&transferred)).is_err());
     }
+    fn snapshot_isolation_target() -> PgTarget {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        PgTarget::new(&address.to_string(), "isolated", None, None).unwrap()
+    }
+
+    fn snapshot_isolation_rows(label: &[u8]) -> Arc<OfflineRows> {
+        Arc::new(OfflineRows::from_memory([(
+            "root".to_owned(),
+            Arc::new(label.to_vec()),
+        )]))
+    }
+
+    #[test]
+    fn snapshot_isolation_explicit_export_cannot_reuse_another_commands_probe() {
+        let target = snapshot_isolation_target();
+        let previous = snapshot_isolation_rows(b"previous command");
+        let previous = PostgresExportSnapshot::new(previous);
+        assert!(
+            load_published(&target, None).is_err(),
+            "an explicit-platform command must read its own database snapshot"
+        );
+        assert!(previous.take_rows().unwrap().is_some());
+    }
+
+    #[test]
+    fn snapshot_isolation_failed_probe_cannot_publish_previous_rows() {
+        let target = snapshot_isolation_target();
+        let previous = snapshot_isolation_rows(b"previous command");
+        let previous = PostgresExportSnapshot::new(previous);
+        assert!(load_for_probe(&target).is_err());
+        assert!(
+            load_published(&target, None).is_err(),
+            "a failed probe must not leave a previous command's rows eligible"
+        );
+        assert!(previous.take_rows().unwrap().is_some());
+    }
+
+    #[test]
+    fn snapshot_isolation_two_pending_probes_keep_their_own_rows() {
+        let first_target = snapshot_isolation_target();
+        let mut second_target = first_target.clone();
+        second_target.password = Some("different synthetic login".into());
+        let first = snapshot_isolation_rows(b"first command");
+        let second = snapshot_isolation_rows(b"second command");
+        let first_snapshot = PostgresExportSnapshot::new(Arc::clone(&first));
+        let second_snapshot = PostgresExportSnapshot::new(Arc::clone(&second));
+        let published = load_published(&first_target, Some(&first_snapshot)).unwrap();
+        assert!(
+            Arc::ptr_eq(&published, &first),
+            "a different pending operation must not replace the first snapshot"
+        );
+        let published = load_published(&second_target, Some(&second_snapshot)).unwrap();
+        assert!(Arc::ptr_eq(&published, &second));
+    }
+
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
+
+    #[test]
+    fn postgres_snapshot_transfer_keeps_one_database_transaction_and_same_rows() {
+        let (ok, queries) = capture(false, false, true);
+        assert!(ok);
+        assert_eq!(queries.len(), 5);
+        assert_eq!(
+            queries.first().map(String::as_str),
+            Some("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        );
+        assert_eq!(queries.last().map(String::as_str), Some("COMMIT"));
+    }
+
+    #[test]
+    fn postgres_snapshot_clones_consume_one_slot_and_debug_hides_payloads() {
+        let snapshot = PostgresExportSnapshot::synthetic(b"synthetic private row");
+        assert!(!format!("{snapshot:?}").contains("synthetic private row"));
+        let clone = snapshot.clone();
+        let transferred = snapshot.transfer().unwrap().unwrap();
+        assert!(clone.transfer().unwrap().is_none());
+        assert!(transferred.take_rows().unwrap().is_some());
+        assert!(transferred.take_rows().unwrap().is_none());
+    }
 
     fn message(stream: &mut TcpStream, tag: u8, body: &[u8]) {
         stream.write_all(&[tag]).unwrap();
@@ -158,7 +273,7 @@ mod tests {
         message(stream, b'D', &body);
     }
 
-    fn capture(stored_only: bool, fail_config: bool) -> (bool, Vec<String>) {
+    fn capture(stored_only: bool, fail_config: bool, retain_snapshot: bool) -> (bool, Vec<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
@@ -205,13 +320,27 @@ mod tests {
             queries
         });
         let target = PgTarget::new(&address.to_string(), "synthetic", None, None).unwrap();
-        let ok = load(&target, stored_only).is_ok();
+        let ok = if retain_snapshot {
+            (|| -> Result<()> {
+                let (rows, snapshot) = load_for_probe(&target)?;
+                let clone = snapshot.clone();
+                let transferred = snapshot.transfer()?.unwrap();
+                assert!(clone.transfer()?.is_none());
+                let published = load_published(&target, Some(&transferred))?;
+                assert!(Arc::ptr_eq(&published, &rows));
+                assert!(transferred.take_rows()?.is_none());
+                Ok(())
+            })()
+            .is_ok()
+        } else {
+            load(&target, stored_only).is_ok()
+        };
         (ok, server.join().unwrap())
     }
 
     #[test]
     fn postgres_export_uses_one_read_only_repeatable_read_snapshot() {
-        let (ok, queries) = capture(false, false);
+        let (ok, queries) = capture(false, false, false);
         assert!(ok);
         assert_eq!(
             queries.first().map(String::as_str),
@@ -226,7 +355,7 @@ mod tests {
 
     #[test]
     fn postgres_stored_only_still_uses_a_read_only_snapshot() {
-        let (ok, queries) = capture(true, false);
+        let (ok, queries) = capture(true, false, false);
         assert!(ok);
         assert_eq!(
             queries.first().map(String::as_str),
@@ -238,7 +367,7 @@ mod tests {
 
     #[test]
     fn postgres_read_failure_rolls_back_without_publishing() {
-        let (ok, queries) = capture(false, true);
+        let (ok, queries) = capture(false, true, false);
         assert!(!ok);
         assert_eq!(queries.last().map(String::as_str), Some("ROLLBACK"));
     }
