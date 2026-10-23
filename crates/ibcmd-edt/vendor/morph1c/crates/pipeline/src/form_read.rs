@@ -660,16 +660,17 @@ fn attach_edt_conditional_appearance(
         path: path.display().to_string(),
         reason: e.to_string(),
     })?;
-    let (ca_items, ca_without_lf_pal) =
-        formats_xml::form::read_conditional_appearance_dcssca(&bytes).map_err(|e| {
+    let document =
+        formats_xml::form::read_conditional_appearance_dcssca_with_framing(&bytes).map_err(|e| {
             ConvertError::Read {
                 kind: kind.to_string(),
                 object: format!("{owner}.{form_name}"),
                 reason: format!("ConditionalAppearance.dcssca: {e}"),
             }
         })?;
-    body.conditional_appearance = ca_items;
-    body.ca_envelope_without_lf_pal = ca_without_lf_pal;
+    body.conditional_appearance = document.items;
+    body.ca_envelope_without_lf_pal = document.envelope_without_lf_pal;
+    body.source_dcssca_lf = document.source_edt_lf;
     Ok(())
 }
 

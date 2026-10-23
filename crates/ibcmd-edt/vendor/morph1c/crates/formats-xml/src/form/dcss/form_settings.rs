@@ -196,12 +196,40 @@ fn resolve_config_style_refs(el: &mut OutElement, style_item_uuid: StyleItemUuid
 pub fn read_conditional_appearance_dcssca(
     bytes: &[u8],
 ) -> Result<(Vec<DcsItem>, bool), FormError> {
-    let descriptor = parse(bytes)?;
+    let document = read_conditional_appearance_dcssca_with_framing(bytes)?;
+    if document.source_edt_lf {
+        return Err(FormError::Envelope(
+            "dcssca: LF source requires the explicit framing-aware API".into(),
+        ));
+    }
+    Ok((document.items, document.envelope_without_lf_pal))
+}
+
+/// Complete typed sidecar plus closed source-only framing. This is not raw XML.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConditionalAppearanceDcssca {
+    pub items: Vec<DcsItem>,
+    pub envelope_without_lf_pal: bool,
+    pub source_edt_lf: bool,
+}
+
+/// Explicit current LF/legacy CRLF reader. All node and namespace checks remain strict.
+pub fn read_conditional_appearance_dcssca_with_framing(
+    bytes: &[u8],
+) -> Result<ConditionalAppearanceDcssca, FormError> {
+    let edt_lf = bytes
+        .strip_prefix(DCSS_DECL.as_bytes())
+        .is_some_and(|rest| rest.starts_with(b"\n"));
+    let descriptor = if edt_lf {
+        crate::read::with_verbatim_in_text_eol(|| parse(bytes))
+    } else {
+        parse(bytes)
+    }?;
     let env = descriptor.bytes_env;
     if env.bom {
         return Err(FormError::Envelope("dcssca: unexpected BOM".into()));
     }
-    if env.eol != EolStyle::Crlf {
+    if env.eol != EolStyle::Crlf && !edt_lf {
         return Err(FormError::Envelope(format!(
             "dcssca: must be CRLF, found {:?}",
             env.eol
@@ -278,7 +306,11 @@ pub fn read_conditional_appearance_dcssca(
         )));
     }
     super::super::read::mark_edt_dcs_items(&mut out);
-    Ok((out, envelope_without_lf_pal))
+    Ok(ConditionalAppearanceDcssca {
+        items: out,
+        envelope_without_lf_pal,
+        source_edt_lf: edt_lf,
+    })
 }
 
 /// Записать форм-уровневые `<item>`-ы УО в байты `ConditionalAppearance.dcssca` (byte-exact к
@@ -287,6 +319,13 @@ pub fn read_conditional_appearance_dcssca(
 /// ПУСТОЕ УО сайдкара НЕ ИМЕЕТ (платформа файл не создаёт); вызывающая сторона
 /// (`pipeline::form_write`) обязана проверить непустоту ДО вызова.
 pub fn write_conditional_appearance_dcssca(items: &[DcsItem], without_lf_pal: bool) -> Vec<u8> {
+    write_conditional_appearance_dcssca_with_framing(items, without_lf_pal, false)
+}
+
+/// Explicit framing counterpart; legacy callers retain the CRLF wrapper above.
+pub fn write_conditional_appearance_dcssca_with_framing(
+    items: &[DcsItem], without_lf_pal: bool, source_edt_lf: bool,
+) -> Vec<u8> {
     let mut root = OutElement::branch("", "ConditionalAppearance");
     for (name, uri) in DCSSCA_ROOT_NS {
         // presence-точный re-emit флавора конверта (см. ридер): ERP-flavor — без lf/pal.
@@ -301,5 +340,9 @@ pub fn write_conditional_appearance_dcssca(items: &[DcsItem], without_lf_pal: bo
         root.push(el);
     }
     super::super::write::bind_dcs_type_qname_depth(&mut root, false);
-    render(&dcss_envelope(), &root)
+    let mut envelope = dcss_envelope();
+    if source_edt_lf {
+        envelope.eol = "\n";
+    }
+    render(&envelope, &root)
 }

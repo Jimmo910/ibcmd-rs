@@ -87,7 +87,8 @@
     "CURRENT DynamicList availability includes effective main-table CommonAttributes with content/autoUse/separation and family-specific SDK policies; calculated-field availability consumes CURRENT Configuration compatibility >8.3.18, with root mode and common definitions in dependency digests",
     "CURRENT chart design projection retains validated Designer names-only factory presence while replacing values with freshly computed native defaults; EDT hidden source spelling is cleared",
     "Witnessed current EDT LF form framing is a source-only lexical facet; declaration-bound verbatim text retains explicit carriage-return edits while legacy CRLF defaults and native envelope validation remain unchanged",
-    "Witnessed current EDT ListSettings.dcss LF framing is a source-only lexical facet with verbatim typed text; legacy CRLF emission, semantic emptiness and native empty ListSettings self-closing spelling remain unchanged"
+    "Witnessed current EDT ListSettings.dcss LF framing is a source-only lexical facet with verbatim typed text; legacy CRLF emission, semantic emptiness and native empty ListSettings self-closing spelling remain unchanged",
+    "Witnessed current EDT ConditionalAppearance.dcssca LF framing uses an explicit framed API and a source-only FormBody facet; legacy CRLF API/defaults, complete ordered typed accounting and empty-sidecar omission remain unchanged"
   ],
   "files": [
     {
@@ -124,7 +125,7 @@
     },
     {
       "path": "crates/core/src/ir/form/body.rs",
-      "sha256": "8f868d413dd2721528436f73b66593fca852fae9175f76bbb4c77853b80acc54"
+      "sha256": "44c3f5f0b2e44f01088d513f85e0298c7aac47d2c3b2eee36bc3a268a05e3f2b"
     },
     {
       "path": "crates/core/src/ir/form/data_attributes.rs",
@@ -1684,7 +1685,7 @@
     },
     {
       "path": "crates/formats-xml/src/form/dcss/form_settings.rs",
-      "sha256": "c9c97b7113a43496f97e1eec3bd0884e959246ecf1de45634833aa749551605e"
+      "sha256": "4c4a493e51dd3e123e3d34bbfb150029dd9cf65f767778adea2d663e332e06c6"
     },
     {
       "path": "crates/formats-xml/src/form/dcss/list_settings.rs",
@@ -1760,7 +1761,7 @@
     },
     {
       "path": "crates/formats-xml/src/form/mod.rs",
-      "sha256": "a87d702419579dc1cb096d4d4d7cc75ecc953455316d8fbe64263185e028321b"
+      "sha256": "b911e89522fb6bba311175a02c14cdc46ec20a772d6e29a3e7c07884ef122eec"
     },
     {
       "path": "crates/formats-xml/src/form/mxlx.rs",
@@ -2648,7 +2649,7 @@
     },
     {
       "path": "crates/pipeline/src/form_read.rs",
-      "sha256": "12fd90e85d998d03228c0c2d1e49297fd610e6a0287501621295dc5590033534"
+      "sha256": "bc85354f29dea9546a4929a5890e17cff80d50c2290a2ade18ca40b36038e3f9"
     },
     {
       "path": "crates/pipeline/src/form_ref_read.rs",
@@ -2656,7 +2657,7 @@
     },
     {
       "path": "crates/pipeline/src/form_write.rs",
-      "sha256": "b6b3764121a04fd5f822a84f21859f9d8c6440d68605eca20d78f500d5a26da4"
+      "sha256": "5a2e66eb9662bd53d6a6fdbafae65a8e4e677f0d943f47ce72c32db3c2a82223"
     },
     {
       "path": "crates/pipeline/src/fsio.rs",

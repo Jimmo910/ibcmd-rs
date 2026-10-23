@@ -63,8 +63,10 @@ mod write;
 
 pub use chart::{designer_dense_chart_settings, project_native_trends, native_percentage_integer,native_percentage_projection, percentage_numeric_equal, read_chart_sidecar, write_chart_sidecar};
 pub use dcss::{
-    DcsSettingsSection, read_conditional_appearance_dcssca, read_list_settings_dcss,
-    write_conditional_appearance_dcssca, write_form_settings_blob, write_list_settings_dcss,
+    DcsSettingsSection, ConditionalAppearanceDcssca, read_conditional_appearance_dcssca,
+    read_conditional_appearance_dcssca_with_framing, read_list_settings_dcss,
+    write_conditional_appearance_dcssca, write_conditional_appearance_dcssca_with_framing,
+    write_form_settings_blob, write_list_settings_dcss,
     write_list_settings_section, write_server_state,
 };
 pub use mxlx::{read_spreadsheet_mxlx, write_spreadsheet_mxlx};
