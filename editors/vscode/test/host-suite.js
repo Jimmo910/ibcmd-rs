@@ -833,6 +833,7 @@ exports.run = async () => {
       baseline,
       vscode.ConfigurationTarget.WorkspaceFolder,
     );
+    pick = "fake/b"; // Reset the selection after the SQL password scenarios.
     vscode.window.showWorkspaceFolderPick = async () => sf;
     await vscode.commands.executeCommand("ibcmd.select");
     await vscode.commands.executeCommand("ibcmd.objects.refresh");

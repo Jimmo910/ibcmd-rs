@@ -2204,7 +2204,8 @@ mod descriptor_snapshot_tests {
             struct Scratch(std::path::PathBuf);
             impl Drop for Scratch {
                 fn drop(&mut self) {
-                    let _ = fs::remove_dir_all(&self.0);
+                    // Retain owned lab evidence; cleanup is through Trash only.
+                    eprintln!("retained fixture: {}", self.0.display());
                 }
             }
             let path = std::env::temp_dir()

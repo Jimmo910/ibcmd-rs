@@ -1616,7 +1616,8 @@ mod tests {
         struct Scratch(PathBuf);
         impl Drop for Scratch {
             fn drop(&mut self) {
-                let _ = fs::remove_dir_all(&self.0);
+                // Retain owned lab evidence; cleanup is through Trash only.
+                eprintln!("retained fixture: {}", self.0.display());
             }
         }
         let root = std::env::temp_dir().join(format!("source-cancel-{}", uuid::Uuid::new_v4()));
