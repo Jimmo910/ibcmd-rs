@@ -1,4 +1,4 @@
-const { test } = require("node:test");
+const { test, mock } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const os = require("node:os");
@@ -59,6 +59,23 @@ test("atomic save detects disk conflicts, locks and symlinks", async () => {
     await assert.rejects(snapshot(link), /regular/);
   }
   // Keep test evidence in the caller-selected temp directory; no destructive cleanup.
+});
+test("settings lock only translates EEXIST and preserves other filesystem errors", async () => {
+  for (const code of ["EEXIST", "EACCES", "EPERM", "EROFS", "ENOENT", "EIO"]) {
+    const error = Object.assign(new Error(`open failed: ${code}`), { code });
+    const open = mock.method(fs, "open", async () => {
+      throw error;
+    });
+    try {
+      await assert.rejects(saveConfig("settings.toml", "", ""), (actual) =>
+        code === "EEXIST"
+          ? /settings lock exists/.test(actual.message)
+          : actual === error,
+      );
+    } finally {
+      open.mock.restore();
+    }
+  }
 });
 function rpc() {
   return new RpcClient(process.execPath, __dirname, () => {}, [
