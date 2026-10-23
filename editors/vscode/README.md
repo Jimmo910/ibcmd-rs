@@ -94,8 +94,8 @@ or VS Code profile change is needed.
 # committed CF fixtures (no SQL Server).
 cargo test --locked --test editor_server --no-default-features
 export IBCMD_TEST_BINARY="$CARGO_TARGET_DIR/debug/ibcmd-rs"
-export IBCMD_TEST_ROWS="$TMPDIR/ibcmd-external-editor-server-protocol/rows/demo"
-export IBCMD_TEST_ROOT="$TMPDIR/ibcmd-vscode-tests"
+export IBCMD_TEST_ROWS="${TMPDIR:-/tmp}/ibcmd-external-editor-server-protocol/rows/demo"
+export IBCMD_TEST_ROOT="${TMPDIR:-/tmp}/ibcmd-vscode-tests"
 cd editors/vscode
 npm ci
 npm test
@@ -132,3 +132,29 @@ stays omitted so normal `db-server`/environment resolution still applies. Copyin
 inherited rows-directory entry keeps its resolved source directory. File databases
 and unknown source types are excluded from this editor; edit their settings using
 the appropriate source-specific tooling instead.
+
+### Selected and changed import (#382)
+
+For a Unix file database, add a fixed `[[database]]` entry with `db-path` in
+workspace TOML and select that connection. `ibcmd.sourceDirectory` defaults to
+`.` and may name a configuration source folder inside the workspace. Explorer
+and editor context menus provide «Загрузить в базу»; «Загрузить изменённые» is
+also available. The #380 object-view hook accepts its `{object, uri}` rows.
+
+Import prepares and verifies a complete effective CONFIG/CONFIGSAVE baseline,
+then asks for confirmation before publishing. Dependency suggestions require
+separate consent and another check. Unsaved files, switched connections,
+changed source/target and unsupported changes fail before publication. New
+objects/deletions and unsupported file collations are refused.
+
+Changed import requires synchronized `ConfigDumpInfo.xml` versions; it refuses
+stale database/staging versions rather than reverting them. Refresh the export
+baseline after synchronization, or explicitly select files when reviewing a
+conflict. Successful import leaves CONFIGSAVE staged; apply remains a separate
+platform operation (#384). File-db pending status is currently unknown.
+
+For local evidence collection, set `IBCMD_TEST_KEEP_FIXTURES=1` before the Rust
+file-db, partial-import and source-traversal tests. Their newly owned fixture
+directories are then retained, including after assertion failure. Without this
+flag, disposable CI fixtures are cleaned on scope exit. This test-only switch
+does not change production temporary-file cleanup or recovery artifacts.

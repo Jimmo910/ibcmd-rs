@@ -74,7 +74,7 @@ async function harness({
       this.disposed = true;
     }
     async request(method, params, signal) {
-      if (method === "initialize") return initialize(this);
+      if (method === "initialize") return initialize(this, params);
       if (method === "infobases/list") return { infobases: bases };
       if (method === "infobases/connect")
         return connect(params, signal, () => this.onCrash());
@@ -153,6 +153,7 @@ async function harness({
           },
         };
       if (id === "./status") return require("../out/status");
+      if (id === "./import") return require("../out/import");
       return require(id);
     },
   });
@@ -308,6 +309,27 @@ test("a stored password is reused without prompting or rewriting on failure", as
   await h.select();
   assert.equal(prompts, 0);
   assert.deepEqual(passwords, ["synthetic-existing"]);
+  assert.equal(h.stores.length, 0);
+});
+
+test("import-capable client advertises 1.2 and cannot connect to a 1.1-only server", async () => {
+  const versions = [];
+  let connections = 0;
+  const h = await harness({
+    initialize: async (_client, params) => {
+      versions.push(params.protocolVersion);
+      if (params.protocolVersion !== "1.1")
+        throw new Error("unsupported protocol version");
+      return {};
+    },
+    connect: async () => {
+      connections++;
+      return {};
+    },
+  });
+  await h.select();
+  assert.deepEqual(versions, ["1.2"]);
+  assert.equal(connections, 0);
   assert.equal(h.stores.length, 0);
 });
 

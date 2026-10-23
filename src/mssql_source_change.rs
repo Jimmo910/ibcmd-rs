@@ -27,6 +27,13 @@ pub struct SourceInventoryLimits {
     pub max_total_bytes: u64,
 }
 
+/// Optional traversal bounds retained by held custody and every revalidation.
+#[derive(Clone, Copy, Debug)]
+pub struct SourceTraversalLimits {
+    pub max_entries: usize,
+    pub max_depth: usize,
+}
+
 impl Default for SourceInventoryLimits {
     fn default() -> Self {
         Self {
@@ -180,13 +187,14 @@ pub struct HeldSourceRoot {
     canonical_root: PathBuf,
     baseline: SourceInventory,
     admission: CensusAdmission,
+    traversal: Option<SourceTraversalLimits>,
     anchor: Arc<RootAnchor>,
     consumed: Mutex<BTreeMap<String, ConsumedSourceFile>>,
 }
 
 #[derive(Debug)]
 struct ConsumedSourceFile {
-    original: Arc<OriginalFile>,
+    witness: files::OriginalFileWitness,
     bytes: Arc<Vec<u8>>,
 }
 
@@ -210,6 +218,27 @@ impl HeldSourceRoot {
             canonical_root,
             CensusAdmission::CallerBudget(limits),
             &BTreeSet::new(),
+            None,
+        )
+    }
+
+    /// Bound actual custody capture, including directory-only trees. These
+    /// bounds also apply to final census and all later captures.
+    pub fn open_with_traversal_limits(
+        root: &Path,
+        limits: SourceInventoryLimits,
+        traversal: SourceTraversalLimits,
+    ) -> Result<Self, SourceChangeError> {
+        validate_limits(limits)?;
+        if traversal.max_entries == 0 || traversal.max_depth == 0 {
+            return Err(SourceChangeError::InvalidInventoryLimits);
+        }
+        Self::open_with_admission(
+            root,
+            canonical_directory(root)?,
+            CensusAdmission::CallerBudget(limits),
+            &BTreeSet::new(),
+            Some(traversal),
         )
     }
 
@@ -218,14 +247,16 @@ impl HeldSourceRoot {
         canonical_root: PathBuf,
         admission: CensusAdmission,
         retained: &BTreeSet<String>,
+        traversal: Option<SourceTraversalLimits>,
     ) -> Result<Self, SourceChangeError> {
         let anchor = RootAnchor::open(&canonical_root)?;
-        let baseline = capture_inventory(&anchor, admission, retained)?;
+        let baseline = capture_inventory(&anchor, admission, retained, traversal)?;
         Ok(Self {
             requested_root: root.to_owned(),
             canonical_root,
             baseline,
             admission,
+            traversal,
             anchor,
             consumed: Mutex::new(BTreeMap::new()),
         })
@@ -241,6 +272,7 @@ impl HeldSourceRoot {
             canonical_directory(root)?,
             CensusAdmission::OriginalSource,
             &candidate_retention_paths(&selected),
+            None,
         )
     }
 
@@ -252,6 +284,7 @@ impl HeldSourceRoot {
             canonical_directory(root)?,
             CensusAdmission::OriginalSource,
             &BTreeSet::new(),
+            None,
         )
     }
 
@@ -265,7 +298,9 @@ impl HeldSourceRoot {
                 .baseline
                 .file(path)?
                 .ok_or(SourceChangeError::HeldRootChanged)?;
-            consumed.original.require_digest(&expected.sha256)?;
+            let current = self.anchor.open_file(path)?;
+            current.require_witness(&consumed.witness)?;
+            current.require_digest(&expected.sha256)?;
         }
         drop(consumed);
         for source in self.baseline.files() {
@@ -313,7 +348,8 @@ impl HeldSourceRoot {
             .map_err(|e| SourceChangeError::Io(e.to_string()))?;
         if let Some(consumed) = consumed.get(path) {
             // Immutable returned bytes remain bound to the original digest;
-            // require_unchanged checks originals once at the publication gate.
+            // require_unchanged reopens anchored names and validates stamps, ancestry
+            // and digests once at the publication gate.
             return Ok(consumed.bytes.clone());
         }
         let original = match &source.original {
@@ -338,7 +374,7 @@ impl HeldSourceRoot {
         consumed.insert(
             path.to_owned(),
             ConsumedSourceFile {
-                original,
+                witness: original.witness(),
                 bytes: bytes.clone(),
             },
         );
@@ -427,7 +463,12 @@ impl HeldSourceRoot {
         if !held_root_paths_equal(&current_root, &self.canonical_root) {
             return Err(SourceChangeError::HeldRootChanged);
         }
-        capture_inventory(&self.anchor, self.admission, &BTreeSet::new())
+        capture_inventory(
+            &self.anchor,
+            self.admission,
+            &BTreeSet::new(),
+            self.traversal,
+        )
     }
 
     pub fn classify_current(
@@ -448,7 +489,7 @@ impl HeldSourceRoot {
         // a retargeted ancestor must never supply selected-path authority.
         let selected = resolve_selected_path(&self.canonical_root, selected_path)?;
         let retention = candidate_retention_paths(&selected);
-        let current = capture_inventory(&self.anchor, self.admission, &retention)?;
+        let current = capture_inventory(&self.anchor, self.admission, &retention, self.traversal)?;
         classify_source_change(&self.baseline, &current, &selected, target, mode)
     }
 }
@@ -1204,15 +1245,38 @@ fn capture_inventory(
     anchor: &Arc<RootAnchor>,
     admission: CensusAdmission,
     retain_bytes: &BTreeSet<String>,
+    traversal: Option<SourceTraversalLimits>,
 ) -> Result<SourceInventory, SourceChangeError> {
     let mut files = Vec::new();
     let mut total = 0_u64;
     let mut identities = BTreeSet::new();
     let mut directory_spellings = BTreeMap::<String, String>::new();
-    for entry in WalkDir::new(&anchor.path).follow_links(false) {
+    let mut entries = 0usize;
+    // The extra level is visited only to reject it; never silently truncate a
+    // census at max_depth and accidentally authorize an incomplete tree.
+    let walker = WalkDir::new(&anchor.path)
+        .follow_links(false)
+        // WalkDir closes old iterators by eagerly collecting their remainder.
+        // Keep every admitted ancestor open so hidden allocation cannot run
+        // ahead of the per-entry budget/cancellation checks.
+        .max_open(traversal.map_or(10, |limits| limits.max_depth.saturating_add(2)))
+        .max_depth(traversal.map_or(usize::MAX, |limits| limits.max_depth.saturating_add(1)));
+    for entry in walker {
+        crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
         let entry = entry.map_err(|error| SourceChangeError::Io(error.to_string()))?;
         if entry.path() == anchor.path {
             continue;
+        }
+        entries = entries
+            .checked_add(1)
+            .ok_or(SourceChangeError::InventoryLimit("entry count overflow"))?;
+        if let Some(limits) = traversal {
+            if entries > limits.max_entries {
+                return Err(SourceChangeError::InventoryLimit("directory entry count"));
+            }
+            if entry.depth() > limits.max_depth {
+                return Err(SourceChangeError::InventoryLimit("directory depth"));
+            }
         }
         if entry.file_type().is_symlink() || path_has_reparse_attribute(entry.path())? {
             return Err(SourceChangeError::LinkOrReparsePoint(
@@ -1484,6 +1548,7 @@ fn path_is_within_windows(candidate: &Path, root: &Path) -> bool {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceChangeError {
+    Cancelled(crate::cancel::Cancelled),
     InvalidInventoryLimits,
     SourceRootIsNotDirectory,
     NonUnicodePath,
@@ -1511,6 +1576,7 @@ pub enum SourceChangeError {
 impl Display for SourceChangeError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Cancelled(error) => Display::fmt(error, formatter),
             Self::InvalidInventoryLimits => {
                 formatter.write_str("source inventory limits must be positive")
             }
@@ -1587,11 +1653,68 @@ impl Display for SourceChangeError {
     }
 }
 
-impl Error for SourceChangeError {}
+impl Error for SourceChangeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Cancelled(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_census_and_held_reads_preserve_typed_cancellation() {
+        const CHILD: &str = "IBCMD_SOURCE_CANCELLATION_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mssql_source_change::tests::source_census_and_held_reads_preserve_typed_cancellation", "--nocapture"])
+                .env(CHILD, "1").status().unwrap();
+            assert!(status.success());
+            return;
+        }
+        struct Scratch(PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                    let _ = fs::remove_dir_all(&self.0);
+                }
+            }
+        }
+        let root = std::env::temp_dir().join(format!("source-cancel-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let scratch = Scratch(root);
+        fs::write(scratch.0.join("body.bsl"), vec![b'x'; 128 * 1024]).unwrap();
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let scope = crate::cancel::scope(flag.clone());
+        let error = HeldSourceRoot::open(&scratch.0, SourceInventoryLimits::default())
+            .err()
+            .expect("census cancelled");
+        assert!(matches!(error, SourceChangeError::Cancelled(_)));
+        assert!(crate::cancel::is_cancelled(&anyhow::Error::from(error)));
+        flag.store(false, std::sync::atomic::Ordering::Relaxed);
+        let held = HeldSourceRoot::open(&scratch.0, SourceInventoryLimits::default()).unwrap();
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        let error = held.source_bytes("body.bsl").unwrap_err();
+        assert!(matches!(error, SourceChangeError::Cancelled(_)));
+        assert!(crate::cancel::is_cancelled(
+            &anyhow::Error::from(error).context("held read")
+        ));
+        drop(scope);
+    }
+
+    #[test]
+    fn typed_source_cancellation_survives_context_without_masking_io() {
+        let error = anyhow::Error::from(SourceChangeError::Cancelled(crate::cancel::Cancelled))
+            .context("source inventory");
+        assert!(crate::cancel::is_cancelled(&error));
+        let io = anyhow::Error::from(SourceChangeError::Io("the operation was cancelled".into()))
+            .context("real I/O failure");
+        assert!(!crate::cancel::is_cancelled(&io));
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
@@ -1632,8 +1755,12 @@ mod tests {
             Err(SourceChangeError::HeldRootChanged)
         ));
         drop(held);
-        fs::remove_file(&first).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_file(&first).unwrap();
+        }
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]
@@ -2497,7 +2624,9 @@ mod tests {
         fs::write(root.join("CommonModules/Work/Ext/Module.bsl"), "bad").unwrap();
         assert_eq!(verified.bytes(), b"new");
         drop(held);
-        fs::remove_dir_all(root).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]
@@ -2524,7 +2653,9 @@ mod tests {
                 | Err(SourceChangeError::PathEscapesRoot(_))
         ));
         drop(held);
-        fs::remove_dir_all(base).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(base).unwrap();
+        }
     }
 
     #[test]
@@ -2577,7 +2708,9 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(error, SourceChangeError::InventoryLimit(_)));
-        fs::remove_dir_all(root).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[cfg(windows)]
@@ -2613,14 +2746,223 @@ mod tests {
                 HeldSourceRoot::open(&real, SourceInventoryLimits::default()),
                 Err(SourceChangeError::LinkOrReparsePoint(_))
             ));
-            fs::remove_file(&entry_link).unwrap();
+            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                fs::remove_file(&entry_link).unwrap();
+            }
         }
-        if root_link.exists() {
+        if root_link.exists() && std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
             fs::remove_dir(&root_link).unwrap();
         }
-        fs::remove_dir_all(base).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(base).unwrap();
+        }
     }
 }
 
 #[cfg(test)]
 mod original_source_tests;
+
+#[cfg(test)]
+mod traversal_budget_tests {
+    use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn source_xml_custody_is_bounded_under_low_fd_limit() {
+        const CHILD: &str = "IBCMD_LOW_FD_SOURCE_CHILD";
+        const TEST: &str = "mssql_source_change::traversal_budget_tests::source_xml_custody_is_bounded_under_low_fd_limit";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "ulimit -S -n 128 && exec \"$1\" --exact \"$2\" --nocapture",
+                    "source-fd-regression",
+                ])
+                .arg(std::env::current_exe().unwrap())
+                .arg(TEST)
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+            return;
+        }
+        let root = root();
+        fs::create_dir(root.join("CommonModules")).unwrap();
+        let template = include_str!(
+            "../tests/fixtures/file-infobase/tiny-xml/CommonModules/ФайловаяБазаПроверка.xml"
+        );
+        for i in 0..1024 {
+            fs::write(
+                root.join(format!("CommonModules/Module{i}.xml")),
+                template.replace("ФайловаяБазаПроверка", &format!("Module{i}")),
+            )
+            .unwrap();
+        }
+        let held = HeldSourceRoot::open(&root, SourceInventoryLimits::default()).unwrap();
+        let xml = (0..1024)
+            .map(|i| {
+                let path = format!("CommonModules/Module{i}.xml");
+                (root.join(&path), held.source_bytes(&path).unwrap())
+            })
+            .collect::<Vec<_>>();
+        let index =
+            crate::metadata_model::index::ConfigIndex::build_from_files(&root, &xml).unwrap();
+        assert_eq!(index.objects.len(), 1024);
+        held.require_unchanged().unwrap();
+    }
+
+    struct Scratch(PathBuf);
+    impl std::ops::Deref for Scratch {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+    }
+    fn root() -> Scratch {
+        let root =
+            std::env::temp_dir().join(format!("held-source-budget-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        Scratch(root)
+    }
+    #[test]
+    fn consumed_cache_revalidates_file_and_ancestor_witnesses() {
+        for mutation in ["rewrite", "replace", "ancestor"] {
+            let root = root();
+            fs::create_dir(root.join("nested")).unwrap();
+            let path = root.join("nested/body.bsl");
+            fs::write(&path, b"original").unwrap();
+            let held = HeldSourceRoot::open(&root, SourceInventoryLimits::default()).unwrap();
+            let bytes = held.source_bytes("nested/body.bsl").unwrap();
+            assert!(Arc::ptr_eq(
+                &bytes,
+                &held.source_bytes("nested/body.bsl").unwrap()
+            ));
+            held.require_unchanged().unwrap();
+            match mutation {
+                "rewrite" => {
+                    fs::write(&path, b"different").unwrap();
+                    fs::write(&path, b"original").unwrap();
+                }
+                "replace" => {
+                    fs::rename(&path, root.join("original.bsl")).unwrap();
+                    fs::write(&path, b"original").unwrap();
+                }
+                "ancestor" => {
+                    fs::rename(root.join("nested"), root.join("old")).unwrap();
+                    fs::create_dir(root.join("nested")).unwrap();
+                    fs::rename(root.join("old/body.bsl"), &path).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            // Cache hits must still return the originally admitted immutable bytes;
+            // only the final guard authorizes publication, and must reject mutation.
+            assert!(Arc::ptr_eq(
+                &bytes,
+                &held.source_bytes("nested/body.bsl").unwrap()
+            ));
+            assert!(held.require_unchanged().is_err(), "{mutation}");
+        }
+    }
+
+    #[test]
+    fn consumed_cache_rejects_ancestor_rebinding_with_unchanged_leaf() {
+        let root = root();
+        fs::create_dir_all(root.join("nested/inner")).unwrap();
+        let path = root.join("nested/inner/body.bsl");
+        fs::write(&path, b"original").unwrap();
+        let held = HeldSourceRoot::open(&root, SourceInventoryLimits::default()).unwrap();
+        held.source_bytes("nested/inner/body.bsl").unwrap();
+        let before = fs::metadata(&path).unwrap();
+        let identity = held
+            .anchor
+            .open_file("nested/inner/body.bsl")
+            .unwrap()
+            .identity();
+        fs::rename(root.join("nested"), root.join("old")).unwrap();
+        fs::create_dir(root.join("nested")).unwrap();
+        fs::rename(root.join("old/inner"), root.join("nested/inner")).unwrap();
+        let after = fs::metadata(&path).unwrap();
+        assert_eq!(before.len(), after.len());
+        assert_eq!(before.modified().unwrap(), after.modified().unwrap());
+        assert_eq!(
+            identity,
+            held.anchor
+                .open_file("nested/inner/body.bsl")
+                .unwrap()
+                .identity()
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(
+                (before.ctime(), before.ctime_nsec()),
+                (after.ctime(), after.ctime_nsec())
+            );
+        }
+        #[cfg(windows)]
+        assert_eq!(before.created().unwrap(), after.created().unwrap());
+        assert!(held.require_unchanged().is_err());
+    }
+
+    #[test]
+    fn empty_directory_growth_is_bounded_during_initial_and_final_capture() {
+        let root = root();
+        let limits = SourceTraversalLimits {
+            max_entries: 2,
+            max_depth: 4,
+        };
+        let held = HeldSourceRoot::open_with_traversal_limits(
+            &root,
+            SourceInventoryLimits::default(),
+            limits,
+        )
+        .unwrap();
+        for name in ["one", "two", "three"] {
+            fs::create_dir(root.join(name)).unwrap();
+        }
+        assert!(matches!(
+            held.require_unchanged(),
+            Err(SourceChangeError::InventoryLimit("directory entry count"))
+        ));
+        assert!(matches!(
+            HeldSourceRoot::open_with_traversal_limits(
+                &root,
+                SourceInventoryLimits::default(),
+                limits
+            ),
+            Err(SourceChangeError::InventoryLimit("directory entry count"))
+        ));
+        // Legacy callers retain their existing admission, independently of the
+        // additive untrusted-consumer traversal controls.
+        assert!(HeldSourceRoot::open(&root, SourceInventoryLimits::default()).is_ok());
+    }
+    #[test]
+    fn depth_limit_refuses_instead_of_truncating_the_census() {
+        let root = root();
+        fs::create_dir_all(root.join("one/two/three")).unwrap();
+        let limits = SourceTraversalLimits {
+            max_entries: 100,
+            max_depth: 2,
+        };
+        assert!(matches!(
+            HeldSourceRoot::open_with_traversal_limits(
+                &root,
+                SourceInventoryLimits::default(),
+                limits
+            ),
+            Err(SourceChangeError::InventoryLimit("directory depth"))
+        ));
+    }
+}

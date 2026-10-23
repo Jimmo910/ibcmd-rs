@@ -40,6 +40,15 @@ pub(super) fn load(db_path: &Path) -> Result<OfflineRows> {
     Ok(load_with_stored_names(db_path)?.0)
 }
 
+/// Effective rows read only through the caller's already locked descriptor.
+pub(super) fn load_from_reader(db: &mut FileDb) -> Result<OfflineRows> {
+    let config = assemble(
+        db.config_rows("CONFIG").map_err(|err| anyhow!("{err}"))?,
+        "CONFIG",
+    )?;
+    published_rows(db, config)
+}
+
 /// Retains the original CONFIG inventory separately from the published view:
 /// a staged `deleted` row is not an unfinished operation in stored CONFIG.
 pub(super) fn load_with_stored_names(db_path: &Path) -> Result<(OfflineRows, BTreeSet<String>)> {
@@ -137,6 +146,58 @@ pub(crate) fn file_infobase_config(rows: Vec<ConfigRow>) -> Result<FileInfobaseC
     Ok(FileInfobaseConfig {
         published,
         stored_names,
+    })
+}
+
+/// Effective import base read through one locked write session. Incomplete or
+/// unrecognised staging is refused, never silently discarded by a partial import.
+pub(crate) fn file_infobase_effective(
+    config: Vec<ConfigRow>,
+    saved: Vec<ConfigRow>,
+) -> Result<FileInfobaseConfig> {
+    let target = file_infobase_config(config)?;
+    if saved.is_empty() {
+        return Ok(target);
+    }
+    let mut staged = assemble(saved, "CONFIGSAVE")?;
+    if !staged.contains_key(STAGE_INVENTORY_ROW)
+        || staged.contains_key(STAGE_COMMIT_ROW)
+        || staged.keys().any(|name| name.ends_with(STAGE_NEW_SUFFIX))
+    {
+        bail!("CONFIGSAVE is incomplete; partial import refused before writes");
+    }
+    if staged
+        .get("deleted")
+        .is_some_and(|bytes| crate::mssql::stage_deleted_row(&[]).ok().as_ref() != Some(bytes))
+    {
+        bail!(
+            "partial import over staged deletions is not supported; apply the existing stage first"
+        );
+    }
+    let unlisted = super::config_dump_info::unlisted_entries(
+        &staged[STAGE_INVENTORY_ROW],
+        target
+            .published
+            .keys()
+            .chain(staged.keys())
+            .map(String::as_str),
+    )?;
+    if staged.keys().any(|name| unlisted.contains(name)) {
+        bail!("CONFIGSAVE has rows absent from versions; partial import refused before writes");
+    }
+    staged.remove("deleted");
+    let mut published =
+        OfflineRows::from_memory(target.published.into_iter().map(|(n, b)| (n, Arc::new(b))))
+            .with_staged(staged.into_iter().map(|(n, b)| (n, Arc::new(b))), &[])?
+            .into_rows()?;
+    published.remove("deleted");
+    super::config_dump_info::validate_effective_inventory(
+        &published[STAGE_INVENTORY_ROW],
+        &published.keys().cloned().collect(),
+    )?;
+    Ok(FileInfobaseConfig {
+        published,
+        stored_names: target.stored_names,
     })
 }
 

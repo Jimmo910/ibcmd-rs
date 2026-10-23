@@ -45,6 +45,9 @@ pub struct BindingReport {
     /// `rows-dir`: a folder of stored rows read instead of SQL Server.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rows_dir: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db_path: Option<PathBuf>,
+    pub agent_write: bool,
 }
 
 /// What `settings show` prints.
@@ -133,6 +136,8 @@ pub fn settings_report(
                 platform: binding.platform,
                 matches: false,
                 rows_dir: binding.rows_dir.clone(),
+                db_path: binding.db_path.clone(),
+                agent_write: binding.agent_write,
             })
         })
         .map(|mut binding| {

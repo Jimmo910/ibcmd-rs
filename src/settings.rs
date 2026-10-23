@@ -273,6 +273,10 @@ pub struct DatabaseBinding {
     /// relative path is the settings file's folder's. Only the editor server
     /// (`serve --stdio`) reads it.
     pub rows_dir: Option<PathBuf>,
+    /// File infobase directory or data file; relative to the settings file.
+    pub db_path: Option<PathBuf>,
+    /// Explicit agent write opt-in; false unless set on a fixed database.
+    pub agent_write: bool,
 }
 
 impl DatabaseBinding {

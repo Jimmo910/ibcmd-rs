@@ -24,7 +24,7 @@
   },
   "scripts": {
     "compile": "tsc -p .",
-    "test": "npm run compile && node --test test/core.test.js test/real.test.js test/connection.test.js",
+    "test": "npm run compile && node --test test/core.test.js test/real.test.js test/import.test.js test/connection.test.js",
     "test:host": "npm run compile && node test/host.js",
     "format": "prettier --write src test package.json tsconfig.json",
     "format:check": "prettier --check src test package.json tsconfig.json"
@@ -54,6 +54,14 @@
       {
         "command": "ibcmd.forgetPassword",
         "title": "ibcmd-rs: Forget Connection Password"
+      },
+      {
+        "command": "ibcmd.importSelected",
+        "title": "ibcmd-rs: Загрузить в базу"
+      },
+      {
+        "command": "ibcmd.importChanged",
+        "title": "ibcmd-rs: Загрузить изменённые"
       }
     ],
     "configuration": {
@@ -98,8 +106,49 @@
             "additionalProperties": false
           },
           "description": "Friendly names and authentication preferences; passwords belong in SecretStorage."
+        },
+        "ibcmd.sourceDirectory": {
+          "type": "string",
+          "default": ".",
+          "scope": "resource",
+          "description": "Configuration source directory, relative to the workspace folder."
         }
       }
+    },
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "ibcmd.importSelected",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "ibcmd@1"
+        },
+        {
+          "command": "ibcmd.importChanged",
+          "when": "resourceScheme == file",
+          "group": "ibcmd@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "ibcmd.importSelected",
+          "when": "resourceScheme == file",
+          "group": "ibcmd@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ibcmd.importSelected",
+          "when": "view == ibcmd.objects && resourceScheme == file",
+          "group": "ibcmd@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "ibcmd.importChanged",
+          "when": "view == ibcmd.objects",
+          "group": "navigation@3"
+        }
+      ]
     }
   },
   "dependencies": {

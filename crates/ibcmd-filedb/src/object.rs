@@ -61,6 +61,21 @@ impl Object {
             )));
         }
         let need = need as usize;
+        let capacity = direct_capacity(pager.page_size());
+        let table_count = match fat {
+            0 if need <= capacity => 0,
+            1 if need.div_ceil(pager.page_size() / 4) <= capacity => {
+                need.div_ceil(pager.page_size() / 4)
+            }
+            _ => {
+                return Err(corrupt(format!(
+                    "Object {header_page}: invalid or oversized FAT level {fat}"
+                )));
+            }
+        };
+        // FAT vectors are attacker-sized too, even when the file is sparse.
+        // Validate representable capacity and charge BEFORE any allocation.
+        pager.materialize_object(((capacity + need + table_count) as u64) * 4)?;
         let direct: Vec<u32> = page[HEADER..]
             .as_chunks::<4>()
             .0
@@ -68,7 +83,7 @@ impl Object {
             .map(|c| u32::from_le_bytes(*c))
             .collect();
         let mut pages = Vec::with_capacity(need);
-        let mut tables = Vec::new();
+        let mut tables = Vec::with_capacity(table_count);
         match fat {
             0 => {
                 if need > direct.len() {
@@ -103,6 +118,7 @@ impl Object {
             }
         }
         for &p in &pages {
+            pager.check_read()?;
             pager.check_page(p, "Страница данных объекта")?;
         }
         Ok(Object {
@@ -153,6 +169,7 @@ impl Object {
     pub(crate) fn read_all(&self, pager: &mut Pager<'_>) -> Result<Vec<u8>> {
         let len = usize::try_from(self.len)
             .map_err(|_| corrupt(format!("Объект {} слишком велик", self.header_page)))?;
+        pager.materialize_object(self.len)?;
         let mut buf = vec![0u8; len];
         self.read_at(pager, 0, &mut buf)?;
         Ok(buf)
@@ -241,5 +258,109 @@ impl Object {
         header[8..12].copy_from_slice(&self.length_counter.to_le_bytes());
         header[16..24].copy_from_slice(&self.len.to_le_bytes());
         pager.write_page(self.header_page, &header)
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::{ReadLimits, read_limits::ReadBudget};
+    use std::{
+        fs::{self, OpenOptions},
+        io::{Seek, SeekFrom, Write},
+    };
+    struct Scratch(std::path::PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "filedb-fat-budget-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            // Local lab evidence is retained explicitly; CI cleans only owned names.
+            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some() {
+                return;
+            }
+            // Only the two names created by this fixture; file handles drop first.
+            let _ = fs::remove_file(self.0.join("fixture"));
+            let _ = fs::remove_dir(&self.0);
+        }
+    }
+    fn rejects_fat_allocation(count: u32) {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("fixture");
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        let ps = 4096usize;
+        file.set_len(ps as u64 * count as u64).unwrap();
+        let mut header = vec![0; ps];
+        header[..8].copy_from_slice(b"1CDBMSV8");
+        header[8..12].copy_from_slice(&[8, 3, 8, 0]);
+        header[12..16].copy_from_slice(&count.to_le_bytes());
+        header[20..24].copy_from_slice(&(ps as u32).to_le_bytes());
+        file.write_all(&header).unwrap();
+        let mut object = vec![0; ps];
+        object[..2].copy_from_slice(&OBJECT_SIGNATURE.to_le_bytes());
+        object[2..4].copy_from_slice(&1u16.to_le_bytes());
+        object[16..24].copy_from_slice(&(ps as u64 * count as u64).to_le_bytes());
+        file.seek(SeekFrom::Start((ps * 2) as u64)).unwrap();
+        file.write_all(&object).unwrap();
+        let mut pager = Pager::new(&file).unwrap();
+        pager.set_read_budget(Some(ReadBudget::new(
+            ReadLimits {
+                max_records: 1,
+                max_binary_bytes: 1,
+                max_object_bytes: 1024,
+            },
+            || Ok(()),
+        )));
+        let error = match Object::open(&mut pager, 2) {
+            Ok(_) => panic!("unbudgeted FAT"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("materialization limit"));
+    }
+    #[test]
+    fn fat_vector_budget_is_enforced_on_every_platform() {
+        rejects_fat_allocation(16);
+    }
+    // set_len is sparse on the Unix lab filesystems. Never request a 4GB
+    // extension from Windows, where it can allocate/zero the entire extent.
+    #[cfg(unix)]
+    #[test]
+    fn sparse_large_fat_vectors_are_rejected_before_allocation() {
+        rejects_fat_allocation(1_000_000);
+    }
+    #[test]
+    fn fixture_cleanup_runs_during_unwind() {
+        let mut path = None;
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let scratch = Scratch::new();
+                path = Some(scratch.0.clone());
+                let _file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(scratch.0.join("fixture"))
+                    .unwrap();
+                panic!("synthetic fixture failure");
+            }))
+            .is_err()
+        );
+        assert_eq!(
+            path.unwrap().exists(),
+            std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some()
+        );
     }
 }

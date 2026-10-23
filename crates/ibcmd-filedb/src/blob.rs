@@ -10,7 +10,28 @@ pub(crate) const DATA: usize = 250;
 
 /// Reads the chain starting at `start` from a whole blob object. With
 /// `expected`, the chain must hold exactly that many bytes.
+#[cfg(test)]
 pub(crate) fn read_chain(object: &[u8], start: u32, expected: Option<u64>) -> Result<Vec<u8>> {
+    read_chain_checked(object, start, expected, &|| Ok(()))
+}
+
+pub(crate) fn read_chain_checked(
+    object: &[u8],
+    start: u32,
+    expected: Option<u64>,
+    check: &dyn Fn() -> Result<()>,
+) -> Result<Vec<u8>> {
+    read_chain_accounted(object, start, expected, &mut |_| check())
+}
+
+/// Charge/check every copied block before growing the destination buffer.
+pub(crate) fn read_chain_accounted(
+    object: &[u8],
+    start: u32,
+    expected: Option<u64>,
+    before_copy: &mut dyn FnMut(u64) -> Result<()>,
+) -> Result<Vec<u8>> {
+    before_copy(0)?;
     let blocks = object.len() / BLOCK;
     let mut out = Vec::with_capacity(expected.unwrap_or(0).min(object.len() as u64) as usize);
     let mut block = start as usize;
@@ -31,12 +52,13 @@ pub(crate) fn read_chain(object: &[u8], start: u32, expected: Option<u64>) -> Re
         if used > DATA {
             return Err(corrupt(format!("Blob: блок {block} заявляет {used} байт")));
         }
-        out.extend_from_slice(&object[at + 6..at + 6 + used]);
         if let Some(limit) = expected
-            && out.len() as u64 > limit
+            && (out.len() as u64).saturating_add(used as u64) > limit
         {
             return Err(corrupt("Blob: цепочка длиннее значения"));
         }
+        before_copy(used as u64)?;
+        out.extend_from_slice(&object[at + 6..at + 6 + used]);
         block = next;
     }
     if let Some(limit) = expected
@@ -126,5 +148,26 @@ mod tests {
         object[BLOCK..BLOCK + 4].copy_from_slice(&0u32.to_le_bytes());
         object[BLOCK + 4..BLOCK + 6].copy_from_slice(&251u16.to_le_bytes());
         assert!(read_chain(&object, 1, None).is_err());
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    #[test]
+    fn cancellation_interrupts_a_chain_between_blocks() {
+        let (object, refs) = build(&[&[7u8; 1000]], 0).unwrap();
+        let calls = std::cell::Cell::new(0);
+        let error = read_chain_checked(&object, refs[0].0, Some(1000), &|| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 3 {
+                Err(crate::Error::Refused("cancelled".into()))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("cancelled"));
+        assert_eq!(calls.get(), 3);
     }
 }

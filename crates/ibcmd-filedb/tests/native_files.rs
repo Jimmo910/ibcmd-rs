@@ -7,9 +7,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ibcmd_filedb::{
-    CONFIG_TABLES, Collation, ConfigRow, Error, FileDb, Timestamp, backup_file, open_for_write,
-    replace_config_table,
+    CONFIG_TABLES, ConfigRow, Error, FileDb, Timestamp, open_for_write, replace_config_table,
 };
+
+#[cfg(unix)]
+use ibcmd_filedb::{Collation, backup_file};
 
 /// A scratch directory holding one unpacked fixture, removed on drop.
 struct Scratch(PathBuf);
@@ -81,6 +83,7 @@ fn native_files_read_and_every_index_matches_its_records() {
     assert!(rows.iter().all(|r| r.data_size == r.binary.len() as u64));
 }
 
+#[cfg(unix)]
 #[test]
 fn a_table_written_back_reads_the_same_and_keeps_a_backup() {
     let dir = unpack("tiny");
@@ -112,6 +115,7 @@ fn a_table_written_back_reads_the_same_and_keeps_a_backup() {
     assert_eq!(again.pages_after, report.pages_after);
 }
 
+#[cfg(unix)]
 #[test]
 fn objects_grow_to_second_level_tables_and_shrink_onto_free_chains() {
     let dir = unpack("tiny");
@@ -145,6 +149,7 @@ fn objects_grow_to_second_level_tables_and_shrink_onto_free_chains() {
     db.verify_index("CONFIGSAVE").unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn a_russian_infobase_is_written_with_its_own_collation() {
     let dir = unpack("ru-empty");
@@ -176,6 +181,7 @@ fn an_infobase_in_an_unmeasured_locale_is_read_but_not_written() {
     assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 1);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_row_the_index_cannot_key_changes_nothing() {
     let dir = unpack("tiny");
@@ -190,6 +196,7 @@ fn a_row_the_index_cannot_key_changes_nothing() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_work_file_left_behind_stops_the_write() {
     let dir = unpack("tiny");
@@ -210,4 +217,121 @@ fn a_corrupted_object_length_is_refused_without_allocating_it() {
     fs::write(&data, &bytes).unwrap();
     assert!(matches!(FileDb::open(&dir.0), Err(Error::Corrupt(_))));
     assert!(open_for_write(&dir.0).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn bounded_write_checks_identity_before_parsing_and_shares_budget_between_reads() {
+    use ibcmd_filedb::{ReadLimits, open_for_write_with_limits};
+    let dir = unpack("tiny");
+    let original = fs::read(dir.0.join("1Cv8.1CD")).unwrap();
+    let limits = ReadLimits {
+        max_records: 100_000,
+        max_binary_bytes: 1 << 30,
+        max_object_bytes: 1 << 30,
+    };
+    fs::write(dir.0.join("1Cv8.1CD"), b"not a database").unwrap();
+    let error = match open_for_write_with_limits(&dir.0, limits, || Ok(()), &mut |_| {
+        Err(Error::Refused("startup identity rejected".into()))
+    }) {
+        Ok(_) => panic!("identity accepted"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("startup identity rejected"));
+    fs::write(dir.0.join("1Cv8.1CD"), &original).unwrap();
+    let bytes: u64 = FileDb::open(&dir.0)
+        .unwrap()
+        .config_rows("CONFIG")
+        .unwrap()
+        .iter()
+        .map(|r| r.binary.len() as u64)
+        .sum();
+    assert!(bytes > 0);
+    let mut session = open_for_write_with_limits(
+        &dir.0,
+        ReadLimits {
+            max_binary_bytes: bytes,
+            ..limits
+        },
+        || Ok(()),
+        &mut |_| Ok(()),
+    )
+    .unwrap();
+    session.config_rows("CONFIG").unwrap();
+    assert!(
+        session
+            .config_rows("CONFIG")
+            .unwrap_err()
+            .to_string()
+            .contains("materialization limit")
+    );
+    assert_eq!(fs::read(dir.0.join("1Cv8.1CD")).unwrap(), original);
+}
+
+#[cfg(unix)]
+#[test]
+fn bounded_write_cancels_snapshot_and_copy_without_publication() {
+    use ibcmd_filedb::{ReadLimits, open_for_write_with_limits};
+    use std::sync::{Arc, atomic::AtomicBool};
+    let dir = unpack("tiny");
+    let original = fs::read(dir.0.join("1Cv8.1CD")).unwrap();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let callback = cancelled.clone();
+    let session = open_for_write_with_limits(
+        &dir.0,
+        ReadLimits {
+            max_records: 1_000_000,
+            max_binary_bytes: 1 << 30,
+            max_object_bytes: 1 << 30,
+        },
+        move || {
+            if callback.load(Ordering::SeqCst) {
+                Err(Error::Refused("budget cancelled".into()))
+            } else {
+                Ok(())
+            }
+        },
+        &mut |_| Ok(()),
+    )
+    .unwrap();
+    cancelled.store(true, Ordering::SeqCst);
+    #[cfg(unix)]
+    assert!(
+        session
+            .snapshot()
+            .unwrap_err()
+            .to_string()
+            .contains("budget cancelled")
+    );
+    #[cfg(not(unix))]
+    assert!(
+        session
+            .snapshot()
+            .unwrap_err()
+            .to_string()
+            .contains("not supported on this OS")
+    );
+    assert!(
+        session
+            .replace("CONFIGSAVE", &[])
+            .unwrap_err()
+            .to_string()
+            .contains("budget cancelled")
+    );
+    assert_eq!(fs::read(dir.0.join("1Cv8.1CD")).unwrap(), original);
+    assert!(!backup_file(&dir.0).exists());
+}
+
+#[cfg(not(unix))]
+#[test]
+fn unsupported_writer_refuses_before_creating_artifacts() {
+    let dir = unpack("tiny");
+    let original = fs::read(dir.0.join("1Cv8.1CD")).unwrap();
+    let error = match open_for_write(&dir.0) {
+        Ok(_) => panic!("unsupported writer opened"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("not supported on this OS"));
+    assert_eq!(fs::read(dir.0.join("1Cv8.1CD")).unwrap(), original);
+    assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 1);
 }

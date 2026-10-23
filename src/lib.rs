@@ -13,6 +13,7 @@ pub mod dump_sources;
 pub mod extension;
 pub mod external;
 mod file_identity;
+pub mod file_import;
 mod file_infobase;
 pub mod form_matrix;
 pub mod form_provenance;
