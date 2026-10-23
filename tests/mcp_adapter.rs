@@ -550,8 +550,13 @@ async fn source_tools_consistently_refuse_hidden_files_directories_and_links() {
     struct Scratch(PathBuf);
     impl Drop for Scratch {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            if !keep_fixtures() {
+                let _ = fs::remove_dir_all(&self.0);
+            }
         }
+    }
+    fn keep_fixtures() -> bool {
+        std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1")
     }
     for kind in ["file", "directory", "symlink"] {
         let (root, db, settings) = writable_corpus(Some(true));
@@ -592,6 +597,8 @@ async fn source_tools_consistently_refuse_hidden_files_directories_and_links() {
             assert!(!db.join(format!("1Cv8.1CD.ibcmd-rs.{suffix}")).exists());
         }
         client.cancel().await.unwrap();
+        drop(_scratch);
+        assert_eq!(root.exists(), keep_fixtures());
     }
 }
 

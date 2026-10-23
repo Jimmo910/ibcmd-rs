@@ -1069,6 +1069,9 @@ impl TestScratch {
         fs::create_dir(&root).unwrap();
         Self(root)
     }
+    fn keep_fixtures() -> bool {
+        std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1")
+    }
 }
 #[cfg(all(test, unix))]
 impl std::ops::Deref for TestScratch {
@@ -1086,7 +1089,9 @@ impl AsRef<Path> for TestScratch {
 #[cfg(all(test, unix))]
 impl Drop for TestScratch {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        if !Self::keep_fixtures() {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 }
 
@@ -1097,7 +1102,7 @@ mod source_snapshot_tests {
         TestScratch::new("ibcmd-source-census")
     }
     #[test]
-    fn scratch_guard_cleans_owned_root_on_unwind() {
+    fn scratch_guard_obeys_retention_contract_on_unwind() {
         let mut path = None;
         assert!(
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1108,7 +1113,7 @@ mod source_snapshot_tests {
             }))
             .is_err()
         );
-        assert!(!path.unwrap().exists());
+        assert_eq!(path.unwrap().exists(), TestScratch::keep_fixtures());
     }
     #[test]
     fn additions_and_renames_invalidate_the_snapshot() {
