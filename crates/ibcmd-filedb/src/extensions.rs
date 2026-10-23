@@ -177,6 +177,37 @@ fn decode_records(
         if physical_id == [0; 16] {
             return Err(corrupt("empty extension registry identity"));
         }
+        for (field, digits, maximum) in [
+            ("_EXTENSIONORDER", 9, 999_999_999),
+            ("_EXTENSIONUSEPURPOSE", 2, 2),
+            ("_EXTENSIONSCOPE", 2, 1),
+        ] {
+            if crate::record::unpack_decimal(layout.field(record, field)?, digits)? > maximum {
+                return Err(Error::Unsupported(format!(
+                    "unsupported extension registry value {field}"
+                )));
+            }
+        }
+        if layout.field(record, "_USEDINDISTRIBUTEDINFOBASE")? != [0] {
+            return Err(Error::Unsupported(
+                "distributed file extensions are not supported".into(),
+            ));
+        }
+        let master_ref = layout.field(record, "_MASTERNODE")?;
+        if u32::from_le_bytes(master_ref[4..].try_into().unwrap()) != 68 {
+            return Err(Error::Unsupported(
+                "unsupported file extension master-node profile".into(),
+            ));
+        }
+        let expected_master: Vec<_> = format!("0:{}", "0".repeat(32))
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        if binary_value(layout, record, blobs, "_MASTERNODE")? != expected_master {
+            return Err(Error::Unsupported(
+                "distributed file extensions are not supported".into(),
+            ));
+        }
         let zipped_info = binary_value(layout, record, blobs, "_EXTENSIONZIPPEDINFO")?;
         retained_bytes = retained_bytes
             .checked_add(zipped_info.len() as u64)
@@ -264,7 +295,22 @@ mod tests {
             &mut record[layout.fields["_EXTNAME"].clone()],
         )
         .unwrap();
-        let (blobs, refs) = blob::build(&[b"payload"], 0).unwrap();
+        for (name, digits) in [
+            ("_EXTENSIONORDER", 9),
+            ("_EXTENSIONUSEPURPOSE", 2),
+            ("_EXTENSIONSCOPE", 2),
+        ] {
+            record[layout.fields[name].clone()]
+                .copy_from_slice(&crate::record::pack_decimal(0, digits));
+        }
+        let master: Vec<_> = format!("0:{}", "0".repeat(32))
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        let (blobs, refs) = blob::build(&[b"payload", &master], 0).unwrap();
+        let master_span = layout.fields["_MASTERNODE"].clone();
+        record[master_span.start..master_span.start + 4].copy_from_slice(&refs[1].0.to_le_bytes());
+        record[master_span.start + 4..master_span.end].copy_from_slice(&refs[1].1.to_le_bytes());
         let span = layout.fields["_EXTENSIONZIPPEDINFO"].clone();
         record[span.start..span.start + 4].copy_from_slice(&refs[0].0.to_le_bytes());
         record[span.start + 4..span.end].copy_from_slice(&refs[0].1.to_le_bytes());
@@ -284,5 +330,56 @@ mod tests {
         records[layout.record_bytes..].copy_from_slice(&record);
         records[layout.record_bytes + span.start..][..4].copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(decode_records(&layout, &records, &blobs).is_err());
+    }
+    #[test]
+    fn registry_refuses_unmeasured_scope_and_distribution() {
+        let layout = Layout::measured(&table()).unwrap();
+        let mut record = vec![0; layout.record_bytes];
+        record[layout.fields["_IDRREF"].clone()].copy_from_slice(&[7; 16]);
+        crate::record::encode_var_string(
+            "CleanRoom",
+            255,
+            &mut record[layout.fields["_EXTNAME"].clone()],
+        )
+        .unwrap();
+        for (name, digits) in [
+            ("_EXTENSIONORDER", 9),
+            ("_EXTENSIONUSEPURPOSE", 2),
+            ("_EXTENSIONSCOPE", 2),
+        ] {
+            record[layout.fields[name].clone()]
+                .copy_from_slice(&crate::record::pack_decimal(0, digits));
+        }
+        let master: Vec<_> = format!("0:{}", "0".repeat(32))
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        let (blobs, refs) = blob::build(&[b"payload", &master], 0).unwrap();
+        for (name, index) in [("_EXTENSIONZIPPEDINFO", 0), ("_MASTERNODE", 1)] {
+            let span = layout.fields[name].clone();
+            record[span.start..span.start + 4].copy_from_slice(&refs[index].0.to_le_bytes());
+            record[span.start + 4..span.end].copy_from_slice(&refs[index].1.to_le_bytes());
+        }
+        let mut records = vec![0; layout.record_bytes];
+        records.extend_from_slice(&record);
+        assert!(decode_records(&layout, &records, &blobs).is_ok());
+        let mut accepted = Vec::new();
+        for (name, value) in [
+            ("_EXTENSIONSCOPE", crate::record::pack_decimal(2, 2)),
+            ("_EXTENSIONUSEPURPOSE", crate::record::pack_decimal(3, 2)),
+            ("_USEDINDISTRIBUTEDINFOBASE", vec![1]),
+        ] {
+            records[layout.record_bytes..].copy_from_slice(&record);
+            let span = layout.fields[name].clone();
+            records[layout.record_bytes + span.start..layout.record_bytes + span.end]
+                .copy_from_slice(&value);
+            if decode_records(&layout, &records, &blobs).is_ok() {
+                accepted.push(name);
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "unmeasured registry values were accepted: {accepted:?}"
+        );
     }
 }

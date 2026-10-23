@@ -415,3 +415,86 @@ fn unmeasured_config_field_precision_and_collation_are_refused() {
         assert_eq!(fs::read(file).unwrap(), bytes);
     }
 }
+
+#[test]
+fn unmeasured_cas_attributes_refuse_before_publication() {
+    let root = setup("cas-attributes", "applied");
+    let mut db = ibcmd_filedb::FileDb::open(&root.0).unwrap();
+    let row = db.config_rows("CONFIGCAS").unwrap().remove(0);
+    let table = db.table("CONFIGCAS").unwrap();
+    let offset = 1 + table
+        .fields
+        .iter()
+        .take_while(|f| f.name != "ATTRIBUTES")
+        .map(ibcmd_filedb::Field::size)
+        .sum::<usize>();
+    let needle: Vec<_> = row
+        .file_name
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    drop(db);
+    let path = root.0.join("1Cv8.1CD");
+    let mut bytes = fs::read(&path).unwrap();
+    let positions: Vec<_> = bytes
+        .windows(needle.len())
+        .enumerate()
+        .filter(|(at, v)| *at >= 3 && **v == needle && bytes[*at - 3] == 0)
+        .map(|(at, _)| at)
+        .collect();
+    assert_eq!(positions.len(), 1);
+    let record = positions[0] - 3;
+    // N(5), positive one instead of the measured zero.
+    bytes[record + offset..record + offset + 3].copy_from_slice(&[0x10, 0, 1]);
+    fs::write(&path, &bytes).unwrap();
+    let out = root.0.join("out");
+    let result = export(&root.0, "ТестРасширение", &out);
+    assert!(
+        !result.status.success(),
+        "unmeasured CAS Attributes were published"
+    );
+    assert!(!out.exists());
+    assert_eq!(fs::read(path).unwrap(), bytes);
+}
+
+#[test]
+fn unknown_main_configuration_preparation_refuses_extension_publication() {
+    let root = setup("main-prepared", "applied");
+    let mut db = ibcmd_filedb::FileDb::open(&root.0).unwrap();
+    assert!(db.config_rows("CONFIGSAVE").unwrap().is_empty());
+    let main = db.table("CONFIG").unwrap();
+    let stage = db.table("CONFIGSAVE").unwrap();
+    let old = format!(
+        "{{\"Files\",{},{},{}}}",
+        stage.records_page, stage.blob_page, stage.index_page
+    );
+    let replacement = format!(
+        "{{\"Files\",{:02},{:02},{:02}}}",
+        main.records_page, main.blob_page, main.index_page
+    );
+    assert_eq!(old.len(), replacement.len());
+    drop(db);
+    let path = root.0.join("1Cv8.1CD");
+    let mut before = fs::read(&path).unwrap();
+    let positions: Vec<_> = before
+        .windows(old.len())
+        .enumerate()
+        .filter_map(|(i, bytes)| (bytes == old.as_bytes()).then_some(i))
+        .collect();
+    assert_eq!(positions.len(), 1);
+    // Reuse valid CONFIG objects under the identical CONFIGSAVE schema. This
+    // creates a nonempty, unclassified main stage without invoking a writer.
+    before[positions[0]..positions[0] + old.len()].copy_from_slice(replacement.as_bytes());
+    fs::write(&path, &before).unwrap();
+    let mut db = ibcmd_filedb::FileDb::open(&root.0).unwrap();
+    assert!(!db.config_rows("CONFIGSAVE").unwrap().is_empty());
+    drop(db);
+    let output = root.0.join("out");
+    let result = export(&root.0, "ТестРасширение", &output);
+    assert!(
+        !result.status.success(),
+        "an unmeasured prepared main configuration was ignored"
+    );
+    assert!(!output.exists());
+    assert_eq!(fs::read(path).unwrap(), before);
+}

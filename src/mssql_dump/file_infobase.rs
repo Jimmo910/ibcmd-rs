@@ -139,8 +139,100 @@ pub(crate) fn file_extension_base_provider(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let indexes = super::extension::base_indexes_from_rows(&rows, version);
+    let indexes = file_extension_base_indexes(&rows, version)?;
     Ok(Arc::new(move || Some(indexes.clone())))
+}
+
+fn file_extension_base_indexes(
+    rows: &[super::ConfigRow],
+    version: crate::legacy_version::InfobaseConfigSourceVersion,
+) -> Result<super::extension::ResolvedIndexes> {
+    check_file_base_metadata_budget(rows, 64 * 1024 * 1024, 256 * 1024 * 1024)?;
+    Ok(super::extension::base_indexes_from_rows(rows, version))
+}
+
+// The index builder inflates this immutable input. Count its output with a
+// fixed buffer first, bounding each allocation and all retained metadata text.
+fn check_file_base_metadata_budget(
+    rows: &[super::ConfigRow],
+    per_row: usize,
+    aggregate: usize,
+) -> Result<()> {
+    use std::io::Read;
+    let mut total = 0usize;
+    let mut buffer = [0u8; 16 * 1024];
+    for row in rows.iter().filter(|row| !row.file_name.contains('.')) {
+        let packed = row.binary_bytes()?;
+        let allowed = per_row.min(aggregate.saturating_sub(total));
+        let mut decoder =
+            flate2::read::DeflateDecoder::new(packed.as_ref()).take(allowed as u64 + 1);
+        let mut count = 0usize;
+        loop {
+            let read = match decoder.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => read,
+            };
+            count += read;
+            if count > allowed {
+                bail!(
+                    "file base metadata {:?} exceeds the inflation budget",
+                    row.file_name
+                );
+            }
+        }
+        total += count;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod extension_base_budget_tests {
+    use super::*;
+    use std::io::Read;
+
+    fn row(name: &str, bytes: &[u8]) -> super::super::ConfigRow {
+        let packed = crate::module_blob::deflate_raw(bytes).unwrap();
+        super::super::ConfigRow {
+            file_name: name.into(),
+            part_no: 0,
+            data_size: packed.len() as i64,
+            binary_hex: super::super::encode_hex_lower(&packed),
+        }
+    }
+
+    #[test]
+    fn file_base_metadata_budgets_count_each_row_and_the_aggregate() {
+        let rows = [row("first", &[b'x'; 6]), row("second", &[b'y'; 6])];
+        assert!(check_file_base_metadata_budget(&rows, 6, 12).is_ok());
+        assert!(check_file_base_metadata_budget(&rows, 5, 12).is_err());
+        assert!(check_file_base_metadata_budget(&rows, 6, 11).is_err());
+    }
+
+    #[test]
+    fn file_extension_base_index_refuses_oversize_inflation_before_indexing() {
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::copy(
+            &mut std::io::repeat(b'x').take(64 * 1024 * 1024 + 1),
+            &mut encoder,
+        )
+        .unwrap();
+        let packed = encoder.finish().unwrap();
+        let rows = [super::super::ConfigRow {
+            file_name: "metadata".into(),
+            part_no: 0,
+            data_size: packed.len() as i64,
+            binary_hex: super::super::encode_hex_lower(&packed),
+        }];
+        assert!(
+            file_extension_base_indexes(
+                &rows,
+                crate::legacy_version::InfobaseConfigSourceVersion::V2_20
+            )
+            .is_err(),
+            "oversize inflated file metadata was accepted by the base index provider"
+        );
+    }
 }
 
 /// Stored rows by name, each assembled from its parts in order.

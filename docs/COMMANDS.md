@@ -433,7 +433,7 @@ ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 --db-name=MyBa
   `import files`); применения
   `--extension`, `--sqlcmd`; сохранения `--extension`;
   общие `--pid`, `--remote`;
-- применение, сохранение, `import files` и расширения файловых баз
+- применение, сохранение, `import files` и загрузка расширений файловых баз
   (`--db-path`); СУБД кроме `MSSQLServer`.
 
 ### Вывод и коды возврата

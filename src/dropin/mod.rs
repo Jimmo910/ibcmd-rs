@@ -574,10 +574,7 @@ fn run_export(mut request: ExportRequest) -> i32 {
                 .downcast_ref::<crate::file_extension_export::MissingExtension>()
                 .is_some() =>
         {
-            let message = format!("{error:#}");
-            eprintln!("[ERROR] {message}");
-            EXPORT.record_failure(&message, report.as_deref());
-            1
+            EXPORT.refuse_with(&format!("{error:#}"), report.as_deref())
         }
         Err(error) if error.downcast_ref::<OutputDirectoryNotEmpty>().is_some() => {
             let message = format!(
