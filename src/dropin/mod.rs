@@ -376,6 +376,7 @@ pub fn import_args(request: &ImportRequest) -> InfobaseConfigImportArgs {
         batch_size: None,
         path_prefix: Vec::new(),
         files: Vec::new(),
+        native_files: None,
         script_output: Some(script),
         stage_mode: if request.base_free {
             InfobaseImportStageMode::BaseFree
@@ -405,6 +406,7 @@ pub fn import_files_args(request: &ImportFilesRequest) -> InfobaseConfigImportAr
     });
     args.stage_mode = InfobaseImportStageMode::Patch;
     args.files = request.files.clone();
+    args.native_files = Some(request.partial);
     args
 }
 
@@ -597,7 +599,7 @@ fn run_import(mut request: ImportRequest) -> i32 {
 }
 
 fn run_import_files(mut request: ImportFilesRequest) -> i32 {
-    use crate::mssql::files_stage::{FilesRefused, select};
+    use crate::mssql::files_stage::{FilesRefused, select_native};
     let report = request.common.report.clone();
     if let Err(message) = read_requested_password(&mut request.common) {
         IMPORT_FILES.start();
@@ -612,20 +614,23 @@ fn run_import_files(mut request: ImportFilesRequest) -> i32 {
         }
     };
     // The files are checked against the directory before any connection.
-    if let Err(refusal) = select(&request.base_dir, &request.files) {
-        return refused(&refusal);
-    }
-    // Without `--partial` the directory is taken for a whole export of the
-    // configuration. What the platform does with a directory that is not one
-    // is not measured, so such a directory is refused rather than guessed at.
-    if !request.partial && !request.base_dir.join("Configuration.xml").is_file() {
-        return IMPORT_FILES.refuse_with(
-            &format!(
-                "Каталог {} не является полной выгрузкой конфигурации (в нем нет Configuration.xml); \
-                 для каталога с частью файлов конфигурации укажите --partial",
-                request.base_dir.display()
-            ),
+    // A directory with part of the files is taken with `--partial` and
+    // without alike (8.5.1.1529, `docs/import/import-files.md`).
+    let selection = match select_native(&request.base_dir, &request.files, request.partial) {
+        Ok(selection) => selection,
+        Err(refusal) => return refused(&refusal),
+    };
+    // Every listed file missing under `--partial`: the platform stages
+    // nothing and succeeds, and so does this, writing nothing.
+    if selection.files().is_empty() {
+        return IMPORT_FILES.succeed(
             report.as_deref(),
+            &serde_json::json!({
+                "operation": IMPORT_FILES.command,
+                "ok": true,
+                "staged": false,
+                "skipped_files": selection.skipped(),
+            }),
         );
     }
     let args = import_files_args(&request);

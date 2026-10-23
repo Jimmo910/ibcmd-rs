@@ -702,6 +702,7 @@ impl State {
             source_version: Some(platform.xml_version()),
             path_prefix: prefixes,
             files: Vec::new(),
+            native_files: None,
             script_output: Some(
                 std::env::temp_dir()
                     .join("ibcmd-rs-serve")

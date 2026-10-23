@@ -800,11 +800,6 @@ fn import_files_checks_the_files_before_the_connection() {
             UNSUPPORTED,
             "частичная загрузка Configuration.xml не поддерживается",
         ),
-        (
-            vec![sparse_dir.as_str(), "Catalogs/X/Ext/ObjectModule.bsl"],
-            UNSUPPORTED,
-            "укажите --partial",
-        ),
     ] {
         let output = assert_exit(&line(&extra), code, needle);
         assert_eq!(
@@ -813,6 +808,19 @@ fn import_files_checks_the_files_before_the_connection() {
             "{extra:?}"
         );
     }
+    // a listed file the directory lacks is skipped under `--partial`: with
+    // nothing left the platform succeeds and writes nothing (8.5.1.1529),
+    // before any connection here
+    let output = assert_exit(
+        &line(&[&sparse_dir, "--partial", "Catalogs/X/Ext/ManagerModule.bsl"]),
+        0,
+        "",
+    );
+    assert_eq!(
+        text(&output.stdout),
+        "[INFO] Импорт файлов конфигурации из XML...\n\
+         [INFO] Импорт файлов конфигурации из XML успешно завершен\n"
+    );
     let report = out.path().join("report.json");
     let report_arg = format!("--report={}", report.display());
     let output = assert_exit(
