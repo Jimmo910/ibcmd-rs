@@ -132,7 +132,7 @@ def inventory(plugins, baseline, release):
         path = candidates[0]
         # One descriptor binds ZIP inspection and both hashes. Path replacement
         # or in-place mutation invalidates the capture rather than mixing evidence.
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as stream:
             initial = os.fstat(stream.fileno())
             if not stat.S_ISREG(initial.st_mode):

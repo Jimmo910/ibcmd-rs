@@ -3,7 +3,7 @@ import importlib.util
 import io
 from pathlib import Path
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import zipfile
 
 spec = importlib.util.spec_from_file_location("model_inventory", Path(__file__).with_name("model_inventory.py"))
@@ -100,6 +100,16 @@ class BundleInventory(unittest.TestCase):
         manifest = b"Bundle-SymbolicName: example.model\nBundle-Version: 2\n\nName: file\nDigest: " + b"x" * (m.MANIFEST_LIMIT * 2)
         row = m.inspect_bundle(self.jar(manifest=manifest), self.expected())
         self.assertEqual(row["installed_version"], "2")
+
+    def test_candidate_open_cannot_block_on_fifo(self):
+        plugins = Mock()
+        plugins.glob.return_value = [Path("example.model_1.jar")]
+        with patch.object(m.os, "open", side_effect=OSError("stop before descriptor ownership")) as opened:
+            with self.assertRaises(OSError):
+                m.inventory(plugins, {"source": {}, "bundles": [self.expected()]}, "current")
+        flags = opened.call_args.args[1]
+        self.assertTrue(flags & m.os.O_NONBLOCK)
+        self.assertTrue(flags & m.os.O_NOFOLLOW)
 
     def test_empty_version_rejected(self):
         with self.assertRaisesRegex(ValueError, "empty bundle version"):
