@@ -60,7 +60,7 @@ class Controls(unittest.TestCase):
             native=native, ours_exe=root / "ours", edt_exe=edt, edt_vm=java,
             edt_vm_library=None, source_version="2.21", edt_build="2025.2.3.30", timeout=1, heap_gib=4)
 
-    def capture(self, args, *, version=None, diagnostics=b"", mutation=None, missing_tsv=False):
+    def capture(self, args, *, version=None, diagnostics=b"", native_diagnostics=b"", mutation=None, missing_tsv=False):
         class SyntheticCapture:
             def __init__(self, _):
                 self.labels = []
@@ -85,7 +85,7 @@ class Controls(unittest.TestCase):
                     write(target / "Configuration.xml", b"different" if mutation == "serializer" and label == "edt-export-generated" else b"same installed serializer")
                 elif label in ("edt-validate-native", "edt-validate-generated"):
                     if label == "edt-validate-native":
-                        write(args.run / "native-validation.tsv", b"")
+                        write(args.run / "native-validation.tsv", native_diagnostics)
                         return b""
                     if not missing_tsv:
                         write(args.run / "generated-validation.tsv", diagnostics)
@@ -153,6 +153,44 @@ class Controls(unittest.TestCase):
                 result = self.capture(args, diagnostics=row)
                 self.assertEqual(result["status"], "FAIL")
                 self.assertFalse(result["gates"]["no_source_errors_or_unknown_validation_rows"])
+
+    def test_new_warning_and_code_style_rows_fail_against_authentic_control(self):
+        for category in ("Warning", "Code style"):
+            row = f"2026-10-23T10:00:00Z\tMinor\t{category}\tGenerated\tvalidator\tobject\t1\tnew diagnostic\n".encode()
+            args = self.fixture()
+            result = self.capture(args, diagnostics=row)
+            self.assertTrue(result["gates"]["no_source_errors_or_unknown_validation_rows"])
+            self.assertFalse(result["gates"]["no_new_structured_validation_diagnostics"])
+            self.assertEqual(result["status"], "FAIL")
+            differential = json.loads((args.run / "validation-differential.json").read_text())
+            self.assertEqual(differential["original_row_count"], 0)
+            self.assertEqual(differential["generated_row_count"], 1)
+            self.assertEqual(differential["added_diagnostics"][0]["count"], 1)
+
+    def test_structured_validation_multisets_preserve_changes_removals_and_counts(self):
+        native = b"2026-10-23T10:00:00Z\tMinor\tCode style\tNativeControl\tvalidator\tobject\t1\tobserved\n"
+        same = native.replace(b"10:00:00Z", b"11:00:00Z").replace(b"NativeControl", b"Generated")
+        for label, candidate, expected_pass, added, removed in (
+            ("same", same, True, 0, 0),
+            ("removed", b"", True, 0, 1),
+            ("changed", same.replace(b"observed", b"changed"), False, 1, 1),
+            ("duplicated", same * 2, False, 1, 0),
+        ):
+            args = self.fixture()
+            result = self.capture(args, native_diagnostics=native, diagnostics=candidate)
+            with self.subTest(label=label):
+                self.assertEqual(result["status"], "PASS" if expected_pass else "FAIL")
+                differential = json.loads((args.run / "validation-differential.json").read_text())
+                self.assertEqual(sum(row["count"] for row in differential["added_diagnostics"]), added)
+                self.assertEqual(sum(row["count"] for row in differential["removed_diagnostics"]), removed)
+                self.assertEqual(differential["exact_multiset_equal"], label == "same")
+
+    def test_authentic_control_configuration_error_cannot_be_hidden_by_clean_candidate(self):
+        native = b"2026-10-23T10:00:00Z\tError\tConfiguration error\tNativeControl\tv\to\t1\tfailure\n"
+        result = self.capture(self.fixture(), native_diagnostics=native)
+        self.assertTrue(result["gates"]["no_new_structured_validation_diagnostics"])
+        self.assertFalse(result["gates"]["authentic_native_no_source_errors_or_unknown_rows"])
+        self.assertEqual(result["status"], "FAIL")
 
     def test_all_exact_tree_and_immutable_gates_fail_closed(self):
         gates = {"serializer": "same_installed_serializer_exact_tree",
