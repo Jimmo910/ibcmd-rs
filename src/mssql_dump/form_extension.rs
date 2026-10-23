@@ -35,6 +35,14 @@ pub(super) struct FormEventBinding {
 
 const CALL_TYPES: [&str; 3] = ["Before", "After", "Override"];
 
+/// A complete quoted handler token. Bytes after its closing quote are
+/// unsupported data, rather than part of the event record we can discard.
+fn parse_event_handler(field: &str) -> Option<String> {
+    let token = field.trim();
+    let (handler, consumed) = parse_1c_quoted_string_with_len(token)?;
+    (consumed == token.len()).then_some(handler)
+}
+
 /// The bindings of the event block `field`, in stored order: an event's first
 /// handler (when it has one), then its further handlers.
 pub(super) fn parse_form_event_block(field: &str) -> Option<Vec<FormEventBinding>> {
@@ -46,7 +54,7 @@ pub(super) fn parse_form_event_block(field: &str) -> Option<Vec<FormEventBinding
     let mut first = Vec::with_capacity(count);
     for index in 0..count {
         let event = fields.get(1 + 2 * index)?.trim();
-        let (handler, _) = parse_1c_quoted_string_with_len(fields.get(2 + 2 * index)?.trim())?;
+        let handler = parse_event_handler(fields.get(2 + 2 * index)?)?;
         first.push((event, handler));
     }
     let mut at = 1 + 2 * count;
@@ -73,7 +81,7 @@ pub(super) fn parse_form_event_block(field: &str) -> Option<Vec<FormEventBinding
             });
         }
         for _ in 1..handlers {
-            let (extra, _) = parse_1c_quoted_string_with_len(fields.get(at)?.trim())?;
+            let extra = parse_event_handler(fields.get(at)?)?;
             let code: u8 = fields.get(at + 1)?.trim().parse().ok()?;
             if usize::from(code) >= CALL_TYPES.len() {
                 return None;
@@ -376,6 +384,27 @@ mod tests {
     #[test]
     fn a_count_beyond_the_fields_is_no_event_block() {
         assert!(parse_form_event_block("{18446744073709551615,e,\"h\",1,0,e,0,1}").is_none());
+    }
+
+    #[test]
+    fn first_handler_token_must_be_consumed_completely() {
+        assert!(parse_form_event_block(r#"{1,e,"Handler"UNMODELED,1,0,e,0,1}"#).is_none());
+    }
+
+    #[test]
+    fn additional_handler_token_must_be_consumed_completely() {
+        assert!(
+            parse_form_event_block(r#"{1,e,"",1,0,e,0,2,"AfterHandler"UNMODELED,1}"#).is_none()
+        );
+    }
+
+    #[test]
+    fn complete_handler_tokens_keep_whitespace_and_doubled_quotes() {
+        let bindings =
+            parse_form_event_block(r#"{1,e, "First""Handler" ,1,0,e,0,2, "After""Handler" ,1}"#)
+                .unwrap();
+        assert_eq!(bindings[0].handler, "First\"Handler");
+        assert_eq!(bindings[1].handler, "After\"Handler");
     }
 
     #[test]

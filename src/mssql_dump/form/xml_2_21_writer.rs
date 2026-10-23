@@ -1765,4 +1765,25 @@ mod tests {
             "{written}"
         );
     }
+    #[test]
+    fn group_handler_tokens_with_unmodeled_suffixes_are_refused() {
+        let id = "a3da1388-983a-4d28-87f2-5096d7e3a4ef";
+        for block in [
+            format!("{{1,{id},\"ClickHandler\"UNMODELED,1,0,{id},0,1}}"),
+            format!("{{1,{id},\"\",1,0,{id},0,2,\"AfterHandler\"UNMODELED,1}}"),
+        ] {
+            let node = super::super::layout_8_5_1::parse_node(&block).unwrap();
+            let xml = form("\t\t<UsualGroup name=\"Clickable\" id=\"1\">\r\n\t\t</UsualGroup>\r\n");
+            let mut edits = XmlEdits::new(&xml).unwrap();
+            let group = edits
+                .elements
+                .iter()
+                .position(|item| item.tag == "UsualGroup")
+                .unwrap();
+            assert!(
+                apply_group_events(&mut edits, group, &node, None).is_err(),
+                "{block}"
+            );
+        }
+    }
 }

@@ -80452,6 +80452,28 @@ fn form_root_read_only_uses_its_own_head_flag_and_native_xml_position() {
 
 #[test]
 fn adopted_form_validation_does_not_leave_a_module() {
+    // Extension state is process-wide; preserve the regression in a child
+    // process so the ordinary converters tested beside it see no context.
+    const CHILD: &str = "IBCMD_RS_ADOPTED_FORM_CLEANUP_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "mssql_dump::tests::adopted_form_validation_does_not_leave_a_module",
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "isolated adopted-form cleanup failed: {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     let root = std::env::temp_dir().join(format!(
         "ibcmd-adopted-row-cleanup-{}",
         uuid::Uuid::new_v4()
