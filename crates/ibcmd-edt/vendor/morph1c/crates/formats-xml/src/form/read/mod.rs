@@ -70,7 +70,19 @@ pub fn read_form(dialect: FormDialect, bytes: &[u8]) -> Result<FormBody, FormErr
 }
 
 fn read_form_current(dialect: FormDialect, bytes: &[u8]) -> Result<FormBody, FormError> {
-    let descriptor = parse(bytes)?;
+    // The declaration separator binds structural framing independently of text.
+    let edt_lf = dialect == FormDialect::Edt
+        && bytes
+            .strip_prefix(edt_envelope().decl.as_bytes())
+            .is_some_and(|rest| rest.starts_with(b"\n"));
+    // LF-framed current EDT sources do not expand authored text LF into CRLF.
+    // Preserve explicit CR characters in their typed values; keep legacy CRLF
+    // decoding on its existing normalization policy.
+    let descriptor = if edt_lf {
+        crate::read::with_verbatim_in_text_eol(|| parse(bytes))
+    } else {
+        parse(bytes)
+    }?;
     let env = descriptor.bytes_env;
     let want = match dialect {
         FormDialect::Edt => edt_envelope(),
@@ -82,7 +94,8 @@ fn read_form_current(dialect: FormDialect, bytes: &[u8]) -> Result<FormBody, For
             env.bom
         )));
     }
-    if env.eol != EolStyle::Crlf {
+
+    if env.eol != EolStyle::Crlf && !edt_lf {
         return Err(FormError::Envelope(format!(
             "must be CRLF, found {:?}",
             env.eol
@@ -111,6 +124,7 @@ fn read_form_current(dialect: FormDialect, bytes: &[u8]) -> Result<FormBody, For
             Ok(body)
         }
     }?;
+    body.source_edt_lf = edt_lf;
     // Both readers have already rejected every unclaimed node/attribute.
     body.source_xml221_default_presence = super::wire_order::capture_xml221_default_presence(dialect, &root)?;
     body.source_wire_order = Some(super::wire_order::capture(dialect, &root, &body)?);

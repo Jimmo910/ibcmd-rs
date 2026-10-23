@@ -166,3 +166,11 @@ are captured with `compared=false`, and receipt publication failure cannot turn
 an unsuccessful capture into PASS or hide its primary error. The original
 failed nonempty capture predates these final guards; no missing historical
 terminal checks are claimed to have run.
+
+
+Dependency scope: this branch applies the four source/test files from #355's
+verified form-framing commit `66fae077a5ddb019dc0c2e8dddc49d040d6c7af0`
+(PR #507), together with its three source hashes and adaptation notice. The
+unrelated diagnostic documentation stack is not included. The donor commits and
+PR remain unchanged. Combined local and installed validation is reported
+separately from the donor's passing focused controls.

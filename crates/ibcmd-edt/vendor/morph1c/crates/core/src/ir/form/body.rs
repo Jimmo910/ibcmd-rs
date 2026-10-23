@@ -68,6 +68,11 @@ pub struct FormRootPresence {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FormBody {
+    /// Witnessed EDT source line framing only. New bodies keep the legacy CRLF
+    /// default; current installed EDT LF sources retain LF on same-dialect write.
+    /// Excluded from semantic fingerprints and serialization like wire ordering.
+    #[serde(skip)]
+    pub source_edt_lf: bool,
     /// Native merged event spelling only. Owner lists remain ordered semantic
     /// data; replay requires both current owner/name orders to remain identical.
     #[serde(skip)]
@@ -447,6 +452,7 @@ impl FormBody {
             native_event_order: None,
             picture_semantics: None,
             picture_resource_selection: None,
+            source_edt_lf: false,
             source_wire_order: None,
             source_xml221_default_presence: None,
             designer_checkbox_auto_presence: std::collections::BTreeMap::new(),

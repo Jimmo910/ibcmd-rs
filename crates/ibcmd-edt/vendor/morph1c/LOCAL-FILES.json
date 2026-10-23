@@ -86,7 +86,8 @@
     "DesignRecord validation binds the already-native current chart counterpart before restoring separate Enum/Value records; dotted literal payloads and unrelated projected values are never projected twice",
     "CURRENT DynamicList availability includes effective main-table CommonAttributes with content/autoUse/separation and family-specific SDK policies; calculated-field availability consumes CURRENT Configuration compatibility >8.3.18, with root mode and common definitions in dependency digests",
     "CURRENT chart design projection retains validated Designer names-only factory presence while replacing values with freshly computed native defaults; EDT hidden source spelling is cleared",
-    "Witnessed client-interface direct panel versus group shape and ordered declared panel subsets are typed; exact installed EDT LF framing is retained separately from semantic data, with full byte guards and legacy CRLF behavior preserved"
+    "Witnessed client-interface direct panel versus group shape and ordered declared panel subsets are typed; exact installed EDT LF framing is retained separately from semantic data, with full byte guards and legacy CRLF behavior preserved",
+    "Witnessed current EDT LF form framing is a source-only lexical facet; declaration-bound verbatim text retains explicit carriage-return edits while legacy CRLF defaults and native envelope validation remain unchanged"
   ],
   "files": [
     {
@@ -123,7 +124,7 @@
     },
     {
       "path": "crates/core/src/ir/form/body.rs",
-      "sha256": "c854e348f06a40e2abbfc3712b0e15398bf0ab6637077e5ee49e2db10925f0ad"
+      "sha256": "8f868d413dd2721528436f73b66593fca852fae9175f76bbb4c77853b80acc54"
     },
     {
       "path": "crates/core/src/ir/form/data_attributes.rs",
@@ -1823,7 +1824,7 @@
     },
     {
       "path": "crates/formats-xml/src/form/read/mod.rs",
-      "sha256": "a8f62aa7ff3d027aa47d09a108f3d0d0aaee4e3618e5b6f3c71771403d9ccea0"
+      "sha256": "7d24fe63f0b24c0c8081463e9e9adf743af8011100546069d8965456edb0caaf"
     },
     {
       "path": "crates/formats-xml/src/form/read/mxl.rs",
@@ -1907,7 +1908,7 @@
     },
     {
       "path": "crates/formats-xml/src/form/write/edt.rs",
-      "sha256": "2162ab1c274ffbb30555052e0d4e602a9ddf195a747416b1af260a2cc1c7b8c5"
+      "sha256": "a3e80128a8b7ec70c9c02c0091d80f7e965f17064d270cdb9b228e343351c899"
     },
     {
       "path": "crates/formats-xml/src/form/write/edt_controls.rs",
