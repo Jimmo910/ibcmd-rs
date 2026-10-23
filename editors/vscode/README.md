@@ -171,3 +171,9 @@ editor_server`: он создаст необходимые сохранённы�
 Состав дерева проверен на небольшом сохранённом штатном примере. Замер на
 ERP УХ до двух секунд и сверка её полного состава остаются условиями приёмки
 задачи № 379; соответствующая база здесь отсутствует.
+
+Edit Connection supports SQL and read-only rows-directory entries. An omitted server
+stays omitted so normal `db-server`/environment resolution still applies. Copying an
+inherited rows-directory entry keeps its resolved source directory. File databases
+and unknown source types are excluded from this editor; edit their settings using
+the appropriate source-specific tooling instead.
