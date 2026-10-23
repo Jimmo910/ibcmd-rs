@@ -5,4 +5,4 @@
 - [x] 3. Add failing-first tests for registry validation, selection and the public export route (#520; native-tree and missing-name regressions first failed with the unsupported-route error).
 - [x] 4. Implement bounded registry reads and named CAS resolution; reuse the existing extension writer (#520).
 - [x] 5. Prove own/adopted objects and two-extension selection against native full trees; preserve database hashes (#520; active, initial prepared and active-plus-prepared snapshots, exact native per-file hashes).
-- [ ] 6. Verify negative cases, targeted regressions, xtask check and ci; independent Rust review (#520).
+- [x] 6. Verify negative cases, targeted regressions, xtask check and ci; independent Rust review (#520).

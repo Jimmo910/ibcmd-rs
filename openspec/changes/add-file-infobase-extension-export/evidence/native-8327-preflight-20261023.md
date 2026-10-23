@@ -90,13 +90,14 @@ rows. In the applied two-extension case, CONFIGCAS has eleven live rows.
 The `_EXTENSIONSINFONGS` table uses the same declared registry fields and
 has no live records in these samples. Other NGS states are unmeasured.
 
-## Candidate baseline and remaining work
+## Baseline before implementation
 
 The unmodified candidate's public command against the same two-extension
 database returns rc 255:
 `Выгрузка расширений из файловой информационной базы пока не поддерживается`.
-The root file_infobase integration harness compiles successfully before the
-change. There is no candidate/native parity result yet.
+The root file_infobase integration harness compiled successfully before the
+change. Final candidate parity and gate results are recorded in
+`verification-20261023.md`.
 
 ## Implementation acceptance
 
