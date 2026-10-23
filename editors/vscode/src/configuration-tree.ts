@@ -213,7 +213,9 @@ function elements(e: Element): Element[] {
   return Array.from(e.childNodes).filter((n) => n.nodeType === 1) as Element[];
 }
 function child(e: Element, tag: string): Element | undefined {
-  return elements(e).find((n) => n.localName === tag);
+  return elements(e).find(
+    (n) => n.namespaceURI === e.namespaceURI && n.localName === tag,
+  );
 }
 function text(e: Element | undefined): string {
   return e?.textContent ?? "";
@@ -264,9 +266,12 @@ export function descriptor(
   const root = doc.documentElement;
   if (!root || root.localName !== "MetaDataObject")
     throw new Error("Ожидалось описание объекта метаданных");
-  const object = elements(root)[0];
+  const object = elements(root).find(
+    (n) => n.namespaceURI === root.namespaceURI,
+  );
   if (!object || object.localName !== owner.kind)
     throw new Error("Вид объекта не соответствует описанию");
+  const metadataNamespace = object.namespaceURI;
   owner.synonym = synonym(object);
   const folder =
     owner.kind === "Configuration" ? "" : owner.path!.replace(/\.xml$/, "");
@@ -274,6 +279,7 @@ export function descriptor(
     const groups = new Map<string, Node[]>();
     const container = child(e, "ChildObjects");
     for (const item of container ? elements(container) : []) {
+      if (item.namespaceURI !== metadataNamespace) continue;
       const kind = item.localName!;
       const embedded = !!child(item, "Properties");
       const label = name(embedded ? property(item, "Name") : text(item).trim());
@@ -547,22 +553,39 @@ export class DatabaseSource implements Source {
 }
 
 export class TreeModel {
-  private cache = new Map<string, Promise<Node[]>>();
+  private cache = new Map<
+    string,
+    {
+      value: Promise<Node[]>;
+      abort: AbortController;
+      settled: boolean;
+      waiters: number;
+    }
+  >();
   private abort = new AbortController();
   constructor(public source: Source) {}
   dispose() {
     this.abort.abort();
     this.cache.clear();
   }
-  async children(node?: Node): Promise<Node[]> {
+  async children(node?: Node, signal?: AbortSignal): Promise<Node[]> {
+    if (signal?.aborted) throw new Error("Чтение отменено");
     if (this.abort.signal.aborted) return [];
     const key = node?.id ?? "";
-    let value = this.cache.get(key);
-    if (!value) {
-      value = this.source
-        .children(node, this.abort.signal)
+    let entry = this.cache.get(key);
+    if (!entry) {
+      const abort = new AbortController();
+      const created = {
+        abort,
+        settled: false,
+        waiters: 0,
+        value: Promise.resolve([] as Node[]),
+      };
+      created.value = this.source
+        .children(node, AbortSignal.any([this.abort.signal, abort.signal]))
         .then((nodes) => {
           if (this.abort.signal.aborted) return [];
+          if (abort.signal.aborted) throw new Error("Чтение отменено");
           const ids = new Set<string>();
           for (const child of nodes) {
             if (ids.has(child.id)) throw new Error("Повторяющийся узел дерева");
@@ -575,12 +598,51 @@ export class TreeModel {
           return nodes;
         })
         .catch((error) => {
-          this.cache.delete(key);
+          if (this.cache.get(key) === created) this.cache.delete(key);
           throw error;
+        })
+        .finally(() => {
+          created.settled = true;
         });
-      this.cache.set(key, value);
+      this.cache.set(key, created);
+      entry = created;
     }
-    return value;
+    const current = entry;
+    current.waiters++;
+    return new Promise((resolve, reject) => {
+      let done = false;
+      const release = () => {
+        signal?.removeEventListener("abort", cancel);
+        current.waiters--;
+        // A cancelled search must not abort an expansion still used by the tree.
+        if (!current.settled && current.waiters === 0) {
+          if (this.cache.get(key) === current) this.cache.delete(key);
+          current.abort.abort();
+        }
+      };
+      const cancel = () => {
+        if (done) return;
+        done = true;
+        release();
+        reject(new Error("Чтение отменено"));
+      };
+      current.value.then(
+        (nodes) => {
+          if (done) return;
+          done = true;
+          release();
+          resolve(nodes);
+        },
+        (error) => {
+          if (done) return;
+          done = true;
+          release();
+          reject(error);
+        },
+      );
+      signal?.addEventListener("abort", cancel, { once: true });
+      if (signal?.aborted) cancel();
+    });
   }
   async search(query: string, signal: AbortSignal): Promise<Node[]> {
     const found: Node[] = [];
@@ -588,7 +650,9 @@ export class TreeModel {
     const visit = async (node?: Node): Promise<void> => {
       if (signal.aborted || this.abort.signal.aborted)
         throw new Error("Поиск отменён");
-      const children = await this.children(node);
+      const children = await this.children(node, signal);
+      if (signal.aborted || this.abort.signal.aborted)
+        throw new Error("Поиск отменён");
       if (
         node &&
         node.type !== "group" &&
