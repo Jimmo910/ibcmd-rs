@@ -2,7 +2,7 @@
 import importlib.util
 import json
 import io
-from contextlib import redirect_stderr
+from contextlib import contextmanager, redirect_stderr
 import os
 from pathlib import Path
 import subprocess
@@ -173,6 +173,25 @@ class CollectorTests(unittest.TestCase):
         with mock.patch.object(collector.os, "walk", broken_walk):
             with self.assertRaises(PermissionError):
                 collector.collect(self.trees)
+
+    def test_replaced_live_path_during_hashing_is_refused(self):
+        original_fdopen = collector.os.fdopen
+        replaced = []
+        target = self.trees[0] / "Configuration.xml"
+        @contextmanager
+        def replace_after_read(fd, *args, **kwargs):
+            selected = not replaced and os.fstat(fd).st_size == len(b"configuration")
+            with original_fdopen(fd, *args, **kwargs) as stream:
+                yield stream
+            if selected:
+                target.rename(self.work / "retained-original.xml")
+                target.write_bytes(b"replacement configuration")
+                replaced.append(True)
+        with mock.patch.object(collector.os, "fdopen", replace_after_read):
+            with self.assertRaisesRegex(ValueError, "changed while hashing"):
+                collector.collect(self.trees)
+        self.assertEqual(replaced, [True])
+        self.assertEqual((self.work / "retained-original.xml").read_bytes(), b"configuration")
 
     def test_partial_tree_refusal(self):
         partial = self.work / "partial"

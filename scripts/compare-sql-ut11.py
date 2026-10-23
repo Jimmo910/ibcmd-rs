@@ -84,7 +84,12 @@ def inventory(root, budget, seen_directories=None):
                         raise ValueError("byte limit exceeded")
                     digest.update(chunk)
                 after = os.fstat(stream.fileno())
-            if (before.st_size, before.st_mtime_ns, before.st_ino) != (after.st_size, after.st_mtime_ns, after.st_ino):
+            # Replacing the pathname can leave the open descriptor unchanged.
+            current = path.lstat()
+            def file_identity(info):
+                return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+            if (not stat.S_ISREG(current.st_mode) or file_identity(before) != file_identity(after)
+                    or file_identity(after) != file_identity(current)):
                 raise ValueError("tree changed while hashing")
             files[path.relative_to(root).as_posix()] = {
                 "bytes": before.st_size, "sha256": digest.hexdigest()}
