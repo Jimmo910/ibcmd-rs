@@ -225,6 +225,7 @@ fn apply_source_change_inner(
                 rows_dir: None,
                 file_infobase: None,
                 postgres: None,
+                postgres_snapshot: None,
                 model_export: false,
                 legacy_export: false,
                 sqlcmd: args.sqlcmd.clone(),
