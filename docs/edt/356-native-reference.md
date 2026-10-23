@@ -305,3 +305,24 @@ false. The report preserves every file inventory and differing row, including
 the excluded CDI row. This public smoke supplies no BSP/UH acceptance, current
 model schema certification, or waiver of retained SDK/style errors. Earlier
 failed captures remain intact.
+
+
+## Post-scaffold/DCS candidate: all configuration bytes match
+
+The one granted direct run in `fixtures/issue356-current-server-dcs-fixed-direct-005`
+uses clean production source `e12f77a1042e3ced9c620db90983bd730d87dfa5`, tree
+`56aa3dcb6d1b75a057ba98277d8ab927b7ba111b`, and executable SHA-256
+`ba118d90b8e0736f08eb6d3d4e1a6f36fee3a57d04f91c68bbec24c92484b12a`.
+The successful build and 21 focused tests are bound through all raw phase logs.
+[Full inventories and exact result](evidence/356-post-scaffold-dcs-direct-20261023.json)
+retain the renewed authentic project/export/native reference and final guards.
+
+Conversion exits 0. Every one of the 18 configuration files is byte-exact against
+the real native export; no normalization is used. Strict all-file equality is
+still false: the native reference additionally contains `ConfigDumpInfo.xml`,
+3084 bytes, SHA-256 `7301e7124e132fc5119c4a4c809b84187f475d8f89ec7a89a6085ea4e4447b7d`.
+The explicit configuration-content view excludes only that row and matches;
+the strict view retains it. All inputs, candidate and selected evidence remain
+unchanged. The slot was released immediately; no SDK/JVM/native/build was run.
+This public smoke does not satisfy BSP/UH coverage, current-model semantic
+support or clean SDK/style diagnostics. Earlier failures remain preserved.
