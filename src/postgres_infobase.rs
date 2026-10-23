@@ -198,6 +198,7 @@ mod tests {
             ),
             xml_version_given: true,
             file_infobase: None,
+            postgres_snapshot: None,
         };
         let args = InfobaseConfigImportArgs {
             settings: None,
