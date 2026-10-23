@@ -328,3 +328,39 @@ this `6340fd54…` candidate; they are not promoted into a single-head three-rou
 success. All prior failures and diagnostic/style gates remain intact. No content
 bytes were normalized, no older output substituted, and full BSP/UH acceptance
 remains open.
+
+## Direct005: exact native configuration-content match
+
+The subsequent authorized direct-only capture,
+`fixtures/issue356-current-server-dcs-fixed-direct-005`, uses source candidate
+`e12f77a1`, executable SHA-256
+`ba118d90b8e0736f08eb6d3d4e1a6f36fee3a57d04f91c68bbec24c92484b12a`.
+Its renewed source/build/test/command/reference bindings and all immutable after
+guards pass. Conversion exits 0 and all **18 configuration-content files match
+native byte for byte**, including both form modules and the report template.
+The candidate tree is
+`bacc61842157fe2fc3ebd7a4f0ca78e2442ce1e5bf9e95472dd9e41004edad1b`.
+
+The full file inventory still differs: the sole row is native-only
+ConfigDumpInfo.xml, 3,084 bytes, SHA-256
+`7301e7124e132fc5119c4a4c809b84187f475d8f89ec7a89a6085ea4e4447b7d`.
+The established configuration-content comparison excludes only that native
+storage inventory and reports zero content differences; the strict report
+retains the original CDI row and remains unequal. No bytes are normalized.
+
+The [direct005 raw report](../evidence/edt-current-dcs-direct005/direct-edt-to-xml.json)
+retains all 19 union paths: 16 all equal, two native=candidate-only serializer
+rows and one EDT=candidate-only native-CDI absence row. The
+[accounting](../evidence/edt-current-dcs-direct005/accounting.json) binds the exact
+successful comparison and complete source/native/EDT/candidate evidence.
+Input trees, executable and bound receipts are unchanged; the only additional
+operation was offline raw reporting at
+`logs/issue358-current-dcs-direct005-oracle-001`. No conversion, SDK, JVM, native
+database or build was repeated.
+
+This is a direct content match on the public DcsFilterEvidence fixture. Earlier
+forward/return reports use another candidate and cannot establish a same-head
+three-route result for `ba118d90…`. Existing SDK/style errors remain unsuppressed;
+strict SDK validation, unrestricted current model/schema support, both XML
+profiles and full BSP/UH acceptance remain open. All earlier failed captures and
+reports remain retained.
