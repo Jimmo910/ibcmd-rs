@@ -883,7 +883,16 @@ fn settle_platform(
                 // An exact build on the command line spells its own
                 // defaults (`platform::note_export_platform`), as for
                 // `cf export --platform`.
-                if let Some(platform) = request.platform {
+                let platform = match request.platform {
+                    Some(platform) => Some(platform),
+                    None => config
+                        .legacy_adapter
+                        .version_axes()
+                        .platform_build()
+                        .map(|build| crate::platform::parse(&build.to_string()))
+                        .transpose()?,
+                };
+                if let Some(platform) = platform {
                     crate::platform::note_export_platform(platform);
                 }
                 return Ok(());
