@@ -20,9 +20,12 @@ harnesses do not use this lock. It does not replace the existing Windows oracle.
 The capture retains raw command arguments, UTC start/duration/exit code,
 stdout/stderr, full original/after project inventories, full reference/output
 inventories, exact installed versions and binary hashes. It binds #358's
-`installation.json` (`schema_version: 1`): live plugin inventory and immutable
-runtime rows must match before and after. The separately supplied #355 model
-inventory is copied verbatim and hash-bound; a structural model inventory does
+`installation.json` (`schema_version: 1`): live plugin inventory and selected immutable
+runtime rows must match before and after (Mac launcher, INI/bootstrap/config files
+and Java executable/release). Java libraries/modules are not fully inventoried;
+this is partial JVM provenance, not a full runtime pin. The separately supplied #355 model
+inventory is copied verbatim, bound to its declared release, preserved legacy
+baseline and installed model JAR hashes; a structural model inventory does
 not establish semantic compatibility. All command children run in their own
 process group; timeout or interruption terminates/reaps that group before the
 slot is released. Failure leaves evidence in place.
@@ -54,6 +57,7 @@ Example (replace paths with genuine #358/#355 captures and a built candidate):
 source /Volumes/Work/Dev/ibcmd-rs-lab/lab-env.sh
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/edt-lab/edt_to_xml_macos.py \
   --project "$LAB_AUTHENTIC_BSP_PROJECT" \
+  --corpus-label BSP-current \
   --run /Volumes/Work/Dev/ibcmd-rs-lab/fixtures/issue356-bsp-current-001 \
   --edt "$LAB_EXTERNAL_EDT_CLI" \
   --installation "$LAB_EDT_INSTALLATION_JSON" \
@@ -72,12 +76,12 @@ changes; #358 owns installed EDT preparation. Real discrepancies must be sent
 with exact path/hash rows and minimal synthetic reproductions to #355 before
 codec edits.
 
-Seventeen synthetic controls passed on 2026-10-23. They exercise correct native
+Twenty synthetic controls passed on 2026-10-23. They exercise correct native
 input routing, complete missing/extra/changed rows, CDI retention, source/tool/
 plugin/Java/schema/reference mutation, incomplete runtime manifests, failed native import, preserved failed command bytes,
 interrupted process cleanup, path/provenance guards, and compatibility verdicts.
 Fixtures are retained under the external TMPDIR. Local log:
-`/Volumes/Work/Dev/ibcmd-rs-lab/logs/issue356-harness-controls-r6.log`.
+`/Volumes/Work/Dev/ibcmd-rs-lab/logs/issue356-harness-controls-r10.log`.
 
 ```sh
 source /Volumes/Work/Dev/ibcmd-rs-lab/lab-env.sh
@@ -87,10 +91,47 @@ IBCMD_TEST_KEEP_FIXTURES=1 PYTHONDONTWRITEBYTECODE=1 \
 
 Independent review identified and verified fixes for interrupted process cleanup,
 external Eclipse/JVM configuration and rehashing the native reference. These
-controls are not installed EDT or BSP acceptance. At this checkpoint no genuine
-BSP project/current EDT/native capture is available to this owner, so there is
-no BSP match claim and #356 remains open. A real empty-configuration smoke,
+controls are not installed EDT or BSP acceptance. At the initial harness checkpoint no genuine BSP/current EDT/native capture
+was available. The later empty smoke below does not provide a BSP match;
+#356 remains open. A real empty-configuration smoke,
 when available from #358, also cannot substitute for the required full BSP
 comparison. Private corpus files and full private path inventories remain local;
 only the reusable harness, synthetic controls and non-private conclusions belong
 in this repository.
+
+## Real current-version empty smoke (2026-10-23)
+
+[Non-private summary](evidence/356-current-empty221-20261023.json) records the
+actual run at `fixtures/issue356-current-empty221-001`. #357 supplied the genuine
+EDT-native import of `empty-8.5.1.1592-en-001/native-xml`, not a generated project.
+The source project has four files (2,696 bytes). We independently exported that
+same project with **EDT 2026.2.1.3**, loaded the resulting XML into a new native
+**8.5.1.1592** file database, then exported native XML and converted the original
+project with explicit `edt-2025.2.3-xml-2.21` compatibility mode.
+
+All eight version/export/create/import/conversion commands exited 0. Both
+configuration files match byte for byte: ours has 2 files/12,369 bytes; native
+has 3 files/13,009 bytes. The sole strict difference is native-only
+`ConfigDumpInfo.xml`, 640 bytes, SHA-256
+`b0b1c4a34b1c22ef1b080e257ce253b71be717186b797cd51668c493b9131e61`.
+The result is **COMPATIBILITY_PROBE_MATCH**. No configuration-content codec
+regression was observed in this empty control; #355 received the exact findings.
+
+The candidate was borrowed read-only from #357's locked, offline Rust 1.95
+`--no-default-features` build of the unchanged `f9ebb8dd` Rust tree, SHA-256
+`e4ac476fad5b93723ecf2c335921efa19e61572f49956cdeddd611a53cd9ebbd`.
+This PR changes Python/docs only. Project, selected installation files, plugins,
+schema evidence and native reference passed after-run immutability checks.
+
+The final combined EDT workspace log contains **three unresolved severity-4
+entries**. `post-capture-diagnostics.json` records them without modifying any
+original capture/verdict. Per-command workspace-log capture and explicit
+validation-scope fields were then added to the reusable harness and covered by
+a negative diagnostic control. The SDK errors are not suppressed or classified
+as harmless. Content equality does not establish clean installed-EDT validation.
+
+Full inventories, exact argv/exit/timing records, raw stdout/stderr and workspace
+logs remain in the external run directory. No native/EDT corpus bodies are
+committed. The native slot was released after the run. Full BSP comparison,
+current-model semantic support and clean installed SDK acceptance remain open;
+PR #506 remains Draft and #356 is not closed.

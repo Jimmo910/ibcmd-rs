@@ -45,7 +45,7 @@ class NativeReferenceControls(unittest.TestCase):
         (self.root / 'configuration').mkdir()
         (self.root / 'configuration/config.ini').write_text('synthetic=true')
         (self.root / 'plugins').mkdir()
-        (self.root / 'plugins/model.jar').write_bytes(b'synthetic model')
+        (self.root / 'plugins/synthetic.model_1.0.jar').write_bytes(b'synthetic model')
         (self.root / '1cedt.ini').write_text('-startup\nsynthetic.jar\n-vmargs\n-Xmx1g\n')
         installation = self.root / 'installation.json'
         java = self.root / 'jdk/bin/java'
@@ -53,24 +53,38 @@ class NativeReferenceControls(unittest.TestCase):
         java.write_bytes(b'synthetic java')
         (self.root / 'jdk/release').write_bytes(b'synthetic runtime release')
         (self.root / '1cedtcli-startup.txt').write_text('synthetic startup')
+        macos = self.root.parent / 'MacOS'
+        macos.mkdir()
+        (macos / '1cedt').write_bytes(b'synthetic launcher')
+        bundles = self.root / 'configuration/org.eclipse.equinox.simpleconfigurator/bundles.info'
+        bundles.parent.mkdir()
+        bundles.write_text('synthetic bundles')
         # Each retained fixture has its own installation parent.
         plist = self.root.parent / 'Info.plist'
         plist.write_text('synthetic plist')
         rows = [{'path': str(p), 'bytes': p.stat().st_size, 'sha256': harness.digest(p)}
                 for p in (tools[0], self.root / '1cedt.ini', self.root / 'configuration/config.ini',
-                          self.root / '1cedtcli-startup.txt', plist, java, self.root / 'jdk/release')]
+                          self.root / '1cedtcli-startup.txt', plist, macos / '1cedt', bundles, java, self.root / 'jdk/release')]
         harness.write_json(installation, {'schema_version': 1, 'edt_cli': str(tools[0]),
             'edt_cli_sha256': harness.digest(tools[0]), 'plugins': harness.snapshot(self.root / 'plugins'),
             'runtime_files': rows})
         schema = self.root / 'schema.json'
-        schema.write_text('{"synthetic": true}')
-        return SimpleNamespace(installation=installation, schema_evidence=schema, project=project, run=self.root / 'run', edt=tools[0], ours=tools[1], native=tools[2],
+        baseline = self.root / 'baseline.json'
+        baseline.write_text('{"bundles": [{"symbolicName": "synthetic.model"}]}')
+        jar = self.root / 'plugins/synthetic.model_1.0.jar'
+        harness.write_json(schema, {'schema_version': 1, 'declared_installed_release': '2025.2.3+30',
+            'baseline_sha256': harness.digest(baseline),
+            'bundles': [{'symbolicName': 'synthetic.model', 'status': 'inspected',
+                         'jar_sha256': harness.digest(jar), 'jar_bytes': jar.stat().st_size}]})
+        return SimpleNamespace(corpus_label='synthetic control, never BSP', installation=installation, schema_evidence=schema, project=project, run=self.root / 'run', edt=tools[0], ours=tools[1], native=tools[2],
                                runtime='8.5.1', edt_build='2025.2.3.30', native_build='8.5.1.1592',
                                timeout=10, heap_gib=1, xml_version='2.21', source_profile='edt-2025.2.3-xml-2.21')
 
     def fake_command(self, args, calls, *, changed=False, mutation=None, failed=None):
         def command(run, label, argv, timeout):
             calls.append((label, [str(x) for x in argv]))
+            (run / f'{label}.stdout').write_bytes(b'')
+            (run / f'{label}.stderr').write_bytes(b'')
             harness.write_json(run / f'{label}.command.json', {'argv': [str(x) for x in argv],
                 'exit_code': 1 if label == failed else 0, 'synthetic': True})
             if label == failed:
@@ -91,7 +105,7 @@ class NativeReferenceControls(unittest.TestCase):
 
     def run_synthetic(self, args, **options):
         calls = []
-        with patch.object(harness.sys, 'platform', 'darwin'), patch.object(harness, 'native_slot', lambda _: contextlib.nullcontext()), \
+        with patch.object(harness, 'MODEL_BASELINE', self.root / 'baseline.json'), patch.object(harness.sys, 'platform', 'darwin'), patch.object(harness, 'native_slot', lambda _: contextlib.nullcontext()), \
              patch.object(harness, 'command', side_effect=self.fake_command(args, calls, **options)):
             code = harness.capture(args)
         return code, calls
@@ -121,13 +135,16 @@ class NativeReferenceControls(unittest.TestCase):
         args = self.fixture()
         args.compatibility_probe = True
         args.edt_build = '2026.2.1.3'
+        schema = json.loads(args.schema_evidence.read_text())
+        schema['declared_installed_release'] = '2026.2.1+3'
+        args.schema_evidence.write_text(json.dumps(schema))
         self.run_synthetic(args)
         self.assertEqual(json.loads((args.run / 'result.json').read_text())['status'], 'COMPATIBILITY_PROBE_MATCH')
 
     def test_plugin_mutation_cannot_leave_pass_result(self):
         args = self.fixture()
         with self.assertRaisesRegex(harness.OracleError, 'plugin inventory'):
-            self.run_synthetic(args, mutation=lambda a, _: (a.edt.parent / 'plugins/model.jar').write_bytes(b'changed'))
+            self.run_synthetic(args, mutation=lambda a, _: (a.edt.parent / 'plugins/synthetic.model_1.0.jar').write_bytes(b'changed'))
         self.assertFalse((args.run / 'result.json').exists())
 
     def test_java_mutation_cannot_leave_pass_result(self):
@@ -150,6 +167,21 @@ class NativeReferenceControls(unittest.TestCase):
         with self.assertRaisesRegex(harness.OracleError, 'explicit Java'):
             self.run_synthetic(args)
         self.assertFalse((args.run / 'result.json').exists())
+
+    def test_unbound_schema_evidence_refused(self):
+        args = self.fixture()
+        args.schema_evidence.write_text('{}')
+        with self.assertRaisesRegex(harness.OracleError, 'Schema evidence release'):
+            self.run_synthetic(args)
+        self.assertFalse((args.run / 'result.json').exists())
+
+    def test_wrong_schema_jar_hash_refused(self):
+        args = self.fixture()
+        schema = json.loads(args.schema_evidence.read_text())
+        schema['bundles'][0]['jar_sha256'] = '0' * 64
+        args.schema_evidence.write_text(json.dumps(schema))
+        with self.assertRaisesRegex(harness.OracleError, 'Schema bundle hash'):
+            self.run_synthetic(args)
 
     def test_any_content_difference_is_failure(self):
         args = self.fixture()
@@ -238,6 +270,19 @@ class NativeReferenceControls(unittest.TestCase):
         report = harness.comparison(harness.snapshot(left), harness.snapshot(right))
         self.assertEqual([x['path'] for x in report['strict']['differing_rows']], ['changed', 'extra', 'missing'])
         self.assertFalse(report['configuration_content']['equal'])
+
+    def test_edt_workspace_error_logs_are_captured_without_suppression(self):
+        run = self.root / 'workspace-control'
+        run.mkdir(); (run / 'tmp').mkdir()
+        metadata = run / 'workspace/.metadata'
+        metadata.mkdir(parents=True)
+        raw = b'!ENTRY synthetic.plugin 4 0 2026-10-23\n!MESSAGE retained error\n'
+        (metadata / '.log').write_bytes(raw)
+        harness.command(run, 'edt', [sys.executable, '-c', 'pass', '-data', str(metadata.parent)], 5)
+        self.assertEqual((run / 'edt.workspace-log').read_bytes(), raw)
+        report = harness.command_diagnostics(run, ['edt'])
+        self.assertEqual(report['edt']['workspace_error_count'], 1)
+        self.assertTrue(harness.has_error_diagnostics(report.values()))
 
     def test_command_failure_records_raw_streams_and_exit(self):
         run = self.root / 'command'

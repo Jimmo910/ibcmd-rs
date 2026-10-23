@@ -19,9 +19,10 @@ import sys
 import time
 
 from oracle import (OracleError, compare_tree_snapshots, digest, no_links,
-                    require_project, require_xml, snapshot, write_json)
+                    require_project, require_xml, snapshot, write_json, command_diagnostics, has_error_diagnostics)
 
 LAB = Path('/Volumes/Work/Dev/ibcmd-rs-lab')
+MODEL_BASELINE = Path(__file__).resolve().parents[2] / 'crates/ibcmd-schema/data/edt-2025.2.3-model-inventory.json'
 
 
 def lab_path(path: Path) -> Path:
@@ -72,6 +73,8 @@ def bind_installation(path, edt):
         raise OracleError('Runtime inventory must bind one explicit Java executable')
     required = {edt, edt.parent / '1cedt.ini', edt.parent / 'configuration/config.ini',
                 edt.parent / '1cedtcli-startup.txt', edt.parent.parent / 'Info.plist',
+                edt.parent.parent / 'MacOS/1cedt',
+                edt.parent / 'configuration/org.eclipse.equinox.simpleconfigurator/bundles.info',
                 java_rows[0], java_rows[0].parent.parent / 'release'}
     if not required.issubset({Path(row['path']) for row in rows}):
         raise OracleError('Runtime inventory omits launcher configuration')
@@ -82,6 +85,33 @@ def bind_installation(path, edt):
         no_links(file)
         if file.stat().st_size != row['bytes'] or digest(file) != row['sha256']:
             raise OracleError(f'Runtime inventory differs: {file}')
+    return data
+
+
+def bind_schema(path, installation, build):
+    data = json.loads(path.read_text(encoding='utf-8'))
+    expected_release = '.'.join(build.split('.')[:3]) + '+' + build.split('.')[-1]
+    baseline = json.loads(MODEL_BASELINE.read_text(encoding='utf-8'))
+    if data.get('schema_version') != 1 or data.get('declared_installed_release') != expected_release:
+        raise OracleError('Schema evidence release differs from tested EDT build')
+    if data.get('baseline_sha256') != digest(MODEL_BASELINE):
+        raise OracleError('Schema evidence does not bind the preserved legacy model inventory')
+    rows = data.get('bundles', [])
+    expected = {row['symbolicName'] for row in baseline['bundles']}
+    if len(rows) != len(expected) or {row['symbolicName'] for row in rows} != expected:
+        raise OracleError('Incomplete or duplicate schema bundle accounting')
+    files = installation['plugins']['files']
+    for row in rows:
+        candidates = [file for file in files if '/' not in file['path'] and
+                      file['path'].startswith(row['symbolicName'] + '_') and file['path'].endswith('.jar')]
+        if row['status'] == 'unresolved':
+            if row.get('candidate_count') != len(candidates) or len(candidates) == 1:
+                raise OracleError('Unresolved schema row disagrees with installed bundles')
+        elif row['status'] == 'inspected':
+            if len(candidates) != 1 or row.get('jar_sha256') != candidates[0]['sha256'] or row.get('jar_bytes') != candidates[0]['bytes']:
+                raise OracleError('Schema bundle hash differs from bound installation')
+        else:
+            raise OracleError('Unknown schema evidence status')
     return data
 
 
@@ -141,6 +171,13 @@ def command(run, label, argv, timeout):
         raise
     finally:
         record['duration_seconds'] = round(time.monotonic() - start, 3)
+        if '-data' in record['argv']:
+            workspace = Path(record['argv'][record['argv'].index('-data') + 1])
+            for name in ('.log', '1cedtcli.log', '1cedtcli-shutdown-hook.log'):
+                log = workspace / '.metadata' / name
+                if log.is_file():
+                    with log.open('rb') as source, (run / f"{label}.workspace-{name.lstrip('.')}").open('xb') as target:
+                        shutil.copyfileobj(source, target)
         write_json(run / f'{label}.command.json', record)
     if record.get('timed_out') or record['exit_code']:
         raise OracleError(f'{label} failed; preserved command/stdout/stderr in {run}')
@@ -179,6 +216,7 @@ def capture(args):
     write_json(run / 'installation-bound.json', installation)
     installation_hash = digest(args.installation)
     lab_path(args.schema_evidence)
+    bind_schema(args.schema_evidence, installation, args.edt_build)
     schema_hash = digest(args.schema_evidence)
     (run / 'schema-evidence.json').write_bytes(args.schema_evidence.read_bytes())
     tools = {name: {'path': str(path), 'sha256': digest(path)}
@@ -196,13 +234,16 @@ def capture(args):
             # Mac 1cedtcli is a custom launcher: generic Eclipse switches
             # belong in its -ini-file, not on the CLI (verified by #358).
             original_ini = (args.edt.parent / '1cedt.ini').read_text(encoding='utf-8')
+            original_ini = ''.join(line for line in original_ini.splitlines(keepends=True)
+                                   if not line.startswith('-Dosgi.debug='))
             if original_ini.count('-vmargs') != 1:
                 raise OracleError('Expected one JVM section in pinned EDT INI')
             launcher, vmargs = original_ini.split('-vmargs', 1)
             java = next(row['path'] for row in installation['runtime_files'] if Path(row['path']).name == 'java')
             ini = run / '1cedt.ini'
+            launcher = launcher.replace('../Eclipse/', str(args.edt.parent) + '/')
             ini.write_text(launcher + '-vm\n' + java + '\n-configuration\n' +
-                str(run / 'edt-configuration') + '\n-user\n' + str(run / 'user') +
+                str(run / 'edt-configuration') + '\n-nl\nen_US\n-user\n' + str(run / 'user') +
                 '\n-vmargs' + vmargs, encoding='utf-8')
             write_json(run / 'launch-ini.json', {'path': str(ini), 'sha256': digest(ini), 'java': java})
             edt = [str(args.edt), '-ini-file', str(ini), '-data', str(run / 'workspace'),
@@ -255,11 +296,16 @@ def capture(args):
                 raise OracleError('Native reference changed during conversion')
             if json.loads((run / 'edt-xml-before.json').read_text()) != snapshot(baseline):
                 raise OracleError('EDT XML changed during native capture')
+            diagnostics = command_diagnostics(run, ['edt-version', 'edt-export'])
+            write_json(run / 'edt-diagnostics.json', diagnostics)
             result = {'status': ('COMPATIBILITY_PROBE_MATCH' if report['configuration_content']['equal'] else 'COMPATIBILITY_PROBE_DIFFERENT')
                         if getattr(args, 'compatibility_probe', False) else ('PASS' if report['configuration_content']['equal'] else 'FAIL'),
                 'strict_equal': report['strict']['equal'], 'configuration_content_equal': report['configuration_content']['equal'],
                 'storage_inventory_exclusion': 'ConfigDumpInfo.xml; full original rows retained in comparison.json',
                 'scope': 'Same authentic EDT project, installed EDT export, fresh native file DB create/import/export; no activation claim',
+                'corpus_label': args.corpus_label,
+                'installed_edt_validation': 'NOT_EVALUATED; content comparison is not clean SDK validation',
+                'observed_edt_errors': has_error_diagnostics(diagnostics.values()),
                 'versions': versions, 'source_profile': args.source_profile, 'runtime': args.runtime,
                 'xml_version': args.xml_version, 'schema_evidence_sha256': schema_hash,
                 'installation_manifest_sha256': installation_hash, 'counts': report['counts']}
@@ -291,6 +337,7 @@ def main():
         parser.add_argument(f'--{name}', type=Path, required=True)
     parser.add_argument('--edt-build', required=True, help='Exact CLI build; never inferred from a profile')
     parser.add_argument('--source-profile', required=True, help='Explicit supported EDT release/XML profile')
+    parser.add_argument('--corpus-label', required=True, help='Actual supplied corpus; empty controls never establish BSP acceptance')
     parser.add_argument('--compatibility-probe', action='store_true',
                         help='Explicitly compare a different tool/model release; never emit PASS')
     parser.add_argument('--native-build', required=True)
