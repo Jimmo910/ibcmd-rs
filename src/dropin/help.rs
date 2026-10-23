@@ -52,8 +52,9 @@ pub fn infobase_help(program: &str) -> String {
         параметрами
 
     --dbms=<kind>
-        Тип СУБД, в которой размещается информационная база.
-        Поддерживается только MSSQLServer
+        Тип СУБД, в которой размещается информационная база:
+        MSSQLServer или PostgreSQL (на PostgreSQL выполняются config
+        export и config import)
 
     --database-server=<server> | --db-server=<server>
         Имя сервера СУБД: server, server\\instance, server/instance или
