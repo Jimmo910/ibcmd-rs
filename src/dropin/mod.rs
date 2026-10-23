@@ -129,15 +129,6 @@ pub fn run_infobase(args: &[OsString]) -> i32 {
         Ok(Invocation::ImportFiles(request)) => run_import_files(request),
         Ok(Invocation::Apply(request)) => apply::run(request),
         Ok(Invocation::Save(request)) => run_save(request),
-        // A .cf is loaded into a file infobase or PostgreSQL (#353); on SQL
-        // Server `mssql-load-config --script-only` writes the stage's scripts.
-        Ok(Invocation::Load(request))
-            if request.common.db_path.is_none() && !is_postgres(&request.common) =>
-        {
-            let refusal = Refusal::UnsupportedCommand("infobase config load".to_string());
-            print_refusal(&refusal, &program_name());
-            refusal_exit_code(&refusal)
-        }
         Ok(Invocation::Load(request)) => run_load(request),
         Err(refusal) => {
             print_refusal(&refusal, &program_name());

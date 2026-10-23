@@ -254,8 +254,8 @@ pub fn infobase_help(program: &str) -> String {
                 Загрузка конфигурации из файла .cf: элементы файла
                 записываются как есть в подготовку загрузки (ConfigSave) вместе
                 со списком строк базы, которых в файле нет; применяет загрузку
-                штатный config apply. Файловая база (--db-path) и PostgreSQL;
-                для SQL Server пока не поддерживается
+                штатный config apply. Файловая база (--db-path), PostgreSQL и
+                SQL Server
 
                 <path>
                     путь к файлу конфигурации

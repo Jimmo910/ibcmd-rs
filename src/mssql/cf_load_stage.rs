@@ -29,6 +29,7 @@ use ibcmd_core::limits::ResourceLimits;
 use serde::Serialize;
 
 use crate::cli::MssqlLoadConfigArgs;
+use crate::sql::SqlExec;
 
 use super::{
     BulkStageRow, CONFIG_ROW_PART_BYTES, build_bulk_stage_prepare_sql, bulk_stage_part_count,
@@ -179,6 +180,83 @@ pub fn write_stage_scripts(
         rows_file: rows_path,
         scripts: vec![prepare_path, apply_path],
         written_to_database: false,
+    })
+}
+
+/// What `infobase config load` wrote into a SQL Server database's stage.
+#[derive(Debug, Clone, Serialize)]
+pub struct DatabaseLoadReport {
+    /// Elements of the file staged.
+    pub rows: usize,
+    /// Rows of `Config` the file does not hold, named by `deleted`.
+    pub deleted: usize,
+    pub config_save_rows_before: i64,
+    pub config_save_rows_after: i64,
+}
+
+/// `infobase config load <file.cf>` into SQL Server (#353): the file's
+/// elements as they are, and `deleted` naming the rows `Config` stores and
+/// the file does not, moved into `ConfigSave` by the base-free stage's
+/// scripts (it empties `ConfigSave` and inserts every row) through `sql`.
+pub fn load_into_database(
+    sql: &SqlExec,
+    database: &str,
+    input: &Path,
+) -> Result<DatabaseLoadReport> {
+    let rows = cf_stage_rows(input)?;
+    let staged = rows
+        .iter()
+        .map(|row| row.file_name.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let stored = super::config_row_digests(sql, database, "Config")?
+        .into_iter()
+        .map(|digest| digest.file_name)
+        .collect::<std::collections::BTreeSet<_>>();
+    let deleted = stored
+        .into_iter()
+        .filter(|name| !staged.contains(name.as_str()))
+        .collect::<Vec<_>>();
+    let deleted_blob = super::stage_deleted_row(&deleted)?;
+    let mut bulk = rows
+        .iter()
+        .map(|row| BulkStageRow {
+            file_name: &row.file_name,
+            requires_config_row: false,
+            blob: &row.blob,
+        })
+        .collect::<Vec<_>>();
+    bulk.push(BulkStageRow {
+        file_name: "deleted",
+        requires_config_row: false,
+        blob: &deleted_blob,
+    });
+    let (rows_path, prepare_path, apply_path) = bulk_stage_paths(None, database);
+    if let Some(parent) = rows_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    if super::bulk_stage_rows_file_needed(sql, false) {
+        write_bulk_stage_rows(&rows_path, &bulk)?;
+    }
+    let table = bulk_stage_table_name(database);
+    fs::write(&prepare_path, build_bulk_stage_prepare_sql(&table))
+        .with_context(|| format!("failed to write {}", prepare_path.display()))?;
+    fs::write(
+        &apply_path,
+        build_base_free_bulk_stage_apply_sql(database, &table, bulk_stage_part_count(&bulk)),
+    )
+    .with_context(|| format!("failed to write {}", apply_path.display()))?;
+    let before = super::storage_table_stats(sql, database, "ConfigSave")?;
+    super::run_bulk_stage(sql, &table, &bulk, &rows_path, &prepare_path, &apply_path)?;
+    let after = super::storage_table_stats(sql, database, "ConfigSave")?;
+    Ok(DatabaseLoadReport {
+        rows: rows.len(),
+        deleted: deleted.len(),
+        config_save_rows_before: before.row_count,
+        config_save_rows_after: after.row_count,
     })
 }
 

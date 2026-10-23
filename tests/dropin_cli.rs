@@ -469,10 +469,9 @@ fn save_starts_in_the_platforms_words_and_stops_at_the_connection() {
         &["infobase", "config", "save", "--db-name=b"],
         "Не указано значение параметра: путь к файлу конфигурации",
     );
-    // load is still refused by name
-    assert_refused(
-        &["infobase", "config", "load", "--db-name=b", "x.cf"],
-        "Команда `infobase config load` не поддерживается",
+    assert_malformed(
+        &["infobase", "config", "load", "--db-name=b"],
+        "Не указано значение параметра: путь к файлу конфигурации",
     );
 }
 

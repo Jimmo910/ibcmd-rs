@@ -609,9 +609,41 @@ pub fn load_config(args: &InfobaseConfigLoadArgs) -> Result<InfobaseConfigImport
         return crate::postgres_infobase::load_cf(&config, &input);
     }
     ensure_mssql(&config.dbms)?;
-    bail!(
-        "загрузка .cf в базу SQL Server этой версией не выполняется: сценарии подготовки пишет `ibcmd-rs mssql-load-config --script-only`"
-    )
+    let sql = crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
+        sqlcmd: None,
+        bcp: None,
+        server: &config.db_server,
+        user: config.db_user.as_deref(),
+        password: config.db_pwd.as_deref(),
+        password_env: &args.db_pwd_env,
+        trust_server_certificate: true,
+    })?;
+    let loaded = crate::mssql::cf_load_stage::load_into_database(&sql, &config.db_name, &input)?;
+    Ok(InfobaseConfigImportReport {
+        operation: "infobase config load",
+        backend: "mssql-configsave-stage",
+        format: "cf",
+        source_version: None,
+        dbms: config.dbms.clone(),
+        db_server: config.db_server.clone(),
+        db_name: config.db_name.clone(),
+        db_user: config.db_user.clone(),
+        native_config: config.native_config.clone(),
+        source_dir: input,
+        stage_mode: "base-free",
+        stage_mode_reason: format!(
+            "the .cf replaces the main configuration ({} elements, {} rows of Config deleted)",
+            loaded.rows, loaded.deleted
+        ),
+        files: Vec::new(),
+        target_config_rows: -1,
+        staged_rows_before: loaded.config_save_rows_before,
+        staged_rows_after: loaded.config_save_rows_after,
+        scripts: Vec::new(),
+        verification: None,
+        overrides: None,
+        backup: None,
+    })
 }
 
 pub fn import_config(args: &InfobaseConfigImportArgs) -> Result<InfobaseConfigImportReport> {
