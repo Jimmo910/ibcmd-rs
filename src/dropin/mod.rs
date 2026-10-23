@@ -161,7 +161,7 @@ fn refuse_postgres(command: &str) -> i32 {
 /// flag here or from the settings in the library (`infobase::import_config`).
 pub(crate) fn postgres_refusal(command: &str) -> String {
     format!(
-        "Команда `{command}` для PostgreSQL не поддерживается в этой версии ibcmd-rs: на PostgreSQL выполняются config export и config import"
+        "Команда `{command}` для PostgreSQL не поддерживается в этой версии ibcmd-rs: на PostgreSQL выполняются config export, config import и config load"
     )
 }
 
