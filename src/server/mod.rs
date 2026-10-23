@@ -44,7 +44,7 @@ use rpc::{RpcError, codes};
 /// served when its major is this one and its minor is not above this one
 /// (see `initialize`); the editor extension and the executable are released
 /// together, so the check catches a mismatched pair.
-pub const PROTOCOL_VERSION: (u32, u32) = (1, 3);
+pub const PROTOCOL_VERSION: (u32, u32) = (1, 4);
 
 /// The methods a client may call.
 pub const METHODS: &[&str] = &[
@@ -55,6 +55,7 @@ pub const METHODS: &[&str] = &[
     "tree/children",
     "objects/status",
     "objects/export",
+    "objects/exportPlan",
     "objects/import",
     "objects/import/prepare",
     "source/read",
@@ -392,6 +393,18 @@ struct ExportParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ExportPlanParams {
+    infobase: String,
+    #[serde(default)]
+    objects: Vec<String>,
+    #[serde(default)]
+    changed: bool,
+    source_dir: PathBuf,
+    target_dir: PathBuf,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ImportParams {
     infobase: String,
     source_dir: PathBuf,
@@ -453,6 +466,7 @@ impl State {
             "tree/children" => self.children(parse(params)?),
             "objects/status" => self.status(id, parse(params)?),
             "objects/export" => self.export(id, parse(params)?),
+            "objects/exportPlan" => self.export_plan(id, parse(params)?),
             "objects/import" => self.import(parse(params)?),
             "objects/import/prepare" => self.prepare_import(parse(params)?),
             "source/read" => self.read(parse(params)?),
@@ -659,6 +673,24 @@ impl State {
             .status(params.objects.as_deref(), &params.source_dir, &progress)
             .map_err(failure)?;
         Ok(json!({ "objects": statuses }))
+    }
+
+    fn export_plan(&mut self, id: &Value, params: ExportPlanParams) -> Result<Value, RpcError> {
+        let progress = self.progress(id);
+        let session = self.session(&params.infobase)?;
+        serde_json::to_value(
+            session
+                .configuration
+                .prepare_editor_export(
+                    &params.objects,
+                    params.changed,
+                    &params.source_dir,
+                    &params.target_dir,
+                    &progress,
+                )
+                .map_err(failure)?,
+        )
+        .map_err(|error| failure(error.into()))
     }
 
     fn export(&mut self, id: &Value, params: ExportParams) -> Result<Value, RpcError> {

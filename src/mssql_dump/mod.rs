@@ -2188,12 +2188,24 @@ pub(crate) fn with_memory_rows_table<T>(
     read(&ConfigTable::active(&sql, ""))
 }
 
+pub(crate) use file_infobase::FileDbReadScope;
+
+#[cfg(test)]
+pub(crate) fn file_db_read_scope_active() -> bool {
+    file_infobase::read_scope_active()
+}
+
+#[cfg(test)]
+pub(crate) fn file_db_fresh_load_count() -> usize {
+    file_infobase::fresh_load_count()
+}
+
 /// Reads a real file infobase through the same effective CONFIG/CONFIGSAVE view as export.
 pub(crate) fn with_file_db_table<T>(
     path: &Path,
     read: impl FnOnce(&ConfigTable<'_>) -> Result<T>,
 ) -> Result<T> {
-    let _active = offline_rows::activate_rows(file_infobase::load(path)?)?;
+    let _active = offline_rows::activate_shared(file_infobase::read_rows(path)?)?;
     let _views = dynamic_generation::StorageViewScope::begin("");
     let sql = crate::sql::SqlExec::detached("a file infobase answers every read itself");
     read(&ConfigTable::active(&sql, ""))
@@ -2266,7 +2278,31 @@ mod descriptor_snapshot_tests {
             let descriptor = fs::File::open(scratch.0.join("1Cv8.1CD")).unwrap();
             let mut db = ibcmd_filedb::FileDb::from_file(descriptor).unwrap();
             assert!(db.config_headers("CONFIGSAVE").unwrap().is_empty());
-            file_db_rows_from_reader(&mut db).unwrap()
+            let descriptor = file_db_rows_from_reader(&mut db).unwrap();
+            drop(db);
+            crate::stored_objects::exclusive(|| -> Result<BTreeMap<String, Arc<Vec<u8>>>> {
+                let read = || -> Result<BTreeMap<String, Arc<Vec<u8>>>> {
+                    with_file_db_table(&scratch.0, |table| {
+                        let names = table.names()?;
+                        Ok(table
+                            .rows(&names)?
+                            .into_iter()
+                            .map(|(name, bytes)| (name, Arc::new(bytes)))
+                            .collect())
+                    })
+                };
+                let fresh = read()?;
+                assert_eq!(descriptor, fresh, "descriptor and path readers must agree");
+                let scope = FileDbReadScope::begin(&scratch.0)?;
+                let scoped = read()?;
+                assert_eq!(
+                    fresh, scoped,
+                    "raw-row reuse must preserve the active-generation view"
+                );
+                drop(scope);
+                Ok(scoped)
+            })
+            .unwrap()
         }
         #[cfg(not(unix))]
         {
@@ -2461,7 +2497,7 @@ fn dump_config_inner(
                         "--file-infobase publishes the main configuration; drop --include-config-save"
                     );
                 }
-                Some(offline_rows::activate_rows(file_infobase::load(path)?)?)
+                Some(offline_rows::activate_shared(file_infobase::read_rows(path)?)?)
             }
             (None, None) => {
                 if args.database.trim().is_empty() {

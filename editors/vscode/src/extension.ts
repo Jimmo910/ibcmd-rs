@@ -11,6 +11,8 @@ import { registerDatabaseCommands } from "./database-commands";
 import { resolveExecutable } from "./executable";
 import { ObjectView } from "./object-view";
 
+const PROTOCOL_VERSION = "1.4";
+
 export function secretKey(folder: string, id: string, user: string): string {
   return `ibcmd:${JSON.stringify([folder, id, user])}`;
 }
@@ -72,7 +74,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const rpc = new RpcClient(executable(), f.uri.fsPath, onCrash);
     try {
       await rpc.request("initialize", {
-        protocolVersion: "1.3",
+        protocolVersion: PROTOCOL_VERSION,
         clientInfo: { name: "ibcmd-rs-vscode", version: "0.1.0" },
         workspaceFolder: f.uri.fsPath,
       });
@@ -420,6 +422,73 @@ export async function activate(context: vscode.ExtensionContext) {
       },
     );
   }
+  let exporting = false;
+  async function runExport(
+    changed: boolean,
+    node?: { object?: string },
+    selection?: { object?: string }[],
+    group = false,
+  ) {
+    if (exporting) return;
+    if (!client || !folder || !selected)
+      throw new Error("Выберите подключение перед выгрузкой");
+    const rpc = client,
+      f = folder,
+      id = selected.id,
+      stamp = generation.capture();
+    const current = () =>
+      generation.current(stamp) &&
+      client === rpc &&
+      folder === f &&
+      selected?.id === id;
+    exporting = true;
+    try {
+      let selectors =
+        changed || group ? [] : objects.exportSelection(node, selection);
+      if (group) {
+        const response = await rpc.request("tree/children", {
+          infobase: id,
+          node: "Configuration",
+          mainConfiguration: true,
+        });
+        if (!current()) return;
+        const groups = response.nodes.filter(
+          (n: any) => n.nodeType === "group",
+        );
+        const picked = await vscode.window.showQuickPick<{
+          label: string;
+          description: string;
+          id: string;
+        }>(
+          groups.map((n: any) => ({
+            label: n.label,
+            description: String(n.count ?? ""),
+            id: n.id,
+          })),
+          { placeHolder: "Группа объектов для выгрузки" },
+        );
+        if (!picked || !current()) return;
+        selectors = [picked.id];
+      }
+      if (!changed && !selectors.length)
+        throw new Error("Выберите объект или группу для выгрузки");
+      const { exportObjects } = await import("./object-export");
+      if (await exportObjects(rpc, f, id, selectors, changed, current)) {
+        if (current()) await objects.refresh(rpc, f, id);
+      }
+    } catch (error) {
+      if (current())
+        void vscode.window.showErrorMessage(
+          error instanceof RpcError
+            ? safeError(error)
+            : error instanceof Error
+              ? error.message
+              : safeError(error),
+        );
+    } finally {
+      exporting = false;
+    }
+  }
   const commands: Record<string, (...args: any[]) => Promise<void>> = {
     "ibcmd.apply": async () => {
       const rpc = client,
@@ -523,6 +592,11 @@ export async function activate(context: vscode.ExtensionContext) {
     ) => importFiles(uri, uris),
     "ibcmd.importChanged": async (uri?: vscode.Uri, uris?: vscode.Uri[]) =>
       importFiles(uri, uris, true),
+    "ibcmd.objects.export": async (node, selection) =>
+      runExport(false, node, selection),
+    "ibcmd.objects.exportChanged": async () => runExport(true),
+    "ibcmd.objects.exportGroup": async () =>
+      runExport(false, undefined, undefined, true),
     "ibcmd.objects.refresh": async () => {
       if (client && folder && selected)
         await objects.refresh(client, folder, selected.id);
@@ -705,6 +779,11 @@ export async function activate(context: vscode.ExtensionContext) {
       });
       if (password === undefined) return;
     }
+    const local = readLocal(expected, old?.id);
+    if (old?.source === "rows-dir" && !local && !old.rowsDir)
+      throw new Error(
+        "Inherited rows directory is missing; reload before editing",
+      );
     const database: Database = {
       ...(server?.trim() ? { server: server.trim() } : {}),
       name: name.trim(),
@@ -716,7 +795,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const validator = new RpcClient(executable(), f.uri.fsPath);
     try {
       await validator.request("initialize", {
-        protocolVersion: "1.3",
+        protocolVersion: PROTOCOL_VERSION,
         workspaceFolder: f.uri.fsPath,
         infobases: [
           {

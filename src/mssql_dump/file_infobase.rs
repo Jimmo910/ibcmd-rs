@@ -5,7 +5,7 @@
 //! `ibcmd-filedb`'s.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -13,6 +13,76 @@ use ibcmd_filedb::{ConfigRow, FileDb};
 
 use super::offline_rows::OfflineRows;
 use super::{STAGE_COMMIT_ROW, STAGE_INVENTORY_ROW, STAGE_NEW_SUFFIX};
+
+#[cfg(test)]
+thread_local! {
+    static FRESH_LOADS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+pub(super) fn fresh_load_count() -> usize {
+    FRESH_LOADS.with(std::cell::Cell::get)
+}
+
+thread_local! {
+    // Only the synchronous operation's worker reuses rows. ACTIVE and overlays
+    // are still installed under each existing engine lock, never held here.
+    static READ_SCOPE: std::cell::RefCell<Option<(PathBuf, Arc<OfflineRows>)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Reuse raw file-table reads within one editor operation, never across requests.
+/// Begin under the engine lock. Drop BEFORE final independent inventory validation.
+/// Nested scopes are refused so final validation cannot restore an older snapshot.
+pub(crate) struct FileDbReadScope {
+    _same_thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+impl FileDbReadScope {
+    pub(crate) fn begin(path: &Path) -> Result<Self> {
+        crate::cancel::check()?;
+        if READ_SCOPE.with(|scope| scope.borrow().is_some()) {
+            bail!("nested file database read scopes are not supported");
+        }
+        let key = std::fs::canonicalize(ibcmd_filedb::data_file(path))?;
+        let rows = Arc::new(load(&key)?);
+        crate::cancel::check()?;
+        READ_SCOPE.with(|scope| *scope.borrow_mut() = Some((key, rows)));
+        Ok(Self {
+            _same_thread: std::marker::PhantomData,
+        })
+    }
+}
+impl Drop for FileDbReadScope {
+    fn drop(&mut self) {
+        READ_SCOPE.with(|scope| {
+            scope.borrow_mut().take();
+        });
+    }
+}
+
+/// A cache hit only for the exact physical data-file selector of this operation.
+/// Another DB is read freshly and cannot replace the operation's snapshot.
+pub(super) fn read_rows(path: &Path) -> Result<Arc<OfflineRows>> {
+    crate::cancel::check()?;
+    let key = std::fs::canonicalize(ibcmd_filedb::data_file(path))?;
+    let cached = READ_SCOPE.with(|scope| {
+        scope
+            .borrow()
+            .as_ref()
+            .filter(|(source, _)| source == &key)
+            .map(|(_, rows)| rows.clone())
+    });
+    if let Some(rows) = cached {
+        crate::cancel::check()?;
+        return Ok(rows);
+    }
+    let rows = Arc::new(load(&key)?);
+    crate::cancel::check()?;
+    Ok(rows)
+}
+
+#[cfg(test)]
+pub(super) fn read_scope_active() -> bool {
+    READ_SCOPE.with(|scope| scope.borrow().is_some())
+}
 
 /// The `CONFIG` table of a file infobase alone, as offline rows: the
 /// database configuration (`config save --db`).
@@ -37,6 +107,9 @@ fn open(db_path: &Path) -> Result<FileDb> {
 
 /// The configuration a file infobase publishes, as offline rows.
 pub(super) fn load(db_path: &Path) -> Result<OfflineRows> {
+    crate::cancel::check()?;
+    #[cfg(test)]
+    FRESH_LOADS.with(|count| count.set(count.get() + 1));
     Ok(load_with_stored_names(db_path)?.0)
 }
 

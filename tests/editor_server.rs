@@ -315,14 +315,14 @@ fn serve_speaks_the_protocol_and_its_lifecycle() {
     assert_eq!(server.error("initialize", json!({})), -32602);
     let refused = server.call("initialize", json!({"protocolVersion": "2.0"}));
     assert_eq!(refused["error"]["code"], -32010);
-    assert_eq!(refused["error"]["data"]["serverProtocolVersion"], "1.3");
+    assert_eq!(refused["error"]["data"]["serverProtocolVersion"], "1.4");
     assert_eq!(
-        server.error("initialize", json!({"protocolVersion": "1.4"})),
+        server.error("initialize", json!({"protocolVersion": "1.5"})),
         -32010
     );
 
     let initialized = server.ok("initialize", corpus.initialize_params());
-    assert_eq!(initialized["protocolVersion"], "1.3");
+    assert_eq!(initialized["protocolVersion"], "1.4");
     assert_eq!(initialized["serverInfo"]["name"], "ibcmd-rs");
     assert_eq!(
         initialized["serverInfo"]["version"],
@@ -334,6 +334,7 @@ fn serve_speaks_the_protocol_and_its_lifecycle() {
         "tree/children",
         "objects/status",
         "objects/export",
+        "objects/exportPlan",
         "objects/import",
         "source/read",
         "config/pending",

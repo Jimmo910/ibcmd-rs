@@ -24,7 +24,7 @@
   },
   "scripts": {
     "compile": "tsc -p .",
-    "test": "npm run compile && node --test test/object-status.test.js test/core.test.js test/real.test.js test/import.test.js test/connection.test.js test/object-view.test.js test/configuration-tree.test.js test/database-files.test.js test/apply.test.js",
+    "test": "npm run compile && node --test test/object-status.test.js test/core.test.js test/real.test.js test/import.test.js test/connection.test.js test/object-view.test.js test/configuration-tree.test.js test/database-files.test.js test/apply.test.js test/export.test.js",
     "test:host": "npm run bundle && node test/host.js",
     "format": "prettier --write src test scripts/*.cjs package.json tsconfig.json",
     "format:check": "prettier --check src test scripts/*.cjs package.json tsconfig.json",
@@ -107,6 +107,18 @@
       {
         "command": "ibcmd.apply",
         "title": "ibcmd-rs: Apply CONFIGSAVE"
+      },
+      {
+        "command": "ibcmd.objects.export",
+        "title": "ibcmd-rs: Выгрузить из базы"
+      },
+      {
+        "command": "ibcmd.objects.exportChanged",
+        "title": "ibcmd-rs: Выгрузить изменённые из базы"
+      },
+      {
+        "command": "ibcmd.objects.exportGroup",
+        "title": "ibcmd-rs: Выгрузить группу из базы"
       }
     ],
     "configuration": {
@@ -208,6 +220,12 @@
             "type": "string"
           },
           "description": "Absolute native ibcmd executable paths keyed by bound platform version. File-db apply only; user must verify each executable matches the bound platform."
+        },
+        "ibcmd.exportCacheDirectory": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Absolute staging directory outside sourceDirectory. Export plans are retained for inspection and Trash cleanup."
         }
       }
     },
@@ -248,6 +266,16 @@
         {
           "command": "ibcmd.source.compare",
           "when": "view == ibcmd.configuration && viewItem != ibcmd.property"
+        },
+        {
+          "command": "ibcmd.objects.export",
+          "when": "view == ibcmd.objects && viewItem == ibcmd.object",
+          "group": "ibcmd@1"
+        },
+        {
+          "command": "ibcmd.objects.exportGroup",
+          "when": "view == ibcmd.objects",
+          "group": "ibcmd@2"
         }
       ],
       "view/title": [
@@ -275,6 +303,16 @@
           "group": "navigation",
           "command": "ibcmd.tree.search",
           "when": "view == ibcmd.configuration"
+        },
+        {
+          "command": "ibcmd.objects.exportChanged",
+          "when": "view == ibcmd.objects",
+          "group": "ibcmd@1"
+        },
+        {
+          "command": "ibcmd.objects.exportGroup",
+          "when": "view == ibcmd.objects",
+          "group": "ibcmd@2"
         }
       ]
     },

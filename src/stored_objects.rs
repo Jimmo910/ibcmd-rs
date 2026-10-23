@@ -31,7 +31,13 @@
 //! views, the platform it noted, `crate::cancel`), so the operations of a
 //! [`StoredConfiguration`] take one lock and run one at a time.
 
+mod editor_export;
 mod version_status;
+
+#[cfg(test)]
+thread_local! {
+    static EXPORTED_FILE_PATHS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -1153,6 +1159,8 @@ impl StoredConfiguration {
             },
         )?;
         let files = std::mem::take(&mut *sink.files.lock().unwrap_or_else(PoisonError::into_inner));
+        #[cfg(test)]
+        EXPORTED_FILE_PATHS.with(|paths| *paths.borrow_mut() = files.keys().cloned().collect());
         Ok(files)
     }
 
