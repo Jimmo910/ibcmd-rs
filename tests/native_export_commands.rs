@@ -216,6 +216,145 @@ fn malformed_status_and_invalid_file_target_match_native_exit_codes() {
     let error = run(&db, &["status"], &[opt("base", &base), opt("out", &target)]);
     assert_eq!(error.status.code(), Some(FAILED));
     assert_eq!(error.stderr,"[ERROR] Операция невозможна, при вычислении изменений конфигурации информационной базы относительно ранее сохраненного состояния обнаружены ошибки: Ошибка приемника потока\n".as_bytes());
+    assert!(!fs::read_dir(&root).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".ibcmd-export-")
+    }));
+}
+
+#[test]
+fn status_directory_target_does_not_mask_input_or_inventory_errors() {
+    let (root, db) = lab("status-error-order");
+    let target = root.join("out");
+    fs::create_dir(&target).unwrap();
+    let base = root.join("base.xml");
+    for contents in [None, Some(b"invalid inventory".as_slice())] {
+        if let Some(contents) = contents {
+            fs::write(&base, contents).unwrap();
+        }
+        let ordinary = run(&db, &["status"], &[opt("base", &base)]);
+        let directory = run(&db, &["status"], &[opt("base", &base), opt("out", &target)]);
+        assert_eq!(ordinary.status.code(), Some(FAILED));
+        assert_eq!(directory.status.code(), Some(FAILED));
+        assert_eq!(directory.stderr, ordinary.stderr);
+        assert!(!String::from_utf8_lossy(&directory.stderr).contains("Ошибка приемника потока"));
+    }
+    let bad = root.join("malformed.1CD");
+    fs::write(&bad, b"not a database").unwrap();
+    let ordinary = run(&bad, &["status"], &[opt("base", &base)]);
+    let directory = run(
+        &bad,
+        &["status"],
+        &[opt("base", &base), opt("out", &target)],
+    );
+    assert_eq!(directory.status.code(), Some(FAILED));
+    assert_eq!(directory.stderr, ordinary.stderr);
+    assert!(tree(&target).is_empty());
+    assert!(!fs::read_dir(&root).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".ibcmd-export-")
+    }));
+}
+
+#[test]
+fn sync_failure_has_no_success_period_before_error_suffix() {
+    let (root, db) = lab("sync-failure-punctuation");
+    let target = root.join("out");
+    fs::create_dir(&target).unwrap();
+    let output = run(&db, &[], &["--sync".into(), target.into_os_string()]);
+    assert_eq!(output.status.code(), Some(FAILED));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.ends_with("завершен с ошибкой\n"), "{stderr}");
+    assert!(!stderr.contains("завершен. с ошибкой"));
+}
+
+#[test]
+fn query_file_target_never_reinterprets_directory_required_spelling() {
+    let (root, db) = lab("query-directory-spelling");
+    let base = root.join("base.xml");
+    fs::write(&base, run(&db, &["info"], &[]).stdout).unwrap();
+    let sentinel = root.join("sentinel.txt");
+    fs::write(&sentinel, b"untouched").unwrap();
+    let absent = root.join("must-not-exist");
+    let separators = if cfg!(windows) {
+        vec!["/", "\\"]
+    } else {
+        vec!["/"]
+    };
+    for target in [&sentinel, &absent] {
+        for separator in &separators {
+            for suffix in [format!("{separator}."), separator.to_string()] {
+                let mut spelling = target.as_os_str().to_owned();
+                spelling.push(suffix);
+                let output = run(
+                    &db,
+                    &["status"],
+                    &[opt("base", &base), opt("out", Path::new(&spelling))],
+                );
+                assert_eq!(output.status.code(), Some(FAILED));
+            }
+        }
+    }
+    let traversal = root.join("missing/../sentinel.txt");
+    let output = run(
+        &db,
+        &["status"],
+        &[opt("base", &base), opt("out", &traversal)],
+    );
+    assert_eq!(output.status.code(), Some(FAILED));
+    assert_eq!(fs::read(&sentinel).unwrap(), b"untouched");
+    assert!(!absent.exists());
+    assert!(!root.join("missing").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn query_output_resolves_directory_aliases_but_rejects_leaf_links() {
+    use std::os::unix::fs::symlink;
+    let (root, db) = lab("query-alias");
+    let real = root.join("real");
+    let alias = root.join("alias");
+    fs::create_dir_all(real.join("info")).unwrap();
+    symlink(&real, &alias).unwrap();
+    let info = run(&db, &["info"], &[opt("out", &alias.join("info"))]);
+    ok(&info);
+    let base = real.join("info/ConfigDumpInfo.xml");
+    assert_eq!(
+        fs::read(&base).unwrap(),
+        fs::read(fixture().join("tiny-xml/ConfigDumpInfo.xml")).unwrap()
+    );
+    let target = alias.join("missing/nested/chosen-name.txt");
+    ok(&run(
+        &db,
+        &["status"],
+        &[opt("base", &base), opt("out", &target)],
+    ));
+    assert_eq!(
+        fs::read(real.join("missing/nested/chosen-name.txt")).unwrap(),
+        b"\xef\xbb\xbf"
+    );
+    let sentinel = real.join("sentinel");
+    fs::write(&sentinel, b"untouched").unwrap();
+    let linked = alias.join("linked.txt");
+    symlink(&sentinel, &linked).unwrap();
+    let dangling = alias.join("dangling.txt");
+    symlink(real.join("must-not-exist"), &dangling).unwrap();
+    for leaf in [&linked, &dangling] {
+        let output = run(&db, &["status"], &[opt("base", &base), opt("out", leaf)]);
+        assert_eq!(output.status.code(), Some(FAILED));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("linked output path is not allowed")
+        );
+        assert!(fs::symlink_metadata(leaf).unwrap().file_type().is_symlink());
+    }
+    assert_eq!(fs::read(&sentinel).unwrap(), b"untouched");
+    assert!(!real.join("must-not-exist").exists());
 }
 
 fn recorded_lab(case: &str) -> (PathBuf, PathBuf, PathBuf) {
@@ -448,6 +587,7 @@ fn empty_published_inventory_matches_native_and_malformed_nonempty_stays_closed(
     }
     // Default platform resolution must also tolerate a genuinely empty table.
     let output = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+        .env_remove("IBCMD_RS_PLATFORM")
         .args(["infobase", "config", "export", "info"])
         .arg(opt("db-path", &db))
         .output()

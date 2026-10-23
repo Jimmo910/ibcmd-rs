@@ -38,3 +38,12 @@ Private ERP read-only evidence on native 8.5.1.1592: 105,253 top-level versioned
 entries (214,747 Metadata elements including nested parts), all 105,253 mapped
 by these descriptor/owner rules, zero unmapped. XML bytes and database remain
 private; only aggregate counts are published.
+
+
+For CLI `info --out` and `status --out`, explicitly selected parent directory
+aliases are resolved before publication; missing status parent directories are
+created below that resolved parent. A linked final file is refused. Use a plain
+file path for status: parent traversal (`..`) and terminal directory syntax
+(a separator or `/.`) are refused rather than rewritten as a file target.
+Object export keeps its strict linked-component checks. These path checks do
+not claim safety against hostile concurrent replacement of parent directories.

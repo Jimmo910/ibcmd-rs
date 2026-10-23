@@ -45,7 +45,15 @@ pub fn status(current: &[u8], base: &[u8], short: bool) -> Result<String> {
 /// Refuse linked path components and publish through a new sibling file.
 /// The final rename replaces a destination entry without following it.
 pub(crate) fn guarded_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    use std::{fs, io::Write};
+    use std::io::Write;
+    guarded_write_with(path, |file| file.write_all(bytes))
+}
+
+fn guarded_write_with(
+    path: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<()> {
+    use std::fs;
     let parent = path.parent().context("output file has no parent")?;
     for component in path.ancestors() {
         match fs::symlink_metadata(component) {
@@ -71,9 +79,22 @@ pub(crate) fn guarded_write(path: &Path, bytes: &[u8]) -> Result<()> {
         .create_new(true)
         .write(true)
         .open(&staging)?;
-    file.write_all(bytes)?;
-    drop(file);
-    fs::rename(&staging, path).with_context(|| format!("failed to publish {}", path.display()))
+    let written = write(&mut file);
+    drop(file); // Windows must close the owned staging handle before cleanup.
+    let result = written.map_err(anyhow::Error::from).and_then(|()| {
+        fs::rename(&staging, path).with_context(|| format!("failed to publish {}", path.display()))
+    });
+    if result.is_err()
+        && let Err(cleanup) = fs::remove_file(&staging)
+    {
+        return result.with_context(|| {
+            format!(
+                "could not remove staging file {}: {cleanup}",
+                staging.display()
+            )
+        });
+    }
+    result
 }
 
 struct ObjectSink {
@@ -129,4 +150,46 @@ pub fn objects(args: &InfobaseConfigExportArgs, names: &[String], recursive: boo
         },
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+    use std::{
+        fs,
+        io::{self, Write},
+    };
+
+    fn root() -> PathBuf {
+        let root = std::env::temp_dir().join(format!("export-write-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::canonicalize(root).unwrap()
+    }
+
+    #[test]
+    fn partial_write_failure_removes_owned_staging_and_preserves_destination() {
+        let root = root();
+        let target = root.join("status.txt");
+        fs::write(&target, b"original").unwrap();
+        let error = guarded_write_with(&target, |file| {
+            file.write_all(b"partial")?;
+            Err(io::Error::other("injected write failure"))
+        })
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("injected write failure"));
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn failed_rename_removes_owned_staging_and_preserves_directory() {
+        let root = root();
+        let target = root.join("directory");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep"), b"original").unwrap();
+        let error = guarded_write(&target, b"replacement").unwrap_err();
+        assert!(format!("{error:#}").contains("failed to publish"));
+        assert_eq!(fs::read(target.join("keep")).unwrap(), b"original");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    }
 }

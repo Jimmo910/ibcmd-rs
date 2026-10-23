@@ -5,7 +5,11 @@ use super::{
 };
 use crate::infobase::export_commands;
 use anyhow::Result;
-use std::{fs, io::Write};
+use std::{
+    fs,
+    io::Write,
+    path::{Component, Path, PathBuf},
+};
 
 pub(super) fn run(mut request: ExportQueryRequest) -> i32 {
     let kind = request.kind;
@@ -59,9 +63,17 @@ pub(super) fn run(mut request: ExportQueryRequest) -> i32 {
                     "output directory does not exist: {}",
                     out.display()
                 );
-                export_commands::guarded_write(&out.join("ConfigDumpInfo.xml"), &bytes)?;
+                let path = query_output_path(&out.join("ConfigDumpInfo.xml"))?;
+                export_commands::guarded_write(&path, &bytes)?;
             } else {
-                export_commands::guarded_write(out, &bytes)?;
+                let path = query_output_path(out)?;
+                export_commands::guarded_write(&path, &bytes).map_err(|error| {
+                    if error.downcast_ref::<std::io::Error>().is_some() && path.is_dir() {
+                        anyhow::anyhow!("Операция невозможна, при вычислении изменений конфигурации информационной базы относительно ранее сохраненного состояния обнаружены ошибки: Ошибка приемника потока")
+                    } else {
+                        error
+                    }
+                })?;
             }
         } else {
             let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
@@ -101,16 +113,68 @@ pub(super) fn run(mut request: ExportQueryRequest) -> i32 {
                     "[ERROR] Операция невозможна, при выполнении экспорта объектов конфигурации в XML обнаружены ошибки: Объект метаданных {} не существует в конфигурации.",
                     unknown.0
                 );
-            } else if kind == ExportQueryKind::Status
-                && request.out.as_ref().is_some_and(|out| out.is_dir())
-            {
-                eprintln!(
-                    "[ERROR] Операция невозможна, при вычислении изменений конфигурации информационной базы относительно ранее сохраненного состояния обнаружены ошибки: Ошибка приемника потока"
-                );
             } else {
                 eprintln!("[ERROR] {error:#}");
             }
             EXIT_FAILED
         }
     }
+}
+
+/// A query destination is explicitly selected by the caller. Resolve directory
+/// aliases (including macOS /tmp) but never follow the final file entry. Objects
+/// retain their separate, strict root-containment checks.
+fn query_output_path(path: &Path) -> Result<PathBuf> {
+    anyhow::ensure!(
+        !path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir)),
+        "parent traversal in output path is not allowed"
+    );
+    let spelling = path.as_os_str().as_encoded_bytes();
+    anyhow::ensure!(
+        spelling != b"."
+            && !spelling.ends_with(b"/.")
+            && !(cfg!(windows) && spelling.ends_with(b"\\.")),
+        "output file path ends with a directory component"
+    );
+    let last = spelling.last().copied();
+    anyhow::ensure!(
+        last != Some(b'/') && !(cfg!(windows) && last == Some(b'\\')),
+        "output file path ends with a directory separator"
+    );
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let leaf = absolute
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("output file has no name"))?;
+    let mut parent = absolute
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("output file has no parent"))?;
+    let mut missing = Vec::new();
+    loop {
+        match fs::symlink_metadata(parent) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(
+                    parent
+                        .file_name()
+                        .ok_or_else(|| anyhow::anyhow!("output parent has no name"))?,
+                );
+                parent = parent
+                    .parent()
+                    .ok_or_else(|| anyhow::anyhow!("output parent has no ancestor"))?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let mut resolved = fs::canonicalize(parent)?;
+    for part in missing.into_iter().rev() {
+        resolved.push(part);
+    }
+    resolved.push(leaf);
+    Ok(resolved)
 }

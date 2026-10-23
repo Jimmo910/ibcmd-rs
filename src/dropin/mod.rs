@@ -490,7 +490,11 @@ impl Operation {
         for line in message.lines() {
             eprintln!("[ERROR] {line}");
         }
-        eprintln!("[ERROR] {} {} с ошибкой", self.title, self.ended);
+        eprintln!(
+            "[ERROR] {} {} с ошибкой",
+            self.title,
+            self.ended.trim_end_matches('.')
+        );
         self.record_failure(message, report);
         EXIT_FAILED
     }

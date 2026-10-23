@@ -1057,6 +1057,69 @@ fn format_config_dump_info_xml(
     Ok(ConfigDumpInfo::native(version, metadata).to_native_bytes()?)
 }
 
+struct InventorySink(Mutex<Option<Vec<u8>>>);
+impl FileSink for InventorySink {
+    fn inventory_only(&self) -> bool {
+        true
+    }
+    fn accept(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+        if path
+            .file_name()
+            .is_some_and(|name| name == CONFIG_DUMP_INFO_FILE_NAME)
+        {
+            *self
+                .0
+                .lock()
+                .map_err(|_| anyhow!("inventory sink poisoned"))? = Some(bytes.to_vec());
+        }
+        Ok(())
+    }
+}
+
+/// Reads ConfigDumpInfo using the export's view and exact XML writer. No files
+/// are written. `main_configuration` selects completed ConfigSave over Config;
+/// this does not change the editor's custom byte-diff or raw Config APIs.
+pub fn read_config_dump_info(args: &MssqlDumpConfigArgs) -> Result<Vec<u8>> {
+    read_config_dump_info_with_sql(args, None)
+}
+
+pub(crate) fn read_config_dump_info_with_sql(
+    args: &MssqlDumpConfigArgs,
+    sql: Option<crate::sql::SqlExec>,
+) -> Result<Vec<u8>> {
+    if args.runtime_journal.is_some()
+        || args.inflate
+        || !args.file_names.is_empty()
+        || !args.file_name_lists.is_empty()
+        || !args.objects.is_empty()
+        || args.include_config_save
+        || args.base.is_some()
+        || args.sync
+        || !args.extract_metadata_xml
+        || !args.extract_module_text
+    {
+        bail!(
+            "ConfigDumpInfo requires an unfiltered read-only inventory without runtime_journal or inflate"
+        );
+    }
+    let sink = Arc::new(InventorySink(Mutex::new(None)));
+    dump_config_with(
+        args,
+        DumpHooks {
+            sql,
+            sink: Some(sink.clone()),
+            object_recursion: None,
+            native_versions: false,
+        },
+    )?;
+    let bytes = sink
+        .0
+        .lock()
+        .map_err(|_| anyhow!("inventory sink poisoned"))?
+        .take();
+    bytes.ok_or_else(|| anyhow!("configuration inventory was not emitted"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1245,67 +1308,4 @@ mod tests {
         let row = encoder.finish().unwrap();
         assert!(parse_versions_blob(&row, VersionsBlobOrigin::MssqlConfigTable).is_err());
     }
-}
-
-struct InventorySink(Mutex<Option<Vec<u8>>>);
-impl FileSink for InventorySink {
-    fn inventory_only(&self) -> bool {
-        true
-    }
-    fn accept(&self, path: &Path, bytes: &[u8]) -> Result<()> {
-        if path
-            .file_name()
-            .is_some_and(|name| name == CONFIG_DUMP_INFO_FILE_NAME)
-        {
-            *self
-                .0
-                .lock()
-                .map_err(|_| anyhow!("inventory sink poisoned"))? = Some(bytes.to_vec());
-        }
-        Ok(())
-    }
-}
-
-/// Reads ConfigDumpInfo using the export's view and exact XML writer. No files
-/// are written. `main_configuration` selects completed ConfigSave over Config;
-/// this does not change the editor's custom byte-diff or raw Config APIs.
-pub fn read_config_dump_info(args: &MssqlDumpConfigArgs) -> Result<Vec<u8>> {
-    read_config_dump_info_with_sql(args, None)
-}
-
-pub(crate) fn read_config_dump_info_with_sql(
-    args: &MssqlDumpConfigArgs,
-    sql: Option<crate::sql::SqlExec>,
-) -> Result<Vec<u8>> {
-    if args.runtime_journal.is_some()
-        || args.inflate
-        || !args.file_names.is_empty()
-        || !args.file_name_lists.is_empty()
-        || !args.objects.is_empty()
-        || args.include_config_save
-        || args.base.is_some()
-        || args.sync
-        || !args.extract_metadata_xml
-        || !args.extract_module_text
-    {
-        bail!(
-            "ConfigDumpInfo requires an unfiltered read-only inventory without runtime_journal or inflate"
-        );
-    }
-    let sink = Arc::new(InventorySink(Mutex::new(None)));
-    dump_config_with(
-        args,
-        DumpHooks {
-            sql,
-            sink: Some(sink.clone()),
-            object_recursion: None,
-            native_versions: false,
-        },
-    )?;
-    let bytes = sink
-        .0
-        .lock()
-        .map_err(|_| anyhow!("inventory sink poisoned"))?
-        .take();
-    bytes.ok_or_else(|| anyhow!("configuration inventory was not emitted"))
 }

@@ -2,4 +2,4 @@
 - [x] Implement parser and common inventory/object pipeline.
 - [x] Differential tests for stdout, files, errors, add/delete/rename/recursion and base/sync.
 - [x] Measure private ERP copy and publish aggregate evidence only.
-- [ ] Run required checks and independent review at final head.
+- [x] Run required checks and independent review at final head.
