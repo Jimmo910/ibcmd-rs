@@ -889,7 +889,7 @@ fn resolve_connection_with(
         // A PostgreSQL server may log the user in without one (`trust` in
         // pg_hba.conf); it asks for a password when it wants one
         // (`sql::postgres`).
-        Some(_) if is_postgres(&dbms) => {
+        _ if is_postgres(&dbms) => {
             resolve_optional_password(request.db_pwd, &settings, request.db_pwd_env, &mut defaults)?
         }
         Some(_) => resolve_password(request.db_pwd, &settings, request.db_pwd_env, &mut defaults)?,
@@ -1587,6 +1587,20 @@ mod tests {
             config.legacy_source_version().unwrap(),
             InfobaseConfigSourceVersion::V2_20
         );
+    }
+
+    #[test]
+    fn postgres_default_user_keeps_an_explicit_password() {
+        let scratch = Scratch::new("postgres-default-password");
+        let load = settings_in(&scratch.0, &[]);
+        let mut args = export_args("disposable_pg");
+        args.dbms = Some("PostgreSQL".into());
+        args.platform = Some(crate::platform::parse("8.3.27").unwrap());
+        args.db_pwd = Some("synthetic-secret".into());
+        let config = resolve_connection_with(args.connection(), &load).unwrap();
+        let target = config.postgres().unwrap().unwrap();
+        assert_eq!(target.user, "postgres");
+        assert_eq!(target.password.as_deref(), Some("synthetic-secret"));
     }
 
     #[test]

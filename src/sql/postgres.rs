@@ -192,7 +192,7 @@ impl PgConnection {
         let salt = base64_decode(field("s=")?)?;
         let iterations: u32 = field("i=")?.parse().context("SCRAM iteration count")?;
 
-        let salted = pbkdf2_sha256(password.as_bytes(), &salt, iterations);
+        let salted = scram_salted_password(password, &salt, iterations);
         let client_key = hmac_sha256(&salted, b"Client Key");
         let stored_key = Sha256::digest(client_key);
         let without_proof = format!("c=biws,r={server_nonce}");
@@ -444,6 +444,13 @@ fn base64_decode(text: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+fn scram_salted_password(password: &str, salt: &[u8], iterations: u32) -> [u8; 32] {
+    // PostgreSQL uses the original bytes when SASLprep rejects a password.
+    // See its SASL authentication contract, rather than rejecting such users.
+    let prepared = stringprep::saslprep(password).unwrap_or_else(|_| password.into());
+    pbkdf2_sha256(prepared.as_bytes(), salt, iterations)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,6 +475,32 @@ mod tests {
         assert_eq!(decode_bytea(b"00ff").unwrap(), vec![0, 255]);
         assert!(decode_bytea(b"0g").is_err());
         assert!(decode_bytea(b"\\x0").is_err());
+    }
+
+    #[test]
+    fn scram_password_uses_saslprep_before_hashing() {
+        for (password, prepared) in [
+            ("I\u{00ad}X", "IX"),
+            ("user\u{00a0}name", "user name"),
+            ("\u{2168}", "IX"),
+        ] {
+            assert_eq!(
+                scram_salted_password(password, b"synthetic-salt", 2),
+                pbkdf2_sha256(prepared.as_bytes(), b"synthetic-salt", 2),
+                "password {password:?} must use the PostgreSQL normalization",
+            );
+        }
+    }
+
+    #[test]
+    fn scram_prohibited_password_falls_back_to_the_original_bytes() {
+        // PostgreSQL deliberately accepts these passwords without SASLprep.
+        for password in ["control\u{0007}", "\u{0627}a\u{0628}"] {
+            assert_eq!(
+                scram_salted_password(password, b"synthetic-salt", 2),
+                pbkdf2_sha256(password.as_bytes(), b"synthetic-salt", 2),
+            );
+        }
     }
 
     #[test]
