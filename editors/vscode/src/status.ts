@@ -2,9 +2,9 @@ export interface Base {
   id: string;
   name: string;
   server?: string;
+  rowsDir?: string;
   platform: string;
   source: string;
-  rowsDir?: string;
   mask: boolean;
 }
 export interface Metadata {

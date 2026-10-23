@@ -26,18 +26,22 @@ export function editConfig(
   oldId: string | undefined,
   database: Database,
 ): string {
-  const keys: (keyof Database)[] = ["name", "platform"];
-  if (database["rows-dir"] !== undefined) keys.push("rows-dir");
-  if (database.server !== undefined || database["rows-dir"] === undefined)
-    keys.push("server");
-
-  for (const key of keys) {
+  const required: (keyof Database)[] = ["name", "platform"];
+  if (database["rows-dir"] !== undefined) required.push("rows-dir");
+  for (const key of required) {
     if (typeof database[key] !== "string" || !database[key]!.trim())
       throw new Error(`${key} is required`);
   }
   if (database.name.includes("*"))
     throw new Error("New connections must name one database");
   const bases = readConfig(text);
+  if (
+    "db-path" in database ||
+    (oldId && bases.some((b) => idOf(b) === oldId && "db-path" in b))
+  )
+    throw new Error(
+      "File database connections cannot be changed by the SQL connection editor",
+    );
   const matches = bases
     .map((b, i) => (idOf(b) === oldId ? i : -1))
     .filter((i) => i >= 0);
@@ -52,8 +56,9 @@ export function editConfig(
       text +
       (text.endsWith("\n") || !text ? "" : "\n") +
       "\n[[database]]\n" +
-      keys
-        .map((k) => `${k} = ${quote(database[k as keyof Database]!)}\n`)
+      (["server", "name", "platform", "rows-dir"] as const)
+        .filter((k) => database[k] !== undefined)
+        .map((k) => `${k} = ${quote(database[k]!)}\n`)
         .join("");
     readConfig(next);
     return next;
@@ -74,11 +79,20 @@ export function editConfig(
     );
   const edits: { start: number; end: number; text: string }[] = [];
   const missing: string[] = [];
+  const keys: (keyof Database)[] = ["server", "name", "platform"];
+  if (database["rows-dir"] !== undefined) keys.push("rows-dir");
   for (const k of keys) {
     const field = table.body.find(
       (n) => n.key.keys.length === 1 && getStaticTOMLValue(n.key)[0] === k,
     );
-    if (field)
+    if (database[k] === undefined) {
+      if (field)
+        edits.push({
+          start: field.range[0] + bom,
+          end: field.range[1] + bom,
+          text: "",
+        });
+    } else if (field)
       edits.push({
         start: field.value.range[0] + bom,
         end: field.value.range[1] + bom,

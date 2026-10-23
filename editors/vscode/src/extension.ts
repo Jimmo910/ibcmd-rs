@@ -147,6 +147,10 @@ export async function activate(context: vscode.ExtensionContext) {
       if (!generation.current(stamp)) return;
       rpc = await start(f, () => {
         if (generation.current(stamp)) {
+          // Report while this selection owns the failure, before invalidating pending work.
+          void vscode.window.showErrorMessage(
+            safeError(new Error("Connection stopped")),
+          );
           generation.next();
           configuration.disconnect();
           status.text = `$(warning) ${label(f, b)} · ${b.platform} · disconnected · pending unknown`;
@@ -324,8 +328,8 @@ export async function activate(context: vscode.ExtensionContext) {
     const old = existing
       ? await pick(
           f,
-          bases,
-          "Edit connection (inherited entries are copied into workspace TOML)",
+          bases.filter((b) => b.source === "mssql" || b.source === "rows-dir"),
+          "Edit SQL/offline connection (inherited entries are copied into workspace TOML)",
         )
       : undefined;
     if (existing && !old) return;
@@ -337,12 +341,12 @@ export async function activate(context: vscode.ExtensionContext) {
     )
       throw new Error("Save TOML before editing");
     const previous = old ? (metadata(f)[old.id] ?? {}) : {};
-    async function input(prompt: string, value = "") {
+    async function input(prompt: string, value = "", required = true) {
       return vscode.window.showInputBox({
         prompt,
         value,
         ignoreFocusOut: true,
-        validateInput: (v) => (v.trim() ? undefined : "Required"),
+        validateInput: (v) => (!required || v.trim() ? undefined : "Required"),
       });
     }
     const friendly = await input(
@@ -351,16 +355,19 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     if (friendly === undefined) return;
 
-    const rowsDir = old?.source === "rows-dir" ? old.rowsDir : undefined;
-    if (old?.source === "rows-dir" && !rowsDir)
+    const local = readLocal(expected, old?.id);
+    const offline = old?.source === "rows-dir";
+    const rowsDir = offline ? old.rowsDir : undefined;
+    if (offline && !local && !rowsDir)
       throw new Error("Сервер не вернул каталог файлового источника");
-    const server = rowsDir
+    const server = offline
       ? old?.server
       : await input(
-          "SQL Server (host or host\\instance)",
-          old?.server || "localhost",
+          "SQL Server (host or host\\instance; blank inherits settings)",
+          old ? (old.server ?? "") : "localhost",
+          false,
         );
-    if (!rowsDir && server === undefined) return;
+    if (!offline && server === undefined) return;
 
     const name = await input(
       "Database name (one database; no wildcard)",
@@ -372,7 +379,7 @@ export async function activate(context: vscode.ExtensionContext) {
       old?.platform || "8.3.27",
     );
     if (platform === undefined) return;
-    const auth = rowsDir
+    const auth = offline
       ? undefined
       : await vscode.window.showQuickPick(
           [
@@ -384,7 +391,7 @@ export async function activate(context: vscode.ExtensionContext) {
               "Authentication (Windows integrated login requires Windows)",
           },
         );
-    if (!rowsDir && !auth) return;
+    if (!offline && !auth) return;
     let user: string | undefined;
     let password: string | undefined;
     if (auth?.value === "sql") {
@@ -400,12 +407,11 @@ export async function activate(context: vscode.ExtensionContext) {
       if (password === undefined) return;
     }
     const database: Database = {
-      ...(server === undefined ? {} : { server: server.trim() }),
+      ...(server?.trim() ? { server: server.trim() } : {}),
       name: name.trim(),
       platform: platform.trim(),
-      ...(rowsDir ? { "rows-dir": rowsDir } : {}),
+      ...(rowsDir && !local ? { "rows-dir": rowsDir } : {}),
     };
-    const local = readLocal(expected, old?.id);
     const next = editConfig(expected, local ? old?.id : undefined, database);
     // Validate the exact platform with the real server before writing the file. No login/query.
     const validator = new RpcClient(

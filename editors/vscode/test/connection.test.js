@@ -13,18 +13,17 @@ function deferred() {
   return { promise, resolve };
 }
 async function harness({
-  entries,
-  settings = "",
   stored,
   input = async () => "synthetic-new",
   connect = async () => ({}),
   store = async () => {},
+  listed,
+  text = "",
+  initialize = async () => ({}),
 } = {}) {
   const commands = new Map(),
     stores = [],
-    clients = [],
-    initialized = [],
-    errors = [];
+    clients = [];
   const f = {
     name: "fixture",
     uri: {
@@ -37,13 +36,16 @@ async function harness({
     cancel = () => {};
   const noEvent = () => ({ dispose() {} });
   const bases =
-    entries ??
+    listed ??
     ["a", "b"].map((id) => ({
       id,
       name: id,
       source: "mssql",
       platform: "8.3.27",
     }));
+  const saved = [],
+    errors = [],
+    offered = [];
   const values = {
     executable: "synthetic",
     connections: ["a", "b"],
@@ -63,7 +65,8 @@ async function harness({
     },
   };
   class RpcClient {
-    constructor() {
+    constructor(_, __, onCrash = () => {}) {
+      this.onCrash = onCrash;
       this.disposed = false;
       clients.push(this);
     }
@@ -71,23 +74,21 @@ async function harness({
       this.disposed = true;
     }
     async request(method, params, signal) {
-      if (method === "initialize") {
-        initialized.push(params);
-        return {};
-      }
+      if (method === "initialize") return initialize(this, params);
       if (method === "infobases/list") return { infobases: bases };
-      if (method === "infobases/connect") return connect(params, signal);
+      if (method === "infobases/connect")
+        return connect(params, signal, () => this.onCrash());
       return { conclusive: true, pending: false };
     }
   }
   const vscode = {
-    ConfigurationTarget: { WorkspaceFolder: 3 },
     StatusBarAlignment: { Left: 1 },
+    ConfigurationTarget: { WorkspaceFolder: 3 },
     ProgressLocation: { Notification: 1 },
     workspace: {
       isTrusted: true,
-      workspaceFolders: [f],
       textDocuments: [],
+      workspaceFolders: [f],
       getConfiguration: () => ({
         get: (key, fallback) => values[key] ?? fallback,
         update: async (key, value) => {
@@ -112,8 +113,16 @@ async function harness({
     window: {
       createStatusBarItem: () => ({ text: "", show() {}, dispose() {} }),
       showInputBox: input,
-      showQuickPick: async (items) =>
-        (await items).find((item) => item.base.id === picked),
+      showQuickPick: async (items) => {
+        items = await items;
+        offered.push(
+          items.filter((item) => item.base).map((item) => item.base.id),
+        );
+        return (
+          items.find((item) => item.base?.id === picked) ??
+          items.find((item) => item.value === "windows")
+        );
+      },
       showErrorMessage(message) {
         errors.push(message);
       },
@@ -137,10 +146,10 @@ async function harness({
       if (id === "./config")
         return {
           ...require("../out/config"),
-          snapshot: async () => settings,
-          saveConfig: async (_file, expected, next) => {
-            assert.equal(expected, settings);
-            settings = next;
+          snapshot: async () => text,
+          saveConfig: async (_, expected, next) => {
+            assert.equal(expected, text);
+            saved.push(next);
           },
         };
       if (id === "./status") return require("../out/status");
@@ -171,11 +180,14 @@ async function harness({
   return {
     stores,
     clients,
-    initialized,
-    errors,
     values,
-    settings: () => settings,
-    edit: () => commands.get("ibcmd.edit")(),
+    saved,
+    errors,
+    offered,
+    edit: (id) => {
+      picked = id;
+      return commands.get("ibcmd.edit")();
+    },
     status: api.status,
     cancel: () => cancel(),
     select: (id = "a") => {
@@ -185,38 +197,51 @@ async function harness({
   };
 }
 
-test("редактирование унаследованного файлового источника сохраняет rows-dir без запросов SQL", async () => {
+test("редактирование файлового источника сохраняет rows-dir без запросов SQL", async () => {
   const { readConfig, idOf } = require("../out/config");
   for (const server of [undefined, "сервер"]) {
-    const prompts = [];
-    const entry = {
-      id: "a",
-      name: "Архив",
-      server,
-      source: "rows-dir",
-      rowsDir: path.resolve("данные", "Архив"),
-      platform: "8.3.27",
-      mask: false,
-    };
-    const h = await harness({
-      entries: [entry],
-      input: async ({ prompt, value }) => {
-        prompts.push(prompt);
-        return value;
-      },
-    });
-    await h.edit();
-    assert.deepEqual(h.errors, []);
-    const [saved] = readConfig(h.settings());
-    assert.equal(saved["rows-dir"], entry.rowsDir);
-    assert.equal(saved.server, server);
-    assert.equal(saved.name, entry.name);
-    assert.equal(h.stores.length, 0);
-    assert.ok(prompts.every((p) => !p.includes("SQL")));
-    const validation = h.initialized.find((p) => p.infobases);
-    assert.equal(validation.infobases[0].rowsDir, entry.rowsDir);
-    assert.equal(validation.infobases[0].server, server);
-    assert.equal(h.values.connectionMetadata[idOf(saved)].auth, undefined);
+    for (const local of [false, true]) {
+      const prompts = [];
+      const initialized = [];
+      const entry = {
+        name: "Архив",
+        server,
+        source: "rows-dir",
+        rowsDir: path.resolve("данные", "Архив"),
+        platform: "8.3.27",
+        mask: false,
+      };
+      entry.id = idOf(entry);
+      const text = local
+        ? `[[database]]\nname="Архив"\nplatform="8.3.27"\nrows-dir="данные/Архив"\n${server ? 'server="сервер"\n' : ""}`
+        : "";
+      const h = await harness({
+        listed: [entry],
+        text,
+        initialize: async (_, params) => {
+          initialized.push(params);
+          return {};
+        },
+        input: async ({ prompt, value }) => {
+          prompts.push(prompt);
+          return value;
+        },
+      });
+      await h.edit(entry.id);
+      assert.deepEqual(h.errors, []);
+      const [saved] = readConfig(h.saved[0]);
+      assert.equal(saved["rows-dir"], local ? "данные/Архив" : entry.rowsDir);
+      assert.equal(saved.server, server);
+      assert.equal(saved.name, entry.name);
+      assert.equal(h.stores.length, 0);
+      assert.ok(prompts.every((p) => !p.includes("SQL")));
+      const validation = initialized.find((p) => p.infobases);
+      assert.equal(
+        validation.infobases[0].rowsDir,
+        local ? undefined : entry.rowsDir,
+      );
+      assert.equal(h.values.connectionMetadata[idOf(saved)].auth, undefined);
+    }
   }
 });
 test("new password is persisted only after a successful current connect", async () => {
@@ -325,14 +350,127 @@ test("selection change during non-cancellable storage cannot restore stale statu
   assert.ok(h.status().includes(" b ·"));
 });
 test("a stored password is reused without prompting or rewriting on failure", async () => {
+  let prompts = 0;
+  const passwords = [];
   const h = await harness({
     stored: "synthetic-existing",
-    input: () => assert.fail("Unexpected password prompt"),
+    input: async () => {
+      prompts++;
+      return undefined;
+    },
     connect: (params) => {
-      assert.equal(params.password, "synthetic-existing");
+      passwords.push(params.password);
       throw new Error("synthetic rejection");
     },
   });
   await h.select();
+  assert.equal(prompts, 0);
+  assert.deepEqual(passwords, ["synthetic-existing"]);
+  assert.equal(h.stores.length, 0);
+});
+
+test("Edit preserves an omitted inherited server and excludes file databases", async () => {
+  const text =
+    'db-server="effective-host"\n[[database]]\nname="a"\nplatform="8.3.27"\n';
+  const h = await harness({
+    text,
+    listed: [
+      { id: "a", name: "a", platform: "8.3.27", source: "mssql" },
+      { id: "file", name: "file", source: "file-db" },
+      { id: "unknown", name: "unknown", source: "future-source" },
+    ],
+    input: async (options) => {
+      if (options.prompt.startsWith("SQL Server")) {
+        assert.equal(options.value, "");
+        assert.equal(options.validateInput(""), undefined);
+      }
+      return options.value;
+    },
+  });
+  await h.edit("a");
+  assert.deepEqual(h.errors, []);
+  assert.equal(h.saved.length, 1);
+  assert.equal(
+    require("../out/config").readConfig(h.saved[0])[0].server,
+    undefined,
+  );
+  assert.deepEqual(Array.from(h.offered[0]), ["a"]);
+});
+test("Edit copies inherited offline rows with its source intact", async () => {
+  const h = await harness({
+    listed: [
+      {
+        id: "a",
+        name: "a",
+        platform: "8.3.27",
+        source: "rows-dir",
+        rowsDir: "/synthetic/original/rows",
+      },
+    ],
+    input: async (options) => options.value,
+  });
+  await h.edit("a");
+  assert.deepEqual(h.errors, []);
+  assert.equal(h.saved.length, 1);
+  assert.equal(
+    require("../out/config").readConfig(h.saved[0])[0]["rows-dir"],
+    "/synthetic/original/rows",
+  );
+});
+
+test("Edit refuses inherited offline entries without a source directory", async () => {
+  const h = await harness({
+    listed: [{ id: "a", name: "a", platform: "8.3.27", source: "rows-dir" }],
+    input: async (options) => options.value,
+  });
+  await h.edit("a");
+  assert.equal(h.saved.length, 0);
+  assert.equal(h.errors.length, 1);
+});
+
+test("current startup and connect crashes report one sanitized error", async () => {
+  for (const startup of [true, false]) {
+    let initialized = 0;
+    const h = await harness({
+      initialize: async (client) => {
+        if (startup && ++initialized === 2) {
+          client.onCrash();
+          throw new Error("ENOENT synthetic-private-path");
+        }
+        return {};
+      },
+      connect: async (_, __, crash) => {
+        crash();
+        throw new Error("synthetic-private-server-exit");
+      },
+    });
+    await h.select();
+    assert.equal(h.errors.length, 1);
+    assert.ok(!h.errors[0].includes("synthetic-private"));
+    assert.ok(h.status().includes("disconnected"));
+    assert.equal(h.stores.length, 0);
+  }
+});
+test("a late crash from an old connection cannot notify or replace the new selection", async () => {
+  const started = deferred(),
+    finish = deferred();
+  const h = await harness({
+    connect: async (params, _, crash) => {
+      if (params.infobase === "a") {
+        started.resolve();
+        await finish.promise;
+        crash();
+        throw new Error("synthetic old crash");
+      }
+      return {};
+    },
+  });
+  const selecting = h.select();
+  await started.promise;
+  await h.select("b");
+  finish.resolve();
+  await selecting;
+  assert.equal(h.errors.length, 0);
+  assert.ok(h.status().includes(" b ·"));
   assert.equal(h.stores.length, 0);
 });

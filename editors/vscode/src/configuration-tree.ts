@@ -278,9 +278,12 @@ export function descriptor(
   const root = doc.documentElement;
   if (!root || root.localName !== "MetaDataObject")
     throw new Error("Ожидалось описание объекта метаданных");
-  const object = elements(root)[0];
+  const object = elements(root).find(
+    (n) => n.namespaceURI === root.namespaceURI,
+  );
   if (!object || object.localName !== owner.kind)
     throw new Error("Вид объекта не соответствует описанию");
+  const metadataNamespace = object.namespaceURI;
   owner.synonym = synonym(object);
   const folder =
     owner.kind === "Configuration" ? "" : owner.path!.replace(/\.xml$/, "");
@@ -288,7 +291,7 @@ export function descriptor(
     const groups = new Map<string, Node[]>();
     const container = child(e, "ChildObjects");
     for (const item of container ? elements(container) : []) {
-      if (item.namespaceURI !== e.namespaceURI) continue;
+      if (item.namespaceURI !== metadataNamespace) continue;
 
       const kind = item.localName!;
       const embedded = !!child(item, "Properties");

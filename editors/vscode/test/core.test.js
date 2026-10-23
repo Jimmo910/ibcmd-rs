@@ -9,7 +9,7 @@ const {
   saveConfig,
   snapshot,
 } = require("../out/config");
-const { RpcClient } = require("../out/rpc");
+const { RpcClient, serverEnvironment } = require("../out/rpc");
 const { pendingText, Generation } = require("../out/status");
 const database = {
   server: "sql\\instance",
@@ -188,4 +188,89 @@ test("malformed error codes cannot leak server text and terminate the transport"
   } finally {
     await client.dispose();
   }
+});
+
+test("server environment removes Windows case variants without mutating the parent", () => {
+  const source = {
+    IBCMD_DB_PSW: "synthetic",
+    Ibcmd_Db_Psw: "synthetic",
+    ibcmd_rs_config: "synthetic.toml",
+    IBCMD_RS_CONFIG: "synthetic.toml",
+    PATH: "tools",
+    OTHER: "kept",
+  };
+  assert.deepEqual(serverEnvironment(source, "win32"), {
+    PATH: "tools",
+    OTHER: "kept",
+  });
+  assert.equal(source.Ibcmd_Db_Psw, "synthetic");
+  assert.equal(serverEnvironment(source, "darwin").Ibcmd_Db_Psw, "synthetic");
+});
+test("intentional disposal after an RPC failure does not report a crash", async () => {
+  let crashes = 0;
+  const client = new RpcClient(process.execPath, __dirname, () => crashes++, [
+    path.join(__dirname, "fake-server.js"),
+  ]);
+  await assert.rejects(client.request("error"));
+  await client.dispose();
+  await client.dispose();
+  assert.equal(crashes, 0);
+  const crashed = new RpcClient(process.execPath, __dirname, () => crashes++, [
+    path.join(__dirname, "fake-server.js"),
+  ]);
+  await assert.rejects(crashed.request("crash"));
+  await crashed.dispose();
+  assert.equal(crashes, 1);
+});
+test("editing preserves omitted inherited server and copying includes offline rows", () => {
+  const text =
+    '# inherited host\ndb-server="effective-host"\n[[database]]\nname="demo"\nplatform="8.3.27"\n';
+  const result = editConfig(text, "demo", { name: "demo", platform: "8.5.1" });
+  assert.equal(readConfig(result)[0].server, undefined);
+  assert.ok(result.includes('db-server="effective-host"'));
+  const copied = editConfig("", undefined, {
+    name: "offline",
+    platform: "8.3.27",
+    "rows-dir": "/synthetic/inherited/rows",
+  });
+  assert.equal(readConfig(copied)[0]["rows-dir"], "/synthetic/inherited/rows");
+});
+
+test("SQL editor refuses file database selector changes without altering TOML", () => {
+  const text =
+    '[[database]]\nname="file-demo"\nplatform="8.3.27"\ndb-path="protected-filedb"\n';
+  assert.throws(
+    () =>
+      editConfig(text, "file-demo", {
+        server: "sql",
+        name: "file-demo",
+        platform: "8.3.27",
+      }),
+    /File database/,
+  );
+  assert.equal(readConfig(text)[0]["db-path"], "protected-filedb");
+});
+
+test("clearing an explicit server preserves its TOML comments", () => {
+  const text =
+    '[[database]]\nserver="explicit" # keep server explanation\nname="demo"\nplatform="8.3.27"\n';
+  const edited = editConfig(text, "explicit/demo", {
+    name: "demo",
+    platform: "8.3.27",
+  });
+  assert.equal(readConfig(edited)[0].server, undefined);
+  assert.ok(edited.includes("# keep server explanation"));
+});
+
+test("a missing executable rejects initialize and reports one transport crash", async () => {
+  let crashes = 0;
+  const client = new RpcClient(
+    path.join(__dirname, "missing-ibcmd-fixture"),
+    __dirname,
+    () => crashes++,
+    [],
+  );
+  await assert.rejects(client.request("initialize"));
+  await client.dispose();
+  assert.equal(crashes, 1);
 });
