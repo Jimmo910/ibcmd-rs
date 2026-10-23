@@ -470,6 +470,11 @@ pub fn note_export_platform(platform: PlatformSpec) {
     );
 }
 
+/// Restore the oldest registered build's spelling when only a dialect is known.
+pub(crate) fn clear_export_platform() {
+    EXPORT_DEFAULT_BUTTON_IMPORTANCE.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// See [`PlatformSpec::writes_default_button_importance`], for the platform
 /// [`note_export_platform`] recorded.
 pub fn export_writes_default_button_importance() -> bool {
