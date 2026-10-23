@@ -3707,6 +3707,7 @@ struct DumpRowContext<'a> {
     extract_module_text: bool,
     extract_metadata_xml: bool,
     collect_all_source_asset_diagnostics: bool,
+    selected_metadata_validator: Option<&'a model_export::ModelExport>,
     refused_output_paths: &'a ReferenceOutputCollisions,
     module_text_paths: &'a BTreeMap<String, PathBuf>,
     source_assets: &'a BTreeMap<String, SourceAsset>,
@@ -4436,6 +4437,7 @@ fn dump_table_rows_with_options_mode(
         extract_module_text,
         extract_metadata_xml,
         collect_all_source_asset_diagnostics,
+        selected_metadata_validator: None,
         refused_output_paths: &reference_collisions,
         module_text_paths: &module_text_paths,
         source_assets: &source_assets,
@@ -4957,7 +4959,10 @@ fn dump_table_rows_streamed(
     } else {
         None
     };
-    let broad_metadata_indexes_without_command_refs = selected_file_names.is_empty()
+    // Selected native exports validate descriptor values against the model's
+    // root/owned identities even when only one object will be converted.
+    let broad_metadata_indexes_without_command_refs = main_view_selected
+        || selected_file_names.is_empty()
         || selected_configuration_index_needs
             .is_some_and(SourceReferenceIndexNeeds::needs_broad_metadata_without_command_refs)
         || selected_metadata_index_needs
@@ -5256,13 +5261,16 @@ fn dump_table_rows_streamed(
     // a run that fetched part of it stays legacy.
     let plan_started = Instant::now();
     let plan_cpu = process_cpu_ms();
-    let model_plan = (model_export && extract_metadata_xml && broad_metadata_indexes).then(|| {
-        model_export::ModelPlan::new(&metadata_rows, &index_metadata_texts, source_version)
-    });
+    let model_plan =
+        ((model_export || main_view_selected) && extract_metadata_xml && broad_metadata_indexes)
+            .then(|| {
+                model_export::ModelPlan::new(&metadata_rows, &index_metadata_texts, source_version)
+            });
     // The shadow check runs the legacy converters too, so it keeps what
     // they read.
     let modelled = |kinds: &[&str]| {
-        !model_export::shadow()
+        model_export
+            && !model_export::shadow()
             && model_plan
                 .as_ref()
                 .is_some_and(|plan| plan.models_kinds(kinds, &index_metadata_texts))
@@ -5678,7 +5686,11 @@ fn dump_table_rows_streamed(
         .map(|row| (row.file_name.as_str(), row))
         .collect::<BTreeMap<_, _>>();
     let source_asset_discovery_misses = source_asset_discovery_misses(
-        source_asset_metadata_texts,
+        if main_view_selected {
+            selected_metadata_texts
+        } else {
+            source_asset_metadata_texts
+        },
         &file_names.iter().map(String::as_str).collect(),
         &write_rows_by_file_name,
         &command_refs,
@@ -5907,6 +5919,12 @@ fn dump_table_rows_streamed(
     // claims its path alone is still produced.
     let mut source_assets = source_assets;
     let mut source_asset_diagnostics = source_asset_diagnostics;
+    if main_view_selected {
+        // Broad indexes supply references, not extra selected candidates.
+        source_assets.retain(|name, _| file_names.contains(name));
+        source_asset_diagnostics.retain(|name, _| file_names.contains(name));
+    }
+
     for (file_name, message) in
         colliding_source_asset_paths(&source_assets, &source_asset_diagnostics)
     {
@@ -6134,7 +6152,7 @@ fn dump_table_rows_streamed(
     };
     let context = DumpRowContext {
         output: &output,
-        model_export: model.as_ref(),
+        model_export: model.as_ref().filter(|_| model_export),
         eds_export: eds_export.as_ref(),
         type_set_leaves: &type_set_leaves,
         output_dir,
@@ -6145,6 +6163,7 @@ fn dump_table_rows_streamed(
         extract_module_text,
         extract_metadata_xml,
         collect_all_source_asset_diagnostics,
+        selected_metadata_validator: model.as_ref().filter(|_| main_view_selected),
         refused_output_paths: &reference_collisions,
         module_text_paths: &module_text_paths,
         source_assets: &source_assets,
@@ -6291,6 +6310,24 @@ fn dump_table_rows_streamed(
         }
         Ok(())
     })?;
+    // Native object selection must also cover nested descriptors, which the
+    // top-level root inventory intentionally does not count. Diagnostics for
+    // module/body/service rows are not descriptor-conversion failures.
+    if main_view_selected
+        && let Some((_, diagnostic)) = metadata_extraction_diagnostics.iter().find(|(name, _)| {
+            selected_metadata_texts.iter().any(|row| {
+                row.file_name == **name
+                    && ((row.header.is_some() && row.kind.is_some())
+                        || is_configuration_metadata_row(row))
+            })
+        })
+    {
+        bail!(
+            "selected metadata conversion is incomplete: {} ({})",
+            diagnostic.family,
+            diagnostic.code
+        );
+    }
     for (source_row_id, reason) in &source_asset_discovery_misses {
         source_asset_completeness.record_affected_reason(source_asset_audit_entry(
             table,
@@ -7188,6 +7225,25 @@ fn dump_table_row_bytes(
                 context.type_set_leaves,
             )
         };
+        let modelled = context
+            .metadata_texts_by_file_name
+            .get(file_name)
+            .and_then(|row| {
+                context
+                    .selected_metadata_validator
+                    .or(context.model_export)
+                    .and_then(|model| model.export_row(row, bytes))
+            });
+        if context.selected_metadata_validator.is_some()
+            && let Some(Err(error)) = &modelled
+            && error.is::<crate::metadata_model::export::values::UnsupportedDescriptorValue>()
+        {
+            return Err(anyhow!(
+                "selected metadata conversion is incomplete: {error}"
+            ));
+        }
+        // Choosing the legacy writer does not disable semantic validation.
+        let modelled = context.model_export.and(modelled);
         let extracted = if let Some(eds) = context.eds_export
             && let Some(row) = context.metadata_texts_by_file_name.get(file_name)
             && let Some(result) = eds.export_row(file_name, row)
@@ -7216,17 +7272,14 @@ fn dump_table_row_bytes(
                 "output_path_collision",
             ))
         } else if let Some(row) = context.metadata_texts_by_file_name.get(file_name)
-            && let Some(modelled) = context
-                .model_export
-                .and_then(|model| model.export_row(row, bytes))
-                .and_then(|result| match result {
-                    Ok(extracted) => Some(extracted),
-                    Err(error) => {
-                        model_export::report_fallback(file_name, &error);
-                        timings.model_fallback_rows += 1;
-                        None
-                    }
-                })
+            && let Some(modelled) = modelled.and_then(|result| match result {
+                Ok(extracted) => Some(extracted),
+                Err(error) => {
+                    model_export::report_fallback(file_name, &error);
+                    timings.model_fallback_rows += 1;
+                    None
+                }
+            })
         {
             timings.model_metadata_xml_rows += 1;
             timings.model_metadata_xml_convert_us += micros(started);

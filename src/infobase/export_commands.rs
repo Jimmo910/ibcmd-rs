@@ -1,12 +1,13 @@
 //! Native export queries on the common SQL/filedb export pipeline.
 use crate::{
     cli::InfobaseConfigExportArgs,
-    mssql_dump::{DumpHooks, FileSink, dump_config_with},
+    mssql_dump::{DumpHooks, FileSink, SourceAssetCompletenessStatus, dump_config_with},
 };
 use anyhow::{Context, Result};
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 /// Reads only the inventory, retaining the exact shared writer's bytes.
@@ -105,21 +106,90 @@ fn validate_unlinked_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+// Conversion may withhold an unsupported descriptor or resource, or fail
+// after writing another file. Keep the whole selection private until its
+// completeness reports have been checked; retain the writer's disk budget.
 struct ObjectSink {
     root: PathBuf,
+    staging: PathBuf,
+    files: Mutex<BTreeSet<PathBuf>>,
+}
+impl ObjectSink {
+    fn new(root: PathBuf) -> Result<Self> {
+        let staging =
+            std::env::temp_dir().join(format!("ibcmd-selected-export-{}", uuid::Uuid::new_v4()));
+        let builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        let builder = {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut builder = builder;
+            builder.mode(0o700);
+            builder
+        };
+        builder.create(&staging)?;
+        let mut sink = Self {
+            root,
+            staging,
+            files: Mutex::new(BTreeSet::new()),
+        };
+        // Only our private scratch is canonicalized: system temp paths may
+        // contain an alias. The caller's destination retains its link checks.
+        sink.staging = std::fs::canonicalize(&sink.staging)?;
+        Ok(sink)
+    }
+
+    fn publish(&self) -> Result<()> {
+        let files = self.files.lock().unwrap_or_else(|error| error.into_inner());
+        // Check the complete set before replacing even its first file.
+        for relative in files.iter() {
+            let path = self.root.join(relative);
+            validate_unlinked_path(&path)?;
+            if path.is_dir() {
+                anyhow::bail!("object output file is a directory: {}", path.display());
+            }
+            for parent in path.parent().into_iter().flat_map(Path::ancestors) {
+                if parent.exists() && !parent.is_dir() {
+                    anyhow::bail!(
+                        "object output parent is not a directory: {}",
+                        parent.display()
+                    );
+                }
+            }
+        }
+        for relative in files.iter() {
+            crate::cancel::check()?;
+            let mut source = std::fs::File::open(self.staging.join(relative))?;
+            guarded_write_with(&self.root.join(relative), |file| {
+                std::io::copy(&mut source, file).map(|_| ())
+            })?;
+        }
+        Ok(())
+    }
+}
+impl Drop for ObjectSink {
+    fn drop(&mut self) {
+        // This path was created by this request, never supplied by the caller.
+        let _ = std::fs::remove_dir_all(&self.staging);
+    }
 }
 impl FileSink for ObjectSink {
     fn accept(&self, path: &Path, bytes: &[u8]) -> Result<()> {
         let relative = path
             .strip_prefix(&self.root)
             .context("object output escaped its root")?;
-        if relative
-            .components()
-            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        if relative.as_os_str().is_empty()
+            || relative
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
         {
             anyhow::bail!("object output contains an unsafe path component");
         }
-        guarded_write(path, bytes)
+        guarded_write(&self.staging.join(relative), bytes)?;
+        self.files
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(relative.to_path_buf());
+        Ok(())
     }
 }
 
@@ -160,17 +230,42 @@ pub fn objects(args: &InfobaseConfigExportArgs, names: &[String], recursive: boo
         config.legacy_source_version()?,
     );
     dump.objects = names.to_vec();
-    dump_config_with(
+    let sink = Arc::new(ObjectSink::new(root)?);
+    let report = dump_config_with(
         &dump,
         DumpHooks {
             rows_snapshot: None,
             sql: None,
-            sink: Some(Arc::new(ObjectSink { root })),
+            sink: Some(sink.clone()),
             object_recursion: Some(recursive),
             native_versions: false,
         },
     )?;
-    Ok(())
+    anyhow::ensure!(
+        !report.tables.is_empty(),
+        "selected export has no completeness inventory"
+    );
+    for table in &report.tables {
+        let metadata = &table.metadata_root_inventory;
+        anyhow::ensure!(
+            metadata.candidate_set_complete
+                && metadata.missing == 0
+                && metadata.expected == metadata.emitted,
+            "selected metadata conversion is incomplete: {} of {} descriptors missing",
+            metadata.missing,
+            metadata.expected
+        );
+        let assets = &table.source_assets;
+        // A scoped inventory proves this selection, not the rest of CONFIG.
+        anyhow::ensure!(
+            assets.status == SourceAssetCompletenessStatus::Complete,
+            "selected source asset conversion is incomplete: {} opaque, {} missing; candidate set complete={}",
+            assets.opaque,
+            assets.missing,
+            assets.candidate_set_complete
+        );
+    }
+    sink.publish()
 }
 
 #[cfg(test)]
@@ -213,6 +308,30 @@ mod publication_tests {
             "object output directory must not be empty"
         );
         assert!(!db.exists());
+    }
+
+    #[test]
+    fn staged_objects_preflight_every_destination_before_replacing_any_file() {
+        let root = root();
+        let first = root.join("a.txt");
+        fs::write(&first, b"original").unwrap();
+        let blocked = root.join("z.txt");
+        fs::create_dir(&blocked).unwrap();
+        let sink = ObjectSink::new(root.clone()).unwrap();
+        let staging = sink.staging.clone();
+        sink.accept(&first, b"replacement").unwrap();
+        sink.accept(&blocked, b"replacement").unwrap();
+        assert_eq!(fs::read(&first).unwrap(), b"original");
+        let error = sink.publish().unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("object output file is a directory")
+        );
+        assert_eq!(fs::read(&first).unwrap(), b"original");
+        assert!(blocked.is_dir());
+        drop(sink);
+        assert!(!staging.exists());
     }
 
     #[test]
