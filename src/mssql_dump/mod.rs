@@ -2161,11 +2161,159 @@ pub(crate) fn with_file_db_table<T>(
 pub(crate) fn file_db_rows_from_reader(
     db: &mut ibcmd_filedb::FileDb,
 ) -> Result<BTreeMap<String, Arc<Vec<u8>>>> {
-    Ok(file_infobase::load_from_reader(db)?
-        .into_rows()?
-        .into_iter()
-        .map(|(name, bytes)| (name, Arc::new(bytes)))
-        .collect())
+    effective_file_db_snapshot(file_infobase::load_from_reader(db)?)
+}
+
+fn effective_file_db_snapshot(
+    rows: offline_rows::OfflineRows,
+) -> Result<BTreeMap<String, Arc<Vec<u8>>>> {
+    crate::stored_objects::exclusive(|| {
+        let _active = offline_rows::activate_rows(rows)?;
+        let _views = dynamic_generation::StorageViewScope::begin("");
+        let sql = crate::sql::SqlExec::detached("a descriptor snapshot answers every read itself");
+        let table = ConfigTable::active(&sql, "");
+        let names = table.names()?;
+        Ok(table
+            .rows(&names)?
+            .into_iter()
+            .map(|(name, bytes)| (name, Arc::new(bytes)))
+            .collect())
+    })
+}
+
+#[cfg(test)]
+mod descriptor_snapshot_tests {
+    use super::*;
+    fn snapshot(rows: BTreeMap<String, Arc<Vec<u8>>>) -> BTreeMap<String, Arc<Vec<u8>>> {
+        #[cfg(unix)]
+        {
+            use std::{fs, io::Read};
+            struct Scratch(std::path::PathBuf);
+            impl Drop for Scratch {
+                fn drop(&mut self) {
+                    let _ = fs::remove_dir_all(&self.0);
+                }
+            }
+            let path = std::env::temp_dir()
+                .join(format!("descriptor-generation-{}", uuid::Uuid::new_v4()));
+            fs::create_dir(&path).unwrap();
+            let scratch = Scratch(path);
+            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/file-infobase/tiny.1CD.gz");
+            let mut bytes = Vec::new();
+            flate2::read::GzDecoder::new(fs::File::open(fixture).unwrap())
+                .read_to_end(&mut bytes)
+                .unwrap();
+            fs::write(scratch.0.join("1Cv8.1CD"), bytes).unwrap();
+            let records = rows
+                .into_iter()
+                .map(|(file_name, bytes)| ibcmd_filedb::ConfigRow {
+                    file_name,
+                    part_no: 0,
+                    creation: ibcmd_filedb::Timestamp::now_utc(),
+                    modified: ibcmd_filedb::Timestamp::now_utc(),
+                    attributes: 0,
+                    data_size: bytes.len() as u64,
+                    binary: bytes.as_ref().clone(),
+                })
+                .collect::<Vec<_>>();
+            ibcmd_filedb::replace_config_table(&scratch.0, "CONFIG", &records).unwrap();
+            ibcmd_filedb::replace_config_table(&scratch.0, "CONFIGSAVE", &[]).unwrap();
+            let descriptor = fs::File::open(scratch.0.join("1Cv8.1CD")).unwrap();
+            let mut db = ibcmd_filedb::FileDb::from_file(descriptor).unwrap();
+            assert!(db.config_headers("CONFIGSAVE").unwrap().is_empty());
+            file_db_rows_from_reader(&mut db).unwrap()
+        }
+        #[cfg(not(unix))]
+        {
+            effective_file_db_snapshot(offline_rows::OfflineRows::from_memory(rows)).unwrap()
+        }
+    }
+    #[test]
+    fn snapshot_uses_active_generation_and_preserves_no_marker_semantics() {
+        // Table views are process-global; isolate this canonical-reader fixture
+        // from legacy SQL mocks rather than sharing their mutable state.
+        const CHILD: &str = "IBCMD_DESCRIPTOR_SNAPSHOT_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mssql_dump::descriptor_snapshot_tests::snapshot_uses_active_generation_and_preserves_no_marker_semantics", "--nocapture"])
+                .env(CHILD, "1").status().unwrap();
+            assert!(status.success());
+            return;
+        }
+        let generation = "b627e390-8fad-4a95-afe6-674f54813188";
+        let base = "a627e390-8fad-4a95-afe6-674f54813188";
+        let versions = |generation: &str, names: &[&str]| {
+            let mut text = format!("{{1,{},\"\",{generation}", names.len());
+            for name in names {
+                text.push_str(&format!(",\"{name}\",{base}"));
+            }
+            text.push('}');
+            use std::io::Write;
+            let mut encoder =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(text.as_bytes()).unwrap();
+            Arc::new(encoder.finish().unwrap())
+        };
+        let mut rows = BTreeMap::from([
+            ("a".to_owned(), Arc::new(b"old".to_vec())),
+            (
+                format!("a_dynupdate_{generation}"),
+                Arc::new(b"active".to_vec()),
+            ),
+            ("gone".to_owned(), Arc::new(b"obsolete".to_vec())),
+            ("versions".to_owned(), versions(base, &["a", "gone"])),
+            (
+                format!("versions_dynupdate_{generation}"),
+                versions(generation, &["a"]),
+            ),
+        ]);
+        let without_marker =
+            effective_file_db_snapshot(offline_rows::OfflineRows::from_memory(rows.clone()))
+                .unwrap();
+        assert_eq!(
+            without_marker, rows,
+            "no marker must preserve all raw names"
+        );
+        rows.insert(
+            "DynamicallyUpdated".into(),
+            Arc::new(format!("{{1,1,{generation}}}").into_bytes()),
+        );
+        let effective =
+            effective_file_db_snapshot(offline_rows::OfflineRows::from_memory(rows.clone()))
+                .unwrap();
+        assert_eq!(effective["a"].as_slice(), b"active");
+        assert_eq!(
+            effective["versions"],
+            rows[&format!("versions_dynupdate_{generation}")]
+        );
+        assert_eq!(
+            effective.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["DynamicallyUpdated", "a", "versions"]
+        );
+        // The measured file-db writer refuses names longer than 43 chars;
+        // generation aliases exceed that even with a one-letter stem. Do not
+        // weaken that guard or manufacture an invalid index for this reader test.
+        // Test the descriptor loader's empty CONFIGSAVE route independently,
+        // with/no marker, and the alias read policy above with exact raw rows.
+        #[cfg(unix)]
+        {
+            let mut plain = rows
+                .into_iter()
+                .filter(|(name, _)| !name.contains("_dynupdate_"))
+                .collect::<BTreeMap<_, _>>();
+            for marker in [true, false] {
+                if !marker {
+                    plain.remove("DynamicallyUpdated");
+                }
+                let expected = effective_file_db_snapshot(offline_rows::OfflineRows::from_memory(
+                    plain.clone(),
+                ))
+                .unwrap();
+                assert_eq!(snapshot(plain.clone()), expected);
+            }
+        }
+    }
 }
 
 /// Runs `read` on the Config table of `database`; the view it installs ends
