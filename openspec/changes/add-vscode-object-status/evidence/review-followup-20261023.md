@@ -91,3 +91,30 @@ selection. The adapted scenario now restores that picker in `finally`. This
 correction awaits the same queued host run; static review is not host execution.
 Narrow independent re-review confirmed the picker restoration on success/error;
 no confirmed P1/P2 remain in this port. Host/fake-host syntax checks pass.
+
+## Bounded consumed-source custody port prepared
+
+Backend donor `3b1629ed10a8848cd11c7bba0bbff3367abbf6cc` was validated
+on #481 head `98d2b1f9` with 4067 root tests, 31 integration tests, all-targets,
+formatting and isolated host exit zero before the later startup-only follow-up.
+Those are donor results, not new #484 acceptance.
+
+The narrow adapted port stores consumed XML bytes with detached file/ordered
+ancestor witnesses; final anchored reopen checks witnesses and digest. Selected
+OriginalSource capabilities and root handles remain held. Windows creation time
+and transient parent custody are preserved. This does not claim universal ABA or
+Windows deny-move equivalence. No API signature or dependency changes are needed.
+
+#484 lacks the donor traversal-budget API; its unrelated API/tests were excluded.
+The low-FD 1024-XML/index/final-census regression (child soft limit 128), consumed
+mutation regression and unchanged-leaf ancestor regression live in a separate
+cache-witness test module with retained local fixtures. Applicable donor retention
+guards were included; existing #484 typed cancellation remains intact.
+Integrated Rust/host gates are still pending the shared scheduled slot.
+Independent read-only review found no confirmed P1/P2 in the adapted backend:
+files.rs and original_source_tests.rs match the donor byte-for-byte, production
+witness/reopen changes match, and all three relocated regressions retain their
+assertions and exact child-test target. Pinned Rustfmt, diff check, physical-adapter
+policy and its self-test passed without baseline changes. No integrated Rust or
+new host execution has occurred yet; scheduled commands must explicitly retain
+fixtures with `IBCMD_TEST_KEEP_FIXTURES=1`.
