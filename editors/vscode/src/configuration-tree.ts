@@ -250,7 +250,7 @@ export function arrange(owner: Node, nodes: Node[]): Node[] {
       ]
     : nodes;
 }
-export function belongsToGroup(group: Node, fullName: string): boolean {
+export function groupContains(group: Node, fullName: string): boolean {
   if (group.kind === "Common") return common.has(fullName.split(".")[0]);
 
   let owner = group.parent;

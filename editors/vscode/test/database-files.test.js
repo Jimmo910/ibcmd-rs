@@ -276,21 +276,18 @@ test("сравнение группы запрашивает также цели
 
 test("область сравнения общих и вложенных объектов не захватывает соседей", () => {
   assert.equal(
-    core.belongsToGroup({ kind: "Common" }, "CommonModule.Модуль"),
+    core.groupContains({ kind: "Common" }, "CommonModule.Модуль"),
     true,
   );
-  assert.equal(
-    core.belongsToGroup({ kind: "Common" }, "Catalog.Товары"),
-    false,
-  );
+  assert.equal(core.groupContains({ kind: "Common" }, "Catalog.Товары"), false);
   const group = {
     kind: "Form",
     parent: { type: "object", kind: "Catalog", fullName: "Catalog.Товары" },
   };
-  assert.equal(core.belongsToGroup(group, "Catalog.Товары.Form.Форма"), true);
-  assert.equal(core.belongsToGroup(group, "Catalog.Склады.Form.Форма"), false);
+  assert.equal(core.groupContains(group, "Catalog.Товары.Form.Форма"), true);
+  assert.equal(core.groupContains(group, "Catalog.Склады.Form.Форма"), false);
   assert.equal(
-    core.belongsToGroup(group, "Catalog.Товары.Template.Макет"),
+    core.groupContains(group, "Catalog.Товары.Template.Макет"),
     false,
   );
 });
@@ -336,4 +333,165 @@ test("сравнение объединяет файлы групп и разл�
     differences({ objects: [{ ...row, localOnly: row.changed }] }),
   );
   assert.throws(() => differences({ objects: [{ object: "Catalog.X" }] }));
+});
+
+test("reopening the same virtual file keeps its in-flight read valid", async () => {
+  const { DatabaseFiles } = load();
+  const files = new DatabaseFiles();
+  let finish,
+    calls = 0;
+  const source = {
+    read: async () => {
+      calls++;
+      return new Promise((resolve) => (finish = resolve));
+    },
+  };
+  try {
+    const first = files.uri(source, "Ext/Module.bsl");
+    const a = files.readFile(first);
+    const second = files.uri(source, "Ext/Module.bsl");
+    const b = files.readFile(second);
+    const reads = Promise.all([a, b]);
+    finish(Buffer.from("same source"));
+    assert.equal(first.toString(), second.toString());
+    assert.equal(calls, 1);
+    assert.deepEqual(
+      (await reads).map((bytes) => bytes.toString()),
+      ["same source", "same source"],
+    );
+  } finally {
+    files.dispose();
+  }
+});
+
+test("group comparison discovers checkout-only objects and excludes other types", async () => {
+  const { DatabaseFiles, differences, vscode } = load();
+  const commands = new Map(),
+    requests = [];
+  let choices;
+  const source = new core.DatabaseSource(
+    {
+      request: async (method, params) => {
+        requests.push({ method, params });
+        const rows = [
+          {
+            object: "Catalog.Removed",
+            changed: [],
+            baseOnly: [],
+            localOnly: ["Catalogs/Removed.xml"],
+          },
+          {
+            object: "Document.Other",
+            changed: [],
+            baseOnly: [],
+            localOnly: ["Documents/Other.xml"],
+          },
+          {
+            object: "CatalogOther.Wrong",
+            changed: [],
+            baseOnly: [],
+            localOnly: ["CatalogOthers/Wrong.xml"],
+          },
+        ];
+        return {
+          objects: rows.filter(
+            (row) => !params.objects || params.objects.includes(row.object),
+          ),
+        };
+      },
+    },
+    "/work",
+    "demo",
+  );
+  const noEvent = () => ({ dispose() {} });
+  vscode.workspace.textDocuments = [];
+  vscode.workspace.registerFileSystemProvider = noEvent;
+  vscode.commands = {
+    registerCommand: (name, run) => {
+      commands.set(name, run);
+      return noEvent();
+    },
+  };
+  vscode.window = {
+    withProgress: (_, run) =>
+      run(
+        {},
+        { isCancellationRequested: false, onCancellationRequested: noEvent },
+      ),
+    showQuickPick: async (items) => {
+      choices = items;
+    },
+    showInformationMessage() {},
+    showErrorMessage: (message) => assert.fail(message),
+  };
+  vscode.ProgressLocation = { Notification: 1 };
+  const view = {
+    source: () => source,
+    onDidChangeSource: noEvent,
+    objectNames: async () => ["Catalog.Existing"],
+  };
+  const module = { exports: {} };
+  vm.runInNewContext(
+    fs.readFileSync(
+      path.join(__dirname, "../out/database-commands.js"),
+      "utf8",
+    ),
+    {
+      module,
+      exports: module.exports,
+      AbortController,
+      require: (id) =>
+        id === "vscode"
+          ? vscode
+          : id === "./configuration-tree"
+            ? core
+            : id === "./database-files"
+              ? { DatabaseFiles, differences }
+              : id === "./configuration-view"
+                ? {}
+                : require(id),
+    },
+  );
+  const provider = module.exports.registerDatabaseCommands(
+    { subscriptions: [] },
+    view,
+  );
+  try {
+    const group = {
+      id: "Configuration/Catalogs",
+      kind: "Catalog",
+      type: "group",
+      parent: { kind: "Configuration", fullName: "Configuration" },
+    };
+    await commands.get("ibcmd.source.compare")(group);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].params.objects, undefined);
+    assert.deepEqual(
+      Array.from(choices, (item) => item.difference.path),
+      ["Catalogs/Removed.xml"],
+    );
+  } finally {
+    provider.dispose();
+  }
+});
+
+test("group scope respects root types, shared types and exact nested owners", () => {
+  assert.equal(
+    core.groupContains({ kind: "Common" }, "CommonModule.LocalOnly"),
+    true,
+  );
+  assert.equal(core.groupContains({ kind: "Common" }, "Catalog.Other"), false);
+  const forms = { kind: "Form", parent: { fullName: "Catalog.Products" } };
+  assert.equal(
+    core.groupContains(forms, "Catalog.Products.Form.LocalOnly"),
+    true,
+  );
+  assert.equal(
+    core.groupContains(forms, "Catalog.ProductsOther.Form.Other"),
+    false,
+  );
+  assert.equal(
+    core.groupContains(forms, "Catalog.Products.Template.Other"),
+    false,
+  );
 });

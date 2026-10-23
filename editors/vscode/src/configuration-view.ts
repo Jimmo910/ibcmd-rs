@@ -198,7 +198,7 @@ export class ConfigurationView
         return [current.fullName];
       if (current.type === "property" || current.type === "file") return [];
       const names: string[] = [];
-      for (const child of await model.children(current))
+      for (const child of await model.children(current, signal))
         names.push(...(await visit(child)));
       return names;
     };

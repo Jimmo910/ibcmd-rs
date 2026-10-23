@@ -6,6 +6,7 @@ import {
   DatabaseSource,
   Node,
   XmlSource,
+  groupContains,
   localPath,
 } from "./configuration-tree";
 
@@ -103,14 +104,11 @@ export function registerDatabaseCommands(
         const changed = view.onDidChangeSource(() => abort.abort());
         try {
           const group =
-            node.type === "group" && node.kind !== "ConfigurationFiles"
-              ? node
-              : undefined;
+            node.type === "group" && node.kind !== "ConfigurationFiles";
           const names = group
             ? undefined
             : await view.objectNames(node, abort.signal);
           if (names && !names.length) return [];
-
           const sourceDir = path.resolve(current.directory);
           if (
             vscode.workspace.textDocuments.some((d) => {
@@ -130,10 +128,14 @@ export function registerDatabaseCommands(
           const result = differences(
             await current.rpc.request(
               "objects/status",
-              { infobase: current.infobase, objects: names, sourceDir },
+              {
+                infobase: current.infobase,
+                ...(names ? { objects: names } : {}),
+                sourceDir,
+              },
               abort.signal,
             ),
-            group,
+            group ? (name) => groupContains(node, name) : undefined,
           );
           return node.kind === "ConfigurationFiles"
             ? result.filter((d) => d.path.startsWith("Ext/"))

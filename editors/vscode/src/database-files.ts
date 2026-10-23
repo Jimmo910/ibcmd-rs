@@ -1,12 +1,6 @@
 import * as vscode from "vscode";
 import { randomUUID } from "node:crypto";
-import {
-  DatabaseSource,
-  Node,
-  Source,
-  belongsToGroup,
-  relativePath,
-} from "./configuration-tree";
+import { DatabaseSource, Source, relativePath } from "./configuration-tree";
 
 interface Entry {
   source: Source;
@@ -34,9 +28,14 @@ export class DatabaseFiles
     });
     const key = uri.toString();
     const previous = this.entries.get(key);
-    if (previous && previous.source !== source)
-      throw new Error("Источник виртуального файла изменился");
-    if (!previous) this.entries.set(key, { source, file, empty });
+    if (previous) {
+      if (
+        previous.source !== source ||
+        previous.file !== file ||
+        previous.empty !== empty
+      )
+        throw new Error("Источник виртуального файла изменился");
+    } else this.entries.set(key, { source, file, empty });
     return uri;
   }
   invalidate() {
@@ -132,20 +131,23 @@ export interface Difference {
   path: string;
   state: "changed" | "baseOnly" | "localOnly";
 }
-export function differences(response: any, group?: Node): Difference[] {
+export function differences(
+  response: any,
+  includeObject: (name: string) => boolean = () => true,
+): Difference[] {
   if (!Array.isArray(response?.objects))
     throw new Error("Неверный ответ сравнения");
   const files = new Map<string, Difference>();
   for (const object of response.objects) {
     if (!object || typeof object.object !== "string")
       throw new Error("Неверный объект сравнения");
-    if (group && !belongsToGroup(group, object.object)) continue;
-
+    const include = includeObject(object.object);
     for (const state of ["changed", "baseOnly", "localOnly"] as const) {
       if (!Array.isArray(object[state])) throw new Error("Нет списка отличий");
       for (const file of object[state]) {
         if (typeof file !== "string") throw new Error("Неверный путь отличия");
         relativePath(file);
+        if (!include) continue;
         const old = files.get(file);
         if (old && old.state !== state)
           throw new Error("Противоречивые результаты сравнения");
