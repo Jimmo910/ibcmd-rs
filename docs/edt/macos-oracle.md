@@ -170,3 +170,18 @@ severity-4 record still appears; it is retained and has not been waived. This
 control does not retroactively turn the earlier generated validation into PASS;
 the generated route must be rerun with the same corrected VM before comparing
 phase-specific diagnostics.
+
+Read-only inspection also identified the remaining workbench diagnostic's exact
+origin. The actual control INI and argument array contain no
+`java.awt.headless` flag. The installed
+`com.e1c.g5.dt.applications.infobases.ui_1.0.1003.v202609171902.jar` (SHA-256
+`5d34e50d650ea38bab84d23f8d269987463c330d8987226b8469d525f96bd785`)
+contains `LifecycleAwareApplicationsViewOpener.onProjectStart`: it checks
+`PlatformUI.isWorkbenchRunning`, calls the plugin's `logError` and returns when
+there is no workbench. The supported command-line workflow has no UI workbench;
+this evidence does not implicate a forced headless flag in our command. The
+read-only javap receipt, complete raw output and exact JAR hash are retained at
+`logs/issue358-headless-vendor-inspection-001`; vendor class bodies are not
+published. This identifies the error source, not a waiver or evidence that all
+future headless errors are benign. Export and validation command results,
+complete XML equality and this error are reported separately.
