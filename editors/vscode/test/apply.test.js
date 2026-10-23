@@ -100,7 +100,7 @@ test("pre-cancelled native apply never spawns", async () => {
   );
 });
 
-function nativeHarness() {
+function nativeHarness(pathApi = require("node:path")) {
   const fs = require("node:fs"),
     path = require("node:path"),
     vm = require("node:vm"),
@@ -127,6 +127,7 @@ function nativeHarness() {
       setTimeout,
       clearTimeout,
       require: (id) => {
+        if (id === "node:path") return pathApi;
         if (id === "node:child_process")
           return {
             spawn: (...args) => {
@@ -162,8 +163,8 @@ test("native apply binds argv and scratch, removes credentials and never uses sh
     "apply",
     "--db-path=/disposable db",
     "--dynamic=disable",
-    "--data=/external/scratch/data",
-    "--temp=/external/scratch/temp",
+    `--data=${require("node:path").join("/external/scratch", "data")}`,
+    `--temp=${require("node:path").join("/external/scratch", "temp")}`,
   ]);
   assert.equal(options.shell, undefined);
   assert.equal(options.env.IBCMD_DB_PSW, undefined);
@@ -198,4 +199,25 @@ test("native cancellation terminates process and reports uncertain outcome", asy
   abort.abort();
   await assert.rejects(running, /failed or was cancelled/);
   assert.ok(h.calls.includes("kill"));
+});
+
+test("native scratch argv follows Windows path semantics", async () => {
+  const win = require("node:path").win32,
+    h = nativeHarness(win);
+  const running = h.native(
+    "C:\\native\\ibcmd.exe",
+    { dbPath: "C:\\disposable", platform: "8.5.1" },
+    "C:\\external",
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    h.calls[0][1][5],
+    `--data=${win.join("/external/scratch", "data")}`,
+  );
+  assert.equal(
+    h.calls[0][1][6],
+    `--temp=${win.join("/external/scratch", "temp")}`,
+  );
+  h.child.emit("exit", 0);
+  await running;
 });
