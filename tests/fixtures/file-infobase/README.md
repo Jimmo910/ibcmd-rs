@@ -15,7 +15,10 @@ the `.1CD` files are gzip-compressed (`gzip -9 -n`).
 The format evidence these files back is in
 `openspec/changes/add-file-infobase-backend/evidence/1cd-format.md`.
 
-| Directory | How it was made |
-|-----------|-----------------|
+| Fixture | How it was made |
+|---------|-----------------|
 | `empty-xml-8.5.1/` | 8.5.1.1529 (Windows, interface language Russian): `ibcmd infobase create --db-path=e --create-database`, then `ibcmd infobase config export --db-path=e empty-xml-8.5.1` (#469). The uuids are drawn anew at each export. |
 | `empty-xml-8.3.27/` | 8.3.27.2214 (Windows, Russian): `1cv8 CREATEINFOBASE File=e`, then `1cv8 DESIGNER /F e /DumpConfigToFiles empty-xml-8.3.27` (this build has no ibcmd). |
+| `default-button-source/` | `tiny-source` with the БСП common form `ДополнительноеОписание` added (its module cut down to an empty handler): a command-bar button with `DefaultButton` `true`. |
+| `default-button.1CD.gz` | 8.5.1.1529 (Windows): `ibcmd infobase create --db-path=db --create-database --import=default-button-source --apply --force`. |
+| `default-button-xml/` | `ibcmd infobase config export --db-path=db default-button-xml` (8.5.1.1529): the default button is written with `ButtonImportance` `Main`. |

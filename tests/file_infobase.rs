@@ -565,3 +565,62 @@ fn saving_a_file_infobase_refuses_the_source_file_and_its_aliases() {
     }
     assert!(!ibcmd_filedb::backup_file(&db).exists());
 }
+
+#[test]
+fn an_exact_build_named_for_the_export_spells_its_own_defaults() {
+    // 8.5.1.1529 writes `ButtonImportance` `Main` on a default button whose
+    // record names no importance of its own; the release 8.5.1 keeps the
+    // oldest build's spelling (`default-button-xml`).
+    let dir = scratch("exact-build");
+    let db = infobase(&dir, "default-button");
+    let out = dir.join("xml");
+    ok(&run(&[
+        "infobase".as_ref(),
+        "config".as_ref(),
+        "export".as_ref(),
+        &db_path(&db),
+        "--platform=8.5.1.1529".as_ref(),
+        out.as_os_str(),
+    ]));
+    assert_same_tree(&fixtures().join("default-button-xml"), &out, &[]);
+}
+
+#[test]
+fn an_exact_build_from_settings_spells_its_own_defaults() {
+    let dir = scratch("exact-build-settings");
+    let db = infobase(&dir, "default-button");
+    let out = dir.join("xml");
+    let settings = dir.join("settings.json");
+    fs::write(&settings, r#"{"platform-version":"8.5.1.1529"}"#).unwrap();
+    ok(&run(&[
+        "infobase".as_ref(),
+        "config".as_ref(),
+        "export".as_ref(),
+        &db_path(&db),
+        "--settings".as_ref(),
+        settings.as_os_str(),
+        out.as_os_str(),
+    ]));
+    assert_same_tree(&fixtures().join("default-button-xml"), &out, &[]);
+}
+
+#[test]
+fn an_unknown_settings_build_is_refused_before_export() {
+    let dir = scratch("unknown-build-settings");
+    let db = infobase(&dir, "default-button");
+    let out = dir.join("xml");
+    let settings = dir.join("settings.json");
+    fs::write(&settings, r#"{"platform-version":"8.5.1.9999"}"#).unwrap();
+    let output = run(&[
+        "infobase".as_ref(),
+        "config".as_ref(),
+        "export".as_ref(),
+        &db_path(&db),
+        "--source-version=2.21".as_ref(),
+        "--settings".as_ref(),
+        settings.as_os_str(),
+        out.as_os_str(),
+    ]);
+    assert!(!output.status.success());
+    assert!(!out.exists());
+}
