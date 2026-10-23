@@ -178,6 +178,26 @@ impl std::error::Error for ExtensionRegistryDecodeError {}
 pub fn decode_extension_zipped_info(
     bytes: &[u8],
 ) -> std::result::Result<DecodedExtensionZippedInfo, ExtensionRegistryDecodeError> {
+    decode_extension_envelope(bytes, RegistryEnvelope::Sql)
+}
+
+/// The separately measured file registry profile of 8.3.27.2214. The SQL
+/// profile is deliberately unchanged; unknown envelope tags still fail.
+pub(crate) fn decode_file_extension_zipped_info(
+    bytes: &[u8],
+) -> std::result::Result<DecodedExtensionZippedInfo, ExtensionRegistryDecodeError> {
+    decode_extension_envelope(bytes, RegistryEnvelope::File)
+}
+
+enum RegistryEnvelope {
+    Sql,
+    File,
+}
+
+fn decode_extension_envelope(
+    bytes: &[u8],
+    profile: RegistryEnvelope,
+) -> std::result::Result<DecodedExtensionZippedInfo, ExtensionRegistryDecodeError> {
     const BODY_HEADER_BYTES: usize = 15;
     const TRAILER_BYTES: usize = 3;
     let minimum = ENVELOPE_PREFIX_BYTES + BODY_HEADER_BYTES + TRAILER_BYTES;
@@ -193,7 +213,11 @@ pub fn decode_extension_zipped_info(
     }
 
     let body = &bytes[ENVELOPE_PREFIX_BYTES..];
-    if body[..3] != [0xa1, 0x9a, 0x08] {
+    let header = match profile {
+        RegistryEnvelope::Sql => [0xa1, 0x9a, 0x08],
+        RegistryEnvelope::File => [0xa2, 0x9a, 0x08],
+    };
+    if body[..3] != header {
         return Err(ExtensionRegistryDecodeError::UnsupportedEnvelopeHeader);
     }
     let safe_mode = decode_bool("safe-mode", body[11])?;

@@ -211,3 +211,65 @@ fn a_corrupted_object_length_is_refused_without_allocating_it() {
     assert!(matches!(FileDb::open(&dir.0), Err(Error::Corrupt(_))));
     assert!(open_for_write(&dir.0).is_err());
 }
+
+#[test]
+fn bounded_reader_counts_shared_blob_chains_before_copying() {
+    let dir = unpack("empty");
+    let rows: Vec<_> = (0..32)
+        .map(|i| {
+            row(
+                &format!("budgetprobe{i:03}"),
+                0,
+                if i == 0 {
+                    vec![42; 1024 * 1024]
+                } else {
+                    Vec::new()
+                },
+            )
+        })
+        .collect();
+    replace_config_table(&dir.0, "CONFIGCAS", &rows).unwrap();
+    let path = dir.0.join("1Cv8.1CD");
+    let mut bytes = fs::read(&path).unwrap();
+    let db = FileDb::open(&dir.0).unwrap();
+    let table = db.table("CONFIGCAS").unwrap();
+    let binary_offset = 1 + table
+        .fields
+        .iter()
+        .take_while(|f| f.name != "BINARYDATA")
+        .map(|f| f.size())
+        .sum::<usize>();
+    drop(db);
+    let slots: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let needle: Vec<u8> = row
+                .file_name
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect();
+            let name_at = bytes
+                .windows(needle.len())
+                .position(|v| v == needle)
+                .unwrap();
+            name_at - 3 + binary_offset
+        })
+        .collect();
+    let shared_ref = bytes[slots[0]..slots[0] + 8].to_vec();
+    for at in &slots[1..] {
+        bytes[*at..*at + 8].copy_from_slice(&shared_ref);
+    }
+    fs::write(&path, bytes).unwrap();
+    let result =
+        FileDb::open(&dir.0)
+            .unwrap()
+            .config_rows_bounded("CONFIGCAS", 2 * 1024 * 1024, 32);
+    let err = match result {
+        Err(err) => err,
+        Ok(rows) => panic!(
+            "2 MiB budget accepted {} retained bytes",
+            rows.iter().map(|row| row.binary.len()).sum::<usize>()
+        ),
+    };
+    assert!(err.to_string().contains("retained"), "{err}");
+}

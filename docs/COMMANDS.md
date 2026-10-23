@@ -322,6 +322,7 @@ ibcmd infobase config import --dbms=PostgreSQL --db-server=pg01 --db-name=demo -
 
 ```
 ibcmd infobase config export --db-path=/srv/ib/demo /srv/export/demo
+ibcmd infobase config export --db-path=/srv/ib/demo --extension=МоёРасширение /srv/export/extension
 ibcmd infobase config import --db-path=/srv/ib/demo /srv/export/demo
 ```
 
@@ -353,7 +354,14 @@ ibcmd infobase config import --db-path=/srv/ib/demo /srv/export/demo
   обновление штатной платформой.
 - Имена строк вне проверенного набора символов (`0-9 A-Z a-z - . / _`, длина
   до 43) загрузка не пишет, а отказывает: ключ индекса таких имён не измерен.
-- Применение, сохранение (`config save`), `import files` и расширения
+- **Расширение** выгружается по имени через `--extension`: измерен профиль
+  8.3.27.2214 / XML 2.20. Читается активный CAS-образ или подготовленная
+  стадия выбранного расширения; остальные расширения в дерево не попадают.
+  Платформа не запускается, база не меняется. Неизвестный профиль реестра,
+  повреждённый CAS, неполная стадия и next-generation реестр отклоняются до
+  публикации результата. `--base`, `--sync` и экспорт всех расширений этим
+  маршрутом не поддерживаются.
+- Применение, сохранение (`config save`), `import files` и загрузку расширений
   файловой базы пока выполняет штатный `ibcmd` (ibcmd-rs отказывает с кодом 1).
 - Версию платформы файловой базы можно задать в настройках записью базы без
   сервера, где имя — маска пути к каталогу базы.
@@ -467,9 +475,9 @@ ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 --db-name=MyBa
   `import files` и `config load`); применения
   `--extension`, `--sqlcmd`; сохранения `--extension`;
   общие `--pid`, `--remote`;
-- применение, сохранение, `import files` и расширения файловых баз
-  (`--db-path`); СУБД кроме `MSSQLServer` (у `PostgreSQL` — всё, кроме
-  `config export`, `config import` и `config load`).
+- применение, сохранение, import files и загрузка расширений файловых баз
+  (--db-path); СУБД кроме MSSQLServer (у PostgreSQL — всё, кроме
+  config export, config import и config load).
 
 ### Вывод и коды возврата
 

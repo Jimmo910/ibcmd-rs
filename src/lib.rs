@@ -12,6 +12,7 @@ pub mod dropin;
 pub mod dump_sources;
 pub mod extension;
 pub mod external;
+mod file_extension_export;
 mod file_infobase;
 pub mod form_matrix;
 pub mod form_provenance;

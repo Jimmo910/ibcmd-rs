@@ -981,7 +981,9 @@ pub(crate) mod extension_types;
 mod fetch;
 mod file_infobase;
 mod postgres_infobase;
-pub(crate) use file_infobase::{FileInfobaseConfig, file_infobase_config};
+pub(crate) use file_infobase::{
+    FileInfobaseConfig, file_extension_base_provider, file_infobase_config,
+};
 pub use postgres_infobase::PostgresExportSnapshot;
 mod form;
 mod form_body;
