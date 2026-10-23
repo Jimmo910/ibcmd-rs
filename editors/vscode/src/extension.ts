@@ -62,7 +62,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     try {
       await rpc.request("initialize", {
-        protocolVersion: "1.1",
+        protocolVersion: "1.3",
         clientInfo: { name: "ibcmd-rs-vscode", version: "0.1.0" },
         workspaceFolder: f.uri.fsPath,
       });
@@ -679,7 +679,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     try {
       await validator.request("initialize", {
-        protocolVersion: "1.1",
+        protocolVersion: "1.3",
         workspaceFolder: f.uri.fsPath,
         infobases: [
           {
