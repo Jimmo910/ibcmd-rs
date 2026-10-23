@@ -535,7 +535,7 @@ fn a_tree_left_by_an_interrupted_update_is_refused() {
 #[test]
 fn a_form_saved_with_lf_line_breaks_loads() {
     // Editors and git on Linux and macOS save the exported CRLF tree with LF
-    // (#471); a line break in XML is not data, the platform loads either.
+    // (#471); structural indentation can use either line ending.
     let (base, tree) = exported("test_processor", "input.epf", "load-lf");
     let form = tree.join("ТестОбработка/Forms/Форма/Ext/Form.xml");
     let text = fs::read_to_string(&form).unwrap();

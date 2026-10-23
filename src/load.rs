@@ -427,7 +427,7 @@ fn verify_loaded(
                 );
                 mine == theirs
                     || path.ends_with(".xml")
-                        && without_carriage_returns(&mine) == without_carriage_returns(&theirs)
+                        && ibcmd_xml::equal_ignoring_structural_line_endings(&mine, &theirs)
             }
             _ => false,
         };
@@ -445,19 +445,6 @@ fn verify_loaded(
         differ.iter().take(LISTED_PATHS).cloned().collect::<Vec<_>>().join(", ")
     )
     .into())
-}
-
-/// An XML file's bytes with every CR of a CRLF dropped: XML parsers fold
-/// line breaks to LF (XML 1.0, section 2.11), so a tree saved with LF (#471)
-/// compiles to the same file as the exported CRLF one.
-fn without_carriage_returns(bytes: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(bytes.len());
-    for (at, byte) in bytes.iter().enumerate() {
-        if *byte != b'\r' || bytes.get(at + 1) != Some(&b'\n') {
-            out.push(*byte);
-        }
-    }
-    out
 }
 
 /// The base's scratch export, removed when dropped -- on a panic too (it
