@@ -315,14 +315,14 @@ fn serve_speaks_the_protocol_and_its_lifecycle() {
     assert_eq!(server.error("initialize", json!({})), -32602);
     let refused = server.call("initialize", json!({"protocolVersion": "2.0"}));
     assert_eq!(refused["error"]["code"], -32010);
-    assert_eq!(refused["error"]["data"]["serverProtocolVersion"], "1.0");
+    assert_eq!(refused["error"]["data"]["serverProtocolVersion"], "1.1");
     assert_eq!(
-        server.error("initialize", json!({"protocolVersion": "1.1"})),
+        server.error("initialize", json!({"protocolVersion": "1.2"})),
         -32010
     );
 
     let initialized = server.ok("initialize", corpus.initialize_params());
-    assert_eq!(initialized["protocolVersion"], "1.0");
+    assert_eq!(initialized["protocolVersion"], "1.1");
     assert_eq!(initialized["serverInfo"]["name"], "ibcmd-rs");
     assert_eq!(
         initialized["serverInfo"]["version"],
@@ -434,6 +434,47 @@ fn serve_speaks_the_protocol_and_its_lifecycle() {
     let mut server = Server::start(&corpus);
     server.ok("initialize", corpus.initialize_params());
     assert_eq!(server.finish(false), 1);
+}
+
+#[test]
+fn windows_auth_rejects_supplied_credentials_before_user_normalization() {
+    let corpus = Corpus::new("windows-auth");
+    let mut server = Server::start(&corpus);
+    server.ok("initialize", corpus.initialize_params());
+    for credentials in [
+        json!({"user": ""}),
+        json!({"user": " \t "}),
+        json!({"user": "reader"}),
+        json!({"password": ""}),
+        json!({"password": "synthetic-test-password"}),
+    ] {
+        let mut params = credentials;
+        params["infobase"] = json!("ep");
+        params["auth"] = json!("windows");
+        let response = server.call("infobases/connect", params);
+        assert_eq!(response["error"]["code"], -32602);
+        assert_eq!(
+            response["error"]["message"],
+            "Windows authentication does not accept user or password"
+        );
+    }
+    // Rows fixtures verify the protocol contract, not a live Windows/SQL login.
+    for params in [
+        json!({"infobase": "ep", "auth": "windows"}),
+        json!({"infobase": "ep", "user": " "}),
+        json!({"infobase": "ep", "auth": "sql", "user": "reader"}),
+    ] {
+        server.ok("infobases/connect", params);
+    }
+    assert_eq!(
+        server.error(
+            "infobases/connect",
+            json!({"infobase": "ep", "auth": "sql", "user": " "})
+        ),
+        -32602
+    );
+    server.ok("shutdown", Value::Null);
+    assert_eq!(server.finish(true), 0);
 }
 
 #[test]

@@ -61,6 +61,69 @@ mod tests {
     }
 
     #[test]
+    fn explicit_auth_does_not_inherit_a_global_sql_user() {
+        let env =
+            |key: &str| (key == crate::settings::ENV_DB_USER).then(|| "global-user".to_string());
+        let settings = Settings::from_sources(&crate::settings::SettingsSources {
+            env: &env,
+            executable: None,
+            current_dir: None,
+            app_data: None,
+            native_config: None,
+        })
+        .unwrap();
+        assert!(settings.db_user().is_some());
+        let legacy = Session::open(
+            &entry(false),
+            None,
+            Login {
+                password: Some(Secret::new("test-password".into())),
+                ..Login::default()
+            },
+            &settings,
+        )
+        .unwrap();
+        assert_eq!(legacy.login.user.as_deref(), Some("global-user"));
+        let windows = Session::open(
+            &entry(false),
+            None,
+            Login {
+                auth: Some(AuthMode::Windows),
+                ..Login::default()
+            },
+            &settings,
+        )
+        .unwrap();
+        assert!(windows.login.user.is_none());
+        assert!(windows.login.password.is_none());
+        assert!(
+            Session::open(
+                &entry(false),
+                None,
+                Login {
+                    auth: Some(AuthMode::Sql),
+                    ..Login::default()
+                },
+                &settings
+            )
+            .is_err()
+        );
+        assert!(
+            Session::open(
+                &entry(false),
+                None,
+                Login {
+                    auth: Some(AuthMode::Windows),
+                    user: Some("unexpected".into()),
+                    ..Login::default()
+                },
+                &settings
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn a_fixed_infobase_cannot_be_redirected_to_another_database() {
         let result = Session::open(
             &entry(false),
@@ -259,9 +322,18 @@ pub fn entries(settings: &Settings, extra: &[EntryParams]) -> Result<Vec<Entry>>
         .collect())
 }
 
+/// Explicit editor authentication; absence preserves the legacy settings fallback.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMode {
+    Windows,
+    Sql,
+}
+
 /// A login for a SQL Server infobase.
 #[derive(Clone, Debug, Default)]
 pub struct Login {
+    pub auth: Option<AuthMode>,
     pub user: Option<String>,
     pub password: Option<Secret>,
 }
@@ -318,11 +390,30 @@ impl Session {
             entry.name = database.clone();
             entry.mask = false;
         }
+        if login.auth == Some(AuthMode::Windows)
+            && (login.user.is_some() || login.password.is_some())
+        {
+            return Err(anyhow!(
+                "Windows authentication does not accept user or password"
+            ));
+        }
+        if login.auth == Some(AuthMode::Sql)
+            && login.user.as_deref().is_none_or(|v| v.trim().is_empty())
+        {
+            return Err(anyhow!("SQL authentication requires a user"));
+        }
+        let explicit = login.auth.is_some();
         let login = Login {
-            user: login
-                .user
-                .or_else(|| settings.db_user().map(|user| user.value)),
+            auth: login.auth,
+            user: login.user.or_else(|| {
+                (!explicit)
+                    .then(|| settings.db_user().map(|user| user.value))
+                    .flatten()
+            }),
             password: login.password.or_else(|| {
+                if explicit {
+                    return None;
+                }
                 std::env::var(ENV_DB_PASSWORD)
                     .ok()
                     .filter(|value| !value.is_empty())

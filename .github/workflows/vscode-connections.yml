@@ -1,0 +1,48 @@
+name: VSCode connections
+on:
+  pull_request:
+    paths: ['editors/vscode/**', 'src/server/**', 'tests/editor_server.rs', '.github/workflows/vscode-connections.yml']
+  push:
+    paths: ['editors/vscode/**', 'src/server/**', 'tests/editor_server.rs', '.github/workflows/vscode-connections.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  client:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.95.0'
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: cargo test --locked --test editor_server --no-default-features
+      - run: npm ci
+        working-directory: editors/vscode
+      - run: npm run format:check
+        working-directory: editors/vscode
+      - name: Unit and real CLI/RPC integration tests
+        shell: bash
+        run: |
+          export IBCMD_TEST_BINARY="$GITHUB_WORKSPACE/target/debug/ibcmd-rs"
+          if [ "$RUNNER_OS" = Windows ]; then export IBCMD_TEST_BINARY="$IBCMD_TEST_BINARY.exe"; fi
+          npm test
+        working-directory: editors/vscode
+      - name: Extension-host interactions, real offline connection and synthetic failures
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          export IBCMD_TEST_BINARY="$GITHUB_WORKSPACE/target/debug/ibcmd-rs"
+          export IBCMD_TEST_ROOT="$RUNNER_TEMP/ibcmd-vscode-host"
+          export IBCMD_TEST_ROWS="${TMPDIR:-/tmp}/ibcmd-external-editor-server-protocol/rows/demo"
+          xvfb-run -a npm run test:host
+        working-directory: editors/vscode
