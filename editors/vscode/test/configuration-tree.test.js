@@ -266,3 +266,110 @@ test("XML-источник не читает ссылку за пределы к
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test("foreign preservation children keep valid metadata siblings and files visible", async () => {
+  for (const version of ["2.17", "2.20", "2.21"]) {
+    const bytes = await fs.readFile(
+      path.resolve(
+        __dirname,
+        `../../../tests/fixtures/xml/${version}/Catalogs/Products.xml`,
+      ),
+    );
+    const owner = {
+      id: "Catalog.Products",
+      fullName: "Catalog.Products",
+      label: "Products",
+      kind: "Catalog",
+      type: "object",
+      path: "Catalogs/Products.xml",
+    };
+    const modulePath = "Catalogs/Products/Ext/ObjectModule.bsl";
+    const nodes = descriptor(bytes, owner, [modulePath]);
+    assert.deepEqual(
+      nodes.map((n) => n.kind),
+      ["Attribute", "TabularSection", "file"],
+    );
+    assert.equal(nodes[0].children[0].label, "Sku");
+    assert.equal(nodes[1].children[0].label, "Lines");
+    assert.equal(nodes[2].path, modulePath);
+    const sameName = bytes
+      .toString()
+      .replace(
+        "<ChildObjects>",
+        "<ChildObjects><f:Attribute>ignored/foreign</f:Attribute>",
+      );
+    assert.equal(descriptor(Buffer.from(sameName), owner, []).length, 2);
+  }
+});
+
+test("cancelling a pending database search aborts its RPC and discards final results", async () => {
+  let loaded, finish, pendingSignal;
+  const loading = new Promise((resolve) => (loaded = resolve));
+  const rpc = {
+    request: async (method, params, signal) => {
+      if (method === "tree/children")
+        return {
+          nodes: [
+            {
+              id: "Catalog.Test",
+              label: "Test",
+              kind: "Catalog",
+              nodeType: "object",
+              fullName: "Catalog.Test",
+              path: "Catalogs/Test.xml",
+            },
+          ],
+        };
+      pendingSignal = signal;
+      loaded();
+      return new Promise(
+        (resolve) =>
+          (finish = () =>
+            resolve({
+              path: params.path,
+              exists: true,
+              encoding: "utf-8",
+              content: xml("Catalog", "<ChildObjects/>").toString(),
+              files: [],
+            })),
+      );
+    },
+  };
+  const model = new TreeModel(new DatabaseSource(rpc, "/work", "demo"));
+  const abort = new AbortController();
+  const pending = model.search("test", abort.signal);
+  const rejected = assert.rejects(pending, /отмен/);
+  try {
+    await loading;
+    abort.abort();
+    assert.equal(
+      pendingSignal.aborted,
+      true,
+      "the source RPC must receive cancellation",
+    );
+  } finally {
+    finish();
+    await rejected;
+    model.dispose();
+  }
+});
+
+test("cancelling search leaves a shared tree expansion usable", async () => {
+  let finish, readSignal;
+  const model = new TreeModel({
+    children: (_, signal) => {
+      readSignal = signal;
+      return new Promise((resolve) => (finish = resolve));
+    },
+  });
+  const expansion = model.children();
+  const abort = new AbortController();
+  const search = model.search("test", abort.signal);
+  const rejected = assert.rejects(search, /отмен/);
+  abort.abort();
+  assert.equal(readSignal.aborted, false);
+  finish([]);
+  await rejected;
+  assert.deepEqual(await expansion, []);
+  model.dispose();
+});
