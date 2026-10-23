@@ -105,3 +105,14 @@ the like) are written as `<v8:TypeId>` for exactly the same reason the platform
 writes them that way: the name exists only in the object's own `copyinfo`, and
 a name it cannot resolve is not a name. Platform types the built-in table knows
 (`ent:AccountingRecordType`, `d5p1:Chart`, …) stay names in both dumps.
+
+The Rust CLI currently returns exit 2 for the initial `inputDesigner.epf`
+export: its `versions` record lists UUID
+`6c422377-2355-44c5-ad7a-f49f72d7b30d`, which is absent from the container.
+The three source XML files are emitted, but `ConfigDumpInfo.xml` is refused.
+A local offline diagnostic on 2026-10-23 confirmed that bootstrapping those
+three files and exporting the result returns exit 0 and preserves all three
+files byte for byte. `inputIBCMD.epf` completes the entire Rust round trip
+with exit 0. XML content equality therefore does not imply that the initial
+Designer-container export command succeeded; the inventory defect remains
+open and the fail-closed validation is retained.
