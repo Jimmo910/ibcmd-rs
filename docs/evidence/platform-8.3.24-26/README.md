@@ -73,7 +73,8 @@ there are no stacked donor commits or dependencies on previous open PRs.
 The focused Python regression suite uses synthetic journals, retained fixtures
 and no database/native process. It verifies exact-build/version binding, phase
 binary/commit/corpus/SQL/input provenance, both native imports and reexports,
-complete full-diff counts, source immutability, distinct empty targets,
+complete full-diff counts and per-file content/path binding to both compared
+output inventories, source immutability, distinct empty targets,
 explicit layout/write findings, artifact tampering/path/symlink rejection and
 malformed-input diagnostics. A dedicated additive CI job runs these checks.
 An independent review found provenance gaps, now fixed with regressions, and

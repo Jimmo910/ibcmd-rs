@@ -129,9 +129,17 @@ hash. Comparison reports contain `scope: full`, `platform_build`,
 `candidate_commit`, `corpus_snapshot_sha256`, `left_inventory_sha256`,
 `right_inventory_sha256`, `summary` and a `full_diff` artifact reference.
 Export binds to the two source export outputs; import binds to the two native
-reexport outputs. The full diff has the same `summary` and a `differences` array
-of unique `path`/`status` records. Both summary and per-file counts include
+reexport outputs. The full diff must repeat the same `left_inventory_sha256` and
+`right_inventory_sha256` bindings and `summary`. Each compared export output
+inventory has a complete `files` array of unique safe relative `path`, lowercase
+`sha256`, and nonnegative integer `size_bytes` entries. The detailed diff has a
+`differences` array covering the exact union of those paths, with `status`,
+`left_sha256`, `right_sha256`, `left_size_bytes`, `right_size_bytes` matching the
+inventories (explicit nulls for the absent side). Status follows file presence
+and SHA equality. Reusing an unrelated nested diff is rejected even if summary
+counts match or its inventory labels were rewritten. Both summary and per-file counts include
 `left_only`, `right_only`, `different`, `unchanged`. Counts must be nonnegative
 integers and total at least one. Preserve the original detailed source-diff
 fields and document comparison rules/normalization in its journal: the audit
-checks count integrity and provenance, not XML semantic equivalence itself.
+checks byte-hash/size/path/status/count integrity and provenance; it does not
+independently establish XML semantic equivalence or authenticate native logs.

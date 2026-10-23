@@ -27,7 +27,7 @@ class Acceptance(unittest.TestCase):
         path.write_text(json.dumps(value) if not isinstance(value, str) else value)
         return {'path': path.name, 'sha256': audit.digest(path)}
 
-    def row(self, release):
+    def row(self, release, export_difference=False):
         build = release + '.1234'
         blank = self.ref('')
         snapshot = self.ref({'synthetic': True})
@@ -58,7 +58,10 @@ class Acceptance(unittest.TestCase):
                 'corpus_snapshot_sha256': snapshot['sha256'], 'exit_code': 0,
                 'argv_redacted': ['synthetic'], 'started_utc': '2026-10-23T00:00:00Z',
                 'ended_utc': '2026-10-23T00:00:01Z', 'stdout': blank, 'stderr': blank,
-                'output_inventory': self.ref({'phase': phase, 'synthetic': True}),
+                'output_inventory': self.ref({'phase': phase, 'synthetic': True, 'files': [{
+                    'path': 'Configuration.xml' if phase.endswith('_source') else 'Catalogs/Products.xml',
+                    'sha256': ('f' if export_difference and phase == 'candidate_export_source' else
+                               'd' if phase.endswith('_source') else 'e') * 64, 'size_bytes': 4}]}),
                 'database_id': database_id}
             records[phase] = record
         for phase, record in records.items():
@@ -71,11 +74,20 @@ class Acceptance(unittest.TestCase):
                 input_hash = records[import_phase]['output_inventory']['sha256']
             record['input_inventory_sha256'] = input_hash
             row['phases'][phase] = self.ref(record)
-        summary = {'left_only': 0, 'right_only': 0, 'different': 0, 'unchanged': 1}
-        diff = self.ref({'summary': summary, 'differences': [{'path': 'Configuration.xml', 'status': 'unchanged'}]})
         for kind in audit.COMPARISONS:
             sides = (('native_export_source', 'candidate_export_source') if kind == 'export' else
                      ('native_reexport_native_target', 'native_reexport_candidate_target'))
+            left_ref = records[sides[0]]['output_inventory']
+            right_ref = records[sides[1]]['output_inventory']
+            left = audit.load(self.root / left_ref['path'])['files'][0]
+            right = audit.load(self.root / right_ref['path'])['files'][0]
+            different = kind == 'export' and export_difference
+            summary = {'left_only': 0, 'right_only': 0, 'different': int(different), 'unchanged': int(not different)}
+            diff = self.ref({'summary': summary, 'left_inventory_sha256': left_ref['sha256'],
+                             'right_inventory_sha256': right_ref['sha256'], 'differences': [{
+                                 'path': left['path'], 'status': 'different' if different else 'unchanged',
+                                 'left_sha256': left['sha256'], 'right_sha256': right['sha256'],
+                                 'left_size_bytes': 4, 'right_size_bytes': 4}]})
             row['comparisons'][kind] = self.ref({
                 'scope': 'full', 'platform_build': build, 'candidate_commit': 'c' * 40,
                 'corpus_snapshot_sha256': snapshot['sha256'], 'full_diff': diff, 'summary': summary,
@@ -97,17 +109,88 @@ class Acceptance(unittest.TestCase):
         self.assertEqual(result['native_acceptance'], 'not_determined')
 
     def test_differences_and_limits_remain_visible_for_review(self):
-        row = self.row('8.3.24')
+        row = self.row('8.3.24', export_difference=True)
         row['observations']['unknown_layouts'] = ['unrecognized catalog layout']
-        ref = row['comparisons']['export']
-        report = audit.load(self.root / ref['path'])
-        summary = {'left_only': 0, 'right_only': 0, 'different': 1, 'unchanged': 0}
-        diff = self.ref({'summary': summary, 'differences': [{'path': 'Configuration.xml', 'status': 'different'}]})
-        row['comparisons']['export'] = self.rewrite(ref, summary=summary, full_diff=diff)
         result = audit.check_row(row, self.root)
         self.assertEqual(result['differences'], 1)
         self.assertEqual(result['unknown_layouts'], row['observations']['unknown_layouts'])
         self.assertEqual(result['write_limits'], row['observations']['write_limits'])
+
+    def test_stale_same_count_diff_is_rejected_even_when_outer_hashes_are_correct(self):
+        row = self.row('8.3.24')
+        export = audit.load(self.root / row['comparisons']['export']['path'])
+        import_ref = row['comparisons']['import']
+        row['comparisons']['import'] = self.rewrite(import_ref, full_diff=export['full_diff'])
+        with self.assertRaisesRegex(audit.EvidenceError, 'full diff inventory binding'):
+            audit.check_row(row, self.root)
+        # Rebinding just the stale nested labels still cannot hide its unrelated paths/content.
+        imported = audit.load(self.root / import_ref['path'])
+        relabeled = self.rewrite(export['full_diff'],
+                                 left_inventory_sha256=imported['left_inventory_sha256'],
+                                 right_inventory_sha256=imported['right_inventory_sha256'])
+        row['comparisons']['import'] = self.rewrite(import_ref, full_diff=relabeled)
+        with self.assertRaisesRegex(audit.EvidenceError, 'diff path absent'):
+            audit.check_row(row, self.root)
+
+    def test_same_path_stale_content_size_or_status_is_rejected(self):
+        for changes in ({'left_sha256': 'a' * 64}, {'right_sha256': 'a' * 64},
+                        {'left_size_bytes': 9}, {'right_size_bytes': True}, {'status': 'different'}):
+            row = self.row('8.3.25')
+            ref = row['comparisons']['import']
+            report = audit.load(self.root / ref['path'])
+            diff = audit.load(self.root / report['full_diff']['path'])
+            diff['differences'][0].update(changes)
+            row['comparisons']['import'] = self.rewrite(ref, full_diff=self.ref(diff))
+            with self.assertRaises(audit.EvidenceError):
+                audit.check_row(row, self.root)
+
+    def test_full_diff_accepts_all_four_statuses_bound_to_real_inventory_entries(self):
+        row = self.row('8.3.26')
+        left = [{'path': name, 'sha256': code * 64, 'size_bytes': 4}
+                for name, code in (('Same.xml', 'a'), ('Changed.xml', 'b'), ('Left.xml', 'c'))]
+        right = [{'path': name, 'sha256': code * 64, 'size_bytes': 4}
+                 for name, code in (('Same.xml', 'a'), ('Changed.xml', 'd'), ('Right.xml', 'e'))]
+        refs = [self.ref({'files': files}) for files in (left, right)]
+        for phase, ref in zip(('native_reexport_native_target', 'native_reexport_candidate_target'), refs):
+            row['phases'][phase] = self.rewrite(row['phases'][phase], output_inventory=ref)
+        entries = [
+            {'path': 'Same.xml', 'status': 'unchanged', 'left_sha256': 'a' * 64,
+             'right_sha256': 'a' * 64, 'left_size_bytes': 4, 'right_size_bytes': 4},
+            {'path': 'Changed.xml', 'status': 'different', 'left_sha256': 'b' * 64,
+             'right_sha256': 'd' * 64, 'left_size_bytes': 4, 'right_size_bytes': 4},
+            {'path': 'Left.xml', 'status': 'left_only', 'left_sha256': 'c' * 64,
+             'right_sha256': None, 'left_size_bytes': 4, 'right_size_bytes': None},
+            {'path': 'Right.xml', 'status': 'right_only', 'left_sha256': None,
+             'right_sha256': 'e' * 64, 'left_size_bytes': None, 'right_size_bytes': 4}]
+        summary = dict.fromkeys(('left_only', 'right_only', 'different', 'unchanged'), 1)
+        diff = self.ref({'summary': summary, 'differences': entries,
+                         'left_inventory_sha256': refs[0]['sha256'],
+                         'right_inventory_sha256': refs[1]['sha256']})
+        row['comparisons']['import'] = self.rewrite(row['comparisons']['import'],
+            full_diff=diff, summary=summary, left_inventory_sha256=refs[0]['sha256'],
+            right_inventory_sha256=refs[1]['sha256'])
+        self.assertEqual(audit.check_row(row, self.root)['differences'], 3)
+
+    def test_source_inventory_rejects_malformed_or_duplicate_entries(self):
+        valid = {'path': 'Configuration.xml', 'sha256': 'a' * 64, 'size_bytes': 4}
+        documents = [{'files': None}, {'files': [None]}, {'files': [valid, valid]}]
+        for changes in ({'path': '../outside'}, {'sha256': 'invalid'},
+                        {'size_bytes': -1}, {'size_bytes': True}):
+            documents.append({'files': [{**valid, **changes}]})
+        for document in documents:
+            with self.assertRaises(audit.EvidenceError):
+                audit.source_inventory(self.root, self.ref(document))
+
+    def test_diff_cannot_omit_inventory_paths_or_duplicate_entries(self):
+        for omit in (True, False):
+            row = self.row('8.3.26')
+            ref = row['comparisons']['export']
+            report = audit.load(self.root / ref['path'])
+            diff = audit.load(self.root / report['full_diff']['path'])
+            diff['differences'] = [] if omit else diff['differences'] * 2
+            row['comparisons']['export'] = self.rewrite(ref, full_diff=self.ref(diff))
+            with self.assertRaises(audit.EvidenceError):
+                audit.check_row(row, self.root)
 
     def test_missing_release_or_duplicate_is_rejected(self):
         doc = self.document()

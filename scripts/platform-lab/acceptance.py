@@ -74,6 +74,26 @@ def artifact(root, ref):
     return path
 
 
+
+def source_inventory(root, ref):
+    document = load(artifact(root, ref))
+    files = document.get('files')
+    require(isinstance(files, list), 'source inventory needs a complete files array')
+    result = {}
+    for entry in files:
+        require(isinstance(entry, dict), 'invalid source inventory entry')
+        name = text(entry.get('path'), 'source inventory path')
+        require(not PurePosixPath(name).is_absolute() and '\\' not in name and ':' not in name
+                and all(part not in ('', '.', '..') for part in name.split('/')),
+                'unsafe source inventory path')
+        require(name not in result, 'duplicate source inventory path')
+        file_hash = sha(entry.get('sha256'))
+        size = entry.get('size_bytes')
+        require(type(size) is int and size >= 0, 'invalid source inventory size')
+        result[name] = {'sha256': file_hash, 'size_bytes': size}
+    return result
+
+
 def inventory(root):
     """Directory names are hints, never a runtime version probe or acceptance."""
     require(root.is_dir(), 'platform root must be an existing directory')
@@ -202,6 +222,11 @@ def check_row(row, root):
                 and report.get('right_inventory_sha256') == records[sides[1]]['output_inventory']['sha256'],
                 f'comparison output binding mismatch: {comparison}')
         full_diff = load(artifact(root, report['full_diff']))
+        require(full_diff.get('left_inventory_sha256') == report['left_inventory_sha256']
+                and full_diff.get('right_inventory_sha256') == report['right_inventory_sha256'],
+                f'full diff inventory binding mismatch: {comparison}')
+        left_files = source_inventory(root, records[sides[0]]['output_inventory'])
+        right_files = source_inventory(root, records[sides[1]]['output_inventory'])
         summary = report['summary']
         require(isinstance(summary, dict), 'invalid summary object')
         require(set(summary) == {'left_only', 'right_only', 'different', 'unchanged'},
@@ -216,9 +241,24 @@ def check_row(row, root):
             name = text(entry.get('path'), 'diff path')
             require(name not in paths, 'duplicate diff path')
             paths.add(name)
+            left = left_files.get(name)
+            right = right_files.get(name)
+            require(left is not None or right is not None, 'diff path absent from compared inventories')
+            for side, value in (('left', left), ('right', right)):
+                for field in ('sha256', 'size_bytes'):
+                    key = f'{side}_{field}'
+                    expected = value[field] if value is not None else None
+                    require(key in entry and entry[key] == expected
+                            and (field != 'size_bytes' or expected is None or type(entry[key]) is int),
+                            f'diff content does not match {side} inventory: {name}')
+            expected_status = ('right_only' if left is None else 'left_only' if right is None else
+                               'unchanged' if left['sha256'] == right['sha256'] else 'different')
+            require(left is None or right is None or left['sha256'] != right['sha256']
+                    or left['size_bytes'] == right['size_bytes'], 'equal hashes have inconsistent sizes')
             status = entry.get('status')
-            require(status in counts, 'unknown diff status')
+            require(status == expected_status, f'diff status does not match compared inventories: {name}')
             counts[status] += 1
+        require(paths == set(left_files) | set(right_files), 'diff omits compared inventory paths')
         require(counts == summary, 'full diff entries do not match counts')
         for key in ('left_only', 'right_only', 'different', 'unchanged'):
             require(type(summary.get(key)) is int and summary[key] >= 0, 'invalid comparison count')
