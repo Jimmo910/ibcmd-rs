@@ -1,6 +1,10 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { runImport } = require("../out/import");
+const {
+  runImport,
+  importErrorMessage,
+  ImportValidationError,
+} = require("../out/import");
 const request = {
   infobase: "lab",
   sourceDir: "/sources",
@@ -161,4 +165,29 @@ test("changed dependency retry retains every original prepared file owner", asyn
     "Document.Example",
     "Catalog.Dependency",
   ]);
+});
+
+test("import UI never exposes server chains or unexpected error text", () => {
+  const { RpcError } = require("../out/rpc");
+  const sentinel =
+    "private-user-sentinel /private/path-sentinel password-sentinel";
+  const error = new RpcError(-32014, sentinel);
+  error.detail = sentinel;
+  assert.equal(importErrorMessage(error), "ibcmd-rs request failed (-32014)");
+  assert.equal(importErrorMessage(new Error(sentinel)), "Import failed");
+  assert.equal(
+    importErrorMessage(new ImportValidationError("Save files first")),
+    "Save files first",
+  );
+});
+
+test("published recovery error remains explicit without exposing server paths", () => {
+  const { RpcError } = require("../out/rpc");
+  const error = new RpcError(-32016);
+  error.detail = "/private/path-sentinel private-user-sentinel";
+  assert.equal(
+    importErrorMessage(error),
+    "Database changes were published; backup update failed. Inspect recovery before retrying",
+  );
+  assert.ok(!importErrorMessage(error).includes("sentinel"));
 });

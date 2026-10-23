@@ -298,6 +298,18 @@ fn cancelled() -> RpcError {
 /// An operation's failure as an answer: a cancellation, an unknown object,
 /// or the failure with its causes.
 fn failure(error: anyhow::Error) -> RpcError {
+    // This state takes precedence over cancellation and never exposes paths.
+    if error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<ibcmd_filedb::Error>(),
+            Some(ibcmd_filedb::Error::Published { .. })
+        )
+    }) {
+        return RpcError::new(
+            codes::IMPORT_PUBLISHED_RECOVERY_REQUIRED,
+            "Database changes were published; backup update failed. Inspect recovery before retrying",
+        );
+    }
     if crate::cancel::is_cancelled(&error) {
         return cancelled();
     }
@@ -867,5 +879,31 @@ fn opened_message(session: &Session) -> String {
             session.login.user.as_deref().unwrap_or("the Windows login"),
             session.entry.platform
         ),
+    }
+}
+
+#[cfg(test)]
+mod import_error_tests {
+    use super::*;
+    #[test]
+    fn source_cancel_and_published_recovery_have_distinct_safe_codes() {
+        let cancelled_source =
+            crate::mssql_source_change::SourceChangeError::Cancelled(crate::cancel::Cancelled);
+        assert_eq!(
+            failure(anyhow::Error::from(cancelled_source).context("source capture")).code,
+            codes::REQUEST_CANCELLED
+        );
+        assert_eq!(
+            failure(anyhow::anyhow!("ordinary I/O error")).code,
+            codes::OPERATION_FAILED
+        );
+        let error = ibcmd_filedb::Error::Published {
+            recovery: "/private/path-sentinel".into(),
+            error: std::io::Error::other("private-user-sentinel"),
+        };
+        let response = failure(anyhow::Error::from(error).context("import"));
+        assert_eq!(response.code, codes::IMPORT_PUBLISHED_RECOVERY_REQUIRED);
+        assert!(!response.message.contains("sentinel"));
+        assert!(response.message.contains("published"));
     }
 }

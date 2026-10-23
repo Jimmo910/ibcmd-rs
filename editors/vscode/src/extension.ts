@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import { RpcClient, RpcError } from "./rpc";
-import { runImport, ImportValidationError } from "./import";
+import { runImport, ImportValidationError, importErrorMessage } from "./import";
 import { Database, editConfig, idOf, snapshot, saveConfig } from "./config";
 import { Base, Metadata, Generation, pendingText } from "./status";
 
@@ -355,13 +355,7 @@ export async function activate(context: vscode.ExtensionContext) {
               "Выбранные изменения загружены в CONFIGSAVE. Примените их отдельной командой платформы.",
             );
         } catch (error) {
-          const message =
-            error instanceof RpcError
-              ? error.detail || error.message
-              : error instanceof Error
-                ? error.message
-                : "Import failed";
-          void vscode.window.showErrorMessage(message);
+          void vscode.window.showErrorMessage(importErrorMessage(error));
         } finally {
           subscription.dispose();
         }

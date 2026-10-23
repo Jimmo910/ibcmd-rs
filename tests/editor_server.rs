@@ -1053,3 +1053,31 @@ fn reconnect_invalidates_file_import_plans_before_writes() {
     server.ok("shutdown", Value::Null);
     assert_eq!(server.finish(true), 0);
 }
+
+#[cfg(unix)]
+#[test]
+fn cancelled_import_prepare_returns_request_cancelled_without_writes() {
+    let (corpus, db, tree) = file_import_corpus("file-import-cancel");
+    let before = fs::read(db.join("1Cv8.1CD")).unwrap();
+    let mut server = Server::start(&corpus);
+    server.ok("initialize", corpus.initialize_params());
+    let mut frames = Vec::new();
+    // Keep prepare queued while the protocol reader consumes cancellation.
+    for id in [3001, 3002] {
+        frames.extend(Server::frame(&json!({"jsonrpc":"2.0","id":id,"method":"objects/status","params":{"infobase":"demo","sourceDir":tree}})));
+    }
+    frames.extend(Server::frame(&json!({"jsonrpc":"2.0","id":3003,"method":"objects/import/prepare","params":{"infobase":"demo","sourceDir":tree,"objects":["CommonModule.ФайловаяБазаПроверка"]}})));
+    frames.extend(Server::frame(
+        &json!({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":3003}}),
+    ));
+    server.write_raw(&frames);
+    for id in [3001, 3002] {
+        assert!(server.response(&json!(id)).get("result").is_some());
+    }
+    let cancelled = server.response(&json!(3003));
+    assert_eq!(cancelled["error"]["code"], -32800, "{cancelled}");
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+    assert!(!ibcmd_filedb::backup_file(&db).exists());
+    server.ok("shutdown", Value::Null);
+    assert_eq!(server.finish(true), 0);
+}

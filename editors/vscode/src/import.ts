@@ -1,4 +1,16 @@
+import { RpcError } from "./rpc";
 export class ImportValidationError extends Error {}
+
+// Server chains may contain credentials, user names and absolute paths.
+export function importErrorMessage(error: unknown): string {
+  if (error instanceof RpcError) {
+    if (error.code === -32016)
+      return "Database changes were published; backup update failed. Inspect recovery before retrying";
+    return error.message;
+  }
+  if (error instanceof ImportValidationError) return error.message;
+  return "Import failed";
+}
 export interface ImportRpc {
   request(
     method: string,

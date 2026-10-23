@@ -41,10 +41,10 @@ Publication renames the verified new database first, retaining the previous back
 For untrusted consumers, `prepare_guarded_with_source_limits` takes an explicit
 `SourceInventoryLimits` alongside retained `ReadControl`. The guarded path also
 limits source directory entries (including empty directories) to `max_files`
-and depth to64, through initial custody and every final revalidation. The walker
+and depth to 64, through initial custody and every final revalidation. The walker
 keeps admitted ancestor iterators open to avoid eager directory caching outside
 the entry budget. Source census checks cancellation per entry; original file
-reads and hashing check it per64 KiB chunk. Ordinary editor `prepare` retains
+reads and hashing check it per 64 KiB chunk. Ordinary editor `prepare` retains
 its existing source admission defaults. These controls do not replace consumer
 policy checks or prove descriptor-relative publication confinement.
 
@@ -54,3 +54,9 @@ policy checks or prove descriptor-relative publication confinement.
 On Unix, the writer retains a parent-directory descriptor and uses single-component `openat(O_NOFOLLOW)`, `linkat`, `renameat` and `unlinkat` names for target/work/backup operations. Data and work-copy identities are checked relative to that descriptor. An ancestor replacement after the final guard cannot redirect writes or cleanup to the replacement directory. Non-Unix file database writes fail closed until an equivalent mutation adapter is implemented; read support remains.
 
 This is mutation confinement with advisory locking and preflight identity/content revalidation, not unconditional atomic filesystem CAS. A malicious same-UID process able to mutate leaf entries in the held directory can race the last leaf check against rename/unlink without respecting the lock. No existing user filesystem permissions are changed to claim otherwise. After an ancestor rename, original absolute paths in reports/recovery errors can be stale: recovery must locate the original directory and verify identities before using any named file. A path that has been rebound must not be treated as trustworthy recovery data.
+
+Import errors never expose server exception chains in editor UI. Code `-32016`
+means database publication succeeded but backup finalization failed; the editor
+shows a fixed recovery-required warning and must not describe it as cancellation
+or a no-op. Ordinary failures retain `-32014`; source cancellation retains
+`-32800` through the source-census error chain.

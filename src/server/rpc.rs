@@ -34,6 +34,8 @@ pub mod codes {
     pub const NOT_SUPPORTED_OFFLINE: i64 = -32013;
     /// The operation ran and failed (SQL Server, the export, the disk).
     pub const OPERATION_FAILED: i64 = -32014;
+    /// Publication succeeded, but backup finalization requires recovery inspection.
+    pub const IMPORT_PUBLISHED_RECOVERY_REQUIRED: i64 = -32016;
     /// A write into the database was asked for without `confirm: true`.
     pub const CONFIRMATION_REQUIRED: i64 = -32015;
 }
