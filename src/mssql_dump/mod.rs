@@ -980,7 +980,9 @@ pub(crate) mod extension;
 pub(crate) mod extension_types;
 mod fetch;
 mod file_infobase;
-pub(crate) use file_infobase::{FileInfobaseConfig, file_infobase_config};
+pub(crate) use file_infobase::{
+    FileInfobaseConfig, file_extension_base_provider, file_infobase_config,
+};
 mod form;
 mod form_body;
 mod form_extension;

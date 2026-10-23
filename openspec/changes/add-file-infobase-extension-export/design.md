@@ -14,6 +14,15 @@ last CAS read and publication. The implementation is read-only. Unknown
 registry profiles and unmeasured prepared states fail closed rather than
 silently choosing a different generation.
 
+The measured file registry has the a2 envelope; SQL retains its existing a1
+decoder. CONFIGCASSAVE keys use the physical registry identity's namespace.
+A selected prepared configinfo takes priority over the active registry root;
+its content digests can resolve from either supplied rows or active CAS.
+Every supplied logical name must match that manifest. A live
+_EXTENSIONSINFONGS registry remains unsupported. The base metadata provider
+reads CONFIG through the same descriptor, so adopted references need no SQL
+connection or second file open.
+
 ## Publication
 
 Reuse the extension exporter and its staging/publication boundary. A missing

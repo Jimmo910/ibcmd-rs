@@ -98,7 +98,31 @@ database returns rc 255:
 The root file_infobase integration harness compiles successfully before the
 change. There is no candidate/native parity result yet.
 
-Implementation, automatic failing-first regressions, corruption/unknown
-state refusals, candidate/native full comparisons and Rust review remain
-open. Raw files and full journals are retained outside the repository in the
-disposable lab; no database or native export tree is included here.
+## Implementation acceptance
+
+The public regression first failed with the unsupported-route error and rc
+255, both for native-tree export and the missing-name code-1 expectation.
+After implementing the route, exact native per-file SHA-256 comparisons pass
+for both extensions in three snapshots: initial prepared, applied, and mixed
+(an applied first extension is edited and prepared again while the second
+stays active). The modified module is selected from staging. Native mixed
+exports both returned rc 0 and left the database hash unchanged.
+
+Native name probes additionally accept Cyrillic lowercase and trailing ASCII
+spaces; each produces the same output as the stored spelling. The candidate
+regressions exercise both.
+
+The portable tests compare every file, including ConfigDumpInfo.xml, with no
+normalization. They assert the database's whole byte vector remains unchanged
+after each candidate export. Missing names, invalid registry layout/envelope,
+missing or changed CAS content, incomplete/unclassified staging, incremental
+options, nonempty outputs and output symlinks have refusal tests. A crate
+test injects a live next-generation registry view and checks refusal.
+
+Minimal clean-room gzip snapshots and native file hashes are retained in
+`tests/fixtures/file-infobase/extensions-8327/`. Raw journals and full native
+XML trees remain outside the repository. Strict OpenSpec, filedb clippy and
+`cargo xtask check` pass; final ci and independent review are recorded in the
+change's verification evidence when complete. This evidence does not claim
+private corpora, SQL, online activation, 8.5 or unsupported next-generation
+selection.

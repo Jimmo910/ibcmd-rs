@@ -109,6 +109,40 @@ pub(crate) fn file_infobase_config(rows: Vec<ConfigRow>) -> Result<FileInfobaseC
     })
 }
 
+/// Resolve adopted references from the same locked descriptor as the
+/// extension registry/CAS. No second open may drop its POSIX record lock.
+pub(crate) fn file_extension_base_provider(
+    db: &mut FileDb,
+    version: crate::legacy_version::InfobaseConfigSourceVersion,
+) -> Result<super::extension::BaseIndexProvider> {
+    let rows = db.config_rows_bounded(
+        "CONFIG",
+        ibcmd_core::storage::MAX_STORAGE_IMAGE_RETAINED_BYTES as u64,
+        ibcmd_core::storage::MAX_STORAGE_ENTRIES,
+    )?;
+    let config = file_infobase_config(rows)?;
+    let rows = config
+        .published
+        .into_iter()
+        .filter(|(name, _)| !name.contains('.'))
+        .map(|(file_name, bytes)| {
+            Ok(super::ConfigRow {
+                file_name,
+                part_no: 0,
+                data_size: i64::try_from(bytes.len())?,
+                #[cfg(test)]
+                binary_hex: super::encode_hex_lower(&bytes),
+                #[cfg(not(test))]
+                binary_hex: String::new(),
+                #[cfg(not(test))]
+                binary: Some(bytes),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let indexes = super::extension::base_indexes_from_rows(&rows, version);
+    Ok(Arc::new(move || Some(indexes.clone())))
+}
+
 /// Stored rows by name, each assembled from its parts in order.
 fn assemble(rows: Vec<ConfigRow>, table: &str) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut parts = BTreeMap::<String, BTreeMap<u32, Vec<u8>>>::new();

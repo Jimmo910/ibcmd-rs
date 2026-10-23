@@ -318,8 +318,6 @@ pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigEx
     let config = resolve_connection(args.connection())?;
     if config.file_infobase.is_none() {
         ensure_mssql(&config.dbms)?;
-    } else if args.extension.is_some() {
-        bail!("Выгрузка расширений из файловой информационной базы пока не поддерживается");
     }
     if let Some(extension) = args.extension.as_deref() {
         if args.base.is_some() || args.sync {
@@ -426,38 +424,52 @@ pub(crate) fn export_extension_report(
     output_dir_arg: &Path,
 ) -> Result<InfobaseConfigExportReport> {
     let source_version = config.legacy_source_version()?;
+    if config.file_infobase.is_some()
+        && fs::symlink_metadata(output_dir_arg)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        bail!("refusing to export an extension through an output symlink");
+    }
     let output_dir = absolute_path(output_dir_arg)?;
     if output_dir.exists() {
         prepare_output_dir(&output_dir, false)?;
     }
     // An existing directory is empty by now; the tree replaces it.
-    let dump_args = extension_dump_args(
-        config,
-        sqlcmd,
-        db_pwd_env,
-        extension,
-        output_dir.clone(),
-        output_dir.exists(),
-        source_version,
-    );
-    let dump = crate::mssql_extension_export::dump_extensions(&dump_args)?;
-    let [entry] = dump.extensions.as_slice() else {
-        bail!(
-            "the export of extension {extension:?} produced {} trees, one expected",
-            dump.extensions.len()
+    let (export, backend) = if let Some(path) = config.file_infobase.as_deref() {
+        (
+            crate::file_extension_export::export(path, extension, &output_dir, source_version)?,
+            "file-infobase-extension",
+        )
+    } else {
+        let dump_args = extension_dump_args(
+            config,
+            sqlcmd,
+            db_pwd_env,
+            extension,
+            output_dir.clone(),
+            output_dir.exists(),
+            source_version,
         );
+        let dump = crate::mssql_extension_export::dump_extensions(&dump_args)?;
+        let [entry]: [_; 1] = dump.extensions.try_into().map_err(|entries: Vec<_>| {
+            anyhow!(
+                "the export of extension {extension:?} produced {} trees, one expected",
+                entries.len()
+            )
+        })?;
+        if !entry.complete {
+            bail!(
+                "the export of extension {extension:?} is incomplete ({}); the tree in {} holds what could be written",
+                entry.warnings.join("; "),
+                output_dir.display()
+            );
+        }
+        (entry.export, "mssql-extension-direct")
     };
-    if !entry.complete {
-        bail!(
-            "the export of extension {extension:?} is incomplete ({}); the tree in {} holds what could be written",
-            entry.warnings.join("; "),
-            output_dir.display()
-        );
-    }
 
     Ok(InfobaseConfigExportReport {
         operation: "infobase config export",
-        backend: "mssql-extension-direct",
+        backend,
         format: format_name(config.format),
         source_version: source_version.as_str(),
         dbms: config.dbms.clone(),
@@ -468,8 +480,8 @@ pub(crate) fn export_extension_report(
         native_config: config.native_config.clone(),
         temp_dump_dir: output_dir.clone(),
         output_dir,
-        exported_files: Some(entry.export.files_written),
-        raw_rows: entry.export.storage.physical_entries,
+        exported_files: Some(export.files_written),
+        raw_rows: export.storage.physical_entries,
         metadata_xml_rows: 0,
         module_text_rows: 0,
         source_asset_rows: 0,

@@ -1,0 +1,288 @@
+//! Native 8.3.27 clean-room file infobases: two independent extensions, one
+//! adopting a common module. Expected hashes come from ibcmd, not our writer.
+use sha2::{Digest, Sha256};
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+    process::{Command, Output},
+};
+
+struct Scratch(PathBuf);
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+fn fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase/extensions-8327")
+}
+fn setup(tag: &str, state: &str) -> Scratch {
+    let root = std::env::temp_dir().join(format!("file-extension-{tag}-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&root).unwrap();
+    let mut bytes = Vec::new();
+    flate2::read::GzDecoder::new(
+        fs::File::open(fixture().join(format!("{state}.1CD.gz"))).unwrap(),
+    )
+    .read_to_end(&mut bytes)
+    .unwrap();
+    fs::write(root.join("1Cv8.1CD"), bytes).unwrap();
+    Scratch(root)
+}
+fn export(root: &Path, name: &str, output: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+        .args(["infobase", "config", "export", "--platform=8.3.27"])
+        .arg(format!("--db-path={}", root.display()))
+        .arg(format!("--extension={name}"))
+        .arg(output)
+        .output()
+        .unwrap()
+}
+fn hashes(root: &Path) -> BTreeMap<String, String> {
+    walkdir::WalkDir::new(root)
+        .into_iter()
+        .map(Result::unwrap)
+        .filter(|e| e.file_type().is_file())
+        .map(|e| {
+            (
+                e.path()
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .replace('\\', "/"),
+                format!("{:x}", Sha256::digest(fs::read(e.path()).unwrap())),
+            )
+        })
+        .collect()
+}
+#[test]
+fn named_extensions_match_native_in_active_and_prepared_states() {
+    let expected: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture().join("native-hashes.json")).unwrap()).unwrap();
+    for state in ["staged", "applied", "mixed"] {
+        let root = setup(&format!("native-{state}"), state);
+        let before = fs::read(root.0.join("1Cv8.1CD")).unwrap();
+        for (i, name) in ["ТестРасширение", "ДругоеРасширение"].iter().enumerate()
+        {
+            let output = root.0.join(format!("out-{i}"));
+            let result = export(&root.0, name, &output);
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let actual = serde_json::to_value(hashes(&output)).unwrap();
+            assert_eq!(actual, expected["cases"][state][name], "{state}/{name}");
+            assert_eq!(fs::read(root.0.join("1Cv8.1CD")).unwrap(), before);
+        }
+    }
+}
+#[test]
+fn missing_extension_does_not_publish_a_tree_or_change_the_database() {
+    let root = setup("missing", "applied");
+    let before = fs::read(root.0.join("1Cv8.1CD")).unwrap();
+    let output = root.0.join("missing");
+    let run = export(&root.0, "ОтсутствующееРасширение", &output);
+    assert_eq!(
+        run.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&run.stderr)
+            .contains("расширение ОтсутствующееРасширение не найдено")
+    );
+    assert!(!output.exists());
+    assert_eq!(fs::read(root.0.join("1Cv8.1CD")).unwrap(), before);
+}
+
+#[test]
+fn native_name_case_and_trailing_spaces_select_the_same_extension() {
+    let root = setup("name-spelling", "applied");
+    let expected: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture().join("native-hashes.json")).unwrap()).unwrap();
+    for (i, name) in ["тестрасширение", "ТестРасширение "].iter().enumerate()
+    {
+        let out = root.0.join(format!("spelling-{i}"));
+        let run = export(&root.0, name, &out);
+        assert!(
+            run.status.success(),
+            "{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(
+            serde_json::to_value(hashes(&out)).unwrap(),
+            expected["cases"]["applied"]["ТестРасширение"]
+        );
+    }
+}
+
+#[test]
+fn corrupt_cas_and_unknown_registry_fail_before_publication() {
+    for kind in [
+        "missing-cas",
+        "bad-digest",
+        "registry-layout",
+        "registry-envelope",
+    ] {
+        let root = setup(kind, "applied");
+        let file = root.0.join("1Cv8.1CD");
+        if kind == "missing-cas" || kind == "bad-digest" {
+            let rows = ibcmd_filedb::FileDb::open(&root.0)
+                .unwrap()
+                .config_rows("CONFIGCAS")
+                .unwrap();
+            let mut bytes = fs::read(&file).unwrap();
+            if kind == "missing-cas" {
+                let needle: Vec<u8> = rows[0]
+                    .file_name
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes)
+                    .collect();
+                let at = bytes
+                    .windows(needle.len())
+                    .position(|v| v == needle)
+                    .unwrap();
+                bytes[at] = if bytes[at] == b'f' { b'e' } else { b'f' };
+            } else {
+                let needle = &rows[0].binary[..16];
+                let at = bytes
+                    .windows(needle.len())
+                    .position(|v| v == needle)
+                    .unwrap();
+                bytes[at] ^= 1;
+            }
+            fs::write(&file, bytes).unwrap();
+        } else {
+            let mut bytes = fs::read(&file).unwrap();
+            let needle: &[u8] = if kind == "registry-layout" {
+                b"_EXTNAME"
+            } else {
+                &[0x43, 0xc2, 0x9a, 0x14]
+            };
+            let at = bytes
+                .windows(needle.len())
+                .position(|v| v == needle)
+                .unwrap();
+            bytes[at] ^= 1;
+            fs::write(&file, bytes).unwrap();
+        }
+        let before = fs::read(&file).unwrap();
+        let out = root.0.join("rejected");
+        let result = export(&root.0, "ТестРасширение", &out);
+        assert!(!result.status.success(), "{kind}");
+        assert!(!out.exists(), "{kind}");
+        assert_eq!(fs::read(&file).unwrap(), before, "{kind}");
+        assert!(
+            !fs::read_dir(&root.0).unwrap().map(Result::unwrap).any(|e| e
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".ibcmd-rs-extension-export-"))
+        );
+    }
+}
+
+#[test]
+fn incomplete_staging_is_not_replaced_by_the_active_image() {
+    let root = setup("incomplete", "staged");
+    let rows = ibcmd_filedb::FileDb::open(&root.0)
+        .unwrap()
+        .config_rows("CONFIGCASSAVE")
+        .unwrap();
+    let row = rows
+        .iter()
+        .find(|r| r.file_name.ends_with("__configinfo"))
+        .unwrap();
+    let needle: Vec<u8> = row
+        .file_name
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    let mut bytes = fs::read(root.0.join("1Cv8.1CD")).unwrap();
+    let at = bytes
+        .windows(needle.len())
+        .position(|v| v == needle)
+        .unwrap();
+    // Preserve the physical record size while removing the required root name.
+    bytes[at + needle.len() - 2] ^= 1;
+    fs::write(root.0.join("1Cv8.1CD"), bytes).unwrap();
+    let before = fs::read(root.0.join("1Cv8.1CD")).unwrap();
+    let out = root.0.join("out");
+    let run = export(&root.0, "ТестРасширение", &out);
+    assert!(!run.status.success());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("configinfo"));
+    assert!(!out.exists());
+    assert_eq!(fs::read(root.0.join("1Cv8.1CD")).unwrap(), before);
+}
+
+#[test]
+fn output_contents_and_incremental_refusals_are_preserved() {
+    let root = setup("output", "applied");
+    let out = root.0.join("out");
+    fs::create_dir(&out).unwrap();
+    fs::write(out.join("keep"), b"original").unwrap();
+    let result = export(&root.0, "ТестРасширение", &out);
+    assert!(!result.status.success());
+    assert_eq!(fs::read(out.join("keep")).unwrap(), b"original");
+    for option in ["--sync", "--base=missing.xml"] {
+        let output = root.0.join(option.replace(['=', '/'], "_"));
+        let result = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+            .args(["infobase", "config", "export", "--platform=8.3.27", option])
+            .arg(format!("--db-path={}", root.0.display()))
+            .arg("--extension=ТестРасширение")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(!output.exists());
+    }
+}
+
+#[test]
+fn a_staged_record_not_classified_by_the_manifest_is_refused() {
+    let root = setup("unclassified", "staged");
+    let rows = ibcmd_filedb::FileDb::open(&root.0)
+        .unwrap()
+        .config_rows("CONFIGCASSAVE")
+        .unwrap();
+    let row = rows
+        .iter()
+        .find(|r| !r.file_name.ends_with("__configinfo"))
+        .unwrap();
+    let needle: Vec<u8> = row
+        .file_name
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    let file = root.0.join("1Cv8.1CD");
+    let mut bytes = fs::read(&file).unwrap();
+    let at = bytes
+        .windows(needle.len())
+        .position(|v| v == needle)
+        .unwrap();
+    let logical_offset = row.file_name.find("__").unwrap() + 2;
+    bytes[at + logical_offset * 2] ^= 1;
+    fs::write(&file, bytes).unwrap();
+    let out = root.0.join("out");
+    let result = export(&root.0, "ТестРасширение", &out);
+    assert!(!result.status.success());
+    assert!(!out.exists());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("not classified"));
+}
+
+#[cfg(unix)]
+#[test]
+fn output_symlinks_are_refused_without_writing_the_target() {
+    let root = setup("symlink", "applied");
+    let target = root.0.join("target");
+    fs::create_dir(&target).unwrap();
+    let link = root.0.join("linked");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let result = export(&root.0, "ТестРасширение", &link);
+    assert!(!result.status.success());
+    assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
+    assert!(link.is_symlink());
+}

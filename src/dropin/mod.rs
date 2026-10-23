@@ -569,6 +569,16 @@ fn run_export(mut request: ExportRequest) -> i32 {
     EXPORT.start();
     match crate::infobase::export_config(&args) {
         Ok(value) => EXPORT.succeed(report.as_deref(), &value),
+        Err(error)
+            if error
+                .downcast_ref::<crate::file_extension_export::MissingExtension>()
+                .is_some() =>
+        {
+            let message = format!("{error:#}");
+            eprintln!("[ERROR] {message}");
+            EXPORT.record_failure(&message, report.as_deref());
+            1
+        }
         Err(error) if error.downcast_ref::<OutputDirectoryNotEmpty>().is_some() => {
             let message = format!(
                 "Операция невозможна, при выполнении экспорта конфигурации в XML обнаружены ошибки: Каталог {} не пуст.",
