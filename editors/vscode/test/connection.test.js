@@ -74,7 +74,7 @@ async function harness({
       this.disposed = true;
     }
     async request(method, params, signal) {
-      if (method === "initialize") return initialize(this);
+      if (method === "initialize") return initialize(this, params);
       if (method === "infobases/list") return { infobases: bases };
       if (method === "infobases/connect")
         return connect(params, signal, () => this.onCrash());
@@ -421,5 +421,21 @@ test("a late crash from an old connection cannot notify or replace the new selec
   await selecting;
   assert.equal(h.errors.length, 0);
   assert.ok(h.status().includes(" b ·"));
+  assert.equal(h.stores.length, 0);
+});
+
+test("export-capable client rejects old protocol before connecting", async () => {
+  const versions = [];
+  const h = await harness({
+    initialize: async (_, params) => {
+      versions.push(params.protocolVersion);
+      if (params.protocolVersion !== "1.1")
+        throw new Error("unsupported protocol");
+      return {};
+    },
+  });
+  await h.select();
+  assert.deepEqual(versions, ["1.4"]);
+  assert.equal(h.errors.length, 1);
   assert.equal(h.stores.length, 0);
 });

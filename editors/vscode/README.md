@@ -292,3 +292,6 @@ stays omitted so normal `db-server`/environment resolution still applies. Copyin
 inherited rows-directory entry keeps its resolved source directory. File databases
 and unknown source types are excluded from this editor; edit their settings using
 the appropriate source-specific tooling instead.
+
+The selected-export client requires editor protocol 1.4 (`objects/exportPlan`).
+Install its matching executable so older servers are rejected during initialization.

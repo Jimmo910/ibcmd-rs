@@ -43,7 +43,7 @@ use rpc::{RpcError, codes};
 /// served when its major is this one and its minor is not above this one
 /// (see `initialize`); the editor extension and the executable are released
 /// together, so the check catches a mismatched pair.
-pub const PROTOCOL_VERSION: (u32, u32) = (1, 1);
+pub const PROTOCOL_VERSION: (u32, u32) = (1, 4);
 
 /// The methods a client may call.
 pub const METHODS: &[&str] = &[

@@ -6,6 +6,8 @@ import { Base, Metadata, Generation, pendingText } from "./status";
 
 import { ObjectView } from "./object-view";
 
+const PROTOCOL_VERSION = "1.4";
+
 export function secretKey(folder: string, id: string, user: string): string {
   return `ibcmd:${JSON.stringify([folder, id, user])}`;
 }
@@ -61,7 +63,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     try {
       await rpc.request("initialize", {
-        protocolVersion: "1.1",
+        protocolVersion: PROTOCOL_VERSION,
         clientInfo: { name: "ibcmd-rs-vscode", version: "0.1.0" },
         workspaceFolder: f.uri.fsPath,
       });
@@ -491,7 +493,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     try {
       await validator.request("initialize", {
-        protocolVersion: "1.1",
+        protocolVersion: PROTOCOL_VERSION,
         workspaceFolder: f.uri.fsPath,
         infobases: [
           {

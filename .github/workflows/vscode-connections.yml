@@ -1,9 +1,9 @@
 name: VSCode connections
 on:
   pull_request:
-    paths: ['editors/vscode/**', 'src/server/**', 'tests/editor_server.rs', '.github/workflows/vscode-connections.yml']
+    paths: ['editors/vscode/**', 'src/**', 'crates/**', 'Cargo.toml', 'Cargo.lock', 'tests/**', '.github/workflows/vscode-connections.yml', '.github/workflows/release.yml']
   push:
-    paths: ['editors/vscode/**', 'src/server/**', 'tests/editor_server.rs', '.github/workflows/vscode-connections.yml']
+    paths: ['editors/vscode/**', 'src/**', 'crates/**', 'Cargo.toml', 'Cargo.lock', 'tests/**', '.github/workflows/vscode-connections.yml', '.github/workflows/release.yml']
   workflow_dispatch:
 permissions:
   contents: read
