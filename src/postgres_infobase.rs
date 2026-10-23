@@ -25,6 +25,7 @@ pub(crate) fn import(
         .ok_or_else(|| anyhow!("no PostgreSQL database"))?;
     let (source_root, source_version) = crate::file_infobase::import_source(config, args)?;
     let mut connection = PgConnection::connect(&target)?;
+    begin_stage(&mut connection)?;
     let stage = crate::file_infobase::plan_stage(
         read_rows(&mut connection, "config")?,
         &source_root,
@@ -66,6 +67,15 @@ pub(crate) fn load_cf(
     ))
 }
 
+/// Hold the configuration generation stable until its replacement stage commits.
+fn begin_stage(connection: &mut PgConnection) -> Result<()> {
+    connection.query("BEGIN", &mut |_| Ok(()))?;
+    connection.query(
+        "LOCK TABLE config, configsave IN SHARE ROW EXCLUSIVE MODE",
+        &mut |_| Ok(()),
+    )
+}
+
 /// Every part of every row of `table`.
 fn read_rows(connection: &mut PgConnection, table: &str) -> Result<Vec<ConfigRow>> {
     let now = Timestamp::now_utc();
@@ -105,7 +115,6 @@ fn read_rows(connection: &mut PgConnection, table: &str) -> Result<Vec<ConfigRow
 /// Replaces `configsave` with `rows` in one transaction; returns the rows it
 /// held before.
 fn write_stage(connection: &mut PgConnection, rows: &[ConfigRow]) -> Result<usize> {
-    connection.query("BEGIN", &mut |_| Ok(()))?;
     let written = (|| -> Result<usize> {
         let mut before = 0;
         connection.query("SELECT count(*) FROM configsave", &mut |row| {
@@ -135,23 +144,136 @@ fn write_stage(connection: &mut PgConnection, rows: &[ConfigRow]) -> Result<usiz
 }
 
 fn insert_statement(row: &ConfigRow) -> String {
+    let name = row.file_name.replace('\\', "\\\\").replace('\'', "''");
     let mut hex = String::with_capacity(row.binary.len() * 2);
     for byte in &row.binary {
         hex.push_str(&format!("{byte:02x}"));
     }
     format!(
         "INSERT INTO configsave (filename, creation, modified, attributes, datasize, binarydata, partno) \
-         VALUES (CAST('{}' AS mvarchar), LOCALTIMESTAMP(0), LOCALTIMESTAMP(0), {}, {}, decode('{hex}', 'hex'), {})",
-        row.file_name.replace('\'', "''"),
-        row.attributes,
-        row.data_size,
-        row.part_no
+         VALUES (CAST(E'{}' AS mvarchar), LOCALTIMESTAMP(0), LOCALTIMESTAMP(0), {}, {}, decode('{hex}', 'hex'), {})",
+        name, row.attributes, row.data_size, row.part_no
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_import_locks_both_tables_before_reading_its_base() {
+        use crate::cli::{
+            InfobaseConfigFormat, InfobaseConfigSourceVersion, InfobaseImportStageMode,
+            InfobaseImportVerify,
+        };
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        fn send(stream: &mut TcpStream, tag: u8, body: &[u8]) {
+            stream.write_all(&[tag]).unwrap();
+            stream
+                .write_all(&((body.len() + 4) as u32).to_be_bytes())
+                .unwrap();
+            stream.write_all(body).unwrap();
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .unwrap();
+            let mut size = [0; 4];
+            stream.read_exact(&mut size).unwrap();
+            let mut startup = vec![0; u32::from_be_bytes(size) as usize - 4];
+            stream.read_exact(&mut startup).unwrap();
+            send(&mut stream, b'R', &0u32.to_be_bytes());
+            send(&mut stream, b'Z', b"I");
+            let mut queries = Vec::new();
+            loop {
+                let mut header = [0; 5];
+                stream.read_exact(&mut header).unwrap();
+                let mut body =
+                    vec![0; u32::from_be_bytes(header[1..].try_into().unwrap()) as usize - 4];
+                stream.read_exact(&mut body).unwrap();
+                if header[0] == b'X' {
+                    break;
+                }
+                assert_eq!(header[0], b'Q');
+                queries.push(String::from_utf8(body[..body.len() - 1].to_vec()).unwrap());
+                send(&mut stream, b'C', b"OK\0");
+                send(&mut stream, b'Z', b"I");
+            }
+            queries
+        });
+        let version = InfobaseConfigSourceVersion::V2_21;
+        let config = ConnectionConfig {
+            dbms: "PostgreSQL".into(),
+            db_server: address,
+            db_name: "synthetic".into(),
+            db_user: None,
+            db_pwd: None,
+            password_source: None,
+            native_config: None,
+            format: InfobaseConfigFormat::Xml,
+            legacy_adapter: crate::adapters::mssql_legacy::MssqlLegacyAdapter::from_legacy_selector(
+                version,
+            ),
+            xml_version_given: true,
+            file_infobase: None,
+        };
+        let args = InfobaseConfigImportArgs {
+            settings: None,
+            native_config: None,
+            format: Some(InfobaseConfigFormat::Xml),
+            platform: None,
+            source_version: Some(version),
+            db_path: None,
+            dbms: None,
+            db_server: None,
+            db_name: None,
+            db_user: None,
+            db_pwd: None,
+            db_pwd_env: "UNUSED_SYNTHETIC_PG_PASSWORD".into(),
+            user: None,
+            password: None,
+            password_env: "UNUSED_SYNTHETIC_IB_PASSWORD".into(),
+            sqlcmd: None,
+            replace_config_save: true,
+            allow_non_lab: true,
+            batch_size: None,
+            path_prefix: vec![],
+            files: vec![],
+            script_output: None,
+            stage_mode: InfobaseImportStageMode::Auto,
+            verify: InfobaseImportVerify::Auto,
+            source_dir: std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/file-infobase/tiny-source"),
+        };
+        let result = import(&config, &args);
+        let queries = worker.join().unwrap();
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(queries.first().map(String::as_str), Some("BEGIN"));
+        assert_eq!(
+            queries.get(1).map(String::as_str),
+            Some("LOCK TABLE config, configsave IN SHARE ROW EXCLUSIVE MODE")
+        );
+        assert!(queries[2].ends_with("FROM config"));
+        assert_eq!(queries.last().map(String::as_str), Some("COMMIT"));
+    }
+
+    #[test]
+    fn row_names_quote_backslashes_independently_of_the_server_setting() {
+        let row = ConfigRow {
+            file_name: r"a\'b".into(),
+            part_no: 0,
+            creation: Timestamp::now_utc(),
+            modified: Timestamp::now_utc(),
+            attributes: 0,
+            data_size: 0,
+            binary: vec![],
+        };
+        assert!(insert_statement(&row).contains(r"CAST(E'a\\''b' AS mvarchar)"));
+    }
 
     #[test]
     fn a_row_is_inserted_with_its_name_quoted_and_bytes_in_hex() {
@@ -167,7 +289,7 @@ mod tests {
         assert_eq!(
             insert_statement(&row),
             "INSERT INTO configsave (filename, creation, modified, attributes, datasize, binarydata, partno) \
-             VALUES (CAST('a''b' AS mvarchar), LOCALTIMESTAMP(0), LOCALTIMESTAMP(0), 0, 20, decode('00ab', 'hex'), 1)"
+             VALUES (CAST(E'a''b' AS mvarchar), LOCALTIMESTAMP(0), LOCALTIMESTAMP(0), 0, 20, decode('00ab', 'hex'), 1)"
         );
     }
 }
