@@ -184,22 +184,34 @@ pub fn save_config_command(args: &MssqlSaveConfigArgs) -> Result<ConfigSaveRepor
 
 /// Reads the rows the request names and writes them as a `.cf`.
 pub fn save_config(request: &ConfigSaveRequest<'_>) -> Result<ConfigSaveReport> {
+    if request.rows_dir.is_none()
+        && let Some(source) = request.file_infobase
+    {
+        refuse_source_output(source, request.output)?;
+    }
     // The view this save resolves ends with it (#409 F-2), as an export's.
     let _views = dynamic_generation::StorageViewScope::begin(request.database);
-    let _offline = match (request.rows_dir, request.file_infobase) {
-        (Some(dir), _) => Some(offline_rows::activate(dir)?),
-        // The main configuration is what the file publishes (a completed
-        // stage folded in, as its export reads it); `--db` is its CONFIG.
-        (None, Some(path)) => Some(offline_rows::activate_rows(match request.configuration {
-            SavedConfiguration::Main => super::file_infobase::load(path)?,
-            SavedConfiguration::Database => super::file_infobase::load_stored(path)?,
-        })?),
-        (None, None) => None,
+    let (_offline, stored_names) = match (request.rows_dir, request.file_infobase) {
+        (Some(dir), _) => (Some(offline_rows::activate(dir)?), None),
+        // Keep stored CONFIG names distinct from the main configuration's
+        // completed CONFIGSAVE stage when checking unfinished operations.
+        (None, Some(path)) => {
+            let (rows, names) = match request.configuration {
+                SavedConfiguration::Main => {
+                    let (rows, names) = super::file_infobase::load_with_stored_names(path)?;
+                    (rows, Some(names))
+                }
+                SavedConfiguration::Database => (super::file_infobase::load_stored(path)?, None),
+            };
+            (Some(offline_rows::activate_rows(rows)?), names)
+        }
+        (None, None) => (None, None),
     };
     let published = published_rows(
         request.sql,
         request.database,
         request.configuration == SavedConfiguration::Main,
+        stored_names.as_ref(),
     )?;
     let source = if request.rows_dir.is_some() {
         "rows-dir"
@@ -234,16 +246,45 @@ pub fn save_config(request: &ConfigSaveRequest<'_>) -> Result<ConfigSaveReport> 
     })
 }
 
+/// Never replace the source database with the saved CF, including through
+/// alternate paths, hard links or symlinks to the same physical file.
+fn refuse_source_output(source: &Path, output: &Path) -> Result<()> {
+    let output_file = match std::fs::File::open(output) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("open save output {}", output.display()));
+        }
+    };
+    let source_path = ibcmd_filedb::data_file(source);
+    let source_file = std::fs::File::open(&source_path)
+        .with_context(|| format!("open source infobase {}", source_path.display()))?;
+    if crate::file_identity::file_identity(&source_file).context("identify source infobase")?
+        == crate::file_identity::file_identity(&output_file).context("identify save output")?
+    {
+        bail!(
+            "save output identifies the source infobase data file: {}",
+            output.display()
+        );
+    }
+    Ok(())
+}
+
 /// The rows `Config` of `database` publishes -- with a completed stage of
-/// `ConfigSave` over it when `main_configuration` -- each whole.
-pub(crate) fn published_rows(
+/// `ConfigSave` over it when `main_configuration` -- each whole. A flattened
+/// file view retains its original CONFIG names for unfinished-operation checks.
+fn published_rows(
     sql: &crate::sql::SqlExec,
     database: &str,
     main_configuration: bool,
+    stored_names: Option<&BTreeSet<String>>,
 ) -> Result<PublishedRows> {
     let table = MssqlConfigurationTableRole::Current.sql_name();
     let stored = fetch_row_headers(sql, database, table, &BTreeSet::new())?;
-    refuse_unfinished_operation(stored.iter().map(|row| row.file_name.as_str()))?;
+    match stored_names {
+        Some(names) => refuse_unfinished_operation(names.iter().map(String::as_str))?,
+        None => refuse_unfinished_operation(stored.iter().map(|row| row.file_name.as_str()))?,
+    }
     let headers = install_storage_overlay(
         sql,
         database,

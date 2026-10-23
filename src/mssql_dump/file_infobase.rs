@@ -37,11 +37,23 @@ fn open(db_path: &Path) -> Result<FileDb> {
 
 /// The configuration a file infobase publishes, as offline rows.
 pub(super) fn load(db_path: &Path) -> Result<OfflineRows> {
+    Ok(load_with_stored_names(db_path)?.0)
+}
+
+/// Retains the original CONFIG inventory separately from the published view:
+/// a staged `deleted` row is not an unfinished operation in stored CONFIG.
+pub(super) fn load_with_stored_names(db_path: &Path) -> Result<(OfflineRows, BTreeSet<String>)> {
     let mut db = open(db_path)?;
     let config = assemble(
         db.config_rows("CONFIG").map_err(|err| anyhow!("{err}"))?,
         "CONFIG",
     )?;
+    let stored_names = config.keys().cloned().collect();
+    let published = published_rows(&mut db, config)?;
+    Ok((published, stored_names))
+}
+
+fn published_rows(db: &mut FileDb, config: BTreeMap<String, Vec<u8>>) -> Result<OfflineRows> {
     let stored = OfflineRows::from_memory(
         config
             .iter()
