@@ -213,7 +213,11 @@ function elements(e: Element): Element[] {
   return Array.from(e.childNodes).filter((n) => n.nodeType === 1) as Element[];
 }
 function child(e: Element, tag: string): Element | undefined {
-  return elements(e).find((n) => n.localName === tag);
+
+  return elements(e).find(
+    (n) => n.namespaceURI === e.namespaceURI && n.localName === tag,
+  );
+
 }
 function text(e: Element | undefined): string {
   return e?.textContent ?? "";
@@ -274,6 +278,9 @@ export function descriptor(
     const groups = new Map<string, Node[]>();
     const container = child(e, "ChildObjects");
     for (const item of container ? elements(container) : []) {
+
+      if (item.namespaceURI !== e.namespaceURI) continue;
+
       const kind = item.localName!;
       const embedded = !!child(item, "Properties");
       const label = name(embedded ? property(item, "Name") : text(item).trim());
@@ -547,22 +554,46 @@ export class DatabaseSource implements Source {
 }
 
 export class TreeModel {
-  private cache = new Map<string, Promise<Node[]>>();
+  private cache = new Map<
+    string,
+    {
+      value: Promise<Node[]>;
+      abort: AbortController;
+      readers: number;
+      complete: boolean;
+    }
+  >();
   private abort = new AbortController();
   constructor(public source: Source) {}
   dispose() {
+
     this.abort.abort();
+    for (const entry of this.cache.values()) entry.abort.abort();
     this.cache.clear();
+
   }
-  async children(node?: Node): Promise<Node[]> {
+  async children(node?: Node, signal?: AbortSignal): Promise<Node[]> {
+
+    if (signal?.aborted) throw new Error("Поиск отменён");
     if (this.abort.signal.aborted) return [];
+
     const key = node?.id ?? "";
-    let value = this.cache.get(key);
-    if (!value) {
-      value = this.source
-        .children(node, this.abort.signal)
+    let entry = this.cache.get(key);
+    if (!entry) {
+
+      const pending = {
+        value: Promise.resolve<Node[]>([]),
+        abort: new AbortController(),
+        readers: 0,
+        complete: false,
+      };
+      pending.value = this.source
+        .children(node, pending.abort.signal)
         .then((nodes) => {
+
           if (this.abort.signal.aborted) return [];
+          if (pending.abort.signal.aborted) throw new Error("Чтение отменено");
+
           const ids = new Set<string>();
           for (const child of nodes) {
             if (ids.has(child.id)) throw new Error("Повторяющийся узел дерева");
@@ -573,22 +604,78 @@ export class TreeModel {
             child.parent = node;
           }
           return nodes;
+
         })
         .catch((error) => {
-          this.cache.delete(key);
+
+          if (this.cache.get(key) === pending) this.cache.delete(key);
           throw error;
+
+        })
+        .finally(() => {
+
+          pending.complete = true;
+
         });
-      this.cache.set(key, value);
+      entry = pending;
+      this.cache.set(key, entry);
+
     }
-    return value;
+    const read = entry;
+    read.readers++;
+
+    return new Promise<Node[]>((resolve, reject) => {
+
+      let finished = false;
+      const release = () => {
+
+        if (finished) return false;
+        finished = true;
+        signal?.removeEventListener("abort", cancel);
+        read.readers--;
+        if (!read.readers && !read.complete) {
+
+          if (this.cache.get(key) === read) this.cache.delete(key);
+          read.abort.abort();
+
+        }
+        return true;
+
+      };
+      const cancel = () => {
+
+        if (release()) reject(new Error("Поиск отменён"));
+
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
+      read.value.then(
+        (nodes) => {
+
+          if (release()) resolve(nodes);
+
+        },
+        (error) => {
+
+          if (release()) reject(error);
+
+        },
+      );
+      if (signal?.aborted) cancel();
+
+    });
+
   }
   async search(query: string, signal: AbortSignal): Promise<Node[]> {
+
     const found: Node[] = [];
     const q = query.toLocaleLowerCase("ru");
     const visit = async (node?: Node): Promise<void> => {
       if (signal.aborted || this.abort.signal.aborted)
         throw new Error("Поиск отменён");
-      const children = await this.children(node);
+      const children = await this.children(node, signal);
+      if (signal.aborted || this.abort.signal.aborted)
+        throw new Error("Поиск отменён");
+
       if (
         node &&
         node.type !== "group" &&
@@ -602,5 +689,6 @@ export class TreeModel {
     };
     await visit();
     return found;
+
   }
 }

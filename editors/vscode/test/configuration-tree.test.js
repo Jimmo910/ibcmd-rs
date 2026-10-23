@@ -243,6 +243,118 @@ test("пути, повреждённый XML, DTD и неизвестные ко
   );
 });
 
+test("посторонние пространства имён не скрывают соседние реквизиты и файлы", async () => {
+
+  for (const version of ["2.17", "2.20", "2.21"]) {
+
+    const source = new XmlSource(
+      path.resolve(__dirname, "../../../tests/fixtures/xml", version),
+    );
+    const owner = {
+      id: "Catalog.Products",
+      fullName: "Catalog.Products",
+      kind: "Catalog",
+      type: "object",
+      label: "Products",
+      path: "Catalogs/Products.xml",
+    };
+    const children = await source.children(owner, signal());
+    assert.equal(children.find((n) => n.kind === "Attribute").children[0].label, "Sku");
+    assert.equal(children.find((n) => n.kind === "TabularSection").children[0].label, "Lines");
+    const modulePath = "Catalogs/Products/Ext/ObjectModule.bsl";
+    assert.ok(descriptor(await source.read(owner.path, signal()), owner, [modulePath]).some((n) => n.path === modulePath));
+    const model = new TreeModel({
+      children: (node, abort) => node ? source.children(node, abort) : Promise.resolve([owner]),
+    });
+    try {
+
+      assert.equal((await model.search("Quantity", signal())).length, 1);
+
+    } finally {
+
+      model.dispose();
+
+    }
+
+  }
+
+  const owner = { kind: "Catalog", path: "Catalogs/Товары.xml" };
+  const bytes = xml("Catalog", '<ChildObjects xmlns:f="urn:посторонние"><f:Attribute><f:Properties><f:Name>Чужой</f:Name></f:Properties></f:Attribute><Attribute><f:Properties/><Properties><Name>Свой</Name></Properties></Attribute></ChildObjects>');
+  assert.equal(descriptor(bytes, owner, [])[0].children[0].label, "Свой");
+  assert.throws(() => descriptor(xml("Catalog", "<ChildObjects><Unknown>Имя</Unknown></ChildObjects>"), owner, []), /Неизвестная коллекция/);
+
+});
+
+test("отмена последнего чтения поиска передаётся серверу и позволяет повтор", async () => {
+
+  let finish;
+  let readSignal;
+  let calls = 0;
+  const source = new DatabaseSource({
+    request: async (_method, _params, abort) => {
+
+      calls++;
+      if (calls > 1) return { nodes: [] };
+      readSignal = abort;
+      return new Promise((resolve) => { finish = resolve; });
+
+    },
+  }, "/work", "demo");
+  const model = new TreeModel(source);
+  const abort = new AbortController();
+  const search = model.search("Имя", abort.signal);
+  abort.abort();
+  await assert.rejects(search, /отменён/);
+  assert.equal(readSignal.aborted, true);
+  assert.deepEqual(await model.search("Имя", signal()), []);
+  finish({ nodes: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  await model.children();
+  assert.equal(calls, 2);
+  model.dispose();
+
+});
+
+test("отмена поиска не отменяет совместное раскрытие узла", async () => {
+
+  let finish;
+  let readSignal;
+  const model = new TreeModel({
+    children: (_node, abort) => {
+
+      readSignal = abort;
+      return new Promise((resolve) => { finish = resolve; });
+
+    },
+  });
+  const abort = new AbortController();
+  const search = model.search("Имя", abort.signal);
+  const expansion = model.children();
+  abort.abort();
+  await assert.rejects(search, /отменён/);
+  assert.equal(readSignal.aborted, false);
+  finish([]);
+  assert.deepEqual(await expansion, []);
+  model.dispose();
+
+});
+
+test("отмена после последнего ответа не показывает результаты поиска", async () => {
+
+  const abort = new AbortController();
+  const model = new TreeModel({
+    children: async () => {
+
+      abort.abort();
+      return [];
+
+    },
+  });
+  await assert.rejects(model.search("Имя", abort.signal), /отменён/);
+  model.dispose();
+
+});
+
 test("XML-источник не читает ссылку за пределы каталога", async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ibcmd-tree-"));
   try {
