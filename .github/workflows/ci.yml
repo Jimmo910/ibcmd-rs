@@ -15,11 +15,12 @@ jobs:
     env:
       IBCMD_TEST_KEEP_FIXTURES: '1'
       PYTHONDONTWRITEBYTECODE: '1'
-      TMPDIR: ${{ runner.temp }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Test exact-build evidence audit
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: python3 tests/scripts/platform_acceptance_test.py -v
 
   fmt:
