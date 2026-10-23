@@ -256,18 +256,27 @@ pub(crate) fn compile_evidenced_template_with_references(
     style_reference_types: &BTreeMap<String, String>,
 ) -> Result<Vec<u8>, TemplateCodecError> {
     let unresolved = |_: &str| None::<String>;
-    compile_evidenced_template_with_resolvers(kind, source, style_reference_types, &unresolved)
+    compile_evidenced_template_with_resolvers(
+        kind,
+        source,
+        style_reference_types,
+        &unresolved,
+        None,
+    )
 }
 
 /// Compiles like [`compile_evidenced_template_with_references`] and also
 /// resolves a `DataCompositionSchema`'s configuration types to their storage
 /// `TypeId` through `types` (see
-/// [`super::dcs::compile_evidenced_dcs_with_resolvers`]).
+/// [`super::dcs::compile_evidenced_dcs_with_resolvers`]). A 2.21 schema's
+/// picture references require the configuration picture index as well; a
+/// missing index refuses their normalization.
 pub(crate) fn compile_evidenced_template_with_resolvers(
     kind: TemplateKind,
     source: TemplateSource<'_>,
     style_reference_types: &BTreeMap<String, String>,
     types: &dyn DcsStorageTypeResolver,
+    picture_object_refs: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<u8>, TemplateCodecError> {
     let blob = match (kind, source) {
         (TemplateKind::DataCompositionSchema, TemplateSource::Bytes(xml)) => {
@@ -276,6 +285,7 @@ pub(crate) fn compile_evidenced_template_with_resolvers(
                 xml,
                 style_reference_types,
                 types,
+                picture_object_refs,
             )
             .map_err(|error| TemplateCodecError::Dcs(error.to_string()))?
         }

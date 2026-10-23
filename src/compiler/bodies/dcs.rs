@@ -154,7 +154,7 @@ pub(crate) fn compile_evidenced_dcs_with_references(
     style_reference_types: &BTreeMap<String, String>,
 ) -> Result<Vec<u8>, DcsCodecError> {
     let unresolved = |_: &str| None::<String>;
-    compile_evidenced_dcs_with_resolvers(kind, xml, style_reference_types, &unresolved)
+    compile_evidenced_dcs_with_resolvers(kind, xml, style_reference_types, &unresolved, None)
 }
 
 /// Compiles like [`compile_evidenced_dcs_with_references`] and resolves a
@@ -164,12 +164,15 @@ pub(crate) fn compile_evidenced_dcs_with_references(
 ///
 /// A schema body is accepted only when the exporter's own reader, given the
 /// compiled body, gives back the source document: the round trip is checked
-/// here rather than assumed.
+/// here rather than assumed. The 2.21 picture spelling additionally needs
+/// the configuration's complete picture references to prove its kind before
+/// converting it to the unqualified stored name; absent context is refused.
 pub(crate) fn compile_evidenced_dcs_with_resolvers(
     kind: DcsTemplateKind,
     xml: &[u8],
     style_reference_types: &BTreeMap<String, String>,
     types: &dyn DcsStorageTypeResolver,
+    picture_object_refs: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<u8>, DcsCodecError> {
     match kind {
         DcsTemplateKind::Appearance => {
@@ -179,6 +182,33 @@ pub(crate) fn compile_evidenced_dcs_with_resolvers(
             Ok(blob)
         }
         DcsTemplateKind::Schema => {
+            // A 2.21 source spells its settings pictures the 8.5 way; the
+            // platform stores them the 8.3.27 way (and its export, like
+            // ours, writes them back as 8.5 spells them).
+            let stored = std::str::from_utf8(xml)
+                .ok()
+                .map(crate::mssql_dump::with_stored_picture_values)
+                .transpose()
+                .map_err(|error| DcsCodecError::RoundTrip(format!("{error:#}")))?
+                .flatten();
+            if let Some(stored) = &stored {
+                // Bare v8ui names carry no CommonPicture/StdPicture kind.
+                // Prove the inverse with the actual configuration, including
+                // common pictures that this template does not itself name.
+                let refs = picture_object_refs.ok_or_else(|| {
+                    DcsCodecError::RoundTrip(
+                        "2.21 picture references require configuration picture context".to_owned(),
+                    )
+                })?;
+                let restored = crate::mssql_dump::with_8_5_picture_values(stored, refs)
+                    .map_err(|error| DcsCodecError::RoundTrip(format!("{error:#}")))?;
+                if document_without_shell(restored.as_bytes()) != document_without_shell(xml) {
+                    return Err(DcsCodecError::RoundTrip(
+                        "2.21 picture normalization does not reproduce the original source with its configuration picture kinds".to_owned(),
+                    ));
+                }
+            }
+            let xml = stored.as_deref().map_or(xml, str::as_bytes);
             let (plain, type_index, object_refs) =
                 compile_schema_plain(xml, style_reference_types, types)?;
             let blob = deflate_bytes(&plain)?;

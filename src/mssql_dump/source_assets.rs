@@ -2775,7 +2775,22 @@ fn write_source_asset_inner(
             let content = if context.source_version == InfobaseConfigSourceVersion::V2_20 {
                 ibcmd_xml::palette::strip_unused_palette_namespace(content)
             } else {
-                content
+                // 8.5 names the kind of a settings picture
+                // (`dcs_2_21::with_8_5_picture_values`).
+                let text = String::from_utf8(content).with_context(|| {
+                    format!(
+                        "data-composition source asset {} is not UTF-8",
+                        asset.primary_path.display()
+                    )
+                })?;
+                super::dcs_2_21::with_8_5_picture_values(&text, context.object_refs)
+                    .with_context(|| {
+                        format!(
+                            "failed to write the 8.5 picture values of source asset {}",
+                            asset.primary_path.display()
+                        )
+                    })?
+                    .into_bytes()
             };
             let path = output_dir.join(&asset.primary_path);
             if let Some(parent) = path.parent() {

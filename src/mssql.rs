@@ -2471,11 +2471,25 @@ pub(crate) fn compile_dcs_template_body(
     match source {
         Some(source) => {
             let resolver = |name: &str| source.dcs_generated_type_id(name);
+            // Only the new readable picture spelling needs the full picture
+            // index; leave other template compilation independent of that scan.
+            let readable_ns = b"http://v8.1c.ru/8.3/xcf/readable";
+            let picture_refs = bytes
+                .windows(readable_ns.len())
+                .any(|window| window == readable_ns)
+                .then(|| source.moxel_object_refs())
+                .transpose()
+                .map_err(|error| {
+                    crate::compiler::bodies::template::TemplateCodecError::InvalidSource(format!(
+                        "failed to read configuration picture context: {error:#}"
+                    ))
+                })?;
             compile_evidenced_template_with_resolvers(
                 TemplateKind::DataCompositionSchema,
                 TemplateSource::Bytes(bytes),
                 source.dcs_style_items(),
                 &resolver,
+                picture_refs.as_ref(),
             )
         }
         None => compile_evidenced_template(
@@ -15367,6 +15381,42 @@ mod tests {
             Some(b"PK\x03\x04".as_slice())
         );
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dcs_picture_import_refuses_a_standard_picture_shadowed_by_configuration() {
+        let root = std::env::temp_dir().join(format!(
+            "ibcmd-rs-dcs-picture-kind-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(root.join("CommonPictures")).unwrap();
+        fs::write(root.join("CommonPictures/Information.xml"), br#"<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.21"><CommonPicture uuid="11111111-2222-4333-8444-555555555555"><Properties><Name>Information</Name></Properties></CommonPicture></MetaDataObject>"#).unwrap();
+        let source = decode_base64_fixture(include_str!(concat!(
+            "../tests/fixtures/native-evidence/8.3.27.2214/",
+            "dcs-output-parameters/native-template.xml.b64"
+        )));
+        let stored = String::from_utf8(source).unwrap().replace(
+            "<dcscor:value xsi:type=\"xs:string\">Probe Title</dcscor:value>",
+            "<dcscor:value xsi:type=\"v8ui:Picture\" ref=\"v8ui:Information\"/>",
+        );
+        let source = stored.replace(
+            "<dcscor:value xsi:type=\"v8ui:Picture\" ref=\"v8ui:Information\"/>",
+            "<dcscor:value xmlns:d6p1=\"http://v8.1c.ru/8.3/xcf/readable\" xsi:type=\"d6p1:Picture\">\r\n\t\t\t\t\t\t<d6p1:Ref>StdPicture.Information</d6p1:Ref>\r\n\t\t\t\t\t\t<d6p1:LoadTransparent>true</d6p1:LoadTransparent>\r\n\t\t\t\t\t</dcscor:value>",
+        );
+        let context = MetadataSourceContext::new(root.clone());
+        assert!(super::compile_dcs_template_body(stored.as_bytes(), Some(&context)).is_ok());
+        assert!(
+            super::compile_dcs_template_body(source.as_bytes(), Some(&context)).is_err(),
+            "the single StdPicture must not become the external CommonPicture of the same name"
+        );
+        let common = source.replace("StdPicture.Information", "CommonPicture.Information");
+        assert!(super::compile_dcs_template_body(common.as_bytes(), Some(&context)).is_ok());
+        assert!(super::compile_dcs_template_body(source.as_bytes(), None).is_err());
+        fs::remove_file(root.join("CommonPictures/Information.xml")).unwrap();
+        let context = MetadataSourceContext::new(root.clone());
+        assert!(super::compile_dcs_template_body(source.as_bytes(), Some(&context)).is_ok());
+        assert!(super::compile_dcs_template_body(common.as_bytes(), Some(&context)).is_err());
         let _ = fs::remove_dir_all(root);
     }
 

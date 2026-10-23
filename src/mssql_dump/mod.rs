@@ -975,6 +975,8 @@ mod config_rows;
 pub mod config_save;
 mod configuration_properties_evidence;
 mod dcs;
+mod dcs_2_21;
+pub(crate) use dcs_2_21::{with_8_5_picture_values, with_stored_picture_values};
 mod dynamic_generation;
 mod empty_configuration;
 pub(crate) mod extension;
