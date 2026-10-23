@@ -334,6 +334,7 @@ fn serve_speaks_the_protocol_and_its_lifecycle() {
         "tree/children",
         "objects/status",
         "objects/export",
+        "objects/exportPlan",
         "objects/import",
         "source/read",
         "config/pending",

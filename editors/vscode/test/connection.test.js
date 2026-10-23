@@ -20,6 +20,7 @@ async function harness({
   listed,
   text = "",
   initialize = async () => ({}),
+  authentication = "windows",
 } = {}) {
   const commands = new Map(),
     stores = [],
@@ -44,6 +45,7 @@ async function harness({
       platform: "8.3.27",
     }));
   const saved = [],
+    updates = [],
     errors = [],
     offered = [];
   const values = {
@@ -92,6 +94,7 @@ async function harness({
       getConfiguration: () => ({
         get: (key, fallback) => values[key] ?? fallback,
         update: async (key, value) => {
+          updates.push({ key, value });
           values[key] = value;
         },
       }),
@@ -120,7 +123,7 @@ async function harness({
         );
         return (
           items.find((item) => item.base?.id === picked) ??
-          items.find((item) => item.value === "windows")
+          items.find((item) => item.value === authentication)
         );
       },
       showErrorMessage(message) {
@@ -179,6 +182,7 @@ async function harness({
     stores,
     clients,
     saved,
+    updates,
     errors,
     offered,
     edit: (id) => {
@@ -438,4 +442,25 @@ test("export-capable client rejects old protocol before connecting", async () =>
   assert.deepEqual(versions, ["1.4"]);
   assert.equal(h.errors.length, 1);
   assert.equal(h.stores.length, 0);
+});
+
+test("Edit validator rejects old protocol after listing without publishing settings or secrets", async () => {
+  const versions = [];
+  const h = await harness({
+    authentication: "sql",
+    input: async (options) =>
+      options.password ? "synthetic-new" : options.value,
+    initialize: async (_, params) => {
+      versions.push(params.protocolVersion);
+      if (params.infobases) throw new Error("unsupported protocol");
+      return {};
+    },
+  });
+  await h.edit("a");
+  assert.deepEqual(versions, ["1.4", "1.4"]);
+  assert.equal(h.errors.length, 1);
+  assert.equal(h.saved.length, 0);
+  assert.equal(h.updates.length, 0);
+  assert.equal(h.stores.length, 0);
+  assert.ok(h.clients.every((client) => client.disposed));
 });
