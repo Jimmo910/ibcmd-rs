@@ -96,6 +96,17 @@ across write-reader pagers/hash/copy. Actual source custody enforces 128 MiB,
 100000 entries and depth 64, including empty directories; its walker avoids
 eager ancestor caching and checks cancellation per entry/64 KiB source chunk.
 
+Consumed XML caches retain immutable bytes and detached leaf/ordered-ancestor
+stamp witnesses rather than a file descriptor and ancestor handles for every
+XML. Final publication reopens each name beneath the held root, compares its
+witness and digest, and releases transient handles before the next member.
+Selected OriginalSource capabilities retain their original pinned handles.
+Windows witnesses include creation time, file identity, modification time,
+ancestor stamps and content hash to detect ordinary mutations. Detached
+revalidation does not provide unconditional ABA protection or the same
+move-denial semantics as continuously held Windows handles. MCP startup remains
+Unix-only; this shared engine behavior does not extend MCP platform support.
+
 Import stages CONFIGSAVE only. It returns `status=staged`, `stagePublished=true`,
 `applied=false`, `restartRequired=true`; the old session then refuses every call
 rather than reconnecting implicitly to an atomically replaced inode. A shared
