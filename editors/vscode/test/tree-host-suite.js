@@ -8,10 +8,13 @@ exports.run = async () => {
   );
   assert.ok(extension);
   const api = await extension.activate();
-  const rootDir = path.resolve(
+  const fixture = path.resolve(
     __dirname,
     "../../../tests/fixtures/file-infobase/tiny-xml",
   );
+  const workspace = vscode.workspace.workspaceFolders[0].uri.fsPath;
+  const rootDir = path.join(workspace, "исходники");
+  await fs.cp(fixture, rootDir, { recursive: true });
   const open = vscode.window.showOpenDialog;
   try {
     vscode.window.showOpenDialog = async () => [vscode.Uri.file(rootDir)];
@@ -34,16 +37,44 @@ exports.run = async () => {
   );
   await vscode.commands.executeCommand("ibcmd.tree.openLocal", file);
   const doc = vscode.window.activeTextEditor.document;
-  assert.equal(doc.uri.fsPath, path.join(rootDir, file.path));
+  assert.equal(
+    doc.uri.fsPath,
+    vscode.Uri.file(path.join(rootDir, file.path)).fsPath,
+  );
   const expected = (await fs.readFile(doc.uri.fsPath, "utf8")).replace(
     /^\uFEFF/,
     "",
   );
   assert.equal(doc.getText(), expected);
+  assert.equal(api.configuration.getTreeItem(module).command, undefined);
+  await fs.writeFile(path.join(workspace, "посторонний.xml"), "<проверка/>");
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.equal((await api.configuration.getChildren())[0], root);
+  let subscription;
+  let timer;
+  const changed = new Promise((resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("Изменение исходника не обновило дерево")),
+      10000,
+    );
+    subscription = api.configuration.onDidChangeTreeData(() => resolve());
+  });
+  try {
+    await fs.appendFile(
+      path.join(rootDir, file.path),
+      "\r\n// Проверка обновления дерева\r\n",
+    );
+    await changed;
+  } finally {
+    clearTimeout(timer);
+    subscription.dispose();
+  }
+  assert.deepEqual(await api.configuration.getChildren(module), []);
+  assert.notEqual((await api.configuration.getChildren())[0], root);
   await vscode.commands.executeCommand("ibcmd.tree.refresh");
   assert.deepEqual(await api.configuration.getChildren(module), []);
   assert.equal((await api.configuration.getChildren()).length, 1);
   console.log(
-    "Проверка дерева в VS Code выполнена: раскрытие, команды, файл и обновление.",
+    "Проверка дерева в VS Code выполнена: раскрытие, команды, файл, границы наблюдения и обновление.",
   );
 };

@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as path from "node:path";
 import {
   DatabaseSource,
   Node,
@@ -9,6 +10,8 @@ import {
   localPath,
 } from "./configuration-tree";
 
+class Notice extends Error {}
+
 export class ConfigurationView
   implements vscode.TreeDataProvider<Node>, vscode.Disposable
 {
@@ -18,6 +21,8 @@ export class ConfigurationView
   readonly onDidChangeSource = this.sources.event;
   private model?: TreeModel;
   private view: vscode.TreeView<Node>;
+  private watcher?: vscode.Disposable;
+  private refreshTimer?: ReturnType<typeof setTimeout>;
   constructor(private context: vscode.ExtensionContext) {
     this.view = vscode.window.createTreeView("ibcmd.configuration", {
       treeDataProvider: this,
@@ -31,9 +36,11 @@ export class ConfigurationView
           if (!vscode.workspace.isTrusted) return;
           try {
             return await run(...args);
-          } catch {
+          } catch (e) {
             void vscode.window.showErrorMessage(
-              "Не удалось прочитать конфигурацию. Проверьте источник и повторите обновление.",
+              e instanceof Notice
+                ? e.message
+                : "Не удалось прочитать конфигурацию. Проверьте источник и повторите обновление.",
             );
           }
         }),
@@ -54,12 +61,16 @@ export class ConfigurationView
     });
     command("ibcmd.tree.openLocal", async (node?: Node) => {
       if (!node?.path || !this.model || !this.owns(node)) return;
-      const local = new XmlSource(this.model.source.directory);
+      const model = this.model;
+      const local = new XmlSource(model.source.directory);
       if (!(await local.read(node.path, new AbortController().signal)))
-        throw new Error("Местный файл не найден");
+        throw new Notice(
+          "Местный файл не найден. Проверьте каталог XML или откройте исходник из базы.",
+        );
+      if (this.model !== model || !this.owns(node)) return;
       await vscode.commands.executeCommand(
         "vscode.open",
-        vscode.Uri.file(localPath(this.model.source.directory, node.path)),
+        vscode.Uri.file(localPath(model.source.directory, node.path)),
       );
     });
     command("ibcmd.tree.search", async () => {
@@ -81,12 +92,15 @@ export class ConfigurationView
           const sub = token.onCancellationRequested(() => abort.abort());
           try {
             return await model.search(query.trim(), abort.signal);
+          } catch (e) {
+            if (abort.signal.aborted || this.model !== model) return undefined;
+            throw e;
           } finally {
             sub.dispose();
           }
         },
       );
-      if (this.model !== model) return;
+      if (!result || this.model !== model) return;
       const picked = await vscode.window.showQuickPick(
         result.map((node) => ({
           label: node.label,
@@ -103,11 +117,35 @@ export class ConfigurationView
       if (picked && this.model === model)
         await this.view.reveal(picked.node, { select: true, focus: true });
     });
-    const watcher = vscode.workspace.createFileSystemWatcher("**/*.{xml,bsl}");
-    const invalidate = () => {
-      if (this.model && !this.model.source.remote) this.use(this.model.source);
+  }
+  private watch(source: Source) {
+    this.watcher?.dispose();
+    this.watcher = undefined;
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.refreshTimer = undefined;
+    if (source.remote) return;
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(
+        vscode.Uri.file(source.directory),
+        "**/*.{xml,bsl}",
+      ),
+    );
+    const invalidate = (uri: vscode.Uri) => {
+      if (uri.scheme !== "file" || this.model?.source !== source) return;
+      const relative = path.relative(source.directory, uri.fsPath);
+      if (
+        path.isAbsolute(relative) ||
+        relative === ".." ||
+        relative.startsWith(".." + path.sep)
+      )
+        return;
+      if (this.refreshTimer) clearTimeout(this.refreshTimer);
+      this.refreshTimer = setTimeout(() => {
+        this.refreshTimer = undefined;
+        if (this.model?.source === source) this.use(source);
+      }, 200);
     };
-    context.subscriptions.push(
+    this.watcher = vscode.Disposable.from(
       watcher,
       watcher.onDidChange(invalidate),
       watcher.onDidCreate(invalidate),
@@ -128,6 +166,7 @@ export class ConfigurationView
     this.model?.dispose();
     this.roots.clear();
     this.model = new TreeModel(source);
+    this.watch(source);
     this.view.message = undefined;
     this.view.description = source.remote ? "База данных" : "Файлы XML";
     this.changed.fire(undefined);
@@ -203,7 +242,7 @@ export class ConfigurationView
             ? "symbol-field"
             : "symbol-class",
     );
-    if (node.path)
+    if (node.type === "file" && node.path)
       item.command = {
         command: "ibcmd.tree.openLocal",
         title: "Открыть местный файл",
@@ -227,6 +266,8 @@ export class ConfigurationView
     }
   }
   dispose() {
+    this.watcher?.dispose();
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.model?.dispose();
     this.changed.dispose();
     this.sources.dispose();
