@@ -611,7 +611,7 @@ impl ModelExport {
 /// only be 8.5.1's (the settings' export rule); an older one says nothing
 /// about the platform, since 8.5 runs 8.3.27-compatible configurations too.
 /// Resolves the export's published storage view, including a completed stage
-/// for the main configuration, then reads oot and its Configuration row.
+/// for the main configuration, then reads the root service row and its Configuration row.
 pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> Result<bool> {
     let _offline = match (&args.rows_dir, &args.file_infobase) {
         (Some(dir), _) => Some(offline_rows::activate(dir)?),
