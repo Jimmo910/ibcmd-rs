@@ -286,7 +286,7 @@ mod read_budget_tests {
         path::PathBuf,
         sync::{
             Arc,
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
     };
 
@@ -313,22 +313,61 @@ mod read_budget_tests {
         }
     }
 
+    fn reserve_fixture_directory(mut candidate: impl FnMut() -> PathBuf) -> Fixture {
+        for _ in 0..128 {
+            let root = candidate();
+            match fs::create_dir(&root) {
+                Ok(()) => {
+                    return Fixture {
+                        file: root.join("1Cv8.1CD"),
+                        root,
+                    };
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("cannot reserve test fixture directory: {error}"),
+            }
+        }
+        panic!("test fixture directory collision retry limit");
+    }
+
+    #[test]
+    fn fixture_reservation_retries_collision_without_adopting_existing_directory() {
+        let first = fresh_fixture();
+        fs::write(&first.file, b"existing fixture").unwrap();
+        let mut attempts = 0;
+        let second = reserve_fixture_directory(|| {
+            attempts += 1;
+            if attempts == 1 {
+                first.root.clone()
+            } else {
+                first.root.join("retry")
+            }
+        });
+        assert_eq!(attempts, 2);
+        assert_ne!(first.root, second.root);
+        assert_eq!(fs::read(&first.file).unwrap(), b"existing fixture");
+        assert!(!second.file.exists());
+    }
+
+    fn fresh_fixture() -> Fixture {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        reserve_fixture_directory(|| {
+            std::env::temp_dir().join(format!(
+                "ibcmd-budget-{}-{stamp}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ))
+        })
+    }
+
     // This deliberately malformed fixture repeats one blob pointer in two live
     // records. Its physical file size does not bound cloned row materialization.
     fn aliased_fixture() -> (Fixture, u64) {
-        let root = std::env::temp_dir().join(format!(
-            "ibcmd-budget-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir(&root).unwrap();
-        let path = Fixture {
-            file: root.join("1Cv8.1CD"),
-            root,
-        };
+        let path = fresh_fixture();
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/file-infobase/tiny.1CD.gz");
         let mut bytes = Vec::new();
