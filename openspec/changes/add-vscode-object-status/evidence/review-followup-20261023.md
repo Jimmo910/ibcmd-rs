@@ -47,3 +47,20 @@ path/link checks and Trash-controlled retention remain unchanged.
 Independent read-only review of this follow-up found no confirmed P1/P2. Exact-head
 local/native host and platform CI results are recorded separately after the commit;
 this document does not claim those pending checks have completed.
+
+## Native view consistency follow-up from #508
+
+Narrow source/test port from `83ae94808f3de3b80079bdf86ee742fb64a85bff`:
+native status without a baseline reads the active configuration, so tree reads
+now use active too. With a resolved directory or Git baseline both requests use
+main. Missing native evidence still remains unknown; cancellation and generation
+guards are unchanged. No Rust, workflow or other shared client changes were ported.
+
+The transport regression failed before the source fix (`true !== false`) and
+passed after it. All 34 client tests passed with the retained debug binary,
+including actual CLI/RPC, plus Prettier and diff checks. An isolated macOS Code
+host passed connection/password, actual rows-dir comparison/local edit, synthetic
+six states, Explorer/filter, stale/cancellation and multiple-workspace scenarios.
+No new native or live SQL acceptance is claimed for this follow-up. Its profile
+and fixtures remain under the external lab for user-controlled Trash cleanup.
+Independent read-only review found no confirmed P1/P2.

@@ -277,7 +277,8 @@ export class ObjectView
                 "tree/children",
                 {
                   infobase,
-                  mainConfiguration: this.nativeMode,
+                  // objects/status selects main only with versionBaselineDir.
+                  mainConfiguration: this.nativeMode && !!baseline,
                   ...(node ? { node } : {}),
                 },
                 abort.signal,
