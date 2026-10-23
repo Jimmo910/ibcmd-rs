@@ -250,6 +250,18 @@ export function arrange(owner: Node, nodes: Node[]): Node[] {
       ]
     : nodes;
 }
+export function belongsToGroup(group: Node, fullName: string): boolean {
+  if (group.kind === "Common") return common.has(fullName.split(".")[0]);
+
+  let owner = group.parent;
+  while (owner?.type === "group") owner = owner.parent;
+  const prefix =
+    owner?.fullName && owner.kind !== "Configuration"
+      ? `${owner.fullName}.`
+      : "";
+  return fullName.startsWith(`${prefix}${group.kind}.`);
+}
+
 export function descriptor(
   bytes: Buffer,
   owner: Node,

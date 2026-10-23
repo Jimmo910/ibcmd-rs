@@ -350,11 +350,18 @@ export async function activate(context: vscode.ExtensionContext) {
       previous.label || old?.name,
     );
     if (friendly === undefined) return;
-    const server = await input(
-      "SQL Server (host or host\\instance)",
-      old?.server || "localhost",
-    );
-    if (server === undefined) return;
+
+    const rowsDir = old?.source === "rows-dir" ? old.rowsDir : undefined;
+    if (old?.source === "rows-dir" && !rowsDir)
+      throw new Error("Сервер не вернул каталог файлового источника");
+    const server = rowsDir
+      ? old?.server
+      : await input(
+          "SQL Server (host or host\\instance)",
+          old?.server || "localhost",
+        );
+    if (!rowsDir && server === undefined) return;
+
     const name = await input(
       "Database name (one database; no wildcard)",
       old?.name,
@@ -365,20 +372,22 @@ export async function activate(context: vscode.ExtensionContext) {
       old?.platform || "8.3.27",
     );
     if (platform === undefined) return;
-    const auth = await vscode.window.showQuickPick(
-      [
-        { label: "Windows authentication", value: "windows" as const },
-        { label: "SQL authentication", value: "sql" as const },
-      ],
-      {
-        placeHolder:
-          "Authentication (Windows integrated login requires Windows)",
-      },
-    );
-    if (!auth) return;
+    const auth = rowsDir
+      ? undefined
+      : await vscode.window.showQuickPick(
+          [
+            { label: "Windows authentication", value: "windows" as const },
+            { label: "SQL authentication", value: "sql" as const },
+          ],
+          {
+            placeHolder:
+              "Authentication (Windows integrated login requires Windows)",
+          },
+        );
+    if (!rowsDir && !auth) return;
     let user: string | undefined;
     let password: string | undefined;
-    if (auth.value === "sql") {
+    if (auth?.value === "sql") {
       user = await input("SQL user", previous.user);
       if (user === undefined) return;
       user = user.trim();
@@ -391,9 +400,10 @@ export async function activate(context: vscode.ExtensionContext) {
       if (password === undefined) return;
     }
     const database: Database = {
-      server: server.trim(),
+      ...(server === undefined ? {} : { server: server.trim() }),
       name: name.trim(),
       platform: platform.trim(),
+      ...(rowsDir ? { "rows-dir": rowsDir } : {}),
     };
     const local = readLocal(expected, old?.id);
     const next = editConfig(expected, local ? old?.id : undefined, database);
@@ -411,6 +421,7 @@ export async function activate(context: vscode.ExtensionContext) {
             name: database.name,
             server: database.server,
             platform: database.platform,
+            rowsDir: database["rows-dir"],
           },
         ],
       });
@@ -429,7 +440,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const all = { ...metadata(f) };
     all[id] = {
       label: friendly.trim(),
-      auth: auth.value,
+      ...(auth ? { auth: auth.value } : {}),
       ...(user ? { user } : {}),
     };
     await config(f).update(
@@ -452,7 +463,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (
       old &&
       previous.user &&
-      (old.id !== id || previous.user !== user || auth.value !== "sql")
+      (old.id !== id || previous.user !== user || auth?.value !== "sql")
     )
       await context.secrets.delete(
         secretKey(f.uri.toString(), old.id, previous.user),

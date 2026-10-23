@@ -4,6 +4,7 @@ export interface Base {
   server?: string;
   platform: string;
   source: string;
+  rowsDir?: string;
   mask: boolean;
 }
 export interface Metadata {

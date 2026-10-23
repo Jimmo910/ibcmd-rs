@@ -1,6 +1,12 @@
 import * as vscode from "vscode";
 import { randomUUID } from "node:crypto";
-import { DatabaseSource, Source, relativePath } from "./configuration-tree";
+import {
+  DatabaseSource,
+  Node,
+  Source,
+  belongsToGroup,
+  relativePath,
+} from "./configuration-tree";
 
 interface Entry {
   source: Source;
@@ -30,7 +36,7 @@ export class DatabaseFiles
     const previous = this.entries.get(key);
     if (previous && previous.source !== source)
       throw new Error("Источник виртуального файла изменился");
-    this.entries.set(key, { source, file, empty });
+    if (!previous) this.entries.set(key, { source, file, empty });
     return uri;
   }
   invalidate() {
@@ -126,13 +132,15 @@ export interface Difference {
   path: string;
   state: "changed" | "baseOnly" | "localOnly";
 }
-export function differences(response: any): Difference[] {
+export function differences(response: any, group?: Node): Difference[] {
   if (!Array.isArray(response?.objects))
     throw new Error("Неверный ответ сравнения");
   const files = new Map<string, Difference>();
   for (const object of response.objects) {
     if (!object || typeof object.object !== "string")
       throw new Error("Неверный объект сравнения");
+    if (group && !belongsToGroup(group, object.object)) continue;
+
     for (const state of ["changed", "baseOnly", "localOnly"] as const) {
       if (!Array.isArray(object[state])) throw new Error("Нет списка отличий");
       for (const file of object[state]) {

@@ -60,6 +60,22 @@ test("atomic save detects disk conflicts, locks and symlinks", async () => {
   }
   // Keep test evidence in the caller-selected temp directory; no destructive cleanup.
 });
+
+test("файловое подключение без сервера сохраняет и обновляет каталог", () => {
+  const database = {
+    name: "Архив",
+    platform: "8.3.27",
+    "rows-dir": "C:\\Данные\\Архив",
+  };
+  const text = editConfig("# Настройки\n", undefined, database);
+  assert.deepEqual(readConfig(text), [database]);
+  const updated = { ...database, "rows-dir": "D:\\Другой каталог" };
+  assert.deepEqual(readConfig(editConfig(text, "Архив", updated)), [updated]);
+  assert.throws(
+    () => editConfig("", undefined, { ...database, "rows-dir": "" }),
+    /required/,
+  );
+});
 test("settings lock only translates EEXIST and preserves other filesystem errors", async () => {
   for (const code of ["EEXIST", "EACCES", "EPERM", "EROFS", "ENOENT", "EIO"]) {
     const error = Object.assign(new Error(`open failed: ${code}`), { code });

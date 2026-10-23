@@ -13,6 +13,8 @@ function deferred() {
   return { promise, resolve };
 }
 async function harness({
+  entries,
+  settings = "",
   stored,
   input = async () => "synthetic-new",
   connect = async () => ({}),
@@ -20,7 +22,9 @@ async function harness({
 } = {}) {
   const commands = new Map(),
     stores = [],
-    clients = [];
+    clients = [],
+    initialized = [],
+    errors = [];
   const f = {
     name: "fixture",
     uri: {
@@ -32,12 +36,14 @@ async function harness({
   let picked = "a",
     cancel = () => {};
   const noEvent = () => ({ dispose() {} });
-  const bases = ["a", "b"].map((id) => ({
-    id,
-    name: id,
-    source: "mssql",
-    platform: "8.3.27",
-  }));
+  const bases =
+    entries ??
+    ["a", "b"].map((id) => ({
+      id,
+      name: id,
+      source: "mssql",
+      platform: "8.3.27",
+    }));
   const values = {
     executable: "synthetic",
     connections: ["a", "b"],
@@ -65,20 +71,28 @@ async function harness({
       this.disposed = true;
     }
     async request(method, params, signal) {
-      if (method === "initialize") return {};
+      if (method === "initialize") {
+        initialized.push(params);
+        return {};
+      }
       if (method === "infobases/list") return { infobases: bases };
       if (method === "infobases/connect") return connect(params, signal);
       return { conclusive: true, pending: false };
     }
   }
   const vscode = {
+    ConfigurationTarget: { WorkspaceFolder: 3 },
     StatusBarAlignment: { Left: 1 },
     ProgressLocation: { Notification: 1 },
     workspace: {
       isTrusted: true,
       workspaceFolders: [f],
+      textDocuments: [],
       getConfiguration: () => ({
         get: (key, fallback) => values[key] ?? fallback,
+        update: async (key, value) => {
+          values[key] = value;
+        },
       }),
       onDidChangeConfiguration: noEvent,
       onDidChangeWorkspaceFolders: noEvent,
@@ -100,7 +114,9 @@ async function harness({
       showInputBox: input,
       showQuickPick: async (items) =>
         (await items).find((item) => item.base.id === picked),
-      showErrorMessage() {},
+      showErrorMessage(message) {
+        errors.push(message);
+      },
       showInformationMessage() {},
       withProgress: (_, task) => task({}, token),
     },
@@ -118,7 +134,15 @@ async function harness({
       if (id === "vscode") return vscode;
       if (id === "./rpc")
         return { RpcClient, RpcError: class extends Error {} };
-      if (id === "./config") return { snapshot: async () => "" };
+      if (id === "./config")
+        return {
+          ...require("../out/config"),
+          snapshot: async () => settings,
+          saveConfig: async (_file, expected, next) => {
+            assert.equal(expected, settings);
+            settings = next;
+          },
+        };
       if (id === "./status") return require("../out/status");
       if (id === "./configuration-view")
         return {
@@ -136,6 +160,7 @@ async function harness({
     subscriptions: [],
     secrets: {
       get: async () => stored,
+      delete: async () => {},
       store: async (key, value) => {
         stores.push({ key, value });
         await store();
@@ -146,6 +171,11 @@ async function harness({
   return {
     stores,
     clients,
+    initialized,
+    errors,
+    values,
+    settings: () => settings,
+    edit: () => commands.get("ibcmd.edit")(),
     status: api.status,
     cancel: () => cancel(),
     select: (id = "a") => {
@@ -154,6 +184,41 @@ async function harness({
     },
   };
 }
+
+test("редактирование унаследованного файлового источника сохраняет rows-dir без запросов SQL", async () => {
+  const { readConfig, idOf } = require("../out/config");
+  for (const server of [undefined, "сервер"]) {
+    const prompts = [];
+    const entry = {
+      id: "a",
+      name: "Архив",
+      server,
+      source: "rows-dir",
+      rowsDir: path.resolve("данные", "Архив"),
+      platform: "8.3.27",
+      mask: false,
+    };
+    const h = await harness({
+      entries: [entry],
+      input: async ({ prompt, value }) => {
+        prompts.push(prompt);
+        return value;
+      },
+    });
+    await h.edit();
+    assert.deepEqual(h.errors, []);
+    const [saved] = readConfig(h.settings());
+    assert.equal(saved["rows-dir"], entry.rowsDir);
+    assert.equal(saved.server, server);
+    assert.equal(saved.name, entry.name);
+    assert.equal(h.stores.length, 0);
+    assert.ok(prompts.every((p) => !p.includes("SQL")));
+    const validation = h.initialized.find((p) => p.infobases);
+    assert.equal(validation.infobases[0].rowsDir, entry.rowsDir);
+    assert.equal(validation.infobases[0].server, server);
+    assert.equal(h.values.connectionMetadata[idOf(saved)].auth, undefined);
+  }
+});
 test("new password is persisted only after a successful current connect", async () => {
   const started = deferred(),
     finish = deferred();

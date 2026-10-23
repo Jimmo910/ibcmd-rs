@@ -124,6 +124,22 @@ exports.run = async () => {
       path.join(local, oldFile),
       "// Только в местной копии\r\n",
     );
+
+    const collection = module.path.split("/")[0];
+    const localObject = `${collection}/ТолькоМестный.xml`;
+    const localModule = `${collection}/ТолькоМестный/Ext/Module.bsl`;
+    await fs.writeFile(path.join(local, localObject), "<MetaDataObject/>\n");
+    await fs.mkdir(path.dirname(path.join(local, localModule)), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(local, localModule),
+      "// Целиком местный объект\n",
+    );
+    const unrelated = "Catalogs/Посторонний.xml";
+    await fs.mkdir(path.join(local, "Catalogs"), { recursive: true });
+    await fs.writeFile(path.join(local, unrelated), "<MetaDataObject/>\n");
+
     let choices;
     vscode.window.showQuickPick = async (items) => {
       choices = await items;
@@ -146,6 +162,17 @@ exports.run = async () => {
           i.difference.path === oldFile && i.difference.state === "localOnly",
       ),
     );
+
+    for (const file of [localObject, localModule]) {
+      assert.ok(
+        choices.some(
+          (i) =>
+            i.difference.path === file && i.difference.state === "localOnly",
+        ),
+      );
+    }
+    assert.ok(choices.every((i) => i.difference.path !== unrelated));
+
     const diff = vscode.window.tabGroups.all
       .flatMap((g) => g.tabs)
       .find((t) => t.input instanceof vscode.TabInputTextDiff);

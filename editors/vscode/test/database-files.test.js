@@ -142,6 +142,159 @@ test("смена источника отменяет чтение; запрос�
   files.dispose();
 });
 
+test("повторное открытие адреса во время чтения сохраняет результат для обоих вызовов", async () => {
+  const { DatabaseFiles } = load();
+  const files = new DatabaseFiles();
+  let finish;
+  let calls = 0;
+  const source = {
+    read: async () => {
+      calls++;
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    },
+  };
+  const first = files.readFile(files.uri(source, "Ext/Module.bsl"));
+  const second = files.readFile(files.uri(source, "Ext/Module.bsl"));
+  assert.equal(calls, 1);
+  assert.equal(
+    (await files.readFile(files.uri(source, "Ext/Module.bsl", true)))
+      .byteLength,
+    0,
+  );
+  assert.throws(
+    () => files.uri({ read: source.read }, "Ext/Module.bsl"),
+    /Источник/,
+  );
+  const bytes = Buffer.from("Точное содержимое\r\n");
+  finish(bytes);
+  assert.deepEqual(await first, bytes);
+  assert.deepEqual(await second, bytes);
+  files.dispose();
+});
+
+test("сравнение группы запрашивает также целиком местные объекты и исключает соседние группы", async () => {
+  const exports = load();
+  const commands = new Map();
+  const requests = [];
+  let choices;
+  const noEvent = () => ({ dispose() {} });
+  const vscode = {
+    ...exports.vscode,
+    ProgressLocation: { Notification: 1 },
+    workspace: {
+      isTrusted: true,
+      textDocuments: [],
+      registerFileSystemProvider: noEvent,
+    },
+    commands: {
+      registerCommand: (id, run) => {
+        commands.set(id, run);
+        return noEvent();
+      },
+    },
+    window: {
+      withProgress: (_, run) => run({}, { onCancellationRequested: noEvent }),
+      showErrorMessage: (message) => assert.fail(message),
+      showInformationMessage: () => assert.fail("Отличия должны быть найдены"),
+      showQuickPick: async (items) => {
+        choices = items;
+      },
+    },
+  };
+  const source = new core.DatabaseSource(
+    {
+      request: async (method, params) => {
+        requests.push({ method, params });
+        return {
+          objects: [
+            {
+              object: "Catalog.Удалённый",
+              changed: [],
+              baseOnly: [],
+              localOnly: ["Catalogs/Удалённый.xml"],
+            },
+            {
+              object: "Catalog.Существующий",
+              changed: ["Catalogs/Существующий.xml"],
+              baseOnly: [],
+              localOnly: [],
+            },
+            {
+              object: "Document.Посторонний",
+              changed: [],
+              baseOnly: [],
+              localOnly: ["Documents/Посторонний.xml"],
+            },
+          ],
+        };
+      },
+    },
+    "/work",
+    "База",
+  );
+  const module = { exports: {} };
+  vm.runInNewContext(
+    fs.readFileSync(
+      path.join(__dirname, "../out/database-commands.js"),
+      "utf8",
+    ),
+    {
+      exports: module.exports,
+      module,
+      AbortController,
+      require: (id) =>
+        id === "vscode"
+          ? vscode
+          : id === "./database-files"
+            ? exports
+            : id === "./configuration-tree"
+              ? core
+              : require(id),
+    },
+  );
+  const context = { subscriptions: [] };
+  module.exports.registerDatabaseCommands(context, {
+    source: () => source,
+    onDidChangeSource: noEvent,
+    objectNames: () =>
+      assert.fail("Нельзя ограничивать группу именами из базы"),
+  });
+  await commands.get("ibcmd.source.compare")({
+    type: "group",
+    kind: "Catalog",
+  });
+  assert.equal(requests[0].method, "objects/status");
+  assert.equal(requests[0].params.objects, undefined);
+  assert.deepEqual(Array.from(choices, (i) => i.difference.path).sort(), [
+    "Catalogs/Существующий.xml",
+    "Catalogs/Удалённый.xml",
+  ]);
+  for (const subscription of context.subscriptions) subscription.dispose();
+});
+
+test("область сравнения общих и вложенных объектов не захватывает соседей", () => {
+  assert.equal(
+    core.belongsToGroup({ kind: "Common" }, "CommonModule.Модуль"),
+    true,
+  );
+  assert.equal(
+    core.belongsToGroup({ kind: "Common" }, "Catalog.Товары"),
+    false,
+  );
+  const group = {
+    kind: "Form",
+    parent: { type: "object", kind: "Catalog", fullName: "Catalog.Товары" },
+  };
+  assert.equal(core.belongsToGroup(group, "Catalog.Товары.Form.Форма"), true);
+  assert.equal(core.belongsToGroup(group, "Catalog.Склады.Form.Форма"), false);
+  assert.equal(
+    core.belongsToGroup(group, "Catalog.Товары.Template.Макет"),
+    false,
+  );
+});
+
 test("ошибки сервера не раскрывают его текст; недоверенная область не читается", async () => {
   const { DatabaseFiles, vscode } = load();
   const files = new DatabaseFiles();

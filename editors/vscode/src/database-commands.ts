@@ -102,8 +102,15 @@ export function registerDatabaseCommands(
         const cancel = token.onCancellationRequested(() => abort.abort());
         const changed = view.onDidChangeSource(() => abort.abort());
         try {
-          const names = await view.objectNames(node, abort.signal);
-          if (!names.length) return [];
+          const group =
+            node.type === "group" && node.kind !== "ConfigurationFiles"
+              ? node
+              : undefined;
+          const names = group
+            ? undefined
+            : await view.objectNames(node, abort.signal);
+          if (names && !names.length) return [];
+
           const sourceDir = path.resolve(current.directory);
           if (
             vscode.workspace.textDocuments.some((d) => {
@@ -126,6 +133,7 @@ export function registerDatabaseCommands(
               { infobase: current.infobase, objects: names, sourceDir },
               abort.signal,
             ),
+            group,
           );
           return node.kind === "ConfigurationFiles"
             ? result.filter((d) => d.path.startsWith("Ext/"))
