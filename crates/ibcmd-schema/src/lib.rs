@@ -18361,7 +18361,9 @@ pub mod metadata_storage_facts {
                 fields.len(),
             ) {
                 (Some("13"), Some("24"), 50) => (false, &[]),
-                (Some("12"), Some("23"), 48) => (false, &[DATA_HISTORY]),
+                // Revision 9 has the 23 keys of revision 12: ЗУП 3.1.18 stores
+                // it and 8.3.27.2214 dumps the absent data history as `Use`.
+                (Some("12" | "9"), Some("23"), 48) => (false, &[DATA_HISTORY]),
                 (Some("8"), Some("21"), 44) => {
                     (false, &[DATA_HISTORY, CREATE_ON_INPUT, CHOICE_HISTORY])
                 }

@@ -43722,6 +43722,25 @@ fn accepts_independent_captured_information_register_standard_attribute_bags() {
     }
 }
 
+/// Standard-attribute bag revision 9 has the 23 keys of revision 12: the
+/// data-history key is absent and the platform dumps it as `Use`. ЗУП 3.1.18
+/// stores `{9,23,...}` bags (`InformationRegisters/
+/// ДанныеОВремениДляРасчетаСреднегоОбщийКорректировка` among them), and
+/// 8.3.27.2214 writes `<xr:DataHistory>Use</xr:DataHistory>` on each of their
+/// standard attributes.
+#[test]
+fn reads_information_register_standard_attribute_bag_revision_9_like_12() {
+    let current = information_register_standard_attribute_bag_for_test("Active", false, false);
+    let data_history = r##"9288a8ed-b259-46d0-a8e3-70d87956ff2d,{"#",d46ea122-3201-4e5e-bed4-e669c6e463c8,{d46ea122-3201-4e5e-bed4-e669c6e463c8,1}},"##;
+    assert!(current.contains(data_history));
+    let without_history = current.replacen(data_history, "", 1);
+    for revision in ["12", "9"] {
+        let raw = without_history.replacen("{13,24,", &format!("{{{revision},23,"), 1);
+        let bag = parse_information_register_standard_attribute_bag(&raw);
+        assert!(bag.is_some(), "revision {revision}");
+    }
+}
+
 #[test]
 fn rejects_malformed_information_register_standard_attribute_envelopes_and_bags() {
     let valid = information_register_standard_attributes_for_test(true);
