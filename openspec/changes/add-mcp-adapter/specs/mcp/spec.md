@@ -103,3 +103,21 @@ for this roundtrip or for negative permission/race tests.
 
 - **WHEN** an authorized MCP client imports a changed source module into a new lab database and the external test orchestrator runs native apply/export
 - **THEN** exported module/source bytes match, unselected source files remain equal, and inventory IDs/versions are audited
+
+### Requirement: Consistent source admission
+
+Status, compare and import SHALL reject dot-prefixed source files, directories
+and links before comparison or staging. Directory iterator pseudo-entries SHALL
+be ignored; actual dot entries SHALL count toward the source entry budget.
+Database-only reads SHALL not enumerate the source tree.
+
+#### Scenario: Hidden source member
+
+- **WHEN** source-root contains a hidden file, `.git` directory or hidden symlink
+- **THEN** status, compare and import all refuse without changing the database or creating staging/backup files
+
+#### Scenario: Hidden directory added after preparation
+
+- **WHEN** an empty hidden directory is added after import preparation but before publication
+- **THEN** the retained source census refuses publication and leaves the database and backup unchanged
+- **AND** operator policy is rechecked after final census validation and before publication

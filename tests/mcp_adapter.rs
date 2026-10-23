@@ -546,6 +546,56 @@ async fn real_mcp_import_requires_fixed_explicit_opt_in_and_rechecks_policy() {
 }
 
 #[tokio::test]
+async fn source_tools_consistently_refuse_hidden_files_directories_and_links() {
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    for kind in ["file", "directory", "symlink"] {
+        let (root, db, settings) = writable_corpus(Some(true));
+        let _scratch = Scratch(root.clone());
+        let source = root.join("source");
+        let module = source.join(WRITE_MODULE);
+        fs::write(
+            &module,
+            fs::read_to_string(&module).unwrap() + "\r\n// hidden-entry admission candidate\r\n",
+        )
+        .unwrap();
+        match kind {
+            "file" => fs::write(source.join(".hidden"), "synthetic hidden data").unwrap(),
+            "directory" => {
+                fs::create_dir(source.join(".git")).unwrap();
+                fs::write(source.join(".git/config"), "synthetic repository").unwrap();
+            }
+            "symlink" => {
+                let sentinel = root.join("outside-sentinel");
+                fs::write(&sentinel, "synthetic outside data").unwrap();
+                std::os::unix::fs::symlink(&sentinel, source.join(".hidden-link")).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let before = fs::read(db.join("1Cv8.1CD")).unwrap();
+        let client = start_client(&settings).await;
+        for tool in ["status", "compare", "import"] {
+            assert_eq!(
+                call(&client, tool, json!({"objects":[WRITE_OBJECT]}))
+                    .await
+                    .is_error,
+                Some(true),
+                "{tool} accepted hidden {kind}"
+            );
+        }
+        assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+        for suffix in ["bak", "tmp", "bak.new"] {
+            assert!(!db.join(format!("1Cv8.1CD.ibcmd-rs.{suffix}")).exists());
+        }
+        client.cancel().await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn real_mcp_client_stages_module_and_native_orchestrator_applies() {
     let (root, db, settings) = writable_corpus(Some(true));
     let target = db.join("1Cv8.1CD");

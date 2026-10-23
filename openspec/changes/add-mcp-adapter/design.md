@@ -60,15 +60,15 @@ immutable snapshot. Feed that snapshot into existing OfflineRows::from_memory,
 ConfigTable and export sinks, preserving a single backend. Source comparisons
 also use directory-relative NOFOLLOW reads, reject traversal, absolute paths,
 backslashes, empty components and special files. Offline snapshot rows are limited before accumulation to
-128 MiB and 100000 parts; filedb input files are limited to128 MiB. Filedb reads use FileDb::from_file_with_limits: cumulative limits are charged
+128 MiB and 100000 parts; filedb input files are limited to 128 MiB. Filedb reads use FileDb::from_file_with_limits: cumulative limits are charged
 before object buffers and copied blob/metadata values are allocated, including
 aliases and repeated table reads. Budget: 100000 descriptors/live records,
 128 MiB copied row binary, 256 MiB object/metadata buffers; each metadata chain
-is capped at1 MiB in the bounded API. Cancellation is checked in initialization,
+is capped at 1 MiB in the bounded API. Cancellation is checked in initialization,
 page reads, metadata parsing, record loops and blob-block walks. Existing
 unbounded APIs retain their previous limits. These counters bound major input
 buffers/copies; they do not claim an exact process heap ceiling. Tool inputs are
-limited to32 objects/32 KiB, transport lines64 KiB, results1 MiB. Resource bounds are enforced before publication; native engine resource
+limited to 32 objects/32 KiB, transport lines 64 KiB, results 1 MiB. Resource bounds are enforced before publication; native engine resource
 limits still govern decoding. One admitted worker avoids an unbounded blocking
 queue. Cancelled futures set the shared engine flag and suppress publication.
 Backend error details are redacted from tool content; research environment
@@ -79,8 +79,8 @@ files in memory as UTF-8/base64. `status` and `compare` use the shared object
 comparator over a confined source snapshot and return `ObjectStatus` entries
 with changed/baseOnly/localOnly paths and `comparisonScope=selected-objects`.
 Explicitly selected objects absent from the database can report local-only
-files. The snapshot caps traversal at 64 levels, 100000 entries and128 MiB;
-reads check cancellation and file stability in64 KiB chunks. A descriptor-based
+files. The snapshot caps traversal at 64 levels, 100000 entries and 128 MiB;
+reads check cancellation and file stability in 64 KiB chunks. A descriptor-based
 file/directory census is revalidated after comparison so concurrent additions,
 renames and replacements cannot silently produce equality. Symlink entries and
 same-inode root aliases are refused. Existing CLI/editor status keeps its lazy
@@ -92,8 +92,8 @@ Missing/false opt-in, rows fixtures and SQL refuse writes. The shared
 `prepare_guarded_with_source_limits` owns compiled rows and source custody;
 MCP checks exact settings/policy bytes, root and consumed database dev/inode
 before parsing and inside final publication. Database budgets are retained
-across write-reader pagers/hash/copy. Actual source custody enforces128 MiB,
-100000 entries and depth64, including empty directories; its walker avoids
+across write-reader pagers/hash/copy. Actual source custody enforces 128 MiB,
+100000 entries and depth 64, including empty directories; its walker avoids
 eager ancestor caching and checks cancellation per entry/64 KiB source chunk.
 
 Import stages CONFIGSAVE only. It returns `status=staged`, `stagePublished=true`,
@@ -187,3 +187,15 @@ review by the parent remains a publication gate.
 Unknown tool names use protocol error `-32602` rather than method-not-found,
 matching the [official tools error example](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling).
 Both supported lifecycle versions exercise this with an actual SDK client.
+
+Source-consuming tools (`status`, `compare`, `import`) reject dot-prefixed
+files, directories (including `.git`) and links anywhere under source-root.
+Only iterator pseudo-entries `.` and `..` are ignored; real dot entries count
+towards the entry budget before refusal. Use a dedicated XML source root without
+repository metadata. Database-only `tree`/`read`/`export` do not enumerate source.
+This MCP admission rule leaves ordinary editor/CLI source inventory unchanged.
+
+Import retains the initial descriptor census (without retaining another copy of
+source bytes) through the final publication callback. File and directory stamps
+are revalidated there, including detection of empty hidden-directory additions.
+Operator policy is checked again after that potentially long validation.

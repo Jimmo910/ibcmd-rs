@@ -488,7 +488,7 @@ ibcmd-rs cf load F:\src\MyExtension-edit F:\cf\MyExtension-new.cfe --base F:\cf\
 ### MCP для ИИ-клиентов (#386)
 
 `ibcmd-rs mcp --settings /operator/ibcmd-rs.toml` — отдельный настоящий MCP stdio
-adapter на official rmcp3.6.0. В настройках нужны `[mcp] database = "fixed-id"`
+adapter на official rmcp 3.6.0. Операции `status`/`compare`/`import` требуют XML source-root без скрытых файлов, каталогов (включая `.git`) и ссылок. В настройках нужны `[mcp] database = "fixed-id"`
 и `source-root = "/approved/source"`; база задаётся фиксированным `[[database]]`
 с `rows-dir` либо `db-path`. Tools: `tree`, `read`, `export`, `status`, `compare`,
 `import`. Export возвращает ограниченные файлы в памяти. Status/compare используют

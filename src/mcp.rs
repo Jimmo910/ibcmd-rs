@@ -370,7 +370,7 @@ impl Bound {
         Ok(())
     }
 
-    fn prepare_import(&self, objects: &[String]) -> Result<crate::file_import::Plan> {
+    fn prepare_import(&self, objects: &[String]) -> Result<PreparedImport> {
         self.authorize()?;
         ensure!(
             self.agent_write && self.file_path.is_some(),
@@ -382,7 +382,7 @@ impl Bound {
         );
         // Apply the MCP source budget before the shared backend's own held
         // source inventory. Revalidate it again in the publication guard.
-        let source = self.snapshot_source()?;
+        let mut source = self.snapshot_source()?;
         let plan = crate::file_import::prepare_guarded_with_source_limits(
             self.file_path.as_ref().unwrap(),
             &self.root,
@@ -408,16 +408,24 @@ impl Bound {
         source.validate(&self.root_handle)?;
         ensure!(plan.summary().ready, "import has unresolved dependencies");
         self.authorize()?;
-        Ok(plan)
+        // Retain the descriptor census through publication, not a second copy of source bytes.
+        source.files.clear();
+        Ok(PreparedImport { plan, source })
     }
 
-    fn publish_import(&self, plan: crate::file_import::Plan) -> Result<Value> {
+    fn publish_import(&self, prepared: PreparedImport) -> Result<Value> {
+        let PreparedImport { plan, source } = prepared;
         // The actual descriptor is checked before metadata parsing and again
         // INSIDE the atomic publication callback. Model parameters never enter
         // target, policy, settings, source root, or opt-in selection.
         let result = plan.publish_guarded(
             self.file_path.as_ref().context("file target required")?,
-            &mut |metadata| self.authorize_write(metadata),
+            &mut |metadata| {
+                self.authorize_write(metadata)?;
+                source.validate(&self.root_handle)?;
+                // Recheck operator authorization after the potentially long census.
+                self.authorize_write(metadata)
+            },
         );
         match result {
             Ok(report) => {
@@ -591,6 +599,11 @@ impl Bound {
     }
 }
 
+struct PreparedImport {
+    plan: crate::file_import::Plan,
+    source: SourceSnapshot,
+}
+
 struct SourceSnapshot {
     files: BTreeMap<String, Vec<u8>>,
     #[cfg(unix)]
@@ -670,15 +683,17 @@ fn walk_source(
         crate::cancel::check()?;
         let entry = entry?;
         let name = entry.file_name().to_str()?;
-        // Match common status: dot files and folders are not source objects.
+        // Reject dot entries consistently before status/compare or shared import custody.
+        // Only the directory iterator pseudo-entries are ignored.
         if name == "." || name == ".." {
             continue;
         }
         *entries += 1;
         ensure!(*entries <= 100_000, "source entry count limit");
-        if name.starts_with('.') {
-            continue;
-        }
+        ensure!(
+            !name.starts_with('.'),
+            "hidden source entries are not allowed"
+        );
         let path = if prefix.is_empty() {
             name.to_string()
         } else {
@@ -846,7 +861,7 @@ impl ServerHandler for Adapter {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("ibcmd-rs", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Fixed operator-bound database tools. Import stages fixed-root objects only with operator agent-write=true; it does not apply. After publication restart MCP. status/compare include local-only files.")
+            .with_instructions("Fixed operator-bound database tools. Import stages fixed-root objects only with operator agent-write=true; it does not apply. After publication restart MCP. status/compare include local-only files. status/compare/import reject hidden source entries, including .git; use a dedicated XML source root.")
     }
     fn get_tool(&self, name: &str) -> Option<Tool> {
         definitions().into_iter().find(|tool| tool.name == name)
@@ -1046,13 +1061,54 @@ pub fn run(args: McpArgs) -> Result<()> {
 }
 
 #[cfg(all(test, unix))]
+struct TestScratch(PathBuf);
+#[cfg(all(test, unix))]
+impl TestScratch {
+    fn new(prefix: &str) -> Self {
+        let root = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        Self(root)
+    }
+}
+#[cfg(all(test, unix))]
+impl std::ops::Deref for TestScratch {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+#[cfg(all(test, unix))]
+impl AsRef<Path> for TestScratch {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+#[cfg(all(test, unix))]
+impl Drop for TestScratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(all(test, unix))]
 mod source_snapshot_tests {
     use super::*;
-    fn scratch_root() -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("ibcmd-source-census-{}", uuid::Uuid::new_v4()));
-        fs::create_dir(&root).unwrap();
-        root
+    fn scratch_root() -> TestScratch {
+        TestScratch::new("ibcmd-source-census")
+    }
+    #[test]
+    fn scratch_guard_cleans_owned_root_on_unwind() {
+        let mut path = None;
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let root = scratch_root();
+                path = Some(root.0.clone());
+                fs::write(root.join("owned"), "fixture").unwrap();
+                panic!("synthetic test failure");
+            }))
+            .is_err()
+        );
+        assert!(!path.unwrap().exists());
     }
     #[test]
     fn additions_and_renames_invalidate_the_snapshot() {
@@ -1080,9 +1136,8 @@ mod source_snapshot_tests {
 #[cfg(all(test, unix))]
 mod import_boundary_tests {
     use super::*;
-    fn setup() -> (PathBuf, PathBuf, Bound) {
-        let root =
-            std::env::temp_dir().join(format!("mcp-policy-boundary-{}", uuid::Uuid::new_v4()));
+    fn setup() -> (TestScratch, PathBuf, Bound) {
+        let root = TestScratch::new("mcp-policy-boundary");
         let db = root.join("db");
         let source = root.join("source");
         fs::create_dir_all(&db).unwrap();
@@ -1129,7 +1184,14 @@ mod import_boundary_tests {
         std::thread::Builder::new()
             .stack_size(256 * 1024 * 1024)
             .spawn(|| {
-                for change in ["policy", "target", "source", "root-alias"] {
+                for change in [
+                    "policy",
+                    "target",
+                    "source",
+                    "root-alias",
+                    "hidden-directory",
+                    "nested-hidden-directory",
+                ] {
                     let (root, db, bound) = setup();
                     let target = db.join("1Cv8.1CD");
                     let before = fs::read(&target).unwrap();
@@ -1163,6 +1225,10 @@ mod import_boundary_tests {
                             "// changed after prepare",
                         )
                         .unwrap(),
+                        "hidden-directory" => fs::create_dir(bound.root.join(".git")).unwrap(),
+                        "nested-hidden-directory" => {
+                            fs::create_dir(bound.root.join("CommonModules/.hidden")).unwrap()
+                        }
                         "root-alias" => {
                             fs::rename(&bound.root, root.join("renamed-source")).unwrap();
                             std::os::unix::fs::symlink(root.join("renamed-source"), &bound.root)
@@ -1177,6 +1243,8 @@ mod import_boundary_tests {
                         "changed target for {change}"
                     );
                     assert!(!ibcmd_filedb::backup_file(&db).exists());
+                    assert!(!db.join("1Cv8.1CD.ibcmd-rs.tmp").exists());
+                    assert!(!db.join("1Cv8.1CD.ibcmd-rs.bak.new").exists());
                 }
             })
             .unwrap()
