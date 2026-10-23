@@ -33,11 +33,29 @@ def lab_path(path: Path) -> Path:
     return path
 
 
+def physical_contains(ancestor, descendant):
+    if descendant.is_relative_to(ancestor):
+        return True
+    if ancestor.exists():
+        return any(part.exists() and part.samefile(ancestor) for part in [descendant, *descendant.parents])
+    return False
+
+
 def disjoint(paths):
     for i, left in enumerate(paths):
         for right in paths[i + 1:]:
-            if left.is_relative_to(right) or right.is_relative_to(left):
+            if physical_contains(left, right) or physical_contains(right, left):
                 raise OracleError(f'Overlapping inputs/run refused: {left}, {right}')
+
+
+def installation_root(edt):
+    """A copied Mac application is the immutable installation boundary."""
+    eclipse = edt.parent
+    contents = eclipse.parent
+    bundle = contents.parent
+    if edt.name != '1cedtcli' or eclipse.name != 'Eclipse' or contents.name != 'Contents' or bundle.suffix != '.app':
+        raise OracleError('Expected copied .app/Contents/Eclipse/1cedtcli layout')
+    return lab_path(bundle)
 
 
 def inventory_equal(left, right):
@@ -223,6 +241,7 @@ def capture(args):
     lab_path(args.ours)
     lab_path(args.edt)  # #358 supplies a copied external installation, never the internal app.
     disjoint([project, run])
+    disjoint([run, installation_root(args.edt)])
     for exe in (args.edt, args.ours, args.native):
         no_links(exe.absolute())
         if not exe.is_file() or not os.access(exe, os.X_OK):
@@ -255,14 +274,21 @@ def capture(args):
              for name, path in [('edt', args.edt), ('ours', args.ours), ('native', args.native)]}
     write_json(run / 'project-before.json', before)
     write_json(run / 'tools-before.json', tools)
+    configuration = args.edt.parent / 'configuration'
+    configuration_before = None
+    configuration_copy_before = None
     try:
         with native_slot(run):
             native = ['/usr/bin/arch', '-x86_64', str(args.native)]
-            configuration = args.edt.parent / 'configuration'
             if not configuration.is_dir():
                 raise OracleError('Copied EDT installation lacks Eclipse configuration')
-            snapshot(configuration)  # reject links/special files before copying
+            configuration_before = snapshot(configuration)
+            write_json(run / 'configuration-source-before.json', configuration_before)
             shutil.copytree(configuration, run / 'edt-configuration')
+            configuration_copy_before = snapshot(run / 'edt-configuration')
+            write_json(run / 'configuration-copy-before.json', configuration_copy_before)
+            if not inventory_equal(configuration_before, configuration_copy_before):
+                raise OracleError('Copied Eclipse configuration differs before launch')
             # Mac 1cedtcli is a custom launcher: generic Eclipse switches
             # belong in its -ini-file, not on the CLI (verified by #358).
             original_ini = (args.edt.parent / '1cedt.ini').read_text(encoding='utf-8')
@@ -338,6 +364,8 @@ def capture(args):
                 'corpus_label': args.corpus_label,
                 'installed_edt_validation': 'NOT_EVALUATED; content comparison is not clean SDK validation',
                 'observed_edt_errors': observed_errors, 'selected_vm': str(selected_vm),
+                'configuration_source_sha256': configuration_before['tree_sha256'],
+                'configuration_copy_initial_sha256': configuration_copy_before['tree_sha256'],
                 'versions': versions, 'source_profile': args.source_profile, 'runtime': args.runtime,
                 'xml_version': args.xml_version, 'schema_evidence_sha256': schema_hash,
                 'installation_manifest_sha256': installation_hash, 'counts': report['counts']}
@@ -345,6 +373,26 @@ def capture(args):
         write_json(run / 'failure.json', {'status': 'FAIL', 'error': str(error), 'type': type(error).__name__})
         raise
     finally:
+        custody_errors = {}
+        def custody_snapshot(path, label, started):
+            if not started and not path.exists():
+                return None
+            try:
+                return snapshot(path)
+            except (OracleError, OSError) as error:
+                custody_errors[label] = str(error)
+                return None
+        configuration_after = custody_snapshot(configuration, 'source', configuration_before is not None)
+        configuration_copy_after = custody_snapshot(run / 'edt-configuration', 'copy', configuration_copy_before is not None)
+        write_json(run / 'configuration-source-after.json', configuration_after)
+        write_json(run / 'configuration-copy-after.json', configuration_copy_after)
+        configuration_unchanged = configuration_before == configuration_after and 'source' not in custody_errors
+        custody_complete = not custody_errors and (configuration_copy_before is None or configuration_copy_after is not None)
+        write_json(run / 'configuration-custody.json', {
+            'source_unchanged': configuration_unchanged, 'complete': custody_complete, 'errors': custody_errors,
+            'copy_changes': compare_tree_snapshots(configuration_copy_before, configuration_copy_after)
+                if configuration_copy_before is not None and configuration_copy_after is not None else None,
+            'scope': 'Full configuration source and copied startup bytes; private Eclipse cache changes retained without normalization'})
         after = snapshot(project)
         write_json(run / 'project-after.json', after)
         changed = [name for name, path in [('edt', args.edt), ('ours', args.ours), ('native', args.native)]
@@ -352,9 +400,10 @@ def capture(args):
         installation_after = bind_installation(args.installation, args.edt)
         installation_unchanged = installation_after == installation and digest(args.installation) == installation_hash
         schema_unchanged = digest(args.schema_evidence) == schema_hash
-        unchanged = before == after and not changed and installation_unchanged and schema_unchanged
+        unchanged = before == after and not changed and installation_unchanged and schema_unchanged and configuration_unchanged and custody_complete
         write_json(run / 'immutability.json', {'project_unchanged': before == after, 'changed_tools': changed,
-            'installation_unchanged': installation_unchanged, 'schema_evidence_unchanged': schema_unchanged})
+            'installation_unchanged': installation_unchanged, 'schema_evidence_unchanged': schema_unchanged,
+            'configuration_source_unchanged': configuration_unchanged, 'configuration_custody_complete': custody_complete})
         if not unchanged:
             # A comparison verdict alone is never acceptance; this terminal
             # receipt is mandatory even after failed conversion/native commands.

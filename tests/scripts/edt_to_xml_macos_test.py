@@ -36,42 +36,44 @@ class NativeReferenceControls(unittest.TestCase):
             path = project / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
+        eclipse = self.root / 'Tool.app/Contents/Eclipse'
+        eclipse.mkdir(parents=True)
         tools = []
         for name in ('edt', 'ours', 'native'):
-            path = self.root / name
+            path = eclipse / '1cedtcli' if name == 'edt' else self.root / name
             path.write_text('synthetic tool; never executed')
             path.chmod(0o700)
             tools.append(path)
-        (self.root / 'configuration').mkdir()
-        (self.root / 'configuration/config.ini').write_text('synthetic=true')
-        (self.root / 'plugins').mkdir()
-        (self.root / 'plugins/synthetic.model_1.0.jar').write_bytes(b'synthetic model')
-        (self.root / '1cedt.ini').write_text('-startup\nsynthetic.jar\n-vmargs\n-Xmx1g\n')
+        (eclipse / 'configuration').mkdir()
+        (eclipse / 'configuration/config.ini').write_text('synthetic=true')
+        (eclipse / 'plugins').mkdir()
+        (eclipse / 'plugins/synthetic.model_1.0.jar').write_bytes(b'synthetic model')
+        (eclipse / '1cedt.ini').write_text('-startup\nsynthetic.jar\n-vmargs\n-Xmx1g\n')
         installation = self.root / 'installation.json'
         java = self.root / 'jdk/bin/java'
         java.parent.mkdir(parents=True)
         java.write_bytes(b'synthetic java')
         (self.root / 'jdk/release').write_bytes(b'synthetic runtime release')
-        (self.root / '1cedtcli-startup.txt').write_text('synthetic startup')
-        macos = self.root.parent / 'MacOS'
+        (eclipse / '1cedtcli-startup.txt').write_text('synthetic startup')
+        macos = eclipse.parent / 'MacOS'
         macos.mkdir()
         (macos / '1cedt').write_bytes(b'synthetic launcher')
-        bundles = self.root / 'configuration/org.eclipse.equinox.simpleconfigurator/bundles.info'
+        bundles = eclipse / 'configuration/org.eclipse.equinox.simpleconfigurator/bundles.info'
         bundles.parent.mkdir()
         bundles.write_text('synthetic bundles')
         # Each retained fixture has its own installation parent.
-        plist = self.root.parent / 'Info.plist'
+        plist = eclipse.parent / 'Info.plist'
         plist.write_text('synthetic plist')
         rows = [{'path': str(p), 'bytes': p.stat().st_size, 'sha256': harness.digest(p)}
-                for p in (tools[0], self.root / '1cedt.ini', self.root / 'configuration/config.ini',
-                          self.root / '1cedtcli-startup.txt', plist, macos / '1cedt', bundles, java, self.root / 'jdk/release')]
+                for p in (tools[0], eclipse / '1cedt.ini', eclipse / 'configuration/config.ini',
+                          eclipse / '1cedtcli-startup.txt', plist, macos / '1cedt', bundles, java, self.root / 'jdk/release')]
         harness.write_json(installation, {'schema_version': 1, 'edt_cli': str(tools[0]),
-            'edt_cli_sha256': harness.digest(tools[0]), 'plugins': harness.snapshot(self.root / 'plugins'),
+            'edt_cli_sha256': harness.digest(tools[0]), 'plugins': harness.snapshot(eclipse / 'plugins'),
             'runtime_files': rows})
         schema = self.root / 'schema.json'
         baseline = self.root / 'baseline.json'
         baseline.write_text('{"bundles": [{"symbolicName": "synthetic.model"}]}')
-        jar = self.root / 'plugins/synthetic.model_1.0.jar'
+        jar = eclipse / 'plugins/synthetic.model_1.0.jar'
         harness.write_json(schema, {'schema_version': 1, 'declared_installed_release': '2025.2.3+30',
             'baseline_sha256': harness.digest(baseline),
             'bundles': [{'symbolicName': 'synthetic.model', 'status': 'inspected',
@@ -150,7 +152,7 @@ class NativeReferenceControls(unittest.TestCase):
     def test_java_mutation_cannot_leave_pass_result(self):
         args = self.fixture()
         with self.assertRaisesRegex(harness.OracleError, 'Runtime inventory differs'):
-            self.run_synthetic(args, mutation=lambda a, _: (a.edt.parent / 'jdk/bin/java').write_bytes(b'changed'))
+            self.run_synthetic(args, mutation=lambda a, _: (self.root / 'jdk/bin/java').write_bytes(b'changed'))
         self.assertFalse((args.run / 'result.json').exists())
 
     def test_schema_evidence_mutation_cannot_leave_pass_result(self):
@@ -214,6 +216,109 @@ class NativeReferenceControls(unittest.TestCase):
         with self.assertRaisesRegex(harness.OracleError, 'Runtime inventory differs'):
             self.run_synthetic(args, mutation=lambda a, _: a.jvm_library.write_bytes(b'changed'))
         self.assertFalse((args.run / 'result.json').exists())
+
+    def test_run_overlap_with_entire_app_is_rejected_before_any_output_or_copy(self):
+        args = self.fixture()
+        bundle = harness.installation_root(args.edt)
+        for relative in ('Contents/Eclipse/configuration/capture', 'Contents/capture', 'Contents/MacOS/capture', 'Resources/capture'):
+            with self.subTest(relative=relative):
+                args.run = bundle / relative
+                with patch.object(harness, 'snapshot') as snapshots, patch.object(harness.shutil, 'copytree') as copies, \
+                     patch.object(harness.subprocess, 'Popen') as process:
+                    with self.assertRaisesRegex(harness.OracleError, 'Overlapping'):
+                        self.run_synthetic(args)
+                snapshots.assert_not_called()
+                copies.assert_not_called()
+                process.assert_not_called()
+                self.assertFalse(args.run.exists())
+        args.run = bundle.parent
+        with self.assertRaisesRegex(harness.OracleError, 'Overlapping'):
+            self.run_synthetic(args)
+
+    def test_case_alias_app_overlap_is_rejected_before_output(self):
+        args = self.fixture()
+        bundle = harness.installation_root(args.edt)
+        alias = bundle.with_name(bundle.name.upper())
+        if not alias.exists() or not alias.samefile(bundle):
+            self.skipTest('This filesystem has no case alias for the application bundle')
+        args.run = alias / 'Resources/capture'
+        with patch.object(harness, 'snapshot') as snapshots, patch.object(harness.shutil, 'copytree') as copies:
+            with self.assertRaisesRegex(harness.OracleError, 'Overlapping'):
+                self.run_synthetic(args)
+        snapshots.assert_not_called()
+        copies.assert_not_called()
+        self.assertFalse(args.run.exists())
+
+    def test_extra_configuration_is_bound_even_with_identical_runtime_manifest(self):
+        args = self.fixture()
+        extra = args.edt.parent / 'configuration/extra.preferences'
+        extra.write_bytes(b'first effective configuration')
+        manifest_hash = harness.digest(args.installation)
+        self.run_synthetic(args)
+        first = json.loads((args.run / 'result.json').read_text())
+        args.run = self.root / 'second-run'
+        extra.write_bytes(b'second effective configuration')
+        self.run_synthetic(args)
+        second = json.loads((args.run / 'result.json').read_text())
+        self.assertEqual(harness.digest(args.installation), manifest_hash)
+        self.assertEqual(first['installation_manifest_sha256'], second['installation_manifest_sha256'])
+        self.assertNotEqual(first['configuration_source_sha256'], second['configuration_source_sha256'])
+        self.assertEqual(second['configuration_source_sha256'], second['configuration_copy_initial_sha256'])
+
+    def test_copy_configuration_tamper_is_refused_before_any_command(self):
+        args = self.fixture()
+        copytree = harness.shutil.copytree
+        def corrupt(source, target, *copy_args, **copy_kwargs):
+            result = copytree(source, target, *copy_args, **copy_kwargs)
+            if Path(target) == args.run / 'edt-configuration':
+                (Path(target) / 'unexpected.preferences').write_bytes(b'unwitnessed configuration')
+            return result
+        with patch.object(harness.shutil, 'copytree', side_effect=corrupt), patch.object(harness, 'command') as commands:
+            with patch.object(harness, 'MODEL_BASELINE', self.root / 'baseline.json'), \
+                 patch.object(harness.sys, 'platform', 'darwin'), patch.object(harness, 'native_slot', lambda _: contextlib.nullcontext()):
+                with self.assertRaisesRegex(harness.OracleError, 'configuration differs before launch'):
+                    harness.capture(args)
+            commands.assert_not_called()
+        self.assertFalse((args.run / 'result.json').exists())
+
+    def test_unlisted_configuration_source_mutation_cannot_leave_pass(self):
+        args = self.fixture()
+        extra = args.edt.parent / 'configuration/extra.preferences'
+        extra.write_bytes(b'original')
+        with self.assertRaisesRegex(harness.OracleError, 'Source project or executable changed'):
+            self.run_synthetic(args, mutation=lambda _, __: extra.write_bytes(b'changed'))
+        self.assertFalse((args.run / 'result.json').exists())
+        custody = json.loads((args.run / 'configuration-custody.json').read_text())
+        self.assertFalse(custody['source_unchanged'])
+
+    def test_listed_configuration_mutation_preserves_final_custody_before_manifest_error(self):
+        args = self.fixture()
+        with self.assertRaisesRegex(harness.OracleError, 'Runtime inventory differs'):
+            self.run_synthetic(args, mutation=lambda a, _: (a.edt.parent / 'configuration/config.ini').write_bytes(b'changed listed input'))
+        self.assertFalse((args.run / 'result.json').exists())
+        self.assertTrue((args.run / 'configuration-source-after.json').is_file())
+        self.assertTrue((args.run / 'configuration-copy-after.json').is_file())
+        custody = json.loads((args.run / 'configuration-custody.json').read_text())
+        self.assertFalse(custody['source_unchanged'])
+
+    def test_renamed_configuration_copy_fails_custody_without_deleting_fixture(self):
+        args = self.fixture()
+        with self.assertRaisesRegex(harness.OracleError, 'Source project or executable changed'):
+            self.run_synthetic(args, mutation=lambda _, r: (r / 'edt-configuration').rename(r / 'retained-renamed-configuration'))
+        self.assertTrue((args.run / 'retained-renamed-configuration/config.ini').is_file())
+        self.assertFalse((args.run / 'result.json').exists())
+        custody = json.loads((args.run / 'configuration-custody.json').read_text())
+        self.assertFalse(custody['complete'])
+        self.assertIn('copy', custody['errors'])
+        self.assertIsNone(json.loads((args.run / 'configuration-copy-after.json').read_text()))
+
+    def test_private_configuration_cache_changes_are_retained_in_custody(self):
+        args = self.fixture()
+        self.run_synthetic(args, mutation=lambda _, r: (r / 'edt-configuration/cache.dat').write_bytes(b'captured runtime cache'))
+        custody = json.loads((args.run / 'configuration-custody.json').read_text())
+        self.assertTrue(custody['source_unchanged'])
+        self.assertEqual(custody['copy_changes']['differing_rows'][0]['path'], 'cache.dat')
+        self.assertTrue((args.run / 'configuration-copy-after.json').is_file())
 
     def test_any_content_difference_is_failure(self):
         args = self.fixture()

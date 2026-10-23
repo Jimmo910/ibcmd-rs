@@ -76,12 +76,12 @@ changes; #358 owns installed EDT preparation. Real discrepancies must be sent
 with exact path/hash rows and minimal synthetic reproductions to #355 before
 codec edits.
 
-Twenty-five synthetic controls passed on 2026-10-23. They exercise correct native
+Thirty-three synthetic controls passed on 2026-10-23. They exercise correct native
 input routing, complete missing/extra/changed rows, CDI retention, source/tool/
 plugin/Java/schema/reference mutation, incomplete runtime manifests, failed native import, preserved failed command bytes,
 interrupted process cleanup, path/provenance guards, and compatibility verdicts.
 Fixtures are retained under the external TMPDIR. Local log:
-`/Volumes/Work/Dev/ibcmd-rs-lab/logs/issue356-harness-controls-r13.log`.
+`/Volumes/Work/Dev/ibcmd-rs-lab/logs/issue356-harness-controls-r17.log`.
 
 ```sh
 source /Volumes/Work/Dev/ibcmd-rs-lab/lab-env.sh
@@ -191,3 +191,31 @@ An overlapping #381 compilation was reported by the coordinator, so these
 command timings are not performance measurements. No further heavy phase or
 retest starts until the parent grants it. Full BSP/UH acceptance and clean SDK
 validation remain open; PR #506 remains Draft.
+
+
+## PR review: whole-application overlap and configuration custody
+
+The two actual Codex findings in PR #506 were confirmed against `9c601e78`.
+Before any output directory, snapshot, copy or process, the harness now validates
+`.app/Contents/Eclipse/1cedtcli` layout and rejects either-direction overlap
+between the run and the entire physical application bundle. Existing-ancestor
+`samefile` checks cover case aliases on the external case-insensitive volume.
+The regression controls check configuration/Contents/MacOS/Resources descendants,
+an ancestor and the real case alias without executing a recursive copy.
+
+The entire source configuration tree is recorded in
+`configuration-source-before.json`. A complete `configuration-copy-before.json`
+must match before any launch. Both initial tree hashes enter the terminal
+result, separately from the supplied installation-manifest hash; unlisted extra
+configuration files therefore cannot silently share the same effective-input
+identity. Full source/copy after-inventories and `configuration-custody.json`
+retain private runtime cache changes without normalizing them away.
+
+Configuration custody is captured before later manifest revalidation, including
+when a listed configuration file changes. Missing, renamed or unreadable copied
+configuration fails custody and cannot publish a verdict; a retained rename
+control covers this without deletion. The source configuration must remain
+unchanged. Thirty-three bounded retained-fixture controls pass; no native run,
+Rust build, private-input mutation or cleanup was needed for these review fixes.
+Older smoke evidence is preserved unchanged and is not retroactively described
+as having this stronger custody contract.
