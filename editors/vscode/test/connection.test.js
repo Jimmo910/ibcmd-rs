@@ -168,6 +168,8 @@ async function harness({
             disconnect() {}
           },
         };
+      if (id === "./database-commands")
+        return { registerDatabaseCommands() {} };
       return require(id);
     },
   });
@@ -186,6 +188,7 @@ async function harness({
   return {
     stores,
     clients,
+    values,
     saved,
     errors,
     offered,
@@ -201,6 +204,54 @@ async function harness({
     },
   };
 }
+
+test("редактирование файлового источника сохраняет rows-dir без запросов SQL", async () => {
+  const { readConfig, idOf } = require("../out/config");
+  for (const server of [undefined, "сервер"]) {
+    for (const local of [false, true]) {
+      const prompts = [];
+      const initialized = [];
+      const entry = {
+        name: "Архив",
+        server,
+        source: "rows-dir",
+        rowsDir: path.resolve("данные", "Архив"),
+        platform: "8.3.27",
+        mask: false,
+      };
+      entry.id = idOf(entry);
+      const text = local
+        ? `[[database]]\nname="Архив"\nplatform="8.3.27"\nrows-dir="данные/Архив"\n${server ? 'server="сервер"\n' : ""}`
+        : "";
+      const h = await harness({
+        listed: [entry],
+        text,
+        initialize: async (_, params) => {
+          initialized.push(params);
+          return {};
+        },
+        input: async ({ prompt, value }) => {
+          prompts.push(prompt);
+          return value;
+        },
+      });
+      await h.edit(entry.id);
+      assert.deepEqual(h.errors, []);
+      const [saved] = readConfig(h.saved[0]);
+      assert.equal(saved["rows-dir"], local ? "данные/Архив" : entry.rowsDir);
+      assert.equal(saved.server, server);
+      assert.equal(saved.name, entry.name);
+      assert.equal(h.stores.length, 0);
+      assert.ok(prompts.every((p) => !p.includes("SQL")));
+      const validation = initialized.find((p) => p.infobases);
+      assert.equal(
+        validation.infobases[0].rowsDir,
+        local ? undefined : entry.rowsDir,
+      );
+      assert.equal(h.values.connectionMetadata[idOf(saved)].auth, undefined);
+    }
+  }
+});
 test("new password is persisted only after a successful current connect", async () => {
   const started = deferred(),
     finish = deferred();

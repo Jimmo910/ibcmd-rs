@@ -24,11 +24,12 @@
   },
   "scripts": {
     "compile": "tsc -p .",
-    "test": "npm run compile && node --test test/object-status.test.js test/core.test.js test/real.test.js test/import.test.js test/connection.test.js test/object-view.test.js test/configuration-tree.test.js",
+    "test": "npm run compile && node --test test/object-status.test.js test/core.test.js test/real.test.js test/import.test.js test/connection.test.js test/object-view.test.js test/configuration-tree.test.js test/database-files.test.js",
     "test:host": "npm run compile && node test/host.js",
     "format": "prettier --write src test package.json tsconfig.json",
     "format:check": "prettier --check src test package.json tsconfig.json",
-    "test:tree-host": "npm run compile && node test/tree-host.js"
+    "test:tree-host": "npm run compile && node test/tree-host.js",
+    "test:source-host": "npm run compile && node test/source-host.js"
   },
   "contributes": {
     "commands": [
@@ -89,6 +90,14 @@
       {
         "command": "ibcmd.tree.openLocal",
         "title": "ibcmd-rs: Открыть местный файл"
+      },
+      {
+        "command": "ibcmd.source.open",
+        "title": "ibcmd-rs: Открыть из базы"
+      },
+      {
+        "command": "ibcmd.source.compare",
+        "title": "ibcmd-rs: Сравнить с базой"
       }
     ],
     "configuration": {
@@ -207,6 +216,14 @@
         {
           "command": "ibcmd.tree.openLocal",
           "when": "view == ibcmd.configuration && viewItem == ibcmd.source"
+        },
+        {
+          "command": "ibcmd.source.open",
+          "when": "view == ibcmd.configuration && viewItem == ibcmd.source"
+        },
+        {
+          "command": "ibcmd.source.compare",
+          "when": "view == ibcmd.configuration && viewItem != ibcmd.property"
         }
       ],
       "view/title": [

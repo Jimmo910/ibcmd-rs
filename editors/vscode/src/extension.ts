@@ -5,6 +5,7 @@ import { runImport, ImportValidationError, importErrorMessage } from "./import";
 import { Database, editConfig, idOf, snapshot, saveConfig } from "./config";
 import { Base, Metadata, Generation, pendingText } from "./status";
 import { ConfigurationView } from "./configuration-view";
+import { registerDatabaseCommands } from "./database-commands";
 
 import { ObjectView } from "./object-view";
 
@@ -14,6 +15,7 @@ export function secretKey(folder: string, id: string, user: string): string {
 export async function activate(context: vscode.ExtensionContext) {
   if (!vscode.workspace.isTrusted) return;
   const configuration = new ConfigurationView(context);
+  const databaseFiles = registerDatabaseCommands(context, configuration);
   const status = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     40,
@@ -530,12 +532,21 @@ export async function activate(context: vscode.ExtensionContext) {
       previous.label || old?.name,
     );
     if (friendly === undefined) return;
-    const server = await input(
-      "SQL Server (host or host\\instance; blank inherits settings)",
-      old ? (old.server ?? "") : "localhost",
-      false,
-    );
-    if (server === undefined) return;
+
+    const local = readLocal(expected, old?.id);
+    const offline = old?.source === "rows-dir";
+    const rowsDir = offline ? old.rowsDir : undefined;
+    if (offline && !local && !rowsDir)
+      throw new Error("Сервер не вернул каталог файлового источника");
+    const server = offline
+      ? old?.server
+      : await input(
+          "SQL Server (host or host\\instance; blank inherits settings)",
+          old ? (old.server ?? "") : "localhost",
+          false,
+        );
+    if (!offline && server === undefined) return;
+
     const name = await input(
       "Database name (one database; no wildcard)",
       old?.name,
@@ -546,20 +557,22 @@ export async function activate(context: vscode.ExtensionContext) {
       old?.platform || "8.3.27",
     );
     if (platform === undefined) return;
-    const auth = await vscode.window.showQuickPick(
-      [
-        { label: "Windows authentication", value: "windows" as const },
-        { label: "SQL authentication", value: "sql" as const },
-      ],
-      {
-        placeHolder:
-          "Authentication (Windows integrated login requires Windows)",
-      },
-    );
-    if (!auth) return;
+    const auth = offline
+      ? undefined
+      : await vscode.window.showQuickPick(
+          [
+            { label: "Windows authentication", value: "windows" as const },
+            { label: "SQL authentication", value: "sql" as const },
+          ],
+          {
+            placeHolder:
+              "Authentication (Windows integrated login requires Windows)",
+          },
+        );
+    if (!offline && !auth) return;
     let user: string | undefined;
     let password: string | undefined;
-    if (auth.value === "sql") {
+    if (auth?.value === "sql") {
       user = await input("SQL user", previous.user);
       if (user === undefined) return;
       user = user.trim();
@@ -571,18 +584,11 @@ export async function activate(context: vscode.ExtensionContext) {
       });
       if (password === undefined) return;
     }
-    const local = readLocal(expected, old?.id);
-    if (old?.source === "rows-dir" && !local && !old.rowsDir)
-      throw new Error(
-        "Inherited rows directory is missing; reload before editing",
-      );
     const database: Database = {
-      ...(server.trim() ? { server: server.trim() } : {}),
-      ...(old?.source === "rows-dir" && !local
-        ? { "rows-dir": old.rowsDir }
-        : {}),
+      ...(server?.trim() ? { server: server.trim() } : {}),
       name: name.trim(),
       platform: platform.trim(),
+      ...(rowsDir && !local ? { "rows-dir": rowsDir } : {}),
     };
     const next = editConfig(expected, local ? old?.id : undefined, database);
     // Validate the exact platform with the real server before writing the file. No login/query.
@@ -599,7 +605,7 @@ export async function activate(context: vscode.ExtensionContext) {
             name: database.name,
             server: database.server,
             platform: database.platform,
-            ...(database["rows-dir"] ? { rowsDir: database["rows-dir"] } : {}),
+            rowsDir: database["rows-dir"],
           },
         ],
       });
@@ -618,7 +624,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const all = { ...metadata(f) };
     all[id] = {
       label: friendly.trim(),
-      auth: auth.value,
+      ...(auth ? { auth: auth.value } : {}),
       ...(user ? { user } : {}),
     };
     await config(f).update(
@@ -641,7 +647,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (
       old &&
       previous.user &&
-      (old.id !== id || previous.user !== user || auth.value !== "sql")
+      (old.id !== id || previous.user !== user || auth?.value !== "sql")
     )
       await context.secrets.delete(
         secretKey(f.uri.toString(), old.id, previous.user),
@@ -722,6 +728,7 @@ export async function activate(context: vscode.ExtensionContext) {
   return {
     status: () => status.text,
     configuration,
+    databaseFiles,
     objects: () => objects.snapshot(),
     visibleObjects: () => objects.getChildren(),
     objectDecoration: (uri: vscode.Uri) => objects.provideFileDecoration(uri),

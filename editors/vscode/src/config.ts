@@ -26,7 +26,9 @@ export function editConfig(
   oldId: string | undefined,
   database: Database,
 ): string {
-  for (const key of ["name", "platform"] as const) {
+  const required: (keyof Database)[] = ["name", "platform"];
+  if (database["rows-dir"] !== undefined) required.push("rows-dir");
+  for (const key of required) {
     if (typeof database[key] !== "string" || !database[key]!.trim())
       throw new Error(`${key} is required`);
   }
@@ -77,7 +79,9 @@ export function editConfig(
     );
   const edits: { start: number; end: number; text: string }[] = [];
   const missing: string[] = [];
-  for (const k of ["server", "name", "platform"] as const) {
+  const keys: (keyof Database)[] = ["server", "name", "platform"];
+  if (database["rows-dir"] !== undefined) keys.push("rows-dir");
+  for (const k of keys) {
     const field = table.body.find(
       (n) => n.key.keys.length === 1 && getStaticTOMLValue(n.key)[0] === k,
     );

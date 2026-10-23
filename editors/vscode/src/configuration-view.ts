@@ -17,6 +17,8 @@ export class ConfigurationView
 {
   private changed = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
+  private sources = new vscode.EventEmitter<void>();
+  readonly onDidChangeSource = this.sources.event;
   private model?: TreeModel;
   private view: vscode.TreeView<Node>;
   private watcher?: vscode.Disposable;
@@ -160,6 +162,7 @@ export class ConfigurationView
     return !node || this.owns(node) ? this.model?.source : undefined;
   }
   use(source: Source) {
+    this.sources.fire();
     this.model?.dispose();
     this.roots.clear();
     this.model = new TreeModel(source);
@@ -173,6 +176,7 @@ export class ConfigurationView
   }
   disconnect() {
     if (!this.model?.source.remote) return;
+    this.sources.fire();
     this.model.dispose();
     this.model = undefined;
     this.roots.clear();
@@ -181,6 +185,24 @@ export class ConfigurationView
   }
   getParent(node: Node) {
     return node.parent;
+  }
+  async objectNames(node: Node, signal: AbortSignal): Promise<string[]> {
+    const model = this.model;
+    if (!model || !this.owns(node))
+      throw new Error("Узел относится к прежнему источнику");
+    const visit = async (current: Node): Promise<string[]> => {
+      if (signal.aborted || this.model !== model)
+        throw new Error("Чтение отменено");
+      if (current.kind === "ConfigurationFiles") return ["Configuration"];
+      if (current.type === "object" && current.fullName)
+        return [current.fullName];
+      if (current.type === "property" || current.type === "file") return [];
+      const names: string[] = [];
+      for (const child of await model.children(current, signal))
+        names.push(...(await visit(child)));
+      return names;
+    };
+    return visit(node);
   }
   getTreeItem(node: Node) {
     const expandable =
@@ -203,7 +225,10 @@ export class ConfigurationView
       .filter(Boolean)
       .join("\n");
     item.contextValue =
-      node.type === "property"
+      node.type === "property" ||
+      (node.type === "group" &&
+        !!node.children?.length &&
+        node.children.every((child) => child.type === "property"))
         ? "ibcmd.property"
         : node.path
           ? "ibcmd.source"
@@ -245,5 +270,6 @@ export class ConfigurationView
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.model?.dispose();
     this.changed.dispose();
+    this.sources.dispose();
   }
 }
