@@ -888,6 +888,8 @@ pub struct InfobaseConfigLoadArgs {
     pub db_user: Option<String>,
     pub db_pwd: Option<String>,
     pub db_pwd_env: String,
+    /// `--sqlcmd`: sqlcmd.exe in place of the built-in SQL Server client.
+    pub sqlcmd: Option<PathBuf>,
     /// The `.cf` to stage.
     pub input: PathBuf,
 }

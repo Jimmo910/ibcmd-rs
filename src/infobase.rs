@@ -610,7 +610,7 @@ pub fn load_config(args: &InfobaseConfigLoadArgs) -> Result<InfobaseConfigImport
     }
     ensure_mssql(&config.dbms)?;
     let sql = crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
-        sqlcmd: None,
+        sqlcmd: args.sqlcmd.as_deref(),
         bcp: None,
         server: &config.db_server,
         user: config.db_user.as_deref(),

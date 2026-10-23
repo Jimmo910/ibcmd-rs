@@ -271,8 +271,8 @@ SQL Server. Проверено на SQL Server 2025: `.cf` БСП, загруж�
 
 | Параметр | Что задаёт |
 |---|---|
-| `--db-path=<каталог>`, `--database-path` | Файловая информационная база: каталог с `1Cv8.1CD` (или сам файл). Только для `config export` и `config import`; вместе с `--dbms`, `--db-server`, `--db-name` не указывается. См. [Файловые базы](#файловые-базы). |
-| `--dbms=MSSQLServer` | Тип СУБД: `MSSQLServer`; для `config export` и `config import` также `PostgreSQL` (см. [PostgreSQL](#postgresql)). |
+| `--db-path=<каталог>`, `--database-path` | Файловая информационная база: каталог с `1Cv8.1CD` (или сам файл). Только для `config export`, `config import` и `config load`; вместе с `--dbms`, `--db-server`, `--db-name` не указывается. См. [Файловые базы](#файловые-базы). |
+| `--dbms=MSSQLServer` | Тип СУБД: `MSSQLServer`; для `config export`, `config import` и `config load` также `PostgreSQL` (см. [PostgreSQL](#postgresql)). |
 | `--db-server=<сервер>`, `--database-server` | Сервер: `server`, `server\instance`, `server/instance` (как пишет штатный `ibcmd`), `server,port`. По умолчанию — из настроек, иначе `localhost`. |
 | `--db-name=<база>`, `--database-name` | Имя базы данных. |
 | `--db-user=<логин>`, `--database-user` | Логин SQL Server. Без него — вход Windows. |
@@ -289,7 +289,7 @@ SQL Server. Проверено на SQL Server 2025: `.cf` БСП, загруж�
 
 ### PostgreSQL
 
-`config export` и `config import` работают с базой на PostgreSQL через свой
+`config export`, `config import` и `config load` работают с базой на PostgreSQL через свой
 клиент, без платформы и без библиотек PostgreSQL:
 
 ```
@@ -452,7 +452,7 @@ ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 --db-name=MyBa
 - режимы `server`, `eventlog`, `config`, `extension`, `mobile-app`,
   `mobile-client`, `session`, `lock`, `binary-data-storage`;
 - команды `infobase create`, `dump`, `restore`, `clear`, `replicate`;
-- `infobase config check`, `load`, `reset`, `repair`,
+- `infobase config check`, `reset`, `repair`,
   `support`, `data-separation`, `extension`, `generation-id`, `sign`;
 - `infobase config export info|status|objects|all-extensions`,
   `infobase config import all-extensions` (вывод `export info`,
@@ -460,12 +460,12 @@ ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 --db-name=MyBa
   повторяются);
 - параметры выгрузки `--file`, `--archive`, а также `--base` и `--sync`
   вместе с `--extension`; загрузки `--out`, `--extension` (и у
-  `import files`); применения
+  `import files` и `config load`); применения
   `--extension`, `--sqlcmd`; сохранения `--extension`;
   общие `--pid`, `--remote`;
 - применение, сохранение, `import files` и расширения файловых баз
   (`--db-path`); СУБД кроме `MSSQLServer` (у `PostgreSQL` — всё, кроме
-  `config export` и `config import`).
+  `config export`, `config import` и `config load`).
 
 ### Вывод и коды возврата
 

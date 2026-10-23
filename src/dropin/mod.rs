@@ -681,6 +681,8 @@ pub fn load_args(request: &LoadRequest) -> InfobaseConfigLoadArgs {
             .db_pwd_env
             .clone()
             .unwrap_or_else(|| "IBCMD_DB_PSW".to_string()),
+        // the built-in SQL Server client, unless `--sqlcmd` asks for sqlcmd.exe
+        sqlcmd: common.sqlcmd.clone(),
         input: PathBuf::from(&request.path),
     }
 }
@@ -793,6 +795,17 @@ mod tests {
         let absolute = std::env::temp_dir().join("elsewhere");
         common.temp = Some(absolute.clone());
         assert_eq!(scratch_dir(&common), absolute.join("ibcmd-rs"));
+    }
+
+    #[test]
+    fn a_load_keeps_the_sqlcmd_it_was_given() {
+        let mut common = common();
+        common.sqlcmd = Some(PathBuf::from(r"sqlcmd-dir/sqlcmd.exe"));
+        let args = load_args(&LoadRequest {
+            common,
+            path: OsString::from("a.cf"),
+        });
+        assert_eq!(args.sqlcmd, Some(PathBuf::from(r"sqlcmd-dir/sqlcmd.exe")));
     }
 
     #[test]

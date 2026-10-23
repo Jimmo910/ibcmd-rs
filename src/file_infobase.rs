@@ -248,7 +248,7 @@ pub(crate) fn load_cf(
 /// does not. The file replaces the whole main configuration.
 pub(crate) fn plan_cf_stage(config_rows: Vec<ConfigRow>, input: &Path) -> Result<Stage> {
     let target = crate::mssql_dump::file_infobase_config(config_rows)?;
-    let entries = crate::mssql::cf_load_stage::cf_stage_rows(input)?
+    let entries = crate::mssql::cf_load_stage::cf_load_rows(input)?
         .into_iter()
         .map(|row| (row.file_name, row.blob))
         .collect::<BTreeMap<_, _>>();
@@ -282,6 +282,7 @@ impl Stage {
     ) -> InfobaseConfigImportReport {
         let mut report = self.report(config, input.to_path_buf(), None, backend, rows, backup);
         report.operation = "infobase config load";
+        report.format = "cf";
         report
     }
 }

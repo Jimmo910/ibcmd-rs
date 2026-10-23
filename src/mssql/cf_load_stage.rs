@@ -130,6 +130,16 @@ pub fn cf_stage_rows(path: &Path) -> Result<Vec<CfStageRow>> {
     Ok(rows)
 }
 
+/// The rows `config load` stages from the file at `path`: its elements but
+/// an archived `deleted` (a platform's `config save` of an unapplied import
+/// writes the stage's list into the file); the load stages the list for its
+/// own target instead.
+pub fn cf_load_rows(path: &Path) -> Result<Vec<CfStageRow>> {
+    let mut rows = cf_stage_rows(path)?;
+    rows.retain(|row| row.file_name != super::override_stage::DELETED_ROW);
+    Ok(rows)
+}
+
 /// Writes `rows` as the bulk stage of `database`: the rows file and the two
 /// scripts, beside `script_output` (named as `mssql-stage-source-objects`
 /// names them).
@@ -203,7 +213,7 @@ pub fn load_into_database(
     database: &str,
     input: &Path,
 ) -> Result<DatabaseLoadReport> {
-    let rows = cf_stage_rows(input)?;
+    let rows = cf_load_rows(input)?;
     let staged = rows
         .iter()
         .map(|row| row.file_name.as_str())
@@ -226,7 +236,7 @@ pub fn load_into_database(
         })
         .collect::<Vec<_>>();
     bulk.push(BulkStageRow {
-        file_name: "deleted",
+        file_name: super::override_stage::DELETED_ROW,
         requires_config_row: false,
         blob: &deleted_blob,
     });
