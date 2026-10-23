@@ -538,7 +538,9 @@ pub(super) fn metadata_source_for_object_fields(
         9 => Some(("CommonCommand", "CommonCommands")),
         12 if header_index == Some(1) => Some(("CommonModule", "CommonModules")),
         14 => Some(("FilterCriterion", "FilterCriteria")),
-        16 if header_index == Some(3) && fields.len() == 12 => {
+        DataProcessorRevision16Layout::OBJECT_CODE
+            if DataProcessorRevision16Layout::recognizes(code, header_index, fields.len()) =>
+        {
             Some(("DataProcessor", "DataProcessors"))
         }
         16 => Some(("Constant", "Constants")),

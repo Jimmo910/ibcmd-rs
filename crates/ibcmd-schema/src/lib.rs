@@ -18591,6 +18591,29 @@ pub mod metadata_storage_facts {
         }
     }
 
+    /// The twelve-member revision-16 DataProcessor owner record measured in
+    /// ЗУП 3.1.18. Constants share its discriminator; the header position and
+    /// complete record length distinguish the generated object/manager pairs.
+    pub struct DataProcessorRevision16Layout;
+
+    impl DataProcessorRevision16Layout {
+        pub const OBJECT_CODE: u32 = 16;
+        pub const FIELD_COUNT: usize = 12;
+        pub const HEADER_INDEX: usize = 3;
+        pub const OBJECT_TYPE_ID: usize = 1;
+        pub const MANAGER_TYPE_ID: usize = 7;
+
+        pub fn recognizes(
+            object_code: u32,
+            header_index: Option<usize>,
+            field_count: usize,
+        ) -> bool {
+            object_code == Self::OBJECT_CODE
+                && header_index == Some(Self::HEADER_INDEX)
+                && field_count == Self::FIELD_COUNT
+        }
+    }
+
     pub fn data_processor_owner_revision(code: Option<&str>) -> bool {
         matches!(code, Some("16" | "17"))
     }
@@ -18634,6 +18657,24 @@ pub mod metadata_storage_facts {
     #[cfg(test)]
     mod tests {
         use super::*;
+        #[test]
+        fn revision_16_data_processor_requires_its_complete_owner_shape() {
+            assert!(DataProcessorRevision16Layout::recognizes(16, Some(3), 12));
+            for (code, header, count) in [
+                (16, Some(3), 11),
+                (16, Some(3), 13),
+                (16, Some(3), usize::MAX),
+                (16, Some(1), 12),
+                (16, None, 12),
+                (17, Some(3), 12),
+            ] {
+                assert!(
+                    !DataProcessorRevision16Layout::recognizes(code, header, count),
+                    "unexpected revision-16 shape: {code}, {header:?}, {count}",
+                );
+            }
+        }
+
         #[test]
         fn declared_type_names_and_namespaces_share_one_registry() {
             for (id, name, namespace) in DATA_PROCESSOR_TYPES {

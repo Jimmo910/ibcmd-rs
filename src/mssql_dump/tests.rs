@@ -80628,11 +80628,15 @@ fn a_label_field_places_its_title_back_colour_after_the_title() {
     assert!(at("TitleBackColor") < at("EditMode"));
 }
 
+fn revision_16_data_processor_text_for_test() -> &'static str {
+    "{1,\r\n{16,fada799c-d476-400d-a17b-7f06cb05c404,c860ba98-e76d-4281-bdc4-8d9126aedbc8,\r\n{0,\r\n{1,\r\n{0,0,84871d25-90e1-43a9-8431-aaa4e9749b2d},\"РасчетЗарплаты\",\r\n{1,\"ru\",\"Расчеты и выплаты\"},\"\",0,0}\r\n},a6f35643-81e5-447b-9a32-dc8d1e3edbf3,0,0,d3985c5b-0dce-44be-8828-860eb5a6f62e,de359b87-41da-4795-9e0c-535e0733d84d,00000000-0000-0000-0000-000000000000,\r\n{0},\r\n{0}\r\n},5,\r\n{2bcef0d1-0981-11d6-b9b8-0050bae0a95d,0},\r\n{3daea016-69b7-4ed4-9453-127911372fe6,0},\r\n{45556acb-826a-4f73-898a-6025fc9536e1,0},\r\n{d5b0e5ed-256d-401c-9c36-f630cafd8a62,1,a6f35643-81e5-447b-9a32-dc8d1e3edbf3},\r\n{ec6bb5e5-b7a8-4d75-bec9-658107a699cf,0}\r\n}"
+}
+
 #[test]
 fn a_data_processor_of_revision_16_indexes_its_object_and_manager_types() {
     // ЗУП 3.1.18 `DataProcessors/РасчетЗарплаты`: 8.3.27.2214 dumps
     // DataProcessorObject fada799c-… and DataProcessorManager d3985c5b-….
-    let text = "{1,\r\n{16,fada799c-d476-400d-a17b-7f06cb05c404,c860ba98-e76d-4281-bdc4-8d9126aedbc8,\r\n{0,\r\n{1,\r\n{0,0,84871d25-90e1-43a9-8431-aaa4e9749b2d},\"РасчетЗарплаты\",\r\n{1,\"ru\",\"Расчеты и выплаты\"},\"\",0,0}\r\n},a6f35643-81e5-447b-9a32-dc8d1e3edbf3,0,0,d3985c5b-0dce-44be-8828-860eb5a6f62e,de359b87-41da-4795-9e0c-535e0733d84d,00000000-0000-0000-0000-000000000000,\r\n{0},\r\n{0}\r\n},5,\r\n{2bcef0d1-0981-11d6-b9b8-0050bae0a95d,0},\r\n{3daea016-69b7-4ed4-9453-127911372fe6,0},\r\n{45556acb-826a-4f73-898a-6025fc9536e1,0},\r\n{d5b0e5ed-256d-401c-9c36-f630cafd8a62,1,a6f35643-81e5-447b-9a32-dc8d1e3edbf3},\r\n{ec6bb5e5-b7a8-4d75-bec9-658107a699cf,0}\r\n}";
+    let text = revision_16_data_processor_text_for_test();
     let entries = parse_generated_type_entries_from_blob(
         &deflate_for_test(text.as_bytes()),
         "84871d25-90e1-43a9-8431-aaa4e9749b2d",
@@ -80653,6 +80657,45 @@ fn a_data_processor_of_revision_16_indexes_its_object_and_manager_types() {
                 .iter()
                 .any(|(id, name)| id == type_id && name == reference),
             "{entries:?}"
+        );
+    }
+}
+
+#[test]
+fn revision_16_data_processor_generated_types_require_the_complete_record() {
+    let uuid = "84871d25-90e1-43a9-8431-aaa4e9749b2d";
+    let root = split_1c_braced_fields(revision_16_data_processor_text_for_test(), 0).unwrap();
+    let fields = split_1c_braced_fields(root[1], 0).unwrap();
+    assert_eq!(fields.len(), 12);
+    assert_eq!(
+        super::metadata::metadata_source_for_object_fields(
+            16,
+            revision_16_data_processor_text_for_test(),
+            uuid,
+            &fields,
+        ),
+        Some(("DataProcessor", "DataProcessors")),
+    );
+    for count in [11, 13] {
+        let mut changed = fields.clone();
+        changed.resize(count, "0");
+        let changed_object = format!("{{{}}}", changed.join(","));
+        let mut changed_root = root.clone();
+        changed_root[1] = &changed_object;
+        let text = format!("{{{}}}", changed_root.join(","));
+        assert_eq!(
+            super::metadata::metadata_source_for_object_fields(16, &text, uuid, &changed),
+            Some(("Constant", "Constants")),
+            "an unrecognized revision-16 shape must retain the constant fallback",
+        );
+        let entries =
+            parse_generated_type_entries_from_blob(&deflate_for_test(text.as_bytes()), uuid)
+                .unwrap();
+        assert!(
+            entries
+                .iter()
+                .all(|(_, reference)| !reference.starts_with("cfg:DataProcessor")),
+            "{count}-field record incorrectly indexed as a data processor: {entries:?}",
         );
     }
 }

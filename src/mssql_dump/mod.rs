@@ -15,6 +15,7 @@ use ibcmd_core::characteristics::Characteristics;
 use ibcmd_core::diagnostic::{MetadataSourceFailureClass, ObjectPath};
 use ibcmd_core::family::FamilyId;
 use ibcmd_core::storage::StorageImage;
+use ibcmd_schema::metadata_storage_facts::DataProcessorRevision16Layout;
 use ibcmd_schema::{
     GeneratedMetadataReferenceOwnerKind, parse_generated_metadata_reference_owner,
     parse_task_data_lock_control_mode_slot, parse_task_full_text_search_slot,
@@ -12569,6 +12570,7 @@ struct RawGeneratedTypeSlot {
 #[derive(Clone, Copy)]
 enum RawGeneratedTypeCondition {
     HeaderIndex(usize),
+    FieldCount(usize),
     FieldPrefix(usize, &'static str),
     FieldUuid(usize),
     FieldUuidRange(usize, usize),
@@ -12586,6 +12588,7 @@ impl RawGeneratedTypeSchema {
         self.object_codes.contains(&object_code)
             && self.conditions.iter().all(|condition| match *condition {
                 RawGeneratedTypeCondition::HeaderIndex(expected) => header_index == Some(expected),
+                RawGeneratedTypeCondition::FieldCount(expected) => fields.len() == expected,
                 RawGeneratedTypeCondition::FieldPrefix(index, prefix) => {
                     field_starts_with(fields.get(index), prefix)
                 }
@@ -12740,22 +12743,21 @@ const RAW_GENERATED_TYPE_SCHEMAS: &[RawGeneratedTypeSchema] = &[
             },
         ],
     },
-    // A data processor of record revision 16 (12 fields, its header third;
-    // `metadata::metadata_kind_for_object_code` tells it from a constant so)
-    // keeps both types where 17 does: ЗУП 3.1.18 `РасчетЗарплаты` stores
-    // `DataProcessorObject` at 1 and `DataProcessorManager` at 7, the ids of
-    // its native dump. Without it the 14 such processors' types stayed bare
-    // ids in the forms that use them.
+    // Revision 16 shares its discriminator with Constant. The schema owns
+    // both its complete shape and the generated type pair positions.
     RawGeneratedTypeSchema {
-        object_codes: &[16],
-        conditions: &[RawGeneratedTypeCondition::HeaderIndex(3)],
+        object_codes: &[DataProcessorRevision16Layout::OBJECT_CODE],
+        conditions: &[
+            RawGeneratedTypeCondition::HeaderIndex(DataProcessorRevision16Layout::HEADER_INDEX),
+            RawGeneratedTypeCondition::FieldCount(DataProcessorRevision16Layout::FIELD_COUNT),
+        ],
         slots: &[
             RawGeneratedTypeSlot {
-                field_index: 1,
+                field_index: DataProcessorRevision16Layout::OBJECT_TYPE_ID,
                 generated_type: "DataProcessorObject",
             },
             RawGeneratedTypeSlot {
-                field_index: 7,
+                field_index: DataProcessorRevision16Layout::MANAGER_TYPE_ID,
                 generated_type: "DataProcessorManager",
             },
         ],
