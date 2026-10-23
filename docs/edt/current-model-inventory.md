@@ -52,3 +52,32 @@ BSP/UH census. Authentic EDT import/export and native comparisons remain
 separate gates. Current-build empty-project smoke evidence cannot establish
 whole BSP/UH support, arbitrary-configuration support, or legacy exact-version
 acceptance.
+
+## Witnessed current form framing fix
+
+The shared genuine native `DcsFilterEvidence` import into installed EDT
+`2026.2.1.3rc0` produced two LF-only managed forms (45,086 and 11,724 bytes).
+The pinned-master form reader rejected both with `must be CRLF, found Lf`.
+The corresponding native XML forms (19,444 and 8,283 bytes) already passed
+byte-exact and typed same-dialect regeneration.
+
+The reader now captures a source-only LF framing facet from the XML declaration
+separator. The EDT writer uses that facet for structural and in-text framing;
+new bodies and legacy CRLF sources retain the previous CRLF behavior. LF sources
+use the existing verbatim-text parse policy so a typed edit containing explicit
+CRLF survives rereading. Native LF XML, BOM-bearing EDT and unknown form nodes
+remain rejected. The facet is excluded from semantic serialization; this is a
+witnessed framing capability, not a new current EDT schema/profile declaration.
+
+Two minimized in-memory regression tests cover both XML dialects, edited text
+(including explicit CRLF), serde exclusion, legacy output and negative cases.
+After the fix, all four genuine current/native form files read and regenerate
+byte for byte, and each same-dialect typed fingerprint is unchanged. All inputs
+remain unchanged. This was an offline probe using the captured current EDT pair,
+not a new installed-EDT run or full configuration acceptance.
+
+Standalone cross-dialect `CorpusList` typed fingerprints agree. `FilterProbe`
+still differs in `conditional_appearance` and `data_attributes`; a full current
+metadata-context/native comparison must classify those differences. Neither
+these two forms nor this framing fix settles the historical BSP/UH census.
+The separate configuration-interface sidecar incompatibility is owned by #357.
