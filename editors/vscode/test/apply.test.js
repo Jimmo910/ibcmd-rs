@@ -100,7 +100,10 @@ test("pre-cancelled native apply never spawns", async () => {
   );
 });
 
-function nativeHarness(pathApi = require("node:path")) {
+function nativeHarness(
+  pathApi = require("node:path"),
+  platform = process.platform,
+) {
   const fs = require("node:fs"),
     path = require("node:path"),
     vm = require("node:vm"),
@@ -118,9 +121,12 @@ function nativeHarness(pathApi = require("node:path")) {
       exports: module.exports,
       module,
       process: {
+        platform,
         env: {
           IBCMD_DB_PSW: "secret",
           IBCMD_RS_CONFIG: "private",
+          Ibcmd_Db_Psw: "mixed-secret",
+          ibcmd_rs_config: "mixed-private",
           TMPDIR: "/external",
         },
       },
@@ -141,6 +147,11 @@ function nativeHarness(pathApi = require("node:path")) {
             mkdtemp: async () => "/external/scratch",
           };
         if (id === "./import") return require("../out/import");
+        if (id === "./rpc")
+          return {
+            serverEnvironment: (env) =>
+              require("../out/rpc").serverEnvironment(env, platform),
+          };
         return require(id);
       },
     },
@@ -220,4 +231,25 @@ test("native scratch argv follows Windows path semantics", async () => {
   );
   h.child.emit("exit", 0);
   await running;
+});
+
+test("native apply removes Windows case variants from the child environment", async () => {
+  const h = nativeHarness(require("node:path").win32, "win32");
+  const running = h.native(
+    "C:\\native\\ibcmd.exe",
+    { dbPath: "C:\\db", platform: "8.5.1" },
+    "C:\\scratch",
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  const env = h.calls[0][2].env;
+  h.child.emit("exit", 0);
+  await running;
+  for (const key of [
+    "IBCMD_DB_PSW",
+    "Ibcmd_Db_Psw",
+    "IBCMD_RS_CONFIG",
+    "ibcmd_rs_config",
+  ])
+    assert.equal(env[key], undefined, key);
+  assert.equal(env.TMPDIR, "/external");
 });

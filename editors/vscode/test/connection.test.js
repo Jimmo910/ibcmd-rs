@@ -40,10 +40,16 @@ async function harness({
   let picked = "a",
     cancel = () => {};
   const noEvent = () => ({ dispose() {} });
-  const bases = listed ?? ["a", "b"].map((id) => ({
-    id, name: id, source, platform: "8.3.27",
-  }));
-  const saved = [], offered = [];
+  const bases =
+    listed ??
+    ["a", "b"].map((id) => ({
+      id,
+      name: id,
+      source,
+      platform: "8.3.27",
+    }));
+  const saved = [],
+    offered = [];
   const values = {
     executable: "synthetic",
     connections: ["a", "b"],
@@ -115,12 +121,20 @@ async function harness({
       showInputBox: input,
       showQuickPick: async (items) => {
         items = await items;
-        offered.push(items.filter((item) => item.base).map((item) => item.base.id));
-        return items.find((item) => item.base?.id === picked) ??
-          items.find((item) => item.value === "windows");
+        offered.push(
+          items.filter((item) => item.base).map((item) => item.base.id),
+        );
+        return (
+          items.find((item) => item.base?.id === picked) ??
+          items.find((item) => item.value === "windows")
+        );
       },
-      showErrorMessage(message) { errors.push(message); },
-      showInformationMessage(message) { infos.push(message); },
+      showErrorMessage(message) {
+        errors.push(message);
+      },
+      showInformationMessage(message) {
+        infos.push(message);
+      },
       showWarningMessage: async (_, options, label) => label,
       withProgress: (_, task) => task({}, token),
     },
@@ -138,12 +152,15 @@ async function harness({
       if (id === "vscode") return vscode;
       if (id === "./rpc")
         return { RpcClient, RpcError: class extends Error {} };
-      if (id === "./config") return {
-        ...require("../out/config"), snapshot,
-        saveConfig: async (_, expected, next) => {
-          assert.equal(expected, text); saved.push(next);
-        },
-      };
+      if (id === "./config")
+        return {
+          ...require("../out/config"),
+          snapshot,
+          saveConfig: async (_, expected, next) => {
+            assert.equal(expected, text);
+            saved.push(next);
+          },
+        };
       if (id === "./status") return require("../out/status");
       if (id === "./apply") return require("../out/apply");
       if (id === "./import") return require("../out/import");
@@ -165,9 +182,15 @@ async function harness({
   return {
     stores,
     clients,
-    saved, errors, offered, infos,
+    saved,
+    errors,
+    offered,
+    infos,
     invoke: (name) => commands.get(name)(),
-    edit: (id) => { picked = id; return commands.get("ibcmd.edit")(); },
+    edit: (id) => {
+      picked = id;
+      return commands.get("ibcmd.edit")();
+    },
     status: api.status,
     cancel: () => cancel(),
     select: (id = "a") => {
@@ -472,4 +495,20 @@ test("a late crash from an old connection cannot notify or replace the new selec
   assert.equal(h.errors.length, 0);
   assert.ok(h.status().includes(" b ·"));
   assert.equal(h.stores.length, 0);
+});
+
+test("apply-capable client rejects protocol 1.1 before connecting", async () => {
+  const versions = [];
+  const h = await harness({
+    initialize: async (_, params) => {
+      versions.push(params.protocolVersion);
+      if (params.protocolVersion !== "1.1")
+        throw new Error("unsupported protocol");
+      return {};
+    },
+  });
+  await h.select();
+  assert.deepEqual(versions, ["1.3"]);
+  assert.equal(h.stores.length, 0);
+  assert.equal(h.errors.length, 1);
 });

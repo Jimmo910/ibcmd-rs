@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { ImportRpc, ImportValidationError } from "./import";
+import { serverEnvironment } from "./rpc";
 
 export interface ApplyPlan {
   backend: "own" | "external-native";
@@ -98,9 +99,7 @@ export async function nativeApply(
     );
   if (signal?.aborted) throw new ImportValidationError("Apply cancelled");
   return new Promise((resolve, reject) => {
-    const env = { ...process.env };
-    delete env.IBCMD_DB_PSW;
-    delete env.IBCMD_RS_CONFIG;
+    const env = serverEnvironment(process.env);
     const child = spawn(
       executable,
       [
