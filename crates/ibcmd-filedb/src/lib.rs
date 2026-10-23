@@ -541,7 +541,7 @@ impl WriteSession {
                 return Err(err);
             }
         };
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         drop(copy);
         // Prepare recovery data without replacing an existing backup. Rejection
         // or interruption before the final check preserves both published files.
@@ -566,7 +566,7 @@ impl WriteSession {
         }
         if let Err(error) = check(&self.file.metadata()?).and_then(|()| {
             self.check_binding()?;
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             self.paths.require_leaf(&work, &copy)?;
             Ok(())
         }) {

@@ -1,9 +1,13 @@
 //! Mutation paths anchored to one held directory, independent of ancestor renames.
-#[cfg(unix)]
+#[cfg(windows)]
+mod windows;
+#[cfg(any(unix, windows))]
 use crate::lock;
 use crate::{Error, Result};
+#[cfg(not(windows))]
+use std::fs;
 use std::{
-    fs::{self, File},
+    fs::File,
     path::{Path, PathBuf},
 };
 
@@ -14,6 +18,8 @@ pub(crate) struct WritePaths {
     parent: PathBuf,
     #[cfg(unix)]
     directory: File,
+    #[cfg(windows)]
+    custody: windows::Custody,
 }
 impl WritePaths {
     pub(crate) fn open(path: &Path) -> std::io::Result<Self> {
@@ -26,10 +32,14 @@ impl WritePaths {
                 .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)
                 .open(&parent)?
         };
+        #[cfg(windows)]
+        let custody = windows::Custody::open(&parent)?;
         Ok(Self {
             parent,
             #[cfg(unix)]
             directory,
+            #[cfg(windows)]
+            custody,
         })
     }
     pub(crate) fn open_locked(&self, path: &Path) -> Result<File> {
@@ -40,7 +50,14 @@ impl WritePaths {
             self.require_binding(path, &file)?;
             Ok(file)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            let path = self.custody.checked(path)?;
+            let file = lock::open_locked(&path, lock::Mode::Write)?;
+            self.custody.require_leaf(&path, &file)?;
+            Ok(file)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = path;
             Err(Error::Refused(
@@ -56,7 +73,11 @@ impl WritePaths {
                 (if read { libc::O_RDWR } else { libc::O_WRONLY }) | libc::O_CREAT | libc::O_EXCL,
             )
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            self.custody.create_new(path, read)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = (path, read);
             Err(std::io::Error::new(
@@ -99,7 +120,11 @@ impl WritePaths {
                 return Err(Error::Refused("file database leaf identity changed".into()));
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            self.custody.require_leaf(path, file)?;
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = file;
             let current = fs::symlink_metadata(path)?;
@@ -128,7 +153,11 @@ impl WritePaths {
                 )
             })
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            self.custody.hard_link(source, target)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = (source, target);
             Err(std::io::Error::new(
@@ -154,7 +183,11 @@ impl WritePaths {
                 )
             })
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            self.custody.rename(source, target)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = (source, target);
             Err(std::io::Error::new(
@@ -172,7 +205,11 @@ impl WritePaths {
             // SAFETY: single-component leaf in a live held directory.
             self.rc(unsafe { libc::unlinkat(self.directory.as_raw_fd(), leaf.as_ptr(), 0) })
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            self.custody.remove(path)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = path;
             Err(std::io::Error::new(

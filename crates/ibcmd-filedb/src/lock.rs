@@ -37,6 +37,11 @@ pub(crate) fn open_locked(path: &Path, mode: Mode) -> Result<File> {
     {
         use std::os::windows::fs::OpenOptionsExt;
         const FILE_SHARE_READ: u32 = 1;
+        // Refuse a write through a leaf reparse point rather than opening its target.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
+        if mode == Mode::Write {
+            options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        }
         options.share_mode(if mode == Mode::Write {
             0
         } else {
