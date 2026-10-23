@@ -4,6 +4,7 @@ import { RpcClient, RpcError } from "./rpc";
 import { Database, editConfig, idOf, snapshot, saveConfig } from "./config";
 import { Base, Metadata, Generation, pendingText } from "./status";
 import { ConfigurationView } from "./configuration-view";
+import { registerDatabaseCommands } from "./database-commands";
 
 export function secretKey(folder: string, id: string, user: string): string {
   return `ibcmd:${JSON.stringify([folder, id, user])}`;
@@ -11,6 +12,7 @@ export function secretKey(folder: string, id: string, user: string): string {
 export async function activate(context: vscode.ExtensionContext) {
   if (!vscode.workspace.isTrusted) return;
   const configuration = new ConfigurationView(context);
+  const databaseFiles = registerDatabaseCommands(context, configuration);
   const status = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     40,
@@ -522,7 +524,7 @@ export async function activate(context: vscode.ExtensionContext) {
       void client?.dispose();
     },
   });
-  return { status: () => status.text, configuration };
+  return { status: () => status.text, configuration, databaseFiles };
 }
 import { readConfig } from "./config";
 function readLocal(text: string, id: string | undefined) {

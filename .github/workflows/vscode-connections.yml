@@ -46,4 +46,5 @@ jobs:
           export IBCMD_TEST_ROWS="${TMPDIR:-/tmp}/ibcmd-external-editor-server-protocol/rows/demo"
           xvfb-run -a npm run test:host
           xvfb-run -a npm run test:tree-host
+          xvfb-run -a npm run test:source-host
         working-directory: editors/vscode

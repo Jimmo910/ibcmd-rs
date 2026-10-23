@@ -127,6 +127,8 @@ async function harness({
             disconnect() {}
           },
         };
+      if (id === "./database-commands")
+        return { registerDatabaseCommands() {} };
       return require(id);
     },
   });
