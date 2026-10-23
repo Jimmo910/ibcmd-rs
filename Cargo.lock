@@ -711,6 +711,17 @@ name = "ibcmd-number-format"
 version = "0.1.0"
 
 [[package]]
+name = "ibcmd-postgres"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "md5",
+ "sha2",
+ "stringprep",
+ "uuid",
+]
+
+[[package]]
 name = "ibcmd-rs"
 version = "0.4.1"
 dependencies = [
@@ -722,10 +733,10 @@ dependencies = [
  "ibcmd-core",
  "ibcmd-edt",
  "ibcmd-filedb",
+ "ibcmd-postgres",
  "ibcmd-schema",
  "ibcmd-v8",
  "ibcmd-xml",
- "md5",
  "mimalloc",
  "quick-xml 0.38.4",
  "rayon",
@@ -735,7 +746,6 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2",
- "stringprep",
  "tiberius",
  "tokio",
  "tokio-util",
