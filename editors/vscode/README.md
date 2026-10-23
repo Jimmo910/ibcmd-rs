@@ -1,7 +1,7 @@
 # ibcmd-rs Connections for VS Code
 
 Minimal connection UI for [#378](https://github.com/Untru/ibcmd-rs/issues/378).
-Requires VS Code 1.95+ and an `ibcmd-rs` executable speaking editor protocol **1.1**
+Requires VS Code 1.95+ and an `ibcmd-rs` executable speaking editor protocol **1.3**
 (this checkout). A 1.0 server is rejected before a connection is attempted.
 
 ## Use
@@ -144,11 +144,66 @@ objects/deletions and unsupported file collations are refused.
 Changed import requires synchronized `ConfigDumpInfo.xml` versions; it refuses
 stale database/staging versions rather than reverting them. Refresh the export
 baseline after synchronization, or explicitly select files when reviewing a
-conflict. Successful import leaves CONFIGSAVE staged; apply remains a separate
-platform operation (#384). File-db pending status is currently unknown.
+conflict. Successful import leaves CONFIGSAVE staged; apply is available through the separate
+**ibcmd-rs: Apply CONFIGSAVE** command (#384). File-db pending state is refreshed
+after import and apply.
 
 For local evidence collection, set `IBCMD_TEST_KEEP_FIXTURES=1` before the Rust
 file-db, partial-import and source-traversal tests. Their newly owned fixture
 directories are then retained, including after assertion failure. Without this
 flag, disposable CI fixtures are cleaned on scope exit. This test-only switch
 does not change production temporary-file cleanup or recovery artifacts.
+
+
+## Apply CONFIGSAVE (#384)
+
+After importing, the status bar refreshes the CONFIGSAVE pending indication.
+Use **ibcmd-rs: Apply CONFIGSAVE** from the command palette. The confirmation
+names the infobase, backend and exclusive mode. The `ibcmd-rs Apply` Output
+channel reports start, completion and uncertain outcomes without forwarding
+configuration data, native output, server error chains or credentials.
+
+- SQL connections call `config/apply` using the existing own #343 backend.
+  Exclusive session checks and the existing structural gate remain enforced;
+  this editor route does not enable restructuring, assumed exclusivity,
+  session termination or dynamic mode. Recovery artifacts are retained in a
+  fresh `.ibcmd-recovery/<uuid>` directory inside the connected workspace.
+- File databases use native `ibcmd` **from the extension**, after consent.
+  Set machine-scoped `ibcmd.nativeExecutables`, mapping the bound platform
+  version (for example `8.5.1`) to an absolute executable path from that
+  platform installation. Verify that mapping before use. The server only
+  returns the connected file database's descriptor and never launches native
+  tools. Native `--data` and `--temp` are fresh subdirectories under the
+  workspace's `.ibcmd-recovery`, retained for inspection.
+- Stored-row folders cannot apply. The command exposes exclusive mode only;
+  dynamic compatibility is tracked separately in #347.
+
+Keep a usable backup and close file-database sessions before consent. Cancel
+before publication stops the request at a checkpoint; native cancellation
+terminates the process. Once SQL execution or native publication has begun,
+cancellation/timeout/disconnection can leave an uncertain outcome. Refresh
+pending state and inspect recovery before retrying. A completed apply is
+never converted into cancellation merely because a late cancel arrived.
+
+Live SQL acceptance requires an authorized disposable SQL endpoint and is
+not established by a file-database/native acceptance run. No ERP content is
+needed or distributed by these tests. `.ibcmd-recovery` may contain private
+recovery material: retain it locally and keep it outside published sources.
+
+
+Opt-in native acceptance (fresh public `tiny-source`, no teardown): set
+`IBCMD_TEST_BINARY` to the candidate, `IBCMD_TEST_NATIVE` to native ibcmd
+8.5.1, and an absolute external `IBCMD_TEST_ROOT`, then run
+`npm run test:native-apply`. It creates an `en_US_POSIX` disposable database,
+imports an edited module through the real client/RPC, verifies that declining
+apply changes no database bytes, applies through the client native route,
+and compares the complete native export with the edited source. The
+version manifest is checked separately for preserved names/IDs and the
+changed module version. The script forces fixture retention for the server.
+
+Local retained-fixture validation uses the focused `editor_server` integration
+target, not the destructive root-unit test
+`file_import::tests::owned_scratch_is_removed_on_success_error_and_unwind`.
+That test's default cleanup assertions remain intact and apply only when
+`IBCMD_TEST_KEEP_FIXTURES` is unset. The default production cleanup behavior is
+unchanged; the explicit lab retention switch keeps import scratch evidence.

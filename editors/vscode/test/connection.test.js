@@ -17,7 +17,12 @@ async function harness({
   input = async () => "synthetic-new",
   connect = async () => ({}),
   store = async () => {},
+  snapshot = async () => "",
+  request = async () => undefined,
+  source = "mssql",
 } = {}) {
+  const errors = [],
+    infos = [];
   const commands = new Map(),
     stores = [],
     clients = [];
@@ -35,7 +40,7 @@ async function harness({
   const bases = ["a", "b"].map((id) => ({
     id,
     name: id,
-    source: "mssql",
+    source,
     platform: "8.3.27",
   }));
   const values = {
@@ -68,7 +73,8 @@ async function harness({
       if (method === "initialize") return {};
       if (method === "infobases/list") return { infobases: bases };
       if (method === "infobases/connect") return connect(params, signal);
-      return { conclusive: true, pending: false };
+      const result = await request(method, params, signal);
+      return result ?? { conclusive: true, pending: false };
     }
   }
   const vscode = {
@@ -77,6 +83,7 @@ async function harness({
     workspace: {
       isTrusted: true,
       workspaceFolders: [f],
+      textDocuments: [],
       getConfiguration: () => ({
         get: (key, fallback) => values[key] ?? fallback,
       }),
@@ -96,21 +103,27 @@ async function harness({
       },
     },
     window: {
+      createOutputChannel: () => ({ appendLine() {}, show() {}, dispose() {} }),
       createStatusBarItem: () => ({ text: "", show() {}, dispose() {} }),
       showInputBox: input,
       showQuickPick: async (items) =>
         (await items).find((item) => item.base.id === picked),
-      showErrorMessage() {},
-      showInformationMessage() {},
+      showErrorMessage(message) {
+        errors.push(message);
+      },
+      showInformationMessage(message) {
+        infos.push(message);
+      },
+      showWarningMessage: async (_, options, label) => label,
       withProgress: (_, task) => task({}, token),
     },
   };
   const module = { exports: {} };
-  const source = fs.readFileSync(
+  const extensionSource = fs.readFileSync(
     path.join(__dirname, "../out/extension.js"),
     "utf8",
   );
-  vm.runInNewContext(source, {
+  vm.runInNewContext(extensionSource, {
     exports: module.exports,
     module,
     AbortController,
@@ -118,8 +131,9 @@ async function harness({
       if (id === "vscode") return vscode;
       if (id === "./rpc")
         return { RpcClient, RpcError: class extends Error {} };
-      if (id === "./config") return { snapshot: async () => "" };
+      if (id === "./config") return { snapshot };
       if (id === "./status") return require("../out/status");
+      if (id === "./apply") return require("../out/apply");
       if (id === "./import") return require("../out/import");
       return require(id);
     },
@@ -138,6 +152,9 @@ async function harness({
   return {
     stores,
     clients,
+    errors,
+    infos,
+    invoke: (name) => commands.get(name)(),
     status: api.status,
     cancel: () => cancel(),
     select: (id = "a") => {
@@ -262,4 +279,71 @@ test("a stored password is reused without prompting or rewriting on failure", as
   });
   await h.select();
   assert.equal(h.stores.length, 0);
+});
+
+test("apply command refuses a connection changed during settings snapshot", async () => {
+  let gate,
+    entered,
+    waitOnce = false;
+  const methods = [];
+  const h = await harness({
+    stored: "cached",
+    snapshot: async () => {
+      if (waitOnce) {
+        waitOnce = false;
+        entered.resolve();
+        await gate.promise;
+      }
+      return "";
+    },
+    request: async (method) => {
+      methods.push(method);
+      return undefined;
+    },
+  });
+  await h.select("a");
+  methods.length = 0;
+  gate = deferred();
+  entered = deferred();
+  waitOnce = true;
+  const applying = h.invoke("ibcmd.apply");
+  await entered.promise;
+  await h.select("b");
+  gate.resolve();
+  await applying;
+  assert.ok(!methods.includes("config/apply"));
+  assert.ok(!methods.includes("config/apply/prepare"));
+});
+
+test("pending snapshot failure after committed import preserves success", async () => {
+  let published = false;
+  const h = await harness({
+    stored: "cached",
+    source: "file-db",
+    snapshot: async () => {
+      if (published) throw new Error("unreadable settings");
+      return "";
+    },
+    request: async (method) => {
+      if (method === "objects/import/prepare")
+        return {
+          plan: "confirmed",
+          preflight: {
+            ready: true,
+            files: ["CommonModules/Example/Ext/Module.bsl"],
+            missingReferences: [],
+          },
+        };
+      if (method === "objects/import") {
+        published = true;
+        return { report: {} };
+      }
+    },
+  });
+  await h.select("b");
+  // runImport expects its own confirmation label.
+  await h.invoke("ibcmd.importChanged");
+  assert.equal(published, true);
+  assert.deepEqual(h.errors, []);
+  assert.ok(h.infos.some((message) => message.includes("CONFIGSAVE")));
 });

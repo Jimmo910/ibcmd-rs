@@ -24,10 +24,11 @@
   },
   "scripts": {
     "compile": "tsc -p .",
-    "test": "npm run compile && node --test test/core.test.js test/real.test.js test/import.test.js test/connection.test.js",
+    "test": "npm run compile && node --test test/core.test.js test/real.test.js test/import.test.js test/connection.test.js test/apply.test.js",
     "test:host": "npm run compile && node test/host.js",
     "format": "prettier --write src test package.json tsconfig.json",
-    "format:check": "prettier --check src test package.json tsconfig.json"
+    "format:check": "prettier --check src test package.json tsconfig.json",
+    "test:native-apply": "npm run compile && node test/native-apply.js"
   },
   "contributes": {
     "commands": [
@@ -62,6 +63,10 @@
       {
         "command": "ibcmd.importChanged",
         "title": "ibcmd-rs: Загрузить изменённые"
+      },
+      {
+        "command": "ibcmd.apply",
+        "title": "ibcmd-rs: Apply CONFIGSAVE"
       }
     ],
     "configuration": {
@@ -112,6 +117,15 @@
           "default": ".",
           "scope": "resource",
           "description": "Configuration source directory, relative to the workspace folder."
+        },
+        "ibcmd.nativeExecutables": {
+          "type": "object",
+          "default": {},
+          "scope": "machine",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Absolute native ibcmd executable paths keyed by bound platform version. File-db apply only; user must verify each executable matches the bound platform."
         }
       }
     },
