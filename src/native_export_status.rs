@@ -71,9 +71,9 @@ impl ConfigDumpInfoSnapshot {
         for entry in &self.entries {
             // A row is the descriptor's canonical reference, or exactly one
             // role after it. Never climb past a missing/unknown nested kind.
-            // Inline forms may have only a versioned body, no standalone
-            // descriptor entry in ConfigDumpInfo. Their storage row UUID is
-            // not necessarily the metadata object's UUID.
+            // Inline members (notably Command modules) need not have a
+            // standalone descriptor version entry. Storage row UUIDs are not
+            // universally the metadata object's UUID.
             let candidate = if entry.name.split('.').count() % 2 == 0 {
                 entry.name.as_str()
             } else {

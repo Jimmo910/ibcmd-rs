@@ -2074,6 +2074,7 @@ pub(crate) fn dump_config_with_sql(
             rows_snapshot: None,
             sql: sql_override,
             object_recursion: None,
+            native_versions: false,
             sink: None,
         },
     )
@@ -2093,6 +2094,8 @@ pub(crate) struct DumpHooks {
     /// Native objects supplies explicit recursion; None retains the custom
     /// --object contract (owned descendants, Configuration itself only).
     pub(crate) object_recursion: Option<bool>,
+    /// Native incremental export compares stored versions across XML headers.
+    pub(crate) native_versions: bool,
     /// Where the files go instead of `output_dir`: nothing is written to the
     /// disk -- no folder prepared, no manifest, no raw rows -- and
     /// `output_dir` only names the files the sink receives.
@@ -2499,7 +2502,14 @@ fn dump_config_inner(
     let write_binary_rows = to_disk && args.write_binary_rows && !args.no_binary_rows;
     // `--base`/`--sync` (#362), read before anything is written: the base may
     // be the folder's own ConfigDumpInfo.xml.
-    let incremental = incremental::IncrementalExport::load(args.base.as_deref(), args.sync)?;
+    let incremental =
+        incremental::IncrementalExport::load(args.base.as_deref(), args.sync)?.map(|plan| {
+            if hooks.native_versions {
+                plan.use_native_versions()
+            } else {
+                plan
+            }
+        });
     if incremental.is_some() {
         if !to_disk {
             bail!("--base and --sync update an output folder; an export into memory has none");
@@ -2518,7 +2528,9 @@ fn dump_config_inner(
                  --file-name, --file-name-list, --object, --include-config-save or --overwrite"
             );
         }
-        incremental::prepare_output_dir(&args.output_dir)?;
+        if !hooks.native_versions {
+            incremental::prepare_output_dir(&args.output_dir)?;
+        }
     } else if to_disk {
         prepare_output_dir(&args.output_dir, args.overwrite)?;
     }
@@ -3546,6 +3558,7 @@ fn dump_table_rows_eager(
     )
 }
 
+#[derive(Default)]
 struct DumpedTable {
     rows: Vec<MssqlDumpRowManifest>,
     failed_rows: Vec<FailedDumpRow>,
@@ -5935,9 +5948,23 @@ fn dump_table_rows_streamed(
                 let parts = child_reference_names(&inventory, &rows, &version_ids)
                     .ok()
                     .flatten()?;
+                let rows = if plan.is_native() {
+                    config_dump_info::current_versioned_names(
+                        &inventory,
+                        plan.base_row_ids().filter(|id| current.contains_key(*id)),
+                        &rows,
+                    )
+                    .ok()?
+                } else {
+                    rows
+                };
                 Some(incremental::ConfigurationNames { rows, parts })
             });
-            let selection = plan.select(&current, names.as_ref(), source_version);
+            let selection = plan.select_for_export(&current, names.as_ref(), source_version)?;
+            // Native refusal must precede even creating the output directory.
+            if plan.is_native() {
+                incremental::prepare_output_dir(output_dir)?;
+            }
             early_versions_blob = Some(blob);
             detail_ms(&mut timings, "incremental_selection", started);
             Some(selection)

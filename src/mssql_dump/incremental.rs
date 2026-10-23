@@ -56,6 +56,18 @@ use crate::metadata_model::index::{NESTED_COLLECTIONS, ROOT_COLLECTIONS};
 /// The file the export writes for the whole configuration.
 pub(crate) const CONFIG_DUMP_INFO: &str = ibcmd_xml::config_dump_info::FILE_NAME;
 
+/// Native incremental export cannot safely represent removed or renamed objects.
+#[derive(Debug)]
+pub(crate) struct NativeFullExportRequired;
+
+impl std::fmt::Display for NativeFullExportRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the configuration requires a full native export")
+    }
+}
+
+impl std::error::Error for NativeFullExportRequired {}
+
 /// The one layout this export writes (`format="Hierarchical"`).
 const HIERARCHICAL: &str = ibcmd_xml::config_dump_info::HIERARCHICAL;
 
@@ -121,6 +133,7 @@ impl DumpInfo {
 pub(crate) struct IncrementalExport {
     base: Option<(PathBuf, DumpInfo)>,
     sync: bool,
+    native_versions: bool,
 }
 
 /// How an export with `--base` or `--sync` went, for the report.
@@ -196,7 +209,52 @@ impl IncrementalExport {
             }
             None => None,
         };
-        Ok(Some(Self { base, sync }))
+        Ok(Some(Self {
+            base,
+            sync,
+            native_versions: false,
+        }))
+    }
+
+    pub(crate) fn use_native_versions(mut self) -> Self {
+        self.native_versions = true;
+        self
+    }
+
+    pub(crate) fn base_row_ids(&self) -> impl Iterator<Item = &str> {
+        self.base()
+            .into_iter()
+            .flat_map(|base| base.entries.iter().map(|entry| entry.id.as_str()))
+    }
+
+    pub(crate) fn is_native(&self) -> bool {
+        self.native_versions
+    }
+
+    /// Validate the inventory used by this export, independently of CLI preflight.
+    /// Custom exports retain their full-export fallback and deletion semantics.
+    pub(crate) fn select_for_export(
+        &self,
+        current: &BTreeMap<String, String>,
+        names: Option<&ConfigurationNames>,
+        source_version: InfobaseConfigSourceVersion,
+    ) -> Result<RowSelection> {
+        if self.native_versions
+            && let Some(base) = self.base()
+        {
+            let names = names.ok_or(NativeFullExportRequired)?;
+            if base.entries.iter().any(|entry| {
+                !current.contains_key(&entry.id) || names.rows.get(&entry.id) != Some(&entry.name)
+            }) || !renamed_since(base, current, names).is_empty()
+                || base
+                    .parts
+                    .iter()
+                    .any(|(id, name)| names.parts.get(id) != Some(name))
+            {
+                return Err(NativeFullExportRequired.into());
+            }
+        }
+        Ok(self.select(current, names, source_version))
     }
 
     pub(crate) fn base_path(&self) -> Option<&Path> {
@@ -235,7 +293,8 @@ impl IncrementalExport {
             return full("no --base: every row is exported".to_owned());
         };
         // Another XML format rewrites every file.
-        if base.format_version.as_deref() != Some(source_version.as_str()) {
+        if !self.native_versions && base.format_version.as_deref() != Some(source_version.as_str())
+        {
             return full(format!(
                 "the base is of XML version {}, the export writes {}",
                 base.format_version.as_deref().unwrap_or("(none)"),
@@ -673,6 +732,26 @@ mod tests {
     const V2: &str = "22222222222222222222222222222222222222";
 
     #[test]
+    fn native_selection_refuses_unreadable_names_but_custom_retains_fallback() {
+        let plan = with_base(
+            dump_info("2.21", vec![entry("CommonModule.X", "a", V1)]),
+            false,
+        );
+        let current = BTreeMap::from([("a".to_owned(), V1.to_owned())]);
+        assert!(
+            plan.select_for_export(&current, None, InfobaseConfigSourceVersion::V2_21)
+                .unwrap()
+                .full_reason
+                .is_some()
+        );
+        let error = plan
+            .use_native_versions()
+            .select_for_export(&current, None, InfobaseConfigSourceVersion::V2_21)
+            .unwrap_err();
+        assert!(error.downcast_ref::<NativeFullExportRequired>().is_some());
+    }
+
+    #[test]
     fn a_truncated_base_manifest_is_refused() {
         for xml in [
             "<ConfigDumpInfo format=\"Hierarchical\" version=\"2.20\"><ConfigVersions>",
@@ -703,6 +782,7 @@ mod tests {
         IncrementalExport {
             base: Some((PathBuf::from("ConfigDumpInfo.xml"), base)),
             sync,
+            native_versions: false,
         }
     }
 
@@ -917,6 +997,7 @@ mod tests {
         let sync_only = IncrementalExport {
             base: None,
             sync: true,
+            native_versions: false,
         }
         .select(&current, Some(&refs), InfobaseConfigSourceVersion::V2_20);
         assert_eq!(sync_only.changed.len(), 1);

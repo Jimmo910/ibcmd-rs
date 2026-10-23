@@ -827,6 +827,33 @@ fn is_parent_configuration_body_id(id: &str, canonical_refs: &BTreeMap<String, S
             .is_some_and(|reference| metadata_reference_family(reference) == Some("Configuration"))
 }
 
+/// Exact names of versioned rows, including body roles from current routing.
+pub(super) fn current_versioned_names<'a>(
+    inventory: &ConfigDumpInfoInventory<'_>,
+    required_ids: impl Iterator<Item = &'a str>,
+    canonical_refs: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>> {
+    let mut names = canonical_refs.clone();
+    // Only reference rows need comparison. In particular, an uncounted tail
+    // omitted by native ConfigDumpInfo must not introduce a new routing demand.
+    for id in required_ids {
+        if is_parent_configuration_body_id(id, canonical_refs) {
+            continue;
+        }
+        names.insert(
+            id.to_owned(),
+            config_dump_top_name(
+                id,
+                canonical_refs,
+                inventory.module_text_paths,
+                inventory.source_assets,
+                inventory.emitted_source_asset_paths,
+            )?,
+        );
+    }
+    Ok(names)
+}
+
 fn config_dump_top_name(
     id: &str,
     canonical_refs: &BTreeMap<String, String>,
@@ -1044,6 +1071,12 @@ fn config_version(version: Uuid) -> String {
     }
     value.push_str("00000000");
     value
+}
+
+pub(super) fn empty_config_dump_info(
+    source_version: InfobaseConfigSourceVersion,
+) -> Result<Vec<u8>> {
+    format_config_dump_info_xml(source_version, Vec::new())
 }
 
 fn format_config_dump_info_xml(
@@ -1299,6 +1332,7 @@ pub(crate) fn read_config_dump_info_with_sql(
             sql,
             sink: Some(sink.clone()),
             object_recursion: None,
+            native_versions: false,
         },
     )?;
     let bytes = sink

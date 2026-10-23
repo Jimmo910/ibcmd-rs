@@ -143,6 +143,16 @@ fn every_native_infobase_command_is_served_or_refused_by_name() {
                     ),
                 );
             }
+            NodeKind::ExportStatus => {
+                assert_malformed(&args, "Не указан путь к файлу ConfigDumpInfo.xml");
+            }
+            NodeKind::ExportObjects => {
+                assert_malformed(&args, "Не указано значение параметра: out");
+            }
+            NodeKind::ExportInfo => {
+                args.push("--db-user=sa");
+                assert_exit(&args, FAILED, "не указан пароль пользователя сервера СУБД");
+            }
             NodeKind::Group => {
                 assert_malformed(&args, "Указана неполная команда");
             }

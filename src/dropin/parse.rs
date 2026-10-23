@@ -64,6 +64,8 @@ pub enum Opt {
     Threads,
     Archive,
     IgnoreUnresolvedRefs,
+    Short,
+    Recursive,
     // `config import`
     Out,
     // `config import files`
@@ -180,6 +182,16 @@ const EXPORT_OPTIONS: &[OptSpec] = &[
     flag(Opt::IgnoreUnresolvedRefs, &["ignore-unresolved-refs"], None),
 ];
 
+const EXPORT_INFO_OPTIONS: &[OptSpec] = &[valued(Opt::Out, &["out"], Some('o'))];
+const EXPORT_STATUS_OPTIONS: &[OptSpec] = &[
+    valued(Opt::Out, &["out"], Some('o')),
+    flag(Opt::Short, &["short"], Some('s')),
+];
+const EXPORT_OBJECTS_OPTIONS: &[OptSpec] = &[
+    valued(Opt::Out, &["out"], Some('o')),
+    flag(Opt::Recursive, &["recursive"], Some('r')),
+];
+
 const IMPORT_OPTIONS: &[OptSpec] = &[
     valued(Opt::Out, &["out"], Some('o')),
     valued(Opt::Extension, &["extension"], Some('e')),
@@ -228,6 +240,9 @@ pub enum NodeKind {
     Group,
     /// `infobase config export`.
     Export,
+    ExportInfo,
+    ExportStatus,
+    ExportObjects,
     /// `infobase config import`.
     Import,
     /// `infobase config import files`.
@@ -306,15 +321,27 @@ pub static INFOBASE: Node = Node {
                     kind: NodeKind::Export,
                     options: EXPORT_OPTIONS,
                     children: &[
-                        unsupported(
-                            "info",
-                            "Вывести информацию о состоянии конфигурации (ConfigDumpInfo)",
-                        ),
-                        unsupported(
-                            "status",
-                            "Вывести информацию о изменениях конфигурации относительно переданного состояния (ConfigDumpInfo)",
-                        ),
-                        unsupported("objects", "Экспорт выбранных объектов конфигурации в XML"),
+                        Node {
+                            name: "info",
+                            summary: "Вывести информацию о состоянии конфигурации (ConfigDumpInfo)",
+                            kind: NodeKind::ExportInfo,
+                            options: EXPORT_INFO_OPTIONS,
+                            children: &[],
+                        },
+                        Node {
+                            name: "status",
+                            summary: "Вывести информацию о изменениях конфигурации относительно переданного состояния (ConfigDumpInfo)",
+                            kind: NodeKind::ExportStatus,
+                            options: EXPORT_STATUS_OPTIONS,
+                            children: &[],
+                        },
+                        Node {
+                            name: "objects",
+                            summary: "Экспорт выбранных объектов конфигурации в XML",
+                            kind: NodeKind::ExportObjects,
+                            options: EXPORT_OBJECTS_OPTIONS,
+                            children: &[],
+                        },
                         unsupported(
                             "all-extensions",
                             "Экспорт всех расширений конфигурации в XML",
@@ -408,11 +435,16 @@ pub enum Refusal {
     /// An option without its value, a command without its path.
     MissingValue(String),
     /// A command word that needs one of its subcommands.
-    Incomplete { path: Vec<&'static str> },
+    Incomplete {
+        path: Vec<&'static str>,
+    },
     /// A native command ibcmd-rs does not implement yet.
     UnsupportedCommand(String),
     /// A native option of a served command that ibcmd-rs does not implement.
-    UnsupportedOption { option: String, command: String },
+    UnsupportedOption {
+        option: String,
+        command: String,
+    },
     /// `--pid`/`--remote`: a running standalone server.
     UnsupportedServer(String),
     /// A DBMS the platform knows and ibcmd-rs does not serve.
@@ -425,14 +457,21 @@ pub enum Refusal {
     /// An import from a `.zip`.
     ImportArchive(PathBuf),
     /// A value of the wrong shape.
-    InvalidValue { option: String, value: String },
+    InvalidValue {
+        option: String,
+        value: String,
+    },
     /// An option of a fixed set of words given another one (or none), as the
     /// platform words it: `Некорректное значение параметра: dynamic`.
     BadValue(String),
     /// Two options that exclude each other.
-    Conflict { first: String, second: String },
+    Conflict {
+        first: String,
+        second: String,
+    },
     /// A line ibcmd-rs will not run, with the reason in its own words.
     Unsupported(String),
+    NativeMalformed(String),
 }
 
 /// The connection and the other options every served command shares.
@@ -477,6 +516,24 @@ pub struct ExportRequest {
     pub sync: bool,
     /// The directory as given.
     pub path: OsString,
+}
+
+/// Native export queries share connection resolution and the export pipeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportQueryRequest {
+    pub export: ExportRequest,
+    pub kind: ExportQueryKind,
+    pub out: Option<PathBuf>,
+    pub short: bool,
+    pub recursive: bool,
+    pub objects: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportQueryKind {
+    Info,
+    Status,
+    Objects,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -591,6 +648,7 @@ pub enum Invocation {
     Help,
     Version,
     Export(ExportRequest),
+    ExportQuery(ExportQueryRequest),
     Import(ImportRequest),
     ImportFiles(ImportFilesRequest),
     Apply(ApplyRequest),
@@ -741,6 +799,96 @@ fn scan(args: &[OsString]) -> Scan {
     scan
 }
 
+fn parse_export_query(scan: &Scan) -> Result<Invocation, Refusal> {
+    if let Some(error) = scan.error.clone() {
+        return Err(error);
+    }
+    for opt in [Opt::Pid, Opt::Remote] {
+        if let Some(spelled) = scan.spelled(opt) {
+            return Err(Refusal::UnsupportedServer(spelled.to_owned()));
+        }
+    }
+    for opt in [
+        Opt::File,
+        Opt::Archive,
+        Opt::Sync,
+        Opt::Force,
+        Opt::IgnoreUnresolvedRefs,
+        Opt::Extension,
+    ] {
+        if let Some(spelled) = scan.spelled(opt) {
+            return Err(Refusal::UnsupportedOption {
+                option: spelled.into(),
+                command: scan.command(),
+            });
+        }
+    }
+    let kind = match scan.node().kind {
+        NodeKind::ExportInfo => ExportQueryKind::Info,
+        NodeKind::ExportStatus => ExportQueryKind::Status,
+        _ => ExportQueryKind::Objects,
+    };
+    let out = match scan.value(Opt::Out) {
+        Some("") => return Err(Refusal::MissingValue("out".into())),
+        value => value.map(PathBuf::from),
+    };
+    if kind == ExportQueryKind::Status && !scan.has(Opt::Base) {
+        return Err(Refusal::NativeMalformed(
+            "Не указан путь к файлу ConfigDumpInfo.xml".into(),
+        ));
+    }
+    if kind == ExportQueryKind::Objects && out.is_none() {
+        return Err(Refusal::MissingValue("out".into()));
+    }
+    if kind == ExportQueryKind::Objects && scan.arguments.is_empty() {
+        return Err(Refusal::NativeMalformed(
+            "Не указано ни одного объекта метаданных.".into(),
+        ));
+    }
+    if kind != ExportQueryKind::Objects && !scan.arguments.is_empty() {
+        return Err(Refusal::Parse(
+            scan.arguments[0].to_string_lossy().into_owned(),
+        ));
+    }
+    if kind != ExportQueryKind::Status && scan.has(Opt::Base) {
+        return Err(Refusal::UnsupportedOption {
+            option: "--base".into(),
+            command: scan.command(),
+        });
+    }
+    let threads = scan
+        .value(Opt::Threads)
+        .map(|v| {
+            v.parse::<usize>()
+                .ok()
+                .filter(|n| *n > 0)
+                .ok_or_else(|| Refusal::InvalidValue {
+                    option: "--threads".into(),
+                    value: v.into(),
+                })
+        })
+        .transpose()?;
+    Ok(Invocation::ExportQuery(ExportQueryRequest {
+        export: ExportRequest {
+            common: common(scan)?,
+            threads,
+            extension: scan.value(Opt::Extension).map(str::to_owned),
+            base: scan.value(Opt::Base).map(PathBuf::from),
+            sync: false,
+            path: out.clone().unwrap_or_default().into_os_string(),
+        },
+        kind,
+        out,
+        short: scan.has(Opt::Short),
+        recursive: scan.has(Opt::Recursive),
+        objects: scan
+            .arguments
+            .iter()
+            .map(|v| v.to_string_lossy().into_owned())
+            .collect(),
+    }))
+}
+
 /// Parses the arguments that follow `infobase`.
 pub fn parse_infobase(args: &[OsString]) -> Result<Invocation, Refusal> {
     let scan = scan(args);
@@ -762,10 +910,19 @@ pub fn parse_infobase(args: &[OsString]) -> Result<Invocation, Refusal> {
             });
         }
         NodeKind::Export
+        | NodeKind::ExportInfo
+        | NodeKind::ExportStatus
+        | NodeKind::ExportObjects
         | NodeKind::Import
         | NodeKind::ImportFiles
         | NodeKind::Apply
         | NodeKind::Save => {}
+    }
+    if matches!(
+        node.kind,
+        NodeKind::ExportInfo | NodeKind::ExportStatus | NodeKind::ExportObjects
+    ) {
+        return parse_export_query(&scan);
     }
     if node.kind == NodeKind::Apply {
         return parse_apply(&scan);
@@ -795,6 +952,11 @@ pub fn parse_infobase(args: &[OsString]) -> Result<Invocation, Refusal> {
                 command: scan.command(),
             });
         }
+    }
+    if node.kind == NodeKind::Export && scan.has(Opt::Base) && scan.has(Opt::Sync) {
+        return Err(Refusal::NativeMalformed(
+            "Опции base и sync не могут быть использованы одновременно.".into(),
+        ));
     }
     let common = common(&scan)?;
     let path = match scan.arguments.as_slice() {
@@ -1726,6 +1888,10 @@ mod tests {
                     "{path:?}: {result:?}"
                 ),
                 // served: without its path (or directory) it asks for one
+                NodeKind::ExportInfo => {
+                    assert!(matches!(result, Ok(Invocation::ExportQuery(_))))
+                }
+                NodeKind::ExportStatus | NodeKind::ExportObjects => assert!(result.is_err()),
                 NodeKind::Export | NodeKind::Import | NodeKind::ImportFiles | NodeKind::Save => {
                     assert!(
                         matches!(result, Err(Refusal::MissingValue(_))),
@@ -1815,9 +1981,7 @@ mod tests {
         );
         assert_eq!(
             parse(&["config", "export", "objects", "-r", "Catalog.A"]),
-            Err(Refusal::UnsupportedCommand(
-                "infobase config export objects".to_string()
-            ))
+            Err(Refusal::MissingValue("out".to_string()))
         );
     }
 
@@ -1857,7 +2021,7 @@ mod tests {
         // first keeps later words as arguments.
         assert!(matches!(
             parse(&["config", "export", "info"]),
-            Err(Refusal::UnsupportedCommand(_))
+            Ok(Invocation::ExportQuery(_))
         ));
         let request = export(&["config", "export", "--db-name=b", r".\info"]);
         assert_eq!(request.path, OsString::from(r".\info"));

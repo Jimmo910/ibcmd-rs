@@ -1148,6 +1148,7 @@ impl StoredConfiguration {
                 rows_snapshot: self.rows_snapshot.clone(),
                 sql,
                 object_recursion: None,
+                native_versions: false,
                 sink: Some(sink.clone()),
             },
         )?;
