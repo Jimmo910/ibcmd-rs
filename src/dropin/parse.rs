@@ -1951,7 +1951,11 @@ mod tests {
                     assert!(matches!(result, Ok(Invocation::ExportQuery(_))))
                 }
                 NodeKind::ExportStatus | NodeKind::ExportObjects => assert!(result.is_err()),
-                NodeKind::Export | NodeKind::Import | NodeKind::ImportFiles | NodeKind::Save | NodeKind::Load => {
+                NodeKind::Export
+                | NodeKind::Import
+                | NodeKind::ImportFiles
+                | NodeKind::Save
+                | NodeKind::Load => {
                     assert!(
                         matches!(result, Err(Refusal::MissingValue(_))),
                         "{path:?}: {result:?}"
