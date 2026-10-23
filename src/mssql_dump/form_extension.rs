@@ -133,6 +133,10 @@ impl EventCallTypes {
     }
 }
 
+fn adoption_event_name(identifier: &str) -> Option<&'static str> {
+    form_event_name_from_identifier(identifier)
+        .or_else(|| super::form::xml_2_21_writer::group_event_name_8_5_1(identifier))
+}
 /// Call types over every event block of the form body text. One procedure
 /// may intercept two events under two call types (fixture
 /// `adopted/form_events_shared`: `Before` on OnOpen, `After` on BeforeClose),
@@ -152,8 +156,7 @@ pub(super) fn form_event_call_types(text: &str) -> EventCallTypes {
         };
         for binding in bindings {
             let identifier = binding.event.trim().trim_matches('"').to_owned();
-            let event =
-                form_event_name_from_identifier(&identifier).map_or(identifier, str::to_owned);
+            let event = adoption_event_name(&identifier).map_or(identifier, str::to_owned);
             found.insert(
                 event,
                 binding.handler,
@@ -181,6 +184,10 @@ pub(super) struct FormAdoption {
 }
 
 impl FormAdoption {
+    /// The stored call type of an event restored by a dialect-specific writer.
+    pub(super) fn event_call_type(&self, event: &str, handler: &str) -> Option<&'static str> {
+        self.call_types.get(event, handler)
+    }
     /// Hands every event handler of the form's model its call type, and every
     /// command handler the form's: the writer then spells `callType` where
     /// the model says so.
@@ -281,6 +288,7 @@ pub(super) fn form_adoption(
             Ok(None)
         };
     };
+    let base_call_types = form_event_call_types(&base.layout);
     let v85 = source_version == InfobaseConfigSourceVersion::V2_21;
     let (base, facts) = if v85 && super::form::layout_8_5_1::is_form_body_8_5_1(&base) {
         let (converted, facts) = super::form::layout_8_5_1::down_convert_form_body_8_5_1(&base)
@@ -292,7 +300,7 @@ pub(super) fn form_adoption(
     // The base form's own handlers are interceptors too (fixture
     // `adopted/form_events`: every event of the base form says `Before`).
     let base_adoption = FormAdoption {
-        call_types: form_event_call_types(&base.layout),
+        call_types: base_call_types,
         command_call_type: None,
         base_form: None,
     };
@@ -308,7 +316,13 @@ pub(super) fn form_adoption(
     let base_xml = match (v85, &facts) {
         (false, _) => base_xml,
         (true, Some(facts)) => {
-            super::form::xml_2_21_writer::apply_form_facts_8_5_1(base_xml, facts, object_refs)?.0
+            super::form::xml_2_21_writer::apply_form_facts_8_5_1(
+                base_xml,
+                facts,
+                object_refs,
+                Some(&base_adoption),
+            )?
+            .0
         }
         (true, None) => super::form::xml_2_21_writer::apply_xml_2_21_upgrade_defaults(base_xml)?,
     };
@@ -338,7 +352,7 @@ pub(super) fn adoption_without_base_form(layout: &str) -> Result<FormAdoption> {
         let Some(identifier) = fields.get(1) else {
             continue;
         };
-        if form_event_name_from_identifier(identifier.trim().trim_matches('"')).is_some()
+        if adoption_event_name(identifier.trim().trim_matches('"')).is_some()
             && fields
                 .first()
                 .is_some_and(|count| count.trim().parse::<usize>().is_ok())

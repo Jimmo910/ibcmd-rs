@@ -2466,6 +2466,7 @@ fn write_source_asset_inner(
             };
             // A platform 8.5 body is read through its 8.3.27 down-conversion;
             // what its appended members say is applied to the written XML.
+            let original_body = body;
             let converted_8_5_1;
             let mut facts_8_5_1 = None;
             let body = if super::form::layout_8_5_1::is_form_body_8_5_1(body) {
@@ -2523,7 +2524,7 @@ fn write_source_asset_inner(
                     .is_some_and(|uuid| extension.adopted(uuid).is_some())
             });
             let adoption = super::form_extension::form_adoption(
-                body,
+                original_body,
                 &form_context,
                 context.source_version,
                 context.object_refs,
@@ -2570,6 +2571,7 @@ fn write_source_asset_inner(
                             xml,
                             facts,
                             context.object_refs,
+                            adoption.as_ref(),
                         )
                             .map_err(|error| {
                                 anyhow::Error::new(SourceAssetRefusal::new(

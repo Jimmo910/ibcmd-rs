@@ -6646,89 +6646,6 @@ fn dump_table_row_bytes(
         None
     };
 
-    let mut module_text_rows = 0;
-    let module_text_relative = if context.extract_module_text {
-        let started = Instant::now();
-        let module_text = match unpack_module_blob_text(&bytes) {
-            Ok(text) => Some(text),
-            Err(_) if let Some(body) = parsed_form_body.as_ref() => {
-                form_body_module_text_bytes(body)
-            }
-            Err(_) if context.module_text_paths.contains_key(file_name) => {
-                unpack_form_body_module_text(&bytes)
-                    .or_else(|| unpack_plain_text_module_body(&bytes))
-            }
-            Err(_) => None,
-        };
-        match module_text {
-            Some(_)
-                if context
-                    .refused_output_paths
-                    .module_text
-                    .contains_key(file_name) =>
-            {
-                // Two rows resolved to the identical canonical module path
-                // (`colliding_reference_output_paths`); the platform writes
-                // neither, and picking a winner would be nondeterministic
-                // between runs of this same binary. Disclosed as an opaque
-                // entry in the top-level export report, not a written file.
-                timings.module_text_cpu_ms += elapsed_ms(started);
-                None
-            }
-            Some(text) => {
-                let relative = match context.module_text_paths.get(file_name).cloned() {
-                    Some(relative) => Some(relative),
-                    // No canonical owner path. `write_binary_rows` is this
-                    // pipeline's existing signal for "raw/debug MSSQL storage
-                    // dump" (see `needs_source_layout_refs` above): that mode
-                    // keeps the historical `{table}_module_text/*.bsl`
-                    // fallback for forensic inspection. A strict source
-                    // export (`write_binary_rows == false`, i.e. `cf export`
-                    // and `infobase config export`) never takes it: the
-                    // platform does not have this path at all -- confirmed by
-                    // its absence from every native reference tree -- so
-                    // writing it here was always a debug-tool convenience
-                    // leaking into the parity-graded output, not a real
-                    // export path. Fail closed instead and disclose through
-                    // the opaque entry, matching the "not emitted" reasoning
-                    // recorded for the owning object's own metadata XML.
-                    None if context.write_binary_rows => Some(
-                        PathBuf::from(format!("{}_module_text", context.table))
-                            .join(format!("{safe_name}.bsl")),
-                    ),
-                    None => None,
-                };
-                match relative {
-                    Some(relative) => {
-                        let path = context.output_dir.join(&relative);
-                        if let Some(parent) = path.parent() {
-                            context.output.create_dir_all(parent).with_context(|| {
-                                format!("failed to create {}", parent.display())
-                            })?;
-                        }
-                        context
-                            .output
-                            .write(&path, text)
-                            .with_context(|| format!("failed to write {}", path.display()))?;
-                        module_text_rows = 1;
-                        timings.module_text_cpu_ms += elapsed_ms(started);
-                        Some(relative.to_string_lossy().replace('\\', "/"))
-                    }
-                    None => {
-                        timings.module_text_cpu_ms += elapsed_ms(started);
-                        None
-                    }
-                }
-            }
-            None => {
-                timings.module_text_cpu_ms += elapsed_ms(started);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
     let mut metadata_xml_rows = 0;
     let mut metadata_xml_diagnostic = None;
     let mut model_row = false;
@@ -6978,6 +6895,89 @@ fn dump_table_row_bytes(
             }
             None => {
                 timings.source_asset_cpu_ms += elapsed_ms(started);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut module_text_rows = 0;
+    let module_text_relative = if context.extract_module_text {
+        let started = Instant::now();
+        let module_text = match unpack_module_blob_text(&bytes) {
+            Ok(text) => Some(text),
+            Err(_) if let Some(body) = parsed_form_body.as_ref() => {
+                form_body_module_text_bytes(body)
+            }
+            Err(_) if context.module_text_paths.contains_key(file_name) => {
+                unpack_form_body_module_text(&bytes)
+                    .or_else(|| unpack_plain_text_module_body(&bytes))
+            }
+            Err(_) => None,
+        };
+        match module_text {
+            Some(_)
+                if context
+                    .refused_output_paths
+                    .module_text
+                    .contains_key(file_name) =>
+            {
+                // Two rows resolved to the identical canonical module path
+                // (`colliding_reference_output_paths`); the platform writes
+                // neither, and picking a winner would be nondeterministic
+                // between runs of this same binary. Disclosed as an opaque
+                // entry in the top-level export report, not a written file.
+                timings.module_text_cpu_ms += elapsed_ms(started);
+                None
+            }
+            Some(text) => {
+                let relative = match context.module_text_paths.get(file_name).cloned() {
+                    Some(relative) => Some(relative),
+                    // No canonical owner path. `write_binary_rows` is this
+                    // pipeline's existing signal for "raw/debug MSSQL storage
+                    // dump" (see `needs_source_layout_refs` above): that mode
+                    // keeps the historical `{table}_module_text/*.bsl`
+                    // fallback for forensic inspection. A strict source
+                    // export (`write_binary_rows == false`, i.e. `cf export`
+                    // and `infobase config export`) never takes it: the
+                    // platform does not have this path at all -- confirmed by
+                    // its absence from every native reference tree -- so
+                    // writing it here was always a debug-tool convenience
+                    // leaking into the parity-graded output, not a real
+                    // export path. Fail closed instead and disclose through
+                    // the opaque entry, matching the "not emitted" reasoning
+                    // recorded for the owning object's own metadata XML.
+                    None if context.write_binary_rows => Some(
+                        PathBuf::from(format!("{}_module_text", context.table))
+                            .join(format!("{safe_name}.bsl")),
+                    ),
+                    None => None,
+                };
+                match relative {
+                    Some(relative) => {
+                        let path = context.output_dir.join(&relative);
+                        if let Some(parent) = path.parent() {
+                            context.output.create_dir_all(parent).with_context(|| {
+                                format!("failed to create {}", parent.display())
+                            })?;
+                        }
+                        context
+                            .output
+                            .write(&path, text)
+                            .with_context(|| format!("failed to write {}", path.display()))?;
+                        module_text_rows = 1;
+                        timings.module_text_cpu_ms += elapsed_ms(started);
+                        Some(relative.to_string_lossy().replace('\\', "/"))
+                    }
+                    None => {
+                        timings.module_text_cpu_ms += elapsed_ms(started);
+                        None
+                    }
+                }
+            }
+            None => {
+                timings.module_text_cpu_ms += elapsed_ms(started);
                 None
             }
         }
