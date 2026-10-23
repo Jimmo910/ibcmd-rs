@@ -11,6 +11,8 @@ function harness({
   dirty = [],
   seconds,
   delay = 40000,
+  comparison = "bytes",
+  baseline = true,
 } = {}) {
   const paths = platform === "win32" ? path.win32 : path.posix;
   let now = 0,
@@ -111,9 +113,12 @@ function harness({
   };
   const values = {
     sourceDirectory: platform === "win32" ? "C:\\EXPORT" : "/export",
-    statusBaselineDirectory:
-      platform === "win32" ? "C:\\baseline" : "/baseline",
-    statusComparison: "bytes",
+    statusBaselineDirectory: baseline
+      ? platform === "win32"
+        ? "C:\\baseline"
+        : "/baseline"
+      : "",
+    statusComparison: comparison,
     ...(seconds === undefined ? {} : { statusTimeoutSeconds: seconds }),
   };
   const vscode = {
@@ -149,8 +154,10 @@ function harness({
     },
   };
   const fakeFs = {
+    readFile: async () => Buffer.from("<ConfigDumpInfo/>"),
     lstat: async () => ({
       isDirectory: () => true,
+      isFile: () => true,
       isSymbolicLink: () => false,
     }),
   };
@@ -310,5 +317,28 @@ test("other RPC calls keep the 30-second default", async () => {
     await p;
   } finally {
     h.close();
+  }
+});
+
+test("native status and tree use one view with and without baseline", async () => {
+  for (const baseline of [false, true]) {
+    const h = harness({ comparison: "native", baseline, delay: 0 });
+    try {
+      const pending = h.view.refresh(h.rpc, h.folder, "demo");
+      await h.clock.advance(5000);
+      await pending;
+      const statuses = h.sent.filter((m) => m.method === "objects/status");
+      const trees = h.sent.filter((m) => m.method === "tree/children");
+      assert.equal(statuses.length, baseline ? 2 : 1);
+      assert.ok(trees.length > 0);
+      for (const status of statuses) {
+        assert.equal(Boolean(status.params.versionBaselineDir), baseline);
+      }
+      // Server status selects main only when versionBaselineDir is supplied.
+      for (const tree of trees)
+        assert.equal(tree.params.mainConfiguration, baseline);
+    } finally {
+      h.close();
+    }
   }
 });
