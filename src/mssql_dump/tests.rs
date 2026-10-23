@@ -38867,6 +38867,29 @@ fn moxel_header_footer_block_omits_the_empty_records() {
     );
 }
 
+/// A `{16,ref,text}` record without the trailing flag publishes `tl`, as the
+/// flag-0 record does. ЗУП 3.1.18 stores the six records of
+/// `DataProcessors/ДокументооборотСКонтролирующимиОрганами/Templates/БланкПечатиДИВ`
+/// this way (`{16,1,{1,0}}` ... `{16,2,{1,1,{"ru","Сформировано [&Дата] [&Время]"}}}`),
+/// and 8.3.27.2214 writes all six elements with a `<tl>` child; 32 templates of
+/// that configuration carry the shape.
+#[test]
+fn moxel_header_footer_record_without_a_flag_reads_as_plain_text() {
+    let mut fields = vec!["8", "1", "9", "{0}", "{0}", "{0}", "0"];
+    let empty = "{16,1,\r\n{1,0}\r\n}";
+    let text = "{16,2,\r\n{1,1,\r\n{\"ru\",\"Сформировано [&Дата] [&Время]\"}\r\n}\r\n}";
+    fields.extend([empty, empty, empty, empty, empty, text]);
+    let slots = parse_moxel_header_footer_slots(&fields).expect("the block decodes");
+    let header = slots[0].as_ref().unwrap();
+    assert_eq!(header.source_format_ref, 1);
+    assert!(header.text_kind == MoxelHeaderFooterText::Plain);
+    assert!(header.text.is_empty());
+    let footer = slots[5].as_ref().unwrap();
+    assert_eq!(footer.source_format_ref, 2);
+    assert!(footer.text_kind == MoxelHeaderFooterText::Plain);
+    assert_eq!(footer.text[0].content, "Сформировано [&Дата] [&Время]");
+}
+
 /// The header/footer record grammar, on the record shapes the platform writes.
 ///
 /// Every one of the 522 records published by the 87 header/footer-carrying
