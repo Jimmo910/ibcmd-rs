@@ -116,7 +116,7 @@ Rules of the loop:
 
 | Tool | Instructions | Skills | Checks |
 | --- | --- | --- | --- |
-| Claude Code | `CLAUDE.md`, which imports `AGENTS.md` | `.claude/skills` (links to `.agents/skills`) | hooks in `.claude/settings.json`; `critic` subagent |
+| Claude Code | `CLAUDE.md`, which imports `AGENTS.md` | `.claude/skills` (stubs pointing to `.agents/skills`) | hooks in `.claude/settings.json`; `critic` subagent |
 | Codex | `AGENTS.md` | `.agents/skills` | run `cargo xtask check` yourself |
 | Gemini CLI | `AGENTS.md` (through `.gemini/settings.json`) | `.agents/skills` | run `cargo xtask check` yourself |
 | Copilot agent, Cursor | `AGENTS.md` | `.agents/skills` | run `cargo xtask check` yourself |
@@ -124,8 +124,10 @@ Rules of the loop:
 The repository skills are `verify-change` (tests, baseline, evidence),
 `review-change` (independent review and PR hand-off), `native-parity`
 (comparison with native `ibcmd`, evidence and fixtures) and
-`openspec-change`. On Windows, `.claude/skills` is a symbolic link: enable
-`core.symlinks` (Developer Mode) or Claude Code will not find the skills.
+`openspec-change`. Each `.claude/skills/<name>/SKILL.md` repeats the name and
+description of the shared skill and points to it; the repository refuses
+symbolic links (`tools/validate-edt-corpus.ps1`), so change a description in
+both places.
 
 **Recommended additions** (installed per person, not committed):
 

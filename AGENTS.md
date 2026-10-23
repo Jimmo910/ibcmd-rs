@@ -24,6 +24,9 @@ cargo build --locked --profile iter                                      # binar
   logs are in `target/xtask/<step>.log`. Read the log before guessing.
 - `clippy -D warnings` covers `crates/*`. The root package (`src/`, `tests/`)
   has clippy debt and is compile-checked only; add no new warnings there.
+- Run `cargo xtask ci` after `git add`: the corpus guard checks tracked files
+  only, so a new untracked file escapes it locally and fails in CI. It also
+  refuses symlinks anywhere in the repository.
 - Plain `cargo test --workspace` is not a gate: the legacy root unit harness
   has known failures (docs/testing.md). Run the suites that cover your change.
 - CI pins Rust 1.95.0. When your clippy disagrees with CI, run

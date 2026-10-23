@@ -61,7 +61,7 @@ cargo xtask ci
 ```
 
 It takes tens of minutes on a small machine; run it once at the end, not in
-the loop. A `SKIP` line means a tool is missing here (pwsh, npx, python). CI
+the loop, and after `git add`: the corpus guard reads tracked files only. A `SKIP` line means a tool is missing here (pwsh, npx, python). CI
 still runs that step: install the tool, or name the step in the PR as not run
 locally. The release build, native micro-corpus parity, SBOM and release
 audit run only in CI (`docs/release-criteria.md`); touch release scripts and

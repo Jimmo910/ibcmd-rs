@@ -12,7 +12,8 @@ in `AGENTS.md`; keep them there so there is one copy.
   changes against `origin/master`. A Stop failure comes back to you: fix it,
   or reproduce it on the merge base and say so.
 - Skills `verify-change`, `review-change`, `native-parity` and
-  `openspec-change` live in `.agents/skills/` (`.claude/skills` links there).
+  `openspec-change` live in `.agents/skills/`; the entries in
+  `.claude/skills/` only point there (the corpus guard refuses symlinks).
 - The `critic` subagent (`.claude/agents/critic.md`) does the fresh-context
   review of `review-change`.
 - With the `rust-analyzer-lsp` plugin installed, prefer its LSP tool for
