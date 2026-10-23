@@ -915,6 +915,26 @@ pub(crate) fn base_index_provider(
     Arc::new(move || fetch_base_indexes(&sql, &database, source_version).ok())
 }
 
+/// Base metadata from a file snapshot held under the caller's read lock.
+pub(crate) fn file_base_index_provider(
+    rows: BTreeMap<String, Vec<u8>>,
+    source_version: InfobaseConfigSourceVersion,
+) -> BaseIndexProvider {
+    let rows = rows
+        .into_iter()
+        .map(|(file_name, bytes)| super::ConfigRow {
+            file_name,
+            part_no: 0,
+            data_size: bytes.len() as i64,
+            binary_hex: bytes.iter().map(|b| format!("{b:02x}")).collect(),
+            #[cfg(not(test))]
+            binary: Some(bytes),
+        })
+        .collect::<Vec<_>>();
+    let indexes = base_indexes_from_rows(&rows, source_version);
+    Arc::new(move || Some(indexes.clone()))
+}
+
 /// The indexes of [`fetch_base_indexes`] over metadata rows already read.
 pub(crate) fn base_indexes_from_rows(
     rows: &[super::ConfigRow],

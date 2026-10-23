@@ -178,6 +178,19 @@ impl std::error::Error for ExtensionRegistryDecodeError {}
 pub fn decode_extension_zipped_info(
     bytes: &[u8],
 ) -> std::result::Result<DecodedExtensionZippedInfo, ExtensionRegistryDecodeError> {
+    decode_zipped_info_with_header(bytes, 0xa1)
+}
+
+pub(crate) fn decode_file_extension_zipped_info(
+    bytes: &[u8],
+) -> std::result::Result<DecodedExtensionZippedInfo, ExtensionRegistryDecodeError> {
+    decode_zipped_info_with_header(bytes, 0xa2)
+}
+
+fn decode_zipped_info_with_header(
+    bytes: &[u8],
+    header: u8,
+) -> std::result::Result<DecodedExtensionZippedInfo, ExtensionRegistryDecodeError> {
     const BODY_HEADER_BYTES: usize = 15;
     const TRAILER_BYTES: usize = 3;
     let minimum = ENVELOPE_PREFIX_BYTES + BODY_HEADER_BYTES + TRAILER_BYTES;
@@ -193,7 +206,7 @@ pub fn decode_extension_zipped_info(
     }
 
     let body = &bytes[ENVELOPE_PREFIX_BYTES..];
-    if body[..3] != [0xa1, 0x9a, 0x08] {
+    if body[..3] != [header, 0x9a, 0x08] {
         return Err(ExtensionRegistryDecodeError::UnsupportedEnvelopeHeader);
     }
     let safe_mode = decode_bool("safe-mode", body[11])?;
@@ -844,6 +857,16 @@ mod tests {
     const SERVICE_DESK_HEX: &str = "43C29A14E1A4957CD700E47CEA9AD20E66D489F9E5B0BAC2A19A080000000000015EC281819A437B2223222C38373032343733382D666332612D343433362D616461312D6466373964333935633432342C0A7B312C227275222C22536572766963654465736B227D0A7D9A07312E372E302E30828120";
     const DEMO_EMPTY_HEX: &str = "43C29A144D6D417AD243F0CB8ECC3969CBD7AA2B429FD1AFA19A0800000001000000008181974F7B002200230022002C00380037003000320034003700330038002D0066006300320061002D0034003400330036002D0061006400610031002D006400660037003900640033003900350063003400320034002C000A007B0031002C0022007200750022002C002200140435043C043E043A0020001F044304410442043E043504200040043004410448043804400435043D043804350422007D000A007D009A07312E302E312E31828120";
     const AI_AGENT_EMPTY_VERSION_HEX: &str = "43C29A144A5D722F8572778E07ECD4315F5A4612EF27BC54A19A0800000000000127F28181973F7B002200230022002C00380037003000320034003700330038002D0066006300320061002D0034003400330036002D0061006400610031002D006400660037003900640033003900350063003400320034002C000A007B0031002C0022007200750022002C002200100418041004330435043D04420422007D000A007D0081828220";
+
+    #[test]
+    fn file_and_sql_registry_profiles_remain_distinct() {
+        let sql = decode_hex(AI_AGENT_EMPTY_VERSION_HEX).unwrap();
+        assert!(decode_file_extension_zipped_info(&sql).is_err());
+        let mut file = sql;
+        file[ENVELOPE_PREFIX_BYTES] = 0xa2;
+        assert!(decode_file_extension_zipped_info(&file).is_ok());
+        assert!(decode_extension_zipped_info(&file).is_err());
+    }
 
     #[test]
     fn decodes_observed_8_3_27_utf8_registry_fixture() {

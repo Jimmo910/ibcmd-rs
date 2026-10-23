@@ -19,6 +19,7 @@ mod blob;
 mod config;
 mod descr;
 mod error;
+mod extensions;
 pub mod index;
 mod lock;
 mod object;
@@ -34,6 +35,7 @@ use std::path::{Path, PathBuf};
 pub use config::ConfigRow;
 pub use descr::{Field, FieldKind, Table};
 pub use error::{Error, Result};
+pub use extensions::ExtensionRow;
 pub use index::Collation;
 pub use record::Timestamp;
 
@@ -112,6 +114,53 @@ impl FileDb {
             locale,
             tables,
         })
+    }
+
+    /// The measured 8.3.27 file extension registry, under this read lock.
+    pub fn extension_registry(&mut self) -> Result<Vec<ExtensionRow>> {
+        let table = self
+            .tables
+            .get("_EXTENSIONSINFO")
+            .ok_or_else(|| Error::Refused("В базе нет реестра расширений _EXTENSIONSINFO".into()))?
+            .clone();
+        extensions::read(&mut self.pager, &table)
+    }
+
+    /// All rows with bounded record/blob materialization, for extension base context.
+    pub fn config_rows_bounded(&mut self, table: &str) -> Result<Vec<ConfigRow>> {
+        let table = config_table(&self.tables, table)?;
+        Ok(
+            config::read_records_named(&mut self.pager, &table, true, None)?
+                .into_iter()
+                .map(|r| r.row)
+                .collect(),
+        )
+    }
+
+    /// Row headers with the same physical-object bounds as bounded reads.
+    pub fn config_headers_bounded(&mut self, table: &str) -> Result<Vec<ConfigRow>> {
+        let table = config_table(&self.tables, table)?;
+        Ok(
+            config::read_records_named(&mut self.pager, &table, false, None)?
+                .into_iter()
+                .map(|r| r.row)
+                .collect(),
+        )
+    }
+
+    /// Only named configuration rows, with bounded record/blob materialization.
+    pub fn config_rows_named(
+        &mut self,
+        table: &str,
+        names: &BTreeSet<String>,
+    ) -> Result<Vec<ConfigRow>> {
+        let table = config_table(&self.tables, table)?;
+        Ok(
+            config::read_records_named(&mut self.pager, &table, true, Some(names))?
+                .into_iter()
+                .map(|r| r.row)
+                .collect(),
+        )
     }
 
     pub fn locale(&self) -> &str {

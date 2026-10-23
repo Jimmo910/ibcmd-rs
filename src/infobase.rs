@@ -315,15 +315,22 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
 }
 
 pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigExportReport> {
-    let config = resolve_connection(args.connection())?;
+    let mut request = args.connection();
+    // The measured file-extension route has a fixed XML profile. Probing the
+    // main configuration also prepares output, before the name can be checked.
+    if args.db_path.is_some() && args.extension.is_some() {
+        request.need = PlatformNeed::Given;
+    }
+    let config = resolve_connection(request)?;
     if config.file_infobase.is_none() {
         ensure_mssql(&config.dbms)?;
-    } else if args.extension.is_some() {
-        bail!("Выгрузка расширений из файловой информационной базы пока не поддерживается");
     }
     if let Some(extension) = args.extension.as_deref() {
         if args.base.is_some() || args.sync {
             bail!("--base and --sync export the configuration; an extension is exported in full");
+        }
+        if config.file_infobase.is_some() {
+            return crate::file_extension_export::export(&config, extension, &args.output_dir);
         }
         return export_extension_report(
             &config,

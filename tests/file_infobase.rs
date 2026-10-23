@@ -25,15 +25,29 @@ impl std::ops::Deref for Scratch {
 
 impl Drop for Scratch {
     fn drop(&mut self) {
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").as_deref()
+            == Some(std::ffi::OsStr::new("1"))
+        {
+            return;
+        }
         let _ = fs::remove_dir_all(&self.0);
     }
 }
 
 fn scratch(tag: &str) -> Scratch {
-    let dir =
-        std::env::temp_dir().join(format!("ibcmd-file-infobase-{}-{tag}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let base = std::env::var_os("TMPDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-fixtures"));
+    fs::create_dir_all(&base).unwrap();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = base.join(format!(
+        "ibcmd-file-infobase-{}-{tag}-{nanos}",
+        std::process::id()
+    ));
+    fs::create_dir(&dir).unwrap();
     Scratch(dir)
 }
 

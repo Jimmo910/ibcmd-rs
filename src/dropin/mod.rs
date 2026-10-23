@@ -578,6 +578,11 @@ fn run_export(mut request: ExportRequest) -> i32 {
             EXPORT.record_failure(&message, report.as_deref());
             EXIT_FAILED
         }
+        // Measured 8.3.27 file-extension refusals (including an unknown name)
+        // return 1; the main configuration and SQL routes keep their codes.
+        Err(error) if args.db_path.is_some() && args.extension.is_some() => {
+            EXPORT.refuse_with(&format!("{error:#}"), report.as_deref())
+        }
         Err(error) => EXPORT.fail_with(&format!("{error:#}"), report.as_deref()),
     }
 }

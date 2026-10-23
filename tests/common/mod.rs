@@ -59,10 +59,17 @@ pub fn export(input: &Path, out: &Path) -> Output {
         .expect("run ibcmd-rs")
 }
 
-/// A scratch directory per test tag, cleared here and reused by the next run
-/// (a per-process name left a new one behind on every run).
+/// Reuse a scratch name normally; retention uses a fresh unique name so a
+/// later run never clears a retained fixture.
 pub fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ibcmd-external-{tag}"));
+    let base = std::env::var_os("TMPDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-fixtures"));
+    fs::create_dir_all(&base).unwrap();
+    if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        return base.join(format!("ibcmd-external-{tag}-{}", uuid::Uuid::new_v4()));
+    }
+    let dir = base.join(format!("ibcmd-external-{tag}"));
     let _ = fs::remove_dir_all(&dir);
     dir
 }

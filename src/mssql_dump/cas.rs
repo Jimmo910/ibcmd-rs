@@ -214,6 +214,20 @@ pub fn resolve_cas_storage_image(
     root_hash: CasHash,
     rows: impl IntoIterator<Item = CasStorageRow>,
 ) -> std::result::Result<StorageImage, CasGraphError> {
+    let source_profile = StorageProfileId::parse("storage:mssql-configcas")
+        .expect("static CAS storage profile is valid");
+    let provenance = StorageProvenance::new(&format!("mssql:configcas-root:{root_hash}"))
+        .expect("CAS root provenance is bounded and valid");
+    let origin = StorageOrigin::new(source_profile, provenance);
+    resolve_cas_storage_image_with_origin(root_hash, rows, origin)
+}
+
+/// Shared graph validation; each container adapter supplies its own provenance.
+pub(crate) fn resolve_cas_storage_image_with_origin(
+    root_hash: CasHash,
+    rows: impl IntoIterator<Item = CasStorageRow>,
+    origin: StorageOrigin,
+) -> std::result::Result<StorageImage, CasGraphError> {
     let mut by_hash = BTreeMap::new();
     let mut row_count = 0_usize;
     let mut packed_bytes = 0_usize;
@@ -248,11 +262,6 @@ pub fn resolve_cas_storage_image(
     validate_content_hash(root)?;
     let manifest = CasManifest::decode(&root.packed)?;
 
-    let source_profile = StorageProfileId::parse("storage:mssql-configcas")
-        .expect("static CAS storage profile is valid");
-    let provenance = StorageProvenance::new(&format!("mssql:configcas-root:{root_hash}"))
-        .expect("CAS root provenance is bounded and valid");
-    let origin = StorageOrigin::new(source_profile, provenance);
     let mut entries = Vec::with_capacity(manifest.entries.len());
     let mut retained_bytes = 0_usize;
     for reference in manifest.entries {
@@ -914,6 +923,35 @@ mod tests {
         assert_eq!(hash.to_hex(), value.to_ascii_lowercase());
         assert!(CasHash::parse_hex("e1a4957c").is_err());
         assert!(CasHash::parse_hex("z1a4957cd700e47cea9ad20e66d489f9e5b0bac2").is_err());
+    }
+
+    #[test]
+    fn file_adapter_retains_file_provenance_without_changing_sql() {
+        let content = row(b"payload");
+        let root = manifest(&[("item", content.hash)]);
+        let origin = StorageOrigin::new(
+            StorageProfileId::parse("storage:file-configcas").unwrap(),
+            StorageProvenance::new("file:configcas-root:test").unwrap(),
+        );
+        let file = resolve_cas_storage_image_with_origin(
+            root.hash,
+            [root.clone(), content.clone()],
+            origin,
+        )
+        .unwrap();
+        let sql = resolve_cas_storage_image(root.hash, [root, content]).unwrap();
+        assert_eq!(
+            file.source_profile().unwrap().as_str(),
+            "storage:file-configcas"
+        );
+        assert_eq!(
+            sql.source_profile().unwrap().as_str(),
+            "storage:mssql-configcas"
+        );
+        assert_eq!(
+            file.entries()[0].packed_payload(),
+            sql.entries()[0].packed_payload()
+        );
     }
 
     #[test]

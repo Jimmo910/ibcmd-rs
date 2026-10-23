@@ -16,6 +16,11 @@ struct Scratch(PathBuf);
 
 impl Drop for Scratch {
     fn drop(&mut self) {
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").as_deref()
+            == Some(std::ffi::OsStr::new("1"))
+        {
+            return;
+        }
         let _ = fs::remove_dir_all(&self.0);
     }
 }
@@ -29,13 +34,20 @@ fn unpack(name: &str) -> Scratch {
     flate2::read::GzDecoder::new(fs::File::open(source).unwrap())
         .read_to_end(&mut bytes)
         .unwrap();
-    let dir = std::env::temp_dir().join(format!(
-        "ibcmd-filedb-{}-{}-{name}",
+    let base = std::env::var_os("TMPDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-fixtures"));
+    fs::create_dir_all(&base).unwrap();
+    let dir = base.join(format!(
+        "ibcmd-filedb-{}-{}-{name}-{}",
         std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
+        NEXT.fetch_add(1, Ordering::Relaxed),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    fs::create_dir(&dir).unwrap();
     fs::write(dir.join("1Cv8.1CD"), bytes).unwrap();
     Scratch(dir)
 }

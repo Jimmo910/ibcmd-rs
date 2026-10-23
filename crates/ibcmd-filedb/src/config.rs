@@ -9,7 +9,7 @@
 //! first free record. A free record holds flag 1 and the next free record
 //! number (0 ends the chain).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::blob;
 use crate::descr::{FieldKind, Table};
@@ -101,7 +101,45 @@ pub(crate) fn read_records(
     table: &Table,
     with_binary: bool,
 ) -> Result<Vec<RawRecord>> {
+    read_records_selected(pager, table, with_binary, None, false)
+}
+
+pub(crate) fn read_records_named(
+    pager: &mut Pager<'_>,
+    table: &Table,
+    with_binary: bool,
+    names: Option<&BTreeSet<String>>,
+) -> Result<Vec<RawRecord>> {
+    read_records_selected(pager, table, with_binary, names, true)
+}
+
+fn read_records_selected(
+    pager: &mut Pager<'_>,
+    table: &Table,
+    with_binary: bool,
+    names: Option<&BTreeSet<String>>,
+    bounded: bool,
+) -> Result<Vec<RawRecord>> {
     check_layout(table)?;
+    if bounded {
+        if table
+            .fields
+            .iter()
+            .any(|f| f.precision != 0 || f.case_insensitive != (f.name == "FILENAME"))
+        {
+            return Err(Error::Refused(format!(
+                "Таблица {}: неподдержанный профиль точности или сравнения полей",
+                table.name
+            )));
+        }
+        let records = Object::open(pager, table.records_page)?;
+        let blobs = Object::open(pager, table.blob_page)?;
+        if records.len > 128 * 1024 * 1024 || blobs.len > 512 * 1024 * 1024 {
+            return Err(Error::Refused(
+                "Таблица расширения превышает поддержанный размер".into(),
+            ));
+        }
+    }
     debug_assert_eq!(table.record_size(), RECORD);
     let records = Object::open(pager, table.records_page)?.read_all(pager)?;
     if records.len() % RECORD != 0 {
@@ -117,13 +155,38 @@ pub(crate) fn read_records(
         Vec::new()
     };
     let mut out = Vec::new();
+    let mut retained_binary = 0u64;
     for (number, rec) in records.as_chunks::<RECORD>().0.iter().enumerate().skip(1) {
         if rec[0] != 0 {
+            if bounded && rec[0] != 1 {
+                return Err(corrupt("Таблица CAS: неверный флаг записи"));
+            }
             continue;
         }
         let file_name = decode_var_string(&rec[NAME..CREATION], 128)?;
+        if names.is_some_and(|names| !names.contains(&file_name)) {
+            continue;
+        }
+        let part_no = unpack_decimal(&rec[PARTNO..RECORD], 10)?;
+        if bounded && part_no > u32::MAX as u64 {
+            return Err(corrupt(format!(
+                "Строка {file_name}: номер части {part_no} вне поддержанного диапазона"
+            )));
+        }
         let block = u32::from_le_bytes(rec[BINARY..BINARY + 4].try_into().unwrap());
         let len = u32::from_le_bytes(rec[BINARY + 4..BINARY + 8].try_into().unwrap());
+        // Several records can reference the same blob. Bound materialized
+        // bytes as well as the physical object before allocating a payload.
+        if bounded && with_binary {
+            retained_binary = retained_binary
+                .checked_add(u64::from(len))
+                .filter(|bytes| *bytes <= 512 * 1024 * 1024)
+                .ok_or_else(|| {
+                    Error::Refused(
+                        "Суммарный размер строк расширения превышает поддержанный предел".into(),
+                    )
+                })?;
+        }
         let binary = if with_binary && block != 0 {
             blob::read_chain(&blob_object, block, Some(len as u64))?
         } else if with_binary && len != 0 {
@@ -137,7 +200,7 @@ pub(crate) fn read_records(
             number: number as u32,
             row: ConfigRow {
                 file_name,
-                part_no: unpack_decimal(&rec[PARTNO..RECORD], 10)? as u32,
+                part_no: part_no as u32,
                 creation: Timestamp(rec[CREATION..MODIFIED].try_into().unwrap()),
                 modified: Timestamp(rec[MODIFIED..ATTRIBUTES].try_into().unwrap()),
                 attributes: unpack_decimal(&rec[ATTRIBUTES..DATASIZE], 5)? as u32,
