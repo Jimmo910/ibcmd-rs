@@ -6505,6 +6505,23 @@ fn metadata_command_reference_index_reads_catalog_use_standard_commands_from_rea
     assert!(index[true_uuid].use_standard_commands);
 }
 
+/// A business process's `<BasedOn>` is field 15 of its owner record, the slot
+/// `parse_business_process_properties_from_text` writes its own
+/// `BusinessProcesses/<name>.xml` from. The row is `BusinessProcess.Задание`
+/// of the business-process-duty evidence, whose native XML lists three
+/// `<BasedOn>` members.
+#[test]
+fn metadata_command_reference_index_reads_business_process_based_on() {
+    let uuid = "dad11c2e-08fc-4a6b-8829-8be6c64c15fc";
+    let packed = include_bytes!(
+        "../../tests/fixtures/native-evidence/8.3.27.2214/business-process-duty/raw/dad11c2e-08fc-4a6b-8829-8be6c64c15fc.deflate"
+    );
+    let row = metadata_text_row_from_blob(uuid, packed).expect("the business process row decodes");
+    assert_eq!(row.kind.as_deref(), Some("BusinessProcess"));
+    let index = build_metadata_command_reference_index_from_texts(&[row]);
+    assert_eq!(index[uuid].based_on_declared, Some(3));
+}
+
 /// A constant's `<UseStandardCommands>` is slot 7 of its record, the slot its
 /// own `Constants/<name>.xml` is written from; the platform keeps the raw
 /// `100:<uuid>` sentinel in a command interface when it is `false`. The row is
