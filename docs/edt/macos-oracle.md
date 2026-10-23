@@ -300,3 +300,31 @@ and every unrestricted/current-schema/BSP/UH acceptance claim to false. No raw
 direct report is produced from a missing, empty or older candidate. The next
 DCSS lexical fix belongs to the shared codec owners; this capture-tool branch
 preserves the reproduction and does not relax the CRLF guard itself.
+
+## Published direct output after DCSS/DCSSCA fixes
+
+The next actual direct run, `fixtures/issue356-current-server-dcs-fixed-direct-004`,
+uses source candidate `c0cd767b`, executable SHA-256
+`6340fd5458a19aa7e40a1208dd35bb29138d79313ce8d2534ad5aa458d2bf471`.
+Its clean source/build receipt, focused tests, genuine-project/native-reference
+reuse binding and all after guards pass. Conversion now exits 0 and publishes
+18 XML files. Exact comparison still **fails**: both form Module.bsl bodies are
+474 bytes versus the native 492, and report Template.xml is 3,189 versus 3,264.
+The native-only 3,084-byte ConfigDumpInfo.xml remains the fourth strict row;
+removing only that storage-inventory row still leaves three content differences.
+
+The new [raw direct three-way report](../evidence/edt-current-dcs-direct004/direct-edt-to-xml.json)
+retains all 19 union paths: 14 all-equal, two native=EDT-only, one native=candidate-only
+and two EDT=candidate-only. The [direct accounting](../evidence/edt-current-dcs-direct004/accounting.json)
+binds every full inventory, exact failed comparison, native reuse evidence,
+command/build receipts and candidate identity. All three input trees, candidate
+and bound receipts were rechecked unchanged. The offline oracle report alone
+was run; no conversion, SDK, JVM or build was repeated. Raw local command/driver
+evidence is `logs/issue358-current-dcs-direct004-oracle-001`.
+
+This supplies a real direct report, but not an equality or acceptance result.
+Earlier successful forward/return comparisons use candidate `6da274e4…`, not
+this `6340fd54…` candidate; they are not promoted into a single-head three-route
+success. All prior failures and diagnostic/style gates remain intact. No content
+bytes were normalized, no older output substituted, and full BSP/UH acceptance
+remains open.
