@@ -1546,6 +1546,11 @@ pub(crate) fn format_native_font(
         ("3", None) => None,
         ("1", Some("sys:DefaultGUIFont")) => Some("{0}".to_string()),
         ("1", Some("sys:ANSIFixedFont")) => Some("{2}".to_string()),
+        // The reader writes the bare `{0}`, which names no style item, as
+        // `ref="0"`.
+        ("2", Some(reference)) if reference.parse::<i32>().ok() == Some(0) => {
+            Some("{0}".to_string())
+        }
         ("2", Some(reference)) => {
             let name = reference.strip_prefix("style:")?;
             match PLATFORM_STYLE_FONT_CODES
@@ -12166,6 +12171,12 @@ mod tests {
             )
             .as_deref(),
             Some("{7,2,0,{-31},1,100}")
+        );
+        // `ref="0"` is the bare `{0}` that names no style item (ЗУП 3.1.18,
+        // 8.3.27.2214).
+        assert_eq!(
+            format_native_font(&font(&[("kind", "StyleItem"), ("ref", "0")]), none).as_deref(),
+            Some("{7,2,0,{0},1,100}")
         );
         // The mask names the attributes that are set and the values follow in
         // an order of their own: height, bold, italic, underline, strikeout,
