@@ -213,11 +213,9 @@ function elements(e: Element): Element[] {
   return Array.from(e.childNodes).filter((n) => n.nodeType === 1) as Element[];
 }
 function child(e: Element, tag: string): Element | undefined {
-
   return elements(e).find(
     (n) => n.namespaceURI === e.namespaceURI && n.localName === tag,
   );
-
 }
 function text(e: Element | undefined): string {
   return e?.textContent ?? "";
@@ -278,7 +276,6 @@ export function descriptor(
     const groups = new Map<string, Node[]>();
     const container = child(e, "ChildObjects");
     for (const item of container ? elements(container) : []) {
-
       if (item.namespaceURI !== e.namespaceURI) continue;
 
       const kind = item.localName!;
@@ -566,21 +563,17 @@ export class TreeModel {
   private abort = new AbortController();
   constructor(public source: Source) {}
   dispose() {
-
     this.abort.abort();
     for (const entry of this.cache.values()) entry.abort.abort();
     this.cache.clear();
-
   }
   async children(node?: Node, signal?: AbortSignal): Promise<Node[]> {
-
     if (signal?.aborted) throw new Error("Поиск отменён");
     if (this.abort.signal.aborted) return [];
 
     const key = node?.id ?? "";
     let entry = this.cache.get(key);
     if (!entry) {
-
       const pending = {
         value: Promise.resolve<Node[]>([]),
         abort: new AbortController(),
@@ -590,7 +583,6 @@ export class TreeModel {
       pending.value = this.source
         .children(node, pending.abort.signal)
         .then((nodes) => {
-
           if (this.abort.signal.aborted) return [];
           if (pending.abort.signal.aborted) throw new Error("Чтение отменено");
 
@@ -604,69 +596,49 @@ export class TreeModel {
             child.parent = node;
           }
           return nodes;
-
         })
         .catch((error) => {
-
           if (this.cache.get(key) === pending) this.cache.delete(key);
           throw error;
-
         })
         .finally(() => {
-
           pending.complete = true;
-
         });
       entry = pending;
       this.cache.set(key, entry);
-
     }
     const read = entry;
     read.readers++;
 
     return new Promise<Node[]>((resolve, reject) => {
-
       let finished = false;
       const release = () => {
-
         if (finished) return false;
         finished = true;
         signal?.removeEventListener("abort", cancel);
         read.readers--;
         if (!read.readers && !read.complete) {
-
           if (this.cache.get(key) === read) this.cache.delete(key);
           read.abort.abort();
-
         }
         return true;
-
       };
       const cancel = () => {
-
         if (release()) reject(new Error("Поиск отменён"));
-
       };
       signal?.addEventListener("abort", cancel, { once: true });
       read.value.then(
         (nodes) => {
-
           if (release()) resolve(nodes);
-
         },
         (error) => {
-
           if (release()) reject(error);
-
         },
       );
       if (signal?.aborted) cancel();
-
     });
-
   }
   async search(query: string, signal: AbortSignal): Promise<Node[]> {
-
     const found: Node[] = [];
     const q = query.toLocaleLowerCase("ru");
     const visit = async (node?: Node): Promise<void> => {
@@ -689,6 +661,5 @@ export class TreeModel {
     };
     await visit();
     return found;
-
   }
 }
