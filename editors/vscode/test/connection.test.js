@@ -65,7 +65,8 @@ async function harness({
     },
   };
   class RpcClient {
-    constructor() {
+    constructor(_, __, onCrash = () => {}) {
+      this.onCrash = onCrash;
       this.disposed = false;
       clients.push(this);
     }
@@ -73,9 +74,10 @@ async function harness({
       this.disposed = true;
     }
     async request(method, params, signal) {
-      if (method === "initialize") return initialize();
+      if (method === "initialize") return initialize(this);
       if (method === "infobases/list") return { infobases: bases };
-      if (method === "infobases/connect") return connect(params, signal);
+      if (method === "infobases/connect")
+        return connect(params, signal, () => this.onCrash());
       return { conclusive: true, pending: false };
     }
   }
@@ -297,15 +299,22 @@ test("selection change during non-cancellable storage cannot restore stale statu
   assert.ok(h.status().includes(" b ·"));
 });
 test("a stored password is reused without prompting or rewriting on failure", async () => {
+  let prompts = 0;
+  const passwords = [];
   const h = await harness({
     stored: "synthetic-existing",
-    input: () => assert.fail("Unexpected password prompt"),
+    input: async () => {
+      prompts++;
+      return undefined;
+    },
     connect: (params) => {
-      assert.equal(params.password, "synthetic-existing");
+      passwords.push(params.password);
       throw new Error("synthetic rejection");
     },
   });
   await h.select();
+  assert.equal(prompts, 0);
+  assert.deepEqual(passwords, ["synthetic-existing"]);
   assert.equal(h.stores.length, 0);
 });
 
@@ -366,4 +375,51 @@ test("Edit refuses inherited offline entries without a source directory", async 
   await h.edit("a");
   assert.equal(h.saved.length, 0);
   assert.equal(h.errors.length, 1);
+});
+
+test("current startup and connect crashes report one sanitized error", async () => {
+  for (const startup of [true, false]) {
+    let initialized = 0;
+    const h = await harness({
+      initialize: async (client) => {
+        if (startup && ++initialized === 2) {
+          client.onCrash();
+          throw new Error("ENOENT synthetic-private-path");
+        }
+        return {};
+      },
+      connect: async (_, __, crash) => {
+        crash();
+        throw new Error("synthetic-private-server-exit");
+      },
+    });
+    await h.select();
+    assert.equal(h.errors.length, 1);
+    assert.ok(!h.errors[0].includes("synthetic-private"));
+    assert.ok(h.status().includes("disconnected"));
+    assert.equal(h.stores.length, 0);
+  }
+});
+test("a late crash from an old connection cannot notify or replace the new selection", async () => {
+  const started = deferred(),
+    finish = deferred();
+  const h = await harness({
+    connect: async (params, _, crash) => {
+      if (params.infobase === "a") {
+        started.resolve();
+        await finish.promise;
+        crash();
+        throw new Error("synthetic old crash");
+      }
+      return {};
+    },
+  });
+  const selecting = h.select();
+  await started.promise;
+  await h.select("b");
+  finish.resolve();
+  await selecting;
+  assert.equal(h.errors.length, 0);
+  assert.ok(h.status().includes(" b ·"));
+  assert.equal(h.stores.length, 0);
 });
