@@ -33,10 +33,13 @@ fn files(root: &Path) -> BTreeMap<String, Vec<u8>> {
 }
 
 fn run(args: &[String]) -> std::process::Output {
-    let output = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
-        .args(args)
-        .output()
-        .unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
+    // The password goes through the environment, never the arguments this
+    // prints on a failure.
+    if let Ok(password) = std::env::var("IBCMD_RS_PG_PASSWORD") {
+        command.env("IBCMD_DB_PSW", password);
+    }
+    let output = command.args(args).output().unwrap();
     assert!(
         output.status.success(),
         "{args:?}\n{}",
@@ -55,15 +58,12 @@ fn a_tree_imported_into_postgresql_exports_back() {
         return;
     };
     let user = std::env::var("IBCMD_RS_PG_USER").unwrap_or_else(|_| "postgres".to_string());
-    let mut connection = vec![
+    let connection = vec![
         "--dbms=PostgreSQL".to_string(),
         format!("--db-server={server}"),
         format!("--db-name={database}"),
         format!("--db-user={user}"),
     ];
-    if let Ok(password) = std::env::var("IBCMD_RS_PG_PASSWORD") {
-        connection.push(format!("--db-pwd={password}"));
-    }
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase");
     let source = fixtures.join("tiny-source");
     let mut import = vec!["infobase", "config", "import"]

@@ -112,9 +112,15 @@ pub fn run_infobase(args: &[OsString]) -> i32 {
         }
         // PostgreSQL is exported and imported (#369, #370); the rest stays
         // the platform's.
-        Ok(Invocation::ImportFiles(request)) if is_postgres(&request.common) => refuse_postgres(),
-        Ok(Invocation::Apply(request)) if is_postgres(&request.common) => refuse_postgres(),
-        Ok(Invocation::Save(request)) if is_postgres(&request.common) => refuse_postgres(),
+        Ok(Invocation::ImportFiles(request)) if is_postgres(&request.common) => {
+            refuse_postgres("infobase config import files")
+        }
+        Ok(Invocation::Apply(request)) if is_postgres(&request.common) => {
+            refuse_postgres("infobase config apply")
+        }
+        Ok(Invocation::Save(request)) if is_postgres(&request.common) => {
+            refuse_postgres("infobase config save")
+        }
         Ok(Invocation::Export(request)) => run_export(request),
         Ok(Invocation::Import(request)) => run_import(request),
         // A file infobase is exported and imported; the rest stays the
@@ -144,10 +150,18 @@ fn is_postgres(common: &parse::Common) -> bool {
         .is_some_and(crate::infobase::is_postgres)
 }
 
-fn refuse_postgres() -> i32 {
-    let refusal = Refusal::UnsupportedDbms("PostgreSQL".to_string());
+fn refuse_postgres(command: &str) -> i32 {
+    let refusal = Refusal::Unsupported(postgres_refusal(command));
     print_refusal(&refusal, &program_name());
     refusal_exit_code(&refusal)
+}
+
+/// A command ibcmd-rs does not run on PostgreSQL yet, from the `--dbms`
+/// flag here or from the settings in the library (`infobase::import_config`).
+pub(crate) fn postgres_refusal(command: &str) -> String {
+    format!(
+        "Команда `{command}` для PostgreSQL не поддерживается в этой версии ibcmd-rs: на PostgreSQL выполняются config export и config import"
+    )
 }
 
 fn refuse_file_infobase() -> i32 {
@@ -212,7 +226,7 @@ pub fn refusal_message(refusal: &Refusal, program: &str) -> (String, bool) {
             format!("Параметр `{option}` (работа через автономный сервер) {PLANNED}")
         }
         Refusal::UnsupportedDbms(dbms) => format!(
-            "СУБД `{dbms}` не поддерживается в этой версии ibcmd-rs: поддерживается только MSSQLServer"
+            "СУБД `{dbms}` не поддерживается в этой версии ibcmd-rs: поддерживаются MSSQLServer и PostgreSQL"
         ),
         Refusal::UnknownDbms(dbms) => format!("Указанный тип СУБД не поддерживается: '{dbms}'"),
         Refusal::FileInfobase => {

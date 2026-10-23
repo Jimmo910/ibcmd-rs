@@ -644,12 +644,16 @@ fn apply_words_and_refusals_are_the_platforms_before_anything_runs() {
             assert!(text(&output.stderr).contains(refused), "{option}");
         }
     }
-    for dbms in ["PostgreSQL", "IBMDB2", "OracleDatabase"] {
+    for dbms in ["IBMDB2", "OracleDatabase"] {
         assert_refused(
             &["infobase", "config", "apply", &format!("--dbms={dbms}")],
             &format!("СУБД `{dbms}` не поддерживается"),
         );
     }
+    assert_refused(
+        &["infobase", "config", "apply", "--dbms=PostgreSQL"],
+        "Команда `infobase config apply` для PostgreSQL не поддерживается",
+    );
     // what the platform accepts is accepted: the short spellings, the
     // session options that need nobody connected, a stray argument; the
     // run stops at the connection (a user without a password)
