@@ -13124,7 +13124,8 @@ fn formats_form_attribute_type_description_settings_from_element_type() {
         }])
     );
 
-    let xml = format_form_attributes_xml(&[attribute]);
+    let mut attributes = [attribute];
+    let xml = format_form_attributes_xml(&attributes);
     assert!(
         xml.contains(r#"<Settings xsi:type="v8:TypeDescription">"#),
         "{xml}"
@@ -13133,17 +13134,20 @@ fn formats_form_attribute_type_description_settings_from_element_type() {
     assert!(xml.contains("<v8:StringQualifiers>"), "{xml}");
     assert!(!xml.contains(r#"<Settings xsi:type="v8:TypeDescription"/>"#));
 
-    assert_eq!(
-        format_type_description_value_types_xml(
-            &[ConstantValueType::Reference {
-                reference: "d5p1:TextDocument".to_string()
-            }],
-            "\t"
-        ),
-        concat!(
-            "\t<v8:Type xmlns:d5p1=\"http://v8.1c.ru/8.1/data/txtedt\">",
-            "d5p1:TextDocument</v8:Type>\r\n"
-        )
+    // Exercise the actual Settings caller at its declaration depth, keeping
+    // the native d5 QName and URI rather than rendering an unparented fragment.
+    attributes[0].type_description_settings = Some(vec![ConstantValueType::Reference {
+        reference: "d5p1:TextDocument".to_owned(),
+    }]);
+    let xml = format_form_attributes_xml(&attributes);
+    assert!(
+        xml.contains(concat!(
+            "\t\t\t<Settings xsi:type=\"v8:TypeDescription\">\r\n",
+            "\t\t\t\t<v8:Type xmlns:d5p1=\"http://v8.1c.ru/8.1/data/txtedt\">",
+            "d5p1:TextDocument</v8:Type>\r\n",
+            "\t\t\t</Settings>\r\n"
+        )),
+        "{xml}"
     );
 }
 
@@ -74776,8 +74780,8 @@ fn a_root_bound_platform_type_name_is_one_fact_for_every_reader() {
     // document root the writer uses the root prefix and declares nothing, and
     // both the `MDClasses` root and the `logform` root bind `cfg`, `v8` and
     // `v8ui`. Census of the eight stand corpora: 1 520 `<v8:Type>` elements
-    // spell one of the six names below and not one of them carries an inline
-    // `xmlns`. So all three readers must answer the same for all six.
+    // spell one of the names below and not one of them carries an inline
+    // `xmlns`. So all three readers must answer the same for every one.
     for (identifier, reference) in ROOT_BOUND_PLATFORM_TYPE_REFERENCES {
         assert_eq!(builtin_type_reference(identifier), Some(*reference));
         assert_eq!(form_builtin_type_reference(identifier), Some(*reference));
@@ -77414,6 +77418,64 @@ fn renders_form_planner_settings_items_zero_to_platform_proven_xml() {
             "../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/items-zero-settings.xml"
         ),
     );
+}
+
+/// A form saved by an older platform (8.3.26) stores its period as
+/// `{1,<begin>,<end>,1,{1,<begin>,<end>}}` -- the flag and the replacement
+/// period behind it -- where 8.3.27 stores `{1,<begin>,<end>,0}`. The platform
+/// still writes `<pl:period><pl:begin>,<pl:end>` from the first two members and
+/// drops the rest.
+///
+/// Evidence: `Обработка все типы` `epf`, DataProcessor attribute `Реквизит69`
+/// (`{1,20261014000000,20261014235959,1,{1,00010101000000,00010101000000}}`).
+/// Its native `ibcmd.exe config export` writes
+/// `<pl:period><pl:begin>2026-10-14T00:00:00</pl:begin>` +
+/// `<pl:end>2026-10-14T23:59:59</pl:end>`, so the five-member record decodes to
+/// exactly what the four-member control decodes to.
+#[test]
+fn reads_the_replacement_period_an_older_platform_stores_behind_the_flag() {
+    let raw = include_str!(
+        "../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/control.txt"
+    );
+    let native = include_str!(
+        "../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/control-settings.xml"
+    );
+    let replaced = raw.replace(
+        "{1,20150217000000,20150217235959,0}",
+        "{1,20150217000000,20150217235959,1,{1,00010101000000,00010101000000}}",
+    );
+    assert_ne!(
+        replaced, raw,
+        "the control fixture must carry the four-member period"
+    );
+    assert_platform_proven_form_planner_settings(&replaced, native);
+}
+
+/// The replacement-period record is only admitted for the flag the older
+/// platform writes. A flag of `0` with a record behind it, or a record that is
+/// not a period, stays unproven and the block is refused rather than rendered
+/// from members the platform never reads.
+#[test]
+fn refuses_a_five_member_period_that_is_not_the_older_platform_record() {
+    let raw = include_str!(
+        "../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/control.txt"
+    );
+    for replacement in [
+        "{1,20150217000000,20150217235959,0,{1,00010101000000,00010101000000}}",
+        "{1,20150217000000,20150217235959,1,{1,00010101000000}}",
+        "{1,20150217000000,20150217235959,1,{2,00010101000000,00010101000000}}",
+        "{1,20150217000000,20150217235959,1,{1,00010101000000,0001010100000}}",
+    ] {
+        let replaced = raw.replace("{1,20150217000000,20150217235959,0}", replacement);
+        assert_ne!(
+            replaced, raw,
+            "the control fixture must carry the four-member period"
+        );
+        assert!(
+            parse_and_render_form_planner_settings_for_test(&replaced).is_none(),
+            "unproven period `{replacement}` must not decode into a planner block"
+        );
+    }
 }
 
 /// Evidence: fixture `form-graphical-scheme-settings`. Two of its ten pairs are
@@ -80721,4 +80783,131 @@ fn adopted_form_validation_does_not_leave_a_module() {
         "failed row left its module in output"
     );
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn type_spelling_binds_common_command_builtin_namespaces() {
+    for (id, name, namespace) in [
+        (
+            "151f8778-e2d0-496a-9f02-d9ffd93b57ec",
+            "fd:FormattedDocument",
+            "http://v8.1c.ru/8.2/data/formatted-document",
+        ),
+        (
+            "48510817-200c-48c2-9973-06cf90840514",
+            "pdfdoc:PDFDocument",
+            "http://v8.1c.ru/8.3/data/pdf",
+        ),
+        (
+            "43dc7f37-5b1d-42a7-8f28-f545080d0255",
+            "pl:Planner",
+            "http://v8.1c.ru/8.3/data/planner",
+        ),
+        (
+            "2957f638-fc52-4bbb-9bd5-614550730ca6",
+            "d5p1:Dendrogram",
+            "http://v8.1c.ru/8.2/data/chart",
+        ),
+    ] {
+        let types = parse_common_command_parameter_types(
+            &format!(r##"{{"Pattern",{{"#",{id}}}}}"##),
+            &BTreeMap::new(),
+        );
+        assert_eq!(types.len(), 1);
+        let mut xml = String::new();
+        format_common_command_parameter_type_xml(&mut xml, &types);
+        let prefix = name.split_once(':').unwrap().0;
+        assert!(
+            xml.contains(&format!(
+                "<v8:Type xmlns:{prefix}=\"{namespace}\">{name}</v8:Type>"
+            )),
+            "{xml}"
+        );
+    }
+}
+
+#[test]
+fn type_spelling_uses_form_declaration_depth() {
+    let types = [ConstantValueType::Reference {
+        reference: "d7p1:Dendrogram".to_owned(),
+    }];
+    for (indent, depth) in [(3, 5), (5, 7), (6, 8)] {
+        let xml = format_form_metadata_types_xml_with_indent(&types, &"\t".repeat(indent));
+        let expected = format!(
+            "<v8:Type xmlns:d{depth}p1=\"http://v8.1c.ru/8.2/data/chart\">d{depth}p1:Dendrogram</v8:Type>"
+        );
+        assert!(xml.contains(&expected), "{xml}");
+    }
+    for (indent, depth) in [(4, 5), (6, 7)] {
+        let xml = format_type_description_value_types_xml(&types, &"\t".repeat(indent));
+        let expected = format!(
+            "<v8:Type xmlns:d{depth}p1=\"http://v8.1c.ru/8.2/data/chart\">d{depth}p1:Dendrogram</v8:Type>"
+        );
+        assert!(xml.contains(&expected), "{xml}");
+    }
+}
+
+#[test]
+fn type_spelling_rebases_form_filter_without_named_aliases() {
+    let types = [ConstantValueType::Reference {
+        reference: "d7p1:Filter".to_owned(),
+    }];
+    let xml = format_form_metadata_types_xml(&types);
+    assert!(
+        xml.contains("<v8:Type xmlns:d5p1=\"http://v8.1c.ru/8.2/misc\">d5p1:Filter</v8:Type>"),
+        "{xml}"
+    );
+    for name in ["dcsset:Filter", "cfg:Filter"] {
+        let xml = format_form_metadata_types_xml(&[ConstantValueType::Reference {
+            reference: name.to_owned(),
+        }]);
+        assert!(xml.contains(&format!(">{name}</v8:Type>")), "{xml}");
+    }
+}
+
+#[test]
+fn type_spelling_keeps_event_subscription_type_ids() {
+    let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let xml = format_event_subscription_source_xml(
+        &MetadataHeader {
+            uuid: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".to_owned(),
+            name: "UnknownSource".to_owned(),
+            synonyms: Vec::new(),
+            comment: String::new(),
+            template_type_code: None,
+        },
+        &EventSubscriptionProperties {
+            source_types: vec![ConstantValueType::TypeId {
+                type_id: id.to_owned(),
+            }],
+            event: "BeforeWrite".to_owned(),
+            handler: "CommonModule.Handlers.BeforeWrite".to_owned(),
+        },
+        InfobaseConfigSourceVersion::V2_20,
+    );
+    assert!(
+        xml.contains(&format!("<v8:TypeId>{id}</v8:TypeId>")),
+        "{xml}"
+    );
+}
+
+#[test]
+fn type_spelling_uses_generic_declaration_depth() {
+    let types = [ConstantValueType::Reference {
+        reference: "d7p1:Dendrogram".to_owned(),
+    }];
+    for (indent, depth) in [(3, 5), (5, 7), (6, 8)] {
+        let xml = format_metadata_types_xml_with_indent(&types, &"\t".repeat(indent));
+        let expected = format!(
+            "<v8:Type xmlns:d{depth}p1=\"http://v8.1c.ru/8.2/data/chart\">d{depth}p1:Dendrogram</v8:Type>"
+        );
+        assert!(xml.contains(&expected), "{xml}");
+    }
+    let xml = format_constant_type_member_xml(&types[0]);
+    assert!(
+        xml.contains(
+            "<v8:Type xmlns:d5p1=\"http://v8.1c.ru/8.2/data/chart\">d5p1:Dendrogram</v8:Type>"
+        ),
+        "{xml}"
+    );
 }

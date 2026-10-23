@@ -18273,7 +18273,12 @@ mod tests {
 /// Closed physical layouts and platform type names shared by metadata readers.
 /// These are schema identifiers/revisions, never configuration object UUIDs.
 pub mod metadata_storage_facts {
+    /// Platform type names a data processor attribute can carry, keyed by the
+    /// type ID the stored pattern holds. The third column is the namespace the
+    /// name is declared in at a metadata root (`d7p1`; `fd`, `pdfdoc` and `pl`
+    /// are canonical in every document).
     const DATA_PROCESSOR_TYPES: &[(&str, &str, &str)] = &[
+        // Диаграмма
         (
             "3543ef08-3316-4f7e-9447-0cd0a1cbf1d5",
             "d7p1:Chart",
@@ -18284,10 +18289,161 @@ pub mod metadata_storage_facts {
             "d7p1:Filter",
             "http://v8.1c.ru/8.2/misc",
         ),
+        // ГрафическаяСхема
         (
             "4af83795-fc2a-48cd-9bea-ce665789a62c",
             "d7p1:FlowchartContextType",
             "http://v8.1c.ru/8.2/data/graphscheme",
+        ),
+        // ВидДанныхАнализа
+        (
+            "0bc96bbe-a6e8-4fdc-aecd-57f493904535",
+            "d7p1:AnalysisDataType",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипИсточникаДанныхПоискаАссоциаций
+        (
+            "050f918e-cda3-4d92-997a-df4a76f00cd1",
+            "d7p1:AssociationRulesDataSourceType",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипОтсеченияПравилАссоциации
+        (
+            "f8cdf4bc-4411-4b98-b8a3-d6f8e3ddb1c7",
+            "d7p1:AssociationRulesPruneType",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // МетодКластеризации
+        (
+            "df706cce-3392-469c-af4c-cd4a13bf13bb",
+            "d7p1:ClusterizationMethod",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипУпорядочиванияПравилАссоциацииАнализаДанных
+        (
+            "e838bbb4-8cdd-4b96-8259-66a1c44ca631",
+            "d7p1:DataAnalysisAssociationRulesOrderType",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипКолонкиАнализаДанныхПоискАссоциаций
+        (
+            "148a98e5-0ad6-42c9-8133-e5ebbff69734",
+            "d7p1:DataAnalysisColumnTypeAssociationRules",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипКолонкиАнализаДанныхКластеризация
+        (
+            "ffdb46a2-3f23-4712-bad7-ad26997fb2d4",
+            "d7p1:DataAnalysisColumnTypeClusterization",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипКолонкиАнализаДанныхДеревоРешений
+        (
+            "5f290fad-aa2a-4245-b200-cd035ab19571",
+            "d7p1:DataAnalysisColumnTypeDecisionTree",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипКолонкиАнализаДанныхПоискПоследовательностей
+        (
+            "7d8b2989-2a0a-4334-afe1-82ceb63cf38a",
+            "d7p1:DataAnalysisColumnTypeSequentialPatterns",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипКолонкиАнализаДанныхОбщаяСтатистика
+        (
+            "efb63b25-8150-4c82-9687-970924f5f1f8",
+            "d7p1:DataAnalysisColumnTypeSummaryStatistics",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипМерыРасстоянияАнализаДанных
+        (
+            "0d3438ab-6412-4d39-91a9-a7d4e8418d27",
+            "d7p1:DataAnalysisDistanceMetricType",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипИспользованияЧисловыхЗначенийАнализаДанных
+        (
+            "2ee0f1c6-3781-421d-b7de-c4c359cb159c",
+            "d7p1:DataAnalysisNumericValueUseType",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипЗаполненияТаблицыРезультатаАнализаДанных
+        (
+            "18ae9d87-950e-44a6-883a-1cd1f63040fb",
+            "d7p1:DataAnalysisResultTableFillType",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипУпорядочиванияШаблоновПоследовательностейАнализаДанных
+        (
+            "6359f32c-4192-46cf-86c0-2f897b70a339",
+            "d7p1:DataAnalysisSequentialPatternsOrderType",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипСтандартизацииАнализаДанных
+        (
+            "afaa3f6e-29a1-4064-a825-73699c7db53b",
+            "d7p1:DataAnalysisStandardizationType",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипЕдиницыИнтервалаВремениАнализаДанных
+        (
+            "77a01c71-e9b2-4617-af07-c95a4b74548a",
+            "d7p1:DataAnalysisTimeIntervalUnitType",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТипУпрощенияДереваРешений
+        (
+            "4622a61b-5817-4bf3-bf46-08bed102c02a",
+            "d7p1:DecisionTreeSimplificationType",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // Дендрограмма
+        (
+            "2957f638-fc52-4bbb-9bd5-614550730ca6",
+            "d7p1:Dendrogram",
+            "http://v8.1c.ru/8.2/data/chart",
+        ),
+        // ДиаграммаГанта
+        (
+            "3a6e63bf-16aa-42eb-b48c-2fff9670ad2f",
+            "d7p1:GanttChart",
+            "http://v8.1c.ru/8.2/data/chart",
+        ),
+        // ГеографическаяСхема
+        (
+            "95de81b0-81c3-4936-9dbb-6400e5c90378",
+            "d7p1:GeographicalSchema",
+            "http://v8.1c.ru/8.2/data/geo",
+        ),
+        // ТипКолонкиМоделиПрогноза
+        (
+            "d015cb03-c768-4078-bb5d-b9404d99bc4c",
+            "d7p1:PredictionModelColumnType",
+            "http://v8.1c.ru/8.2/data/data-analysis",
+        ),
+        // ТекстовыйДокумент
+        (
+            "ebf766b1-f32c-11d3-9851-008048da1252",
+            "d7p1:TextDocument",
+            "http://v8.1c.ru/8.1/data/txtedt",
+        ),
+        // ФорматированныйДокумент
+        (
+            "151f8778-e2d0-496a-9f02-d9ffd93b57ec",
+            "fd:FormattedDocument",
+            "http://v8.1c.ru/8.2/data/formatted-document",
+        ),
+        // ДокументPDF
+        (
+            "48510817-200c-48c2-9973-06cf90840514",
+            "pdfdoc:PDFDocument",
+            "http://v8.1c.ru/8.3/data/pdf",
+        ),
+        // Планировщик
+        (
+            "43dc7f37-5b1d-42a7-8f28-f545080d0255",
+            "pl:Planner",
+            "http://v8.1c.ru/8.3/data/planner",
         ),
     ];
 
@@ -18308,6 +18464,41 @@ pub mod metadata_storage_facts {
         DATA_PROCESSOR_TYPES
             .iter()
             .find_map(|(_, name, namespace)| (*name == reference).then_some(*namespace))
+    }
+
+    /// The namespace of a processor type name whichever generated prefix the
+    /// writing document scopes its declaration to: a `d<N>p1` prefix is the
+    /// depth of the element carrying the declaration, so the same name reaches
+    /// this table as `d7p1:X` from a metadata root and `d5p1:X` from a form.
+    /// Only a generated prefix is looked through: a named prefix (`dcsset`,
+    /// `cfg`, `v8ui`) selects its own namespace and never matches by local name.
+    pub fn data_processor_builtin_type_namespace_uri_ignoring_prefix(
+        reference: &str,
+    ) -> Option<&'static str> {
+        if let Some(namespace) = data_processor_builtin_type_namespace_uri(reference) {
+            return Some(namespace);
+        }
+        let (prefix, local) = reference.split_once(':')?;
+        if !generated_type_prefix(prefix) {
+            return None;
+        }
+        DATA_PROCESSOR_TYPES
+            .iter()
+            .find_map(|(_, name, namespace)| {
+                let (known_prefix, known_local) = name.split_once(':')?;
+                (generated_type_prefix(known_prefix) && known_local == local).then_some(*namespace)
+            })
+    }
+
+    /// Whether a namespace prefix is one the platform generates as
+    /// `d<N>p1`, N being the depth of the element that declares it.
+    pub fn generated_type_prefix(prefix: &str) -> bool {
+        prefix.len() > 3
+            && prefix.starts_with('d')
+            && prefix.ends_with("p1")
+            && prefix[1..prefix.len() - 2]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit())
     }
 
     /// Direct Form headers have two measured revisions; revision 12 omits the final flag.
@@ -18462,6 +18653,46 @@ pub mod metadata_storage_facts {
                 data_processor_builtin_type_namespace_uri("d7p1:Unknown"),
                 None
             );
+        }
+
+        /// Only a generated `d<N>p1` prefix is looked through. A named prefix
+        /// selects its own namespace: `dcsset:Filter` and `cfg:Chart` are not
+        /// the `d7p1:` records of the same local name, and a form that spells
+        /// `d5p1:Chart` must reach the same namespace the root spells `d7p1`.
+        #[test]
+        fn the_generated_prefix_alone_is_looked_through() {
+            assert_eq!(
+                data_processor_builtin_type_namespace_uri_ignoring_prefix("d5p1:Chart"),
+                Some("http://v8.1c.ru/8.2/data/chart")
+            );
+            assert_eq!(
+                data_processor_builtin_type_namespace_uri_ignoring_prefix("d7p1:Chart"),
+                Some("http://v8.1c.ru/8.2/data/chart")
+            );
+            assert_eq!(
+                data_processor_builtin_type_namespace_uri_ignoring_prefix("d12p1:Chart"),
+                Some("http://v8.1c.ru/8.2/data/chart")
+            );
+            for named in [
+                "cfg:Chart",
+                "dcsset:Filter",
+                "ent:Chart",
+                "v8:Chart",
+                "Chart",
+            ] {
+                assert_eq!(
+                    data_processor_builtin_type_namespace_uri_ignoring_prefix(named),
+                    None,
+                    "{named} carries a named prefix and must not match by local name"
+                );
+            }
+            for not_generated in ["d5p2:Chart", "dxp1:Chart", "dp1:Chart", "d5p:Chart"] {
+                assert!(!generated_type_prefix(
+                    not_generated.split_once(':').unwrap().0
+                ));
+            }
+            assert!(generated_type_prefix("d5p1"));
+            assert!(generated_type_prefix("d12p1"));
         }
         #[test]
         fn revisions_require_their_complete_layout_and_preserve_unknown_refusal() {

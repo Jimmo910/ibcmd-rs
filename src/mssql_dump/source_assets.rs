@@ -2506,6 +2506,7 @@ fn write_source_asset_inner(
                 owner_reference.as_deref(),
             )
             .with_form_reference_index(context.role_rights_object_refs)
+            .with_foreign_types(context.foreign_type_ids)
             .with_metadata_command_refs(context.metadata_refs)
             .with_metadata_command_facts(context.metadata_command_facts)
             .with_metadata_field_declarations(context.metadata_field_declarations)

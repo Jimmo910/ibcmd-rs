@@ -1209,6 +1209,7 @@ const CHART_TYPE_UUID: &str = "3543ef08-3316-4f7e-9447-0cd0a1cbf1d5";
 /// `<Settings>` block. The id had no entry at all, so neither element was
 /// written on any of them.
 pub(super) const GANTT_CHART_TYPE_UUID: &str = "3a6e63bf-16aa-42eb-b48c-2fff9670ad2f";
+/// Русское имя — `ДиаграммаГанта`.
 pub(super) const GANTT_CHART_TYPE_REFERENCE: &str = "d5p1:GanttChart";
 /// The data-analysis time-interval unit. Named by every form attribute of the
 /// eight stand corpora that declares it -- 7 of them, all in ERP UH 3.2.12.6
@@ -1218,6 +1219,7 @@ pub(super) const GANTT_CHART_TYPE_REFERENCE: &str = "d5p1:GanttChart";
 /// all, so the element was written on none of them. The QName occurs nowhere
 /// else in the eight native trees.
 const DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_UUID: &str = "77a01c71-e9b2-4617-af07-c95a4b74548a";
+/// Русское имя — `ТипЕдиницыИнтервалаВремениАнализаДанных`.
 const DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_REFERENCE: &str =
     "d5p1:DataAnalysisTimeIntervalUnitType";
 const REPORT_BUILDER_TYPE_UUID: &str = "0dda99d9-ae9f-43d2-b7ac-44f3fb0d4059";
@@ -1257,15 +1259,46 @@ const DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE: &str =
 /// table answers every reader for them, and the per-shape tables below keep
 /// only the names whose spelling really does depend on the document.
 const ROOT_BOUND_PLATFORM_TYPE_REFERENCES: &[(&str, &str)] = &[
+    // КонстантыНабор
     (CONSTANTS_SET_TYPE_UUID, "cfg:ConstantsSet"),
+    // ОписаниеТипов
     (TYPE_DESCRIPTION_TYPE_UUID, "v8:TypeDescription"),
+    // Картинка
     ("e6f51714-91cb-4dce-94fe-90ae3e3e1ad1", "v8ui:Picture"),
+    // ОтчетОбъект
     ("1dd6fdb9-553d-40d4-b2d1-c7fc31f497bb", "cfg:ReportObject"),
+    // ВертикальноеПоложение
     ("52616226-8ccf-4d1d-a3da-827eeb4f9cf9", "v8ui:VerticalAlign"),
     // Named by `DataProcessors/УниверсальныйОбменДаннымиXML` in ух, ут, до and
     // БСП демо and by `Reports/ПланПоказателей` in ух -- five records of one
     // type id, one spelling, in two different owner families.
     (REPORT_BUILDER_TYPE_UUID, "cfg:ReportBuilder"),
+    // The `ent:` and `v8ui:` namespaces are bound at the same roots as `cfg:`,
+    // so these names carry no inline declaration either.
+    // ДинамическийСписок
+    ("65abad24-838b-4987-8b35-ed9e2bd4d9c8", "cfg:DynamicList"),
+    // ВидДвиженияНакопления
+    (
+        "5a49abd5-936d-4f46-8499-9cb204efe378",
+        "ent:AccumulationRecordType",
+    ),
+    // ВидСчета
+    ("872f7198-7083-4e3e-b57e-a2a9802c769e", "ent:AccountType"),
+    // ВидДвиженияБухгалтерии
+    (
+        "741ae838-6e42-4ac0-b6a4-17e5604b0669",
+        "ent:AccountingRecordType",
+    ),
+    // ГоризонтальноеПоложение
+    (
+        "43f9c095-40e8-441a-8fad-20a45798c71b",
+        "v8ui:HorizontalAlign",
+    ),
+    // РежимИзмененияРазмера
+    (
+        "7a0135c7-5b77-4de2-839e-25c5e63a2142",
+        "v8ui:SizeChangeMode",
+    ),
 ];
 // Platform type IDs used by serialized Form type patterns. Only the names whose
 // prefix the form document itself fixes stay here: the `d5p1:` names by the
@@ -1273,37 +1306,48 @@ const ROOT_BOUND_PLATFORM_TYPE_REFERENCES: &[(&str, &str)] = &[
 // writer knows how to spell (`form_metadata_type_xml_namespace_attr`). Names
 // bound at the root live in `ROOT_BOUND_PLATFORM_TYPE_REFERENCES`.
 const FORM_BUILTIN_TYPE_REFERENCES: &[(&str, &str)] = &[
+    // КомпоновщикНастроекКомпоновкиДанных
     (
         DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID,
         DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME,
     ),
+    // ФорматированныйДокумент
     (
         "151f8778-e2d0-496a-9f02-d9ffd93b57ec",
         "fd:FormattedDocument",
     ),
+    // ТекстовыйДокумент
     ("ebf766b1-f32c-11d3-9851-008048da1252", "d5p1:TextDocument"),
+    // Диаграмма
     (CHART_TYPE_UUID, "d5p1:Chart"),
+    // ДиаграммаГанта
     (GANTT_CHART_TYPE_UUID, GANTT_CHART_TYPE_REFERENCE),
+    // ТипЕдиницыИнтервалаВремениАнализаДанных
     (
         DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_UUID,
         DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_REFERENCE,
     ),
+    // ГрафическаяСхема
     (
         "4af83795-fc2a-48cd-9bea-ce665789a62c",
         "d5p1:FlowchartContextType",
     ),
+    // ДокументPDF
     (
         "48510817-200c-48c2-9973-06cf90840514",
         PDF_DOCUMENT_TYPE_REFERENCE,
     ),
+    // ГеографическаяСхема
     (
         "95de81b0-81c3-4936-9dbb-6400e5c90378",
         GEOGRAPHICAL_SCHEMA_TYPE_REFERENCE,
     ),
+    // Планировщик
     (PLANNER_TYPE_UUID, PLANNER_TYPE_REFERENCE),
 ];
 // Both carry their namespace inline on the emitted `<v8:Type>` element; see
 // `form_metadata_type_xml_namespace_attr`.
+/// Русские имена — `ДокументPDF` и `ГеографическаяСхема`.
 const PDF_DOCUMENT_TYPE_REFERENCE: &str = "pdfdoc:PDFDocument";
 const GEOGRAPHICAL_SCHEMA_TYPE_REFERENCE: &str = "d5p1:GeographicalSchema";
 /// The planner. Named by the five graphical-planner attributes of
@@ -1311,6 +1355,7 @@ const GEOGRAPHICAL_SCHEMA_TYPE_REFERENCE: &str = "d5p1:GeographicalSchema";
 /// each stores this type id and the platform writes this QName both in the
 /// attribute's `<v8:Type>` and in the `xsi:type` of its `<Settings>` block.
 const PLANNER_TYPE_UUID: &str = "43dc7f37-5b1d-42a7-8f28-f545080d0255";
+/// Русское имя — `Планировщик`.
 const PLANNER_TYPE_REFERENCE: &str = "pl:Planner";
 // Platform types serialized in DataProcessor Attribute patterns. Only the one
 // name whose prefix the metadata-root document fixes stays here: `Chart` at
@@ -3670,6 +3715,9 @@ struct DumpRowContext<'a> {
     metadata_command_facts: &'a Arc<BTreeMap<String, MetadataCommandReference>>,
     type_index: &'a BTreeMap<String, String>,
     type_index_collisions: &'a BTreeSet<String>,
+    /// Type ids the object carries from outside its configuration, see
+    /// MetadataTypeIndexes::foreign.
+    foreign_type_ids: &'a BTreeSet<String>,
     moxel_generated_types: &'a BTreeMap<String, String>,
     dcs_type_index: &'a DcsTypeIndex,
     object_refs: &'a BTreeMap<String, String>,
@@ -4004,6 +4052,7 @@ fn dump_table_rows_with_options_mode(
         references: type_index,
         reference_collisions: type_index_collisions,
         dcs: dcs_type_index,
+        foreign: foreign_type_ids,
     } = metadata_type_indexes;
     let moxel_generated_types =
         build_moxel_generated_type_index(&type_index, &type_index_collisions);
@@ -4388,6 +4437,7 @@ fn dump_table_rows_with_options_mode(
         metadata_command_facts: &metadata_refs,
         type_index: &type_index,
         type_index_collisions: &type_index_collisions,
+        foreign_type_ids: &foreign_type_ids,
         moxel_generated_types: &moxel_generated_types,
         dcs_type_index: &dcs_type_index,
         object_refs: &object_refs,
@@ -5302,6 +5352,7 @@ fn dump_table_rows_streamed(
         references: type_index,
         reference_collisions: type_index_collisions,
         dcs: dcs_type_index,
+        foreign: _,
     } = metadata_type_indexes;
     let moxel_generated_types =
         build_moxel_generated_type_index(&type_index, &type_index_collisions);
@@ -6054,6 +6105,9 @@ fn dump_table_rows_streamed(
         && selection
             .as_ref()
             .is_none_or(|selection| selection.unchanged.is_empty());
+    // This path indexes no foreign references: every type it sees belongs to
+    // the configuration being written.
+    let foreign_type_ids = BTreeSet::new();
 
     // The files go to writer threads of their own, so a worker converting a
     // row does not wait on the disk (`IBCMD_RS_OUTPUT_WRITERS`). With a sink
@@ -6088,6 +6142,7 @@ fn dump_table_rows_streamed(
         metadata_command_facts: &metadata_refs,
         type_index: &type_index,
         type_index_collisions: &type_index_collisions,
+        foreign_type_ids: &foreign_type_ids,
         moxel_generated_types: &moxel_generated_types,
         dcs_type_index: &dcs_type_index,
         object_refs: &object_refs,
@@ -12035,6 +12090,11 @@ struct MetadataTypeIndexes {
     references: BTreeMap<String, String>,
     reference_collisions: BTreeSet<String>,
     dcs: DcsTypeIndex,
+    /// Type ids that came from outside the exported configuration (copyinfo
+    /// of an external object). The form exporter writes a <UseAlways> path
+    /// through such a type as the raw <attribute id>/<code> pair, the way
+    /// the platform does: no configuration is there to name it.
+    foreign: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -13073,15 +13133,19 @@ fn respell_any_ib_ref_by_compatibility(
 fn merge_foreign_type_references(indexes: &mut MetadataTypeIndexes, foreign: &ForeignReferences) {
     for (type_id, reference, category) in &foreign.types {
         let type_id = type_id.to_ascii_lowercase();
-        if indexes.references.contains_key(&type_id) {
-            continue;
-        }
-        indexes
-            .references
-            .insert(type_id.clone(), reference.clone());
+        // Both spellings: a form attribute may carry the id or, in an object
+        // rebuilt from its own XML, the name the reference table resolved to.
+        indexes.foreign.insert(type_id.clone());
+        indexes.foreign.insert(reference.clone());
         // "TypeSet" names a platform type set the foreign context spells
         // differently from the built-in table (`AnyIBRef` → `AnyRef`).
         if category == "TypeSet" {
+            if indexes.references.contains_key(&type_id) {
+                continue;
+            }
+            indexes
+                .references
+                .insert(type_id.clone(), reference.clone());
             indexes.dcs.insert(
                 type_id,
                 DcsTypeResolution::TypeSet {
@@ -13090,16 +13154,19 @@ fn merge_foreign_type_references(indexes: &mut MetadataTypeIndexes, foreign: &Fo
             );
             continue;
         }
-        let resolution = match generated_type_dcs_policy(Some(category)) {
-            GeneratedTypeDcsPolicy::KeepId => DcsTypeResolution::KeepId,
-            GeneratedTypeDcsPolicy::Type => DcsTypeResolution::Type {
-                qname: reference.clone(),
-            },
-            GeneratedTypeDcsPolicy::TypeSet => DcsTypeResolution::TypeSet {
-                qname: reference.clone(),
-            },
-        };
-        indexes.dcs.entry(type_id).or_insert(resolution);
+        // A configuration object the configuration being written does not
+        // define: its name lives only in the object's own `copyinfo`, and the
+        // platform writes such a reference as `<v8:TypeId>`, never by name.
+        // Naming it here made `cf export` of an external object disagree with
+        // the platform on every configuration reference it carries, and made
+        // the base-free compiler's own re-export disagree with its input tree.
+        if indexes.references.contains_key(&type_id) {
+            continue;
+        }
+        indexes
+            .dcs
+            .entry(type_id)
+            .or_insert(DcsTypeResolution::KeepId);
     }
 }
 
@@ -20920,15 +20987,27 @@ fn apply_data_processor_settings_composer_types_inner(
     for child in child_objects {
         let uuid = child.header.uuid.to_ascii_lowercase();
         if expected_attributes.contains(&uuid) {
-            if child.tag != "Attribute"
-                || !child.value_types.is_empty()
-                || !matched_attributes.insert(uuid)
-            {
+            if child.tag != "Attribute" || !matched_attributes.insert(uuid) {
                 return false;
             }
-            child.value_types.push(ConstantValueType::Reference {
+            let composer_type = ConstantValueType::Reference {
                 reference: DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME.to_string(),
-            });
+            };
+            // The generic reader leaves this attribute without types, may
+            // already spell the composer, or may know only the platform
+            // identifier. All three describe the same attribute, so the check
+            // is on the outcome: exactly one composer type and nothing else.
+            let already_composed = child.value_types == [composer_type.clone()]
+                || matches!(
+                    child.value_types.as_slice(),
+                    [ConstantValueType::TypeId { type_id }]
+                        if type_id.eq_ignore_ascii_case(DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID)
+                );
+            if !child.value_types.is_empty() && !already_composed {
+                return false;
+            }
+            child.value_types.clear();
+            child.value_types.push(composer_type);
         }
         if !apply_data_processor_settings_composer_types_inner(
             &mut child.child_objects,
@@ -37602,11 +37681,8 @@ fn parse_form_metadata_type_pattern(
                 )
             })
             .or_else(|| {
-                let element = split_1c_braced_fields(field, 0)?;
-                (element.first()?.trim() == r##""#""## && element.len() >= 2)
-                    .then(|| parse_uuid_field(element.get(1)?.trim()))
-                    .flatten()
-                    .map(|type_id| ConstantValueType::TypeId { type_id })
+                let type_id = metadata_type_pattern_field_type_id(field)?;
+                (!type_id.is_empty()).then_some(ConstantValueType::TypeId { type_id })
             })
         })
         .collect()
@@ -37626,6 +37702,10 @@ fn parse_metadata_type_pattern_with_builtin(
         .skip(1)
         .map(|field| {
             parse_metadata_type_pattern_element_with_builtin(field, type_index, builtin_reference)
+                .or_else(|| {
+                    let type_id = metadata_type_pattern_field_type_id(field)?;
+                    (!type_id.is_empty()).then_some(ConstantValueType::TypeId { type_id })
+                })
         })
         .collect()
 }
@@ -37710,8 +37790,10 @@ fn parse_metadata_type_pattern_element_with_builtin(
                 .cloned()
                 .or_else(|| builtin_reference(&type_id).map(ToOwned::to_owned))
             else {
-                // A type of the extended configuration, which an extension
-                // does not hold: the platform prints its identifier.
+                // A type the configuration index and the builtin table both
+                // miss: the platform prints its identifier. The substitution
+                // belongs to the pattern reader, not to this leaf, so a
+                // column- or form-scoped table still gets its turn first.
                 return extension::active()
                     .is_some()
                     .then_some(ConstantValueType::TypeId { type_id });
@@ -37827,6 +37909,9 @@ pub(super) fn builtin_type_reference(type_id: &str) -> Option<&'static str> {
                     .find_map(|(candidate, reference)| {
                         (*candidate == type_id).then_some(*reference)
                     })
+            })
+            .or_else(|| {
+                ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_reference(type_id)
             }),
     }
 }
@@ -43704,7 +43789,8 @@ fn format_common_command_parameter_type_xml_with_indent(
     }
     xml.push_str(&format!("{indent}<CommandParameterType>\r\n"));
     for value_type in types {
-        let tag_name = match value_type {
+        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 2);
+        let tag_name = match &value_type {
             ConstantValueType::ReferenceTypeSet { .. } => "TypeSet",
             // A type identifier the configuration resolves to no name is
             // echoed verbatim, exactly as a form pattern echoes one. Evidence:
@@ -43715,9 +43801,10 @@ fn format_common_command_parameter_type_xml_with_indent(
             ConstantValueType::TypeId { .. } => "TypeId",
             _ => "Type",
         };
+        let namespace_attr = metadata_type_xml_namespace_attr(&value_type);
         xml.push_str(&format!(
-            "{indent}\t<v8:{tag_name}>{}</v8:{tag_name}>\r\n",
-            escape_xml_text(&metadata_type_xml_name(value_type))
+            "{indent}\t<v8:{tag_name}{namespace_attr}>{}</v8:{tag_name}>\r\n",
+            escape_xml_text(&metadata_type_xml_name(&value_type))
         ));
     }
     xml.push_str(&format!("{indent}</CommandParameterType>\r\n"));
@@ -43960,11 +44047,17 @@ fn format_event_subscription_source_xml(
     let mut xml = format_full_metadata_source_xml("EventSubscription", header, source_version);
     let mut insert = String::from("\t\t\t<Source>\r\n");
     let source_types = sorted_event_subscription_source_types(&event_subscription.source_types);
+    let type_indent = "\t\t\t\t";
     for source_type in source_types {
-        let reference = metadata_type_xml_name(source_type);
-        let tag = event_subscription_source_type_tag(&reference);
+        let source_type = scoped_value_type(source_type, type_indent.matches('\t').count() + 1);
+        let reference = metadata_type_xml_name(&source_type);
+        let tag = match &source_type {
+            ConstantValueType::TypeId { .. } => metadata_type_xml_tag(&source_type),
+            _ => event_subscription_source_type_tag(&reference),
+        };
+        let namespace_attr = metadata_type_xml_namespace_attr(&source_type);
         insert.push_str(&format!(
-            "\t\t\t\t<v8:{tag}>{}</v8:{tag}>\r\n",
+            "{type_indent}<v8:{tag}{namespace_attr}>{}</v8:{tag}>\r\n",
             escape_xml_element_text(&reference)
         ));
     }
@@ -46023,11 +46116,12 @@ fn format_form_metadata_types_xml_with_indent(
     let nested2 = format!("{nested}\t");
     let mut xml = format!("{indent}<Type>\r\n");
     for value_type in value_types {
-        let tag_name = form_metadata_type_xml_tag(value_type);
-        let namespace_attr = form_metadata_type_xml_namespace_attr(value_type);
+        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 2);
+        let tag_name = form_metadata_type_xml_tag(&value_type);
+        let namespace_attr = form_metadata_type_xml_namespace_attr(&value_type);
         xml.push_str(&format!(
             "{nested}<v8:{tag_name}{namespace_attr}>{}</v8:{tag_name}>\r\n",
-            metadata_type_xml_name(value_type)
+            metadata_type_xml_name(&value_type)
         ));
     }
 
@@ -46102,11 +46196,12 @@ fn format_type_description_value_types_xml(
         // and its namespace declarations just like the attribute's own Type.
         // The generic table omits the txtedt declaration, which would leave a
         // `d5p1:TextDocument` value with an unbound prefix.
-        let tag_name = form_metadata_type_xml_tag(value_type);
-        let namespace_attr = form_metadata_type_xml_namespace_attr(value_type);
+        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 1);
+        let tag_name = form_metadata_type_xml_tag(&value_type);
+        let namespace_attr = form_metadata_type_xml_namespace_attr(&value_type);
         xml.push_str(&format!(
             "{indent}<v8:{tag_name}{namespace_attr}>{}</v8:{tag_name}>\r\n",
-            metadata_type_xml_name(value_type)
+            metadata_type_xml_name(&value_type)
         ));
     }
     if let Some(number) = value_types.iter().find_map(|value_type| match value_type {
@@ -46172,11 +46267,12 @@ fn format_metadata_types_xml_with_indent(
     let nested2 = format!("{nested}\t");
     let mut xml = format!("{indent}<Type>\r\n");
     for value_type in value_types {
-        let tag_name = metadata_type_xml_tag(value_type);
-        let namespace_attr = metadata_type_xml_namespace_attr(value_type);
+        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 2);
+        let tag_name = metadata_type_xml_tag(&value_type);
+        let namespace_attr = metadata_type_xml_namespace_attr(&value_type);
         xml.push_str(&format!(
             "{nested}<v8:{tag_name}{namespace_attr}>{}</v8:{tag_name}>\r\n",
-            metadata_type_xml_name(value_type)
+            metadata_type_xml_name(&value_type)
         ));
     }
 
@@ -46271,6 +46367,35 @@ fn metadata_type_xml_tag(value_type: &ConstantValueType) -> &'static str {
     }
 }
 
+/// A generated prefix records the declaration element's 1-based depth.
+/// Rebase schema-known generated names to that depth; canonical names keep
+/// their own prefix and namespace.
+fn scoped_type_reference(reference: &str, depth: usize) -> std::borrow::Cow<'_, str> {
+    let Some((prefix, local)) = reference.split_once(':') else {
+        return std::borrow::Cow::Borrowed(reference);
+    };
+    let generated = ibcmd_schema::metadata_storage_facts::generated_type_prefix(prefix)
+        && ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_namespace_uri_ignoring_prefix(reference).is_some();
+    let target_prefix = format!("d{depth}p1");
+    if generated && prefix != target_prefix {
+        std::borrow::Cow::Owned(format!("{target_prefix}:{local}"))
+    } else {
+        std::borrow::Cow::Borrowed(reference)
+    }
+}
+
+fn scoped_value_type(value_type: &ConstantValueType, depth: usize) -> ConstantValueType {
+    match value_type {
+        ConstantValueType::Reference { reference } => ConstantValueType::Reference {
+            reference: scoped_type_reference(reference, depth).into_owned(),
+        },
+        ConstantValueType::ReferenceTypeSet { reference } => ConstantValueType::ReferenceTypeSet {
+            reference: scoped_type_reference(reference, depth).into_owned(),
+        },
+        other => other.clone(),
+    }
+}
+
 fn form_metadata_type_xml_tag(value_type: &ConstantValueType) -> &'static str {
     match value_type {
         ConstantValueType::Reference { reference } => form_reference_type_tag(reference),
@@ -46293,96 +46418,45 @@ fn metadata_type_xml_name(value_type: &ConstantValueType) -> String {
     }
 }
 
-fn metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> &'static str {
+fn metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> String {
     match value_type {
         ConstantValueType::Reference { reference }
         | ConstantValueType::ReferenceTypeSet { reference }
             if reference == DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME =>
         {
-            DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE
+            DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE.to_owned()
         }
         ConstantValueType::Reference { reference }
         | ConstantValueType::ReferenceTypeSet { reference }
             if reference.starts_with("mxl:") =>
         {
-            r#" xmlns:mxl="http://v8.1c.ru/8.2/data/spreadsheet""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "d7p1:Chart" =>
-        {
-            r#" xmlns:d7p1="http://v8.1c.ru/8.2/data/chart""#
+            r#" xmlns:mxl="http://v8.1c.ru/8.2/data/spreadsheet""#.to_owned()
         }
         ConstantValueType::Reference { reference }
         | ConstantValueType::ReferenceTypeSet { reference } => {
-            ibcmd_xml::metadata::data_processor_builtin_type_namespace_attribute(reference)
-                .unwrap_or_default()
+            ibcmd_xml::metadata::data_processor_builtin_type_namespace_attribute_for_qname(
+                reference,
+            )
+            .unwrap_or_default()
         }
-        _ => "",
+        _ => String::new(),
     }
 }
 
-fn form_metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> &'static str {
-    match value_type {
+/// The inline binding a form body needs. SettingsComposer is root-bound;
+/// ConditionalAppearance retains its measured spelling. Other bindings use
+/// the shared XML renderer after the QName has been set from its depth.
+
+fn form_metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> String {
+    let reference = match value_type {
         ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME =>
-        {
-            ""
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "fd:FormattedDocument" =>
-        {
-            r#" xmlns:fd="http://v8.1c.ru/8.2/data/formatted-document""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "d5p1:TextDocument" =>
-        {
-            r#" xmlns:d5p1="http://v8.1c.ru/8.1/data/txtedt""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "d7p1:ConditionalAppearance" =>
-        {
-            r#" xmlns:d7p1="http://v8.1c.ru/8.3/data/entext""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "d5p1:Chart" || reference == GANTT_CHART_TYPE_REFERENCE =>
-        {
-            r#" xmlns:d5p1="http://v8.1c.ru/8.2/data/chart""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "d5p1:FlowchartContextType" =>
-        {
-            r#" xmlns:d5p1="http://v8.1c.ru/8.2/data/graphscheme""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_REFERENCE =>
-        {
-            r#" xmlns:d5p1="http://v8.1c.ru/8.2/data/data-analysis""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == PDF_DOCUMENT_TYPE_REFERENCE =>
-        {
-            r#" xmlns:pdfdoc="http://v8.1c.ru/8.3/data/pdf""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == PLANNER_TYPE_REFERENCE =>
-        {
-            r#" xmlns:pl="http://v8.1c.ru/8.3/data/planner""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == GEOGRAPHICAL_SCHEMA_TYPE_REFERENCE =>
-        {
-            r#" xmlns:d5p1="http://v8.1c.ru/8.2/data/geo""#
+        | ConstantValueType::ReferenceTypeSet { reference } => reference.as_str(),
+        _ => "",
+    };
+    match reference {
+        DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME => String::new(),
+        "d7p1:ConditionalAppearance" => {
+            r#" xmlns:d7p1="http://v8.1c.ru/8.3/data/entext""#.to_owned()
         }
         _ => metadata_type_xml_namespace_attr(value_type),
     }
@@ -46415,7 +46489,9 @@ fn format_constant_type_xml(value_type: &ConstantValueType) -> String {
 }
 
 fn format_constant_type_member_xml(value_type: &ConstantValueType) -> String {
-    match value_type {
+    // MetaDataObject / Constant / Properties / Type / v8:Type.
+    let value_type = scoped_value_type(value_type, 5);
+    match &value_type {
         ConstantValueType::Boolean => "\t\t\t\t<v8:Type>xs:boolean</v8:Type>\r\n".to_string(),
         ConstantValueType::String {
             length,
@@ -46465,14 +46541,14 @@ fn format_constant_type_member_xml(value_type: &ConstantValueType) -> String {
         ),
         ConstantValueType::Reference { reference, .. } => {
             let tag = constant_reference_type_tag(reference);
-            let namespace_attr = metadata_type_xml_namespace_attr(value_type);
+            let namespace_attr = metadata_type_xml_namespace_attr(&value_type);
             format!(
                 "\t\t\t\t<v8:{tag}{namespace_attr}>{}</v8:{tag}>\r\n",
                 escape_xml_text(reference)
             )
         }
         ConstantValueType::ReferenceTypeSet { reference, .. } => {
-            let namespace_attr = metadata_type_xml_namespace_attr(value_type);
+            let namespace_attr = metadata_type_xml_namespace_attr(&value_type);
             format!(
                 "\t\t\t\t<v8:TypeSet{namespace_attr}>{}</v8:TypeSet>\r\n",
                 escape_xml_text(reference)
