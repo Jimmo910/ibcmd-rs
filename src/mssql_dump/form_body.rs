@@ -37197,9 +37197,7 @@ fn format_form_extended_tooltip_property_xml(
                 )
             })
             .unwrap_or_default(),
-        FormExtendedTooltipXmlProperty::Events => {
-            format_form_extended_tooltip_events_xml(&tooltip.events, indent)
-        }
+        FormExtendedTooltipXmlProperty::Events => format_form_events_xml(&tooltip.events, indent),
     }
 }
 
@@ -37225,7 +37223,7 @@ fn format_form_extended_tooltip_title_xml(
     xml
 }
 
-fn format_form_extended_tooltip_events_xml(events: &[FormBodyEvent], indent: usize) -> String {
+pub(super) fn format_form_events_xml(events: &[FormBodyEvent], indent: usize) -> String {
     if events.is_empty() {
         return String::new();
     }

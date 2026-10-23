@@ -1049,7 +1049,7 @@ fn apply_complex_settings_view_mode(
 
 /// The events 8.5 lets a usual group handle, by the identifier its event
 /// record stores (8.5.1.1150 BSP: three `Click` handlers).
-fn group_event_name_8_5_1(id: &str) -> Option<&'static str> {
+pub(in crate::mssql_dump) fn group_event_name_8_5_1(id: &str) -> Option<&'static str> {
     match id {
         "a3da1388-983a-4d28-87f2-5096d7e3a4ef" => Some("Click"),
         _ => None,
@@ -1058,52 +1058,54 @@ fn group_event_name_8_5_1(id: &str) -> Option<&'static str> {
 
 /// A usual group's event record, the member its 8.5 property bag appends:
 /// `{<count>,(<id>,"<handler>")*,1,0,(<id>,0,1)*}`, or `{0,1,0}` for none.
-fn apply_group_events(edits: &mut XmlEdits<'_>, group: usize, node: &Node) -> Result<()> {
+fn apply_group_events(
+    edits: &mut XmlEdits<'_>,
+    group: usize,
+    node: &Node,
+    adoption: Option<&super::super::form_extension::FormAdoption>,
+) -> Result<()> {
     let Node::List(members) = node else {
         bail!("<UsualGroup> events: the 8.5 member is not a tuple");
     };
-    let count: usize = members
-        .first()
-        .and_then(Node::as_leaf)
-        .and_then(|value| value.parse().ok())
-        .ok_or_else(|| anyhow!("<UsualGroup> events: unreadable 8.5 count"))?;
-    if members.len() != 3 + count * 5
-        || members[1 + 2 * count].as_leaf() != Some("1")
-        || members[2 + 2 * count].as_leaf() != Some("0")
+    if members
+        .iter()
+        .map(Node::as_leaf)
+        .eq([Some("0"), Some("1"), Some("0")])
     {
-        bail!(
-            "<UsualGroup> events: unexpected 8.5 record {}",
-            node.to_text()
-        );
-    }
-    if count == 0 {
         return Ok(());
     }
-    let mut body = String::from("<Events>\r\n");
-    for index in 0..count {
-        let id = members[1 + 2 * index]
-            .as_leaf()
-            .ok_or_else(|| anyhow!("<UsualGroup> events: unreadable 8.5 event id"))?;
-        let name = group_event_name_8_5_1(id)
-            .ok_or_else(|| anyhow!("<UsualGroup> events: unknown 8.5 event {id}"))?;
-        let handler = members[2 + 2 * index]
-            .as_leaf()
-            .and_then(|value| value.strip_prefix('"'))
-            .and_then(|value| value.strip_suffix('"'))
-            .ok_or_else(|| anyhow!("<UsualGroup> events: unreadable 8.5 handler"))?
-            .replace("\"\"", "\"");
-        body.push_str(&format!(
-            "\t<Event name=\"{name}\">{}</Event>\r\n",
-            super::super::escape_xml_text(&handler)
-        ));
+    let record = node.to_text();
+    let bindings = super::super::form_extension::parse_form_event_block(&record)
+        .ok_or_else(|| anyhow!("<UsualGroup> events: unexpected 8.5 record {record}"))?;
+    let mut events = Vec::new();
+    for binding in bindings {
+        let name = group_event_name_8_5_1(&binding.event)
+            .ok_or_else(|| anyhow!("<UsualGroup> events: unknown 8.5 event {}", binding.event))?;
+        let call_type = match adoption {
+            Some(adoption) => Some(
+                adoption
+                    .event_call_type(name, &binding.handler)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "<UsualGroup> event {name}/{} has no unambiguous stored call type",
+                            binding.handler
+                        )
+                    })?,
+            ),
+            None => None,
+        };
+        events.push(super::super::FormBodyEvent {
+            name: name.to_owned(),
+            handler: binding.handler,
+            call_type,
+        });
     }
-    body.push_str("</Events>\r\n");
+    let body = super::super::format_form_events_xml(&events, 0);
     for child in edits.direct_children(group, "Events") {
         edits.remove(child);
     }
     edits.insert_child(group, "Events", &body)
 }
-
 /// The picture 8.5 appends to a choice-list value: written after the value's
 /// own `<Value>`, in document order of the values (8.5.1.1150 BSP: 17
 /// pictures over 4 forms). A body whose values the written XML does not
@@ -1191,6 +1193,7 @@ fn apply_rules(
     item: Option<&FormItemFactsV8_5_1>,
     command: Option<&[Node]>,
     object_refs: &std::collections::BTreeMap<String, String>,
+    adoption: Option<&super::super::form_extension::FormAdoption>,
     assets: &mut Vec<super::super::FormItemAsset>,
 ) -> Result<()> {
     let tag = edits.elements[element].tag.clone();
@@ -1227,7 +1230,7 @@ fn apply_rules(
             }
             "UsualGroup" if item.bag_revision.as_deref() == Some("38") => {
                 if let Some(node) = item.bag_tail.get(4) {
-                    apply_group_events(edits, element, node)?;
+                    apply_group_events(edits, element, node, adoption)?;
                 }
             }
             _ => {}
@@ -1570,6 +1573,7 @@ pub(in crate::mssql_dump) fn apply_form_facts_8_5_1(
     xml: String,
     facts: &FormFactsV8_5_1,
     object_refs: &std::collections::BTreeMap<String, String>,
+    adoption: Option<&super::super::form_extension::FormAdoption>,
 ) -> Result<(String, Vec<super::super::FormItemAsset>)> {
     let mut assets = Vec::new();
     let mut edits = XmlEdits::new(&xml)?;
@@ -1581,6 +1585,7 @@ pub(in crate::mssql_dump) fn apply_form_facts_8_5_1(
         None,
         None,
         object_refs,
+        adoption,
         &mut assets,
     )?;
     apply_choice_value_pictures(&mut edits, facts, object_refs)?;
@@ -1632,6 +1637,7 @@ pub(in crate::mssql_dump) fn apply_form_facts_8_5_1(
                 Some(item),
                 None,
                 object_refs,
+                adoption,
                 &mut assets,
             )?;
             if crate::platform::export_writes_default_button_importance() {
@@ -1648,6 +1654,7 @@ pub(in crate::mssql_dump) fn apply_form_facts_8_5_1(
                 None,
                 Some(tail),
                 object_refs,
+                adoption,
                 &mut assets,
             )?;
         }
@@ -1748,7 +1755,7 @@ mod tests {
         // The spelling of the oldest 8.5 build, whatever a parallel test noted.
         let (written, assets) =
             crate::platform::with_export_default_button_importance(false, || {
-                apply_form_facts_8_5_1(xml, &facts, &BTreeMap::new())
+                apply_form_facts_8_5_1(xml, &facts, &BTreeMap::new(), None)
             })
             .unwrap();
         assert!(assets.is_empty());
@@ -1776,5 +1783,55 @@ mod tests {
             .concat(),
         );
         assert_eq!(written, expected);
+    }
+
+    #[test]
+    fn adopted_form_group_event_keeps_call_type_after_8_5_facts() {
+        use super::super::super::form_extension::adoption_without_base_form;
+        let event_id = "a3da1388-983a-4d28-87f2-5096d7e3a4ef";
+        let block = format!("{{1,{event_id},\"ClickHandler\",1,0,{event_id},0,1}}");
+        let adoption = adoption_without_base_form(&block).unwrap();
+        let mut tail = vec![Node::Leaf("0".to_owned()); 13];
+        tail[4] = super::super::layout_8_5_1::parse_node(&block).unwrap();
+        let mut facts = FormFactsV8_5_1::default();
+        facts.items.insert(
+            "1".to_owned(),
+            FormItemFactsV8_5_1 {
+                revision: "22".to_owned(),
+                kind: Some("5".to_owned()),
+                bag_revision: Some("38".to_owned()),
+                bag: vec![Node::Leaf("0".to_owned()); 42],
+                bag_tail: tail,
+                ..FormItemFactsV8_5_1::default()
+            },
+        );
+        let xml = form("\t\t<UsualGroup name=\"Clickable\" id=\"1\">\r\n\t\t</UsualGroup>\r\n");
+        let (written, _) =
+            apply_form_facts_8_5_1(xml, &facts, &BTreeMap::new(), Some(&adoption)).unwrap();
+        assert!(
+            written.contains("<Event name=\"Click\" callType=\"Before\">ClickHandler</Event>"),
+            "{written}"
+        );
+    }
+    #[test]
+    fn group_handler_tokens_with_unmodeled_suffixes_are_refused() {
+        let id = "a3da1388-983a-4d28-87f2-5096d7e3a4ef";
+        for block in [
+            format!("{{1,{id},\"ClickHandler\"UNMODELED,1,0,{id},0,1}}"),
+            format!("{{1,{id},\"\",1,0,{id},0,2,\"AfterHandler\"UNMODELED,1}}"),
+        ] {
+            let node = super::super::layout_8_5_1::parse_node(&block).unwrap();
+            let xml = form("\t\t<UsualGroup name=\"Clickable\" id=\"1\">\r\n\t\t</UsualGroup>\r\n");
+            let mut edits = XmlEdits::new(&xml).unwrap();
+            let group = edits
+                .elements
+                .iter()
+                .position(|item| item.tag == "UsualGroup")
+                .unwrap();
+            assert!(
+                apply_group_events(&mut edits, group, &node, None).is_err(),
+                "{block}"
+            );
+        }
     }
 }

@@ -80628,3 +80628,97 @@ fn role_rights_configuration_root_rejects_duplicate_mode_names() {
         }
     }
 }
+
+#[test]
+fn adopted_form_validation_does_not_leave_a_module() {
+    // Extension state is process-wide; preserve the regression in a child
+    // process so the ordinary converters tested beside it see no context.
+    const CHILD: &str = "IBCMD_RS_ADOPTED_FORM_CLEANUP_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "mssql_dump::tests::adopted_form_validation_does_not_leave_a_module",
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "isolated adopted-form cleanup failed: {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let root = std::env::temp_dir().join(format!(
+        "ibcmd-adopted-row-cleanup-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let form_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+    let event_id = "9f2e5ddb-3492-4f5d-8f0d-416b8d1d5c5b";
+    let metadata = deflate_for_test(format!(
+        "{{1,{{4,{{14,{{3,{{1,0,{form_uuid}}},\"AdoptedBroken\",{{1,\"en\",\"Adopted broken\"}},\"\",0,0,00000000-0000-0000-0000-000000000000,0}},0,1,{{2,{{\"#\",1708fdaa-cbce-4289-b373-07a5a74bee91,1}},{{\"#\",1708fdaa-cbce-4289-b373-07a5a74bee91,2}}}},0}},{{0}},{{0}},0}},0}}"
+    ).as_bytes());
+    let body = deflate_for_test(format!(
+        "{{4,{{1,{event_id},\"Handler\",1,0,{event_id},3,1}},\"Procedure StillParsed()\r\nEndProcedure\r\n\",{{0}}}}"
+    ).as_bytes());
+    let _extension = extension::activate(extension::ExtensionContext::new([
+        extension::AdoptedHeader {
+            uuid: form_uuid.to_owned(),
+            properties: Vec::new(),
+            extended_object: None,
+            added_values: Vec::new(),
+        },
+    ]))
+    .unwrap();
+    let row = |name: String, bytes: Vec<u8>| ConfigRow {
+        file_name: name,
+        part_no: 0,
+        data_size: bytes.len() as i64,
+        binary_hex: encode_hex_for_test(&bytes),
+    };
+    let dumped = dump_table_rows_with_options_mode(
+        &root,
+        "Config",
+        vec![
+            row(form_uuid.to_owned(), metadata),
+            row(format!("{form_uuid}.0"), body),
+        ],
+        false,
+        false,
+        true,
+        true,
+        InfobaseConfigSourceVersion::V2_20,
+        RootMetadataInventoryScope::Scoped,
+        SourceAssetCompletenessScope::Scoped,
+        true,
+        false,
+        false,
+        None,
+    )
+    .unwrap();
+    assert!(
+        dumped
+            .failed_rows
+            .iter()
+            .any(|row| row.file_name == format!("{form_uuid}.0")
+                && row.message.contains("malformed adopted form event")),
+        "{:?}",
+        dumped
+            .failed_rows
+            .iter()
+            .map(|row| &row.message)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !root
+            .join("CommonForms/AdoptedBroken/Ext/Form/Module.bsl")
+            .exists(),
+        "failed row left its module in output"
+    );
+    let _ = fs::remove_dir_all(root);
+}

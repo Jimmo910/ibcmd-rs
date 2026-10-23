@@ -9,7 +9,7 @@
   "engines": {
     "vscode": "^1.95.0"
   },
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "categories": [
     "Other"
   ],
@@ -28,13 +28,13 @@
     "test:host": "npm run bundle && node test/host.js",
     "format": "prettier --write src test scripts/*.cjs package.json tsconfig.json",
     "format:check": "prettier --check src test scripts/*.cjs package.json tsconfig.json",
-    "test:tree-host": "npm run compile && node test/tree-host.js",
-    "test:source-host": "npm run compile && node test/source-host.js",
+    "test:tree-host": "npm run bundle && node test/tree-host.js",
+    "test:source-host": "npm run bundle && node test/source-host.js",
     "bundle": "npm run compile && node scripts/build.cjs",
     "package": "npm run bundle && node scripts/python.cjs scripts/package.py",
     "test:package": "npm run compile && node --test test/executable.test.js test/process-watchdog.test.js && node scripts/python.cjs scripts/test_package.py",
     "test:installed": "node test/installed.js",
-    "test:native-apply": "npm run compile && node test/native-apply.js"
+    "test:native-apply": "npm run bundle && node test/native-apply.js"
   },
   "contributes": {
     "commands": [
@@ -126,9 +126,9 @@
       "properties": {
         "ibcmd.executable": {
           "type": "string",
-          "default": "ibcmd-rs",
+          "default": "",
           "scope": "machine",
-          "description": "Trusted executable path (never a shell command)."
+          "description": "Legacy executable override; ibcmd-rs.path takes precedence."
         },
         "ibcmd.connections": {
           "type": "array",

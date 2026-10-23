@@ -35,6 +35,14 @@ pub(super) struct FormEventBinding {
 
 const CALL_TYPES: [&str; 3] = ["Before", "After", "Override"];
 
+/// A complete quoted handler token. Bytes after its closing quote are
+/// unsupported data, rather than part of the event record we can discard.
+fn parse_event_handler(field: &str) -> Option<String> {
+    let token = field.trim();
+    let (handler, consumed) = parse_1c_quoted_string_with_len(token)?;
+    (consumed == token.len()).then_some(handler)
+}
+
 /// The bindings of the event block `field`, in stored order: an event's first
 /// handler (when it has one), then its further handlers.
 pub(super) fn parse_form_event_block(field: &str) -> Option<Vec<FormEventBinding>> {
@@ -46,7 +54,7 @@ pub(super) fn parse_form_event_block(field: &str) -> Option<Vec<FormEventBinding
     let mut first = Vec::with_capacity(count);
     for index in 0..count {
         let event = fields.get(1 + 2 * index)?.trim();
-        let (handler, _) = parse_1c_quoted_string_with_len(fields.get(2 + 2 * index)?.trim())?;
+        let handler = parse_event_handler(fields.get(2 + 2 * index)?)?;
         first.push((event, handler));
     }
     let mut at = 1 + 2 * count;
@@ -73,7 +81,7 @@ pub(super) fn parse_form_event_block(field: &str) -> Option<Vec<FormEventBinding
             });
         }
         for _ in 1..handlers {
-            let (extra, _) = parse_1c_quoted_string_with_len(fields.get(at)?.trim())?;
+            let extra = parse_event_handler(fields.get(at)?)?;
             let code: u8 = fields.get(at + 1)?.trim().parse().ok()?;
             if usize::from(code) >= CALL_TYPES.len() {
                 return None;
@@ -133,6 +141,10 @@ impl EventCallTypes {
     }
 }
 
+fn adoption_event_name(identifier: &str) -> Option<&'static str> {
+    form_event_name_from_identifier(identifier)
+        .or_else(|| super::form::xml_2_21_writer::group_event_name_8_5_1(identifier))
+}
 /// Call types over every event block of the form body text. One procedure
 /// may intercept two events under two call types (fixture
 /// `adopted/form_events_shared`: `Before` on OnOpen, `After` on BeforeClose),
@@ -152,8 +164,7 @@ pub(super) fn form_event_call_types(text: &str) -> EventCallTypes {
         };
         for binding in bindings {
             let identifier = binding.event.trim().trim_matches('"').to_owned();
-            let event =
-                form_event_name_from_identifier(&identifier).map_or(identifier, str::to_owned);
+            let event = adoption_event_name(&identifier).map_or(identifier, str::to_owned);
             found.insert(
                 event,
                 binding.handler,
@@ -162,56 +173,6 @@ pub(super) fn form_event_call_types(text: &str) -> EventCallTypes {
         }
     }
     found
-}
-
-// Compatibility for the guarded no-BaseForm extension path. The native
-// FormAdoption writer continues to own forms that carry their base record.
-/// `xml` with `callType` on every `<Event>` whose handler the map knows.
-pub(super) fn with_event_call_types(xml: &str, call_types: &EventCallTypes) -> String {
-    let mut out = String::with_capacity(xml.len() + 64);
-    let mut rest = xml;
-    while let Some(at) = rest.find("<Event name=\"") {
-        out.push_str(&rest[..at]);
-        rest = &rest[at..];
-        let Some(open_end) = rest.find('>') else {
-            break;
-        };
-        let Some(close) = rest.find("</Event>") else {
-            break;
-        };
-        let open = &rest[..open_end];
-        let handler = unescape_xml_text(&rest[open_end + 1..close]);
-        let name_start = "<Event name=\"".len();
-        let event = open[name_start..]
-            .find('"')
-            .map(|end| unescape_xml_text(&open[name_start..name_start + end]))
-            .unwrap_or_default();
-        match call_types.get(&event, &handler) {
-            Some(call_type) if !open.contains("callType=") => {
-                out.push_str(open);
-                out.push_str(&format!(" callType=\"{call_type}\""));
-            }
-            _ => out.push_str(open),
-        }
-        rest = &rest[open_end..];
-    }
-    out.push_str(rest);
-    out
-}
-
-/// `xml` with `callType="Before"` on every command handler. The commands of
-/// an adopted form on record (six of an extension's common form in the БСП
-/// 8.3.27 ServiceDesk) all say `Before`; where the command record keeps a code
-/// for an interceptor that would say otherwise is not on record.
-pub(super) fn with_action_call_types(xml: &str) -> String {
-    xml.replace("<Action>", "<Action callType=\"Before\">")
-}
-
-fn unescape_xml_text(text: &str) -> String {
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&amp;", "&")
 }
 
 /// What the writer spells for an adopted form beyond its body, read once by
@@ -231,6 +192,10 @@ pub(super) struct FormAdoption {
 }
 
 impl FormAdoption {
+    /// The stored call type of an event restored by a dialect-specific writer.
+    pub(super) fn event_call_type(&self, event: &str, handler: &str) -> Option<&'static str> {
+        self.call_types.get(event, handler)
+    }
     /// Hands every event handler of the form's model its call type, and every
     /// command handler the form's: the writer then spells `callType` where
     /// the model says so.
@@ -322,10 +287,16 @@ pub(super) fn form_adoption(
     context: &FormParseContext<'_>,
     source_version: InfobaseConfigSourceVersion,
     object_refs: &BTreeMap<String, String>,
+    adopted: bool,
 ) -> Result<Option<FormAdoption>> {
     let Some(base) = adopted_base_form(body) else {
-        return Ok(None);
+        return if adopted {
+            adoption_without_base_form(&body.layout).map(Some)
+        } else {
+            Ok(None)
+        };
     };
+    let base_call_types = form_event_call_types(&base.layout);
     let v85 = source_version == InfobaseConfigSourceVersion::V2_21;
     let (base, facts) = if v85 && super::form::layout_8_5_1::is_form_body_8_5_1(&base) {
         let (converted, facts) = super::form::layout_8_5_1::down_convert_form_body_8_5_1(&base)
@@ -337,7 +308,7 @@ pub(super) fn form_adoption(
     // The base form's own handlers are interceptors too (fixture
     // `adopted/form_events`: every event of the base form says `Before`).
     let base_adoption = FormAdoption {
-        call_types: form_event_call_types(&base.layout),
+        call_types: base_call_types,
         command_call_type: None,
         base_form: None,
     };
@@ -353,7 +324,13 @@ pub(super) fn form_adoption(
     let base_xml = match (v85, &facts) {
         (false, _) => base_xml,
         (true, Some(facts)) => {
-            super::form::xml_2_21_writer::apply_form_facts_8_5_1(base_xml, facts, object_refs)?.0
+            super::form::xml_2_21_writer::apply_form_facts_8_5_1(
+                base_xml,
+                facts,
+                object_refs,
+                Some(&base_adoption),
+            )?
+            .0
         }
         (true, None) => super::form::xml_2_21_writer::apply_xml_2_21_upgrade_defaults(base_xml)?,
     };
@@ -365,6 +342,41 @@ pub(super) fn form_adoption(
     }))
 }
 
+/// The adoption facts of an adopted form that keeps no base form record
+/// (ServiceDesk's adopted `CommonForm.СвязанныеДокументы`, fixture
+/// `native-evidence/extension-form-interceptors`): the call types its event
+/// blocks store, `Before` on its commands, no `<BaseForm>`. An event block
+/// whose head is recognized but whose tail is not is refused rather than
+/// read as `Before`.
+pub(super) fn adoption_without_base_form(layout: &str) -> Result<FormAdoption> {
+    for (start, _) in layout.match_indices('{') {
+        let Some(end) = scan_1c_braced_value(layout, start) else {
+            continue;
+        };
+        let block = &layout[start..end];
+        let Some(fields) = split_1c_braced_fields(block, 0) else {
+            continue;
+        };
+        let Some(identifier) = fields.get(1) else {
+            continue;
+        };
+        if adoption_event_name(identifier.trim().trim_matches('"')).is_some()
+            && fields
+                .first()
+                .is_some_and(|count| count.trim().parse::<usize>().is_ok())
+            && parse_form_event_block(block).is_none()
+        {
+            anyhow::bail!("unsupported or malformed adopted form event block for {identifier}");
+        }
+    }
+    Ok(FormAdoption {
+        call_types: form_event_call_types(layout),
+        // `Before`.
+        command_call_type: Some(CALL_TYPES[0]),
+        base_form: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,6 +384,27 @@ mod tests {
     #[test]
     fn a_count_beyond_the_fields_is_no_event_block() {
         assert!(parse_form_event_block("{18446744073709551615,e,\"h\",1,0,e,0,1}").is_none());
+    }
+
+    #[test]
+    fn first_handler_token_must_be_consumed_completely() {
+        assert!(parse_form_event_block(r#"{1,e,"Handler"UNMODELED,1,0,e,0,1}"#).is_none());
+    }
+
+    #[test]
+    fn additional_handler_token_must_be_consumed_completely() {
+        assert!(
+            parse_form_event_block(r#"{1,e,"",1,0,e,0,2,"AfterHandler"UNMODELED,1}"#).is_none()
+        );
+    }
+
+    #[test]
+    fn complete_handler_tokens_keep_whitespace_and_doubled_quotes() {
+        let bindings =
+            parse_form_event_block(r#"{1,e, "First""Handler" ,1,0,e,0,2, "After""Handler" ,1}"#)
+                .unwrap();
+        assert_eq!(bindings[0].handler, "First\"Handler");
+        assert_eq!(bindings[1].handler, "After\"Handler");
     }
 
     #[test]
@@ -435,6 +468,49 @@ mod tests {
         assert_eq!(items[0].events[0].call_type, Some("Before"));
         let tooltip = items[0].child_items[0].extended_tooltip.as_ref().unwrap();
         assert_eq!(tooltip.events[0].call_type, Some("Before"));
+    }
+
+    #[test]
+    fn an_adopted_form_without_a_base_record_carries_the_stored_call_types() {
+        // Native 8.3.27.2214 blocks of an adopted common form without
+        // BaseForm (`extension-form-interceptors`).
+        for (call_type, block) in [
+            (
+                "Before",
+                include_str!(
+                    "../../tests/fixtures/native-evidence/extension-form-interceptors/before.block.txt"
+                ),
+            ),
+            (
+                "After",
+                include_str!(
+                    "../../tests/fixtures/native-evidence/extension-form-interceptors/after.block.txt"
+                ),
+            ),
+            (
+                "Override",
+                include_str!(
+                    "../../tests/fixtures/native-evidence/extension-form-interceptors/override.block.txt"
+                ),
+            ),
+        ] {
+            let adoption = adoption_without_base_form(block.trim()).unwrap();
+            let mut events = vec![event("OnCreateAtServer", "ПриСозданииНаСервере")];
+            let mut commands = Vec::new();
+            adoption.mark(&mut events, None, &mut [], &mut commands);
+            assert_eq!(events[0].call_type, Some(call_type), "{block}");
+            assert_eq!(adoption.command_call_type, Some("Before"));
+            assert!(adoption.base_form.is_none());
+        }
+    }
+
+    #[test]
+    fn a_malformed_interceptor_block_without_a_base_record_is_refused() {
+        const EVENT: &str = "9f2e5ddb-3492-4f5d-8f0d-416b8d1d5c5b";
+        for tail in ["3,1", "0,2,\"Handler\",3", "0,0", "0,2", "0,1,extra"] {
+            let block = format!("{{1,{EVENT},\"Handler\",1,0,{EVENT},{tail}}}");
+            assert!(adoption_without_base_form(&block).is_err(), "{block}");
+        }
     }
 
     #[test]
