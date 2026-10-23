@@ -41,7 +41,8 @@ $work = "$env:TEMP\all-types"; New-Item -ItemType Directory -Force $work | Out-N
 
 Both dumps have the same layout relative to their roots (`$work\plat` holds
 `ВнешняяОбработка1.xml` and `ВнешняяОбработка1\`; `$work\rs` the same), so the
-two trees are compared file by file. **Identical.**
+two trees are compared file by file. They agree except for the two known
+relative Planner-period dates in the Designer form (see below).
 
 ### 2. XML → `.epf`, both tools
 
@@ -67,8 +68,9 @@ each with the same tool and diff the trees.
 & $rs cf export --overwrite --platform 8.3.27.2214 "$work\rs.epf" "$work\rs3"
 ```
 
-`$work\plat3` and `$work\rs3` **identical**, and this dump equals the one from
-step 1.
+`$work\plat3` and `$work\rs3` **identical**. Comparison with the Designer input from step 1 still allows
+only the two documented relative Planner-period dates; step 1 is not a
+byte-identical platform comparison.
 
 ### Current status
 
