@@ -133,3 +133,29 @@ This is local client/server-contract evidence, not a new native CONFIGSAVE oracl
 or live SQL login. Exact-head fork CI must still validate Windows packaging and
 installation. Existing publication, screenshot and release acceptance limits remain.
 No additional bot review request or manual workflow rerun was sent.
+
+## Shared current-crash follow-up
+
+Reused the three-file donor `a3ede3682b99efde6d9caee730bfa736acb78c3e` from #477,
+over the previously integrated b6aca400. A current startup/connect crash could
+advance the selection generation before its catch handler reported the error,
+leaving a disconnected state with no visible explanation. The existing current
+selection callback now reports one sanitized error before invalidation; this
+branch's object clearing, executable resolver and protocol wiring remain intact.
+A stale old connection still cannot notify or replace the new selection.
+
+The donor's password test records callback observations and asserts afterward,
+preventing the command handler from swallowing test assertion failures. Reused
+current/stale crash tests and the actual missing-executable transport regression.
+Before applying the runtime fix, the current startup case reproduced zero visible
+errors rather than one. After integration: all 45 client tests, five packaging/
+checkout checks, esbuild bundle, formatting and whitespace pass. Independent
+integrated read-only review found no blocker. Retained logs:
+
+- `logs/issue-385-crash-followup-before.log`
+- `logs/issue-385-crash-followup-green.log`
+
+No new local host, Cargo, native, SQL or ERP process was started. Fresh host coverage
+for this follow-up is explicitly pending the current #485 → #357 → #483 queue;
+earlier host runs do not validate this new path. Do not attribute donor host
+coverage to this branch. Ordinary exact-head CI and owner acceptance remain pending.
