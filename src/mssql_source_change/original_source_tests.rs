@@ -35,7 +35,7 @@ impl Drop for Fixture {
                 .unwrap()
                 .starts_with("ibcmd-original-source-")
         );
-        if self.path.is_dir() {
+        if self.path.is_dir() && std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
             fs::remove_dir_all(&self.path).unwrap();
         }
     }
@@ -101,6 +101,15 @@ fn selected_classification_uses_one_immutable_original_owner() {
     fixture.write("CommonModules/M.xml", b"metadata");
     fixture.write(selected, b"new");
     let original = HeldSourceRoot::open_source_operation(&fixture.path, selected).unwrap();
+    assert!(
+        original
+            .baseline()
+            .file(selected)
+            .unwrap()
+            .unwrap()
+            .original
+            .is_some()
+    );
     let active = SourceInventory::from_files(vec![
         SourceFileDigest::for_bytes("Configuration.xml", b"root").unwrap(),
         SourceFileDigest::for_bytes("CommonModules/M.xml", b"metadata").unwrap(),
@@ -223,7 +232,19 @@ fn hardlink_alias_is_refused_before_original_consumption() {
 fn windows_required_original_and_ancestors_exclude_write_delete_share() {
     let fixture = Fixture::new();
     fixture.write("Files/payload.bin", b"bound");
-    let original = fixture.original();
+    // Required selected capabilities retain their original Windows handles;
+    // generic compiler XML consumption instead uses detached witnesses.
+    let original =
+        HeldSourceRoot::open_source_operation(&fixture.path, "Files/payload.bin").unwrap();
+    assert!(
+        original
+            .baseline()
+            .file("Files/payload.bin")
+            .unwrap()
+            .unwrap()
+            .original
+            .is_some()
+    );
     let bytes = original.source_bytes("Files/payload.bin").unwrap();
     assert_eq!(bytes.as_slice(), b"bound");
     assert!(fs::write(fixture.path.join("Files/payload.bin"), b"other").is_err());
@@ -232,6 +253,38 @@ fn windows_required_original_and_ancestors_exclude_write_delete_share() {
     original.require_unchanged().unwrap();
     drop(original);
     fs::write(fixture.path.join("Files/payload.bin"), b"other").unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_detached_compiler_cache_retains_bytes_and_rejects_later_mutation() {
+    for mutation in ["write", "ancestor"] {
+        let fixture = Fixture::new();
+        fixture.write("Files/payload.bin", b"bound");
+        let original = fixture.original();
+        assert!(
+            original
+                .baseline()
+                .file("Files/payload.bin")
+                .unwrap()
+                .unwrap()
+                .original
+                .is_none()
+        );
+        let bytes = original.source_bytes("Files/payload.bin").unwrap();
+        original.require_unchanged().unwrap();
+        match mutation {
+            "write" => fs::write(fixture.path.join("Files/payload.bin"), b"other").unwrap(),
+            "ancestor" => {
+                fs::rename(fixture.path.join("Files"), fixture.path.join("Moved")).unwrap()
+            }
+            _ => unreachable!(),
+        }
+        let cached = original.source_bytes("Files/payload.bin").unwrap();
+        assert!(Arc::ptr_eq(&bytes, &cached));
+        assert_eq!(cached.as_slice(), b"bound");
+        assert!(original.require_unchanged().is_err(), "{mutation}");
+    }
 }
 
 #[cfg(unix)]
