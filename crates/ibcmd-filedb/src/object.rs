@@ -269,10 +269,29 @@ mod budget_tests {
         fs::{self, OpenOptions},
         io::{Seek, SeekFrom, Write},
     };
-    #[test]
-    fn sparse_large_fat_vectors_are_rejected_before_allocation() {
-        let path =
-            std::env::temp_dir().join(format!("filedb-sparse-budget-{}", std::process::id()));
+    struct Scratch(std::path::PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "filedb-fat-budget-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            // Only the two names created by this fixture; file handles drop first.
+            let _ = fs::remove_file(self.0.join("fixture"));
+            let _ = fs::remove_dir(&self.0);
+        }
+    }
+    fn rejects_fat_allocation(count: u32) {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("fixture");
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -280,7 +299,6 @@ mod budget_tests {
             .open(&path)
             .unwrap();
         let ps = 4096usize;
-        let count = 1_000_000u32;
         file.set_len(ps as u64 * count as u64).unwrap();
         let mut header = vec![0; ps];
         header[..8].copy_from_slice(b"1CDBMSV8");
@@ -308,8 +326,34 @@ mod budget_tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("materialization limit"));
-        drop(pager);
-        drop(file);
-        fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn fat_vector_budget_is_enforced_on_every_platform() {
+        rejects_fat_allocation(16);
+    }
+    // set_len is sparse on the Unix lab filesystems. Never request a 4GB
+    // extension from Windows, where it can allocate/zero the entire extent.
+    #[cfg(unix)]
+    #[test]
+    fn sparse_large_fat_vectors_are_rejected_before_allocation() {
+        rejects_fat_allocation(1_000_000);
+    }
+    #[test]
+    fn fixture_cleanup_runs_during_unwind() {
+        let mut path = None;
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let scratch = Scratch::new();
+                path = Some(scratch.0.clone());
+                let _file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(scratch.0.join("fixture"))
+                    .unwrap();
+                panic!("synthetic fixture failure");
+            }))
+            .is_err()
+        );
+        assert!(!path.unwrap().exists());
     }
 }
