@@ -13,3 +13,9 @@ _onecdec/corpora.local.json
 .claude/worktrees/
 __pycache__/
 *.pyc
+
+# Bundled editor build products
+/editors/vscode/node_modules/
+/editors/vscode/out/
+/editors/vscode/dist/
+*.vsix

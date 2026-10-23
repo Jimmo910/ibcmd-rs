@@ -126,12 +126,14 @@ async function harness({
             clear() {}
           },
         };
+      if (id === "./executable") return require("../out/executable");
       if (id === "./status") return require("../out/status");
       return require(id);
     },
   });
   const api = await module.exports.activate({
     subscriptions: [],
+    extensionPath: path.resolve(__dirname, ".."),
     secrets: {
       get: async () => stored,
       store: async (key, value) => {

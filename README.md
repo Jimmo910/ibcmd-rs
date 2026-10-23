@@ -481,3 +481,13 @@ ibcmd-rs cf load F:\src\MyExtension-edit F:\cf\MyExtension-new.cfe --base F:\cf\
 - [scripts/empty-load](scripts/empty-load) — скрипты проверки загрузки в пустую
   базу; [scripts/timing](scripts/timing) — замеры против штатного `ibcmd`.
 - [openspec/changes](openspec/changes) — спецификации и результаты проверок.
+
+## Расширение VS Code и Cursor
+
+Клиент показывает подключения и дерево объектов лабораторной базы. Платформенный
+VSIX включает `ibcmd-rs`; Windows x64 — `ibcmd-rs.exe`. Свой исполняемый файл задаётся
+машинной настройкой `ibcmd-rs.path`. [Установка, сборка и проверки](editors/vscode/README.md#platform-vsix-packaging-and-installation).
+
+![Дерево офлайн-фикстуры — иллюстрация, проверенная через API редактора](editors/vscode/images/offline-tree.svg)
+
+Публикация Marketplace/Open VSX и выпуск релиза остаются шагами владельца.

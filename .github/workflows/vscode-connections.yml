@@ -1,9 +1,9 @@
 name: VSCode connections
 on:
   pull_request:
-    paths: ['editors/vscode/**', 'src/server/**', 'tests/editor_server.rs', '.github/workflows/vscode-connections.yml']
+    paths: ['editors/vscode/**', 'src/server/**', 'tests/editor_server.rs', '.github/workflows/vscode-connections.yml', '.github/workflows/release.yml']
   push:
-    paths: ['editors/vscode/**', 'src/server/**', 'tests/editor_server.rs', '.github/workflows/vscode-connections.yml']
+    paths: ['editors/vscode/**', 'src/server/**', 'tests/editor_server.rs', '.github/workflows/vscode-connections.yml', '.github/workflows/release.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -25,8 +25,15 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - run: cargo test --locked --test editor_server --no-default-features
       - run: npm ci
+        working-directory: editors/vscode
+      - run: npm run bundle
+        working-directory: editors/vscode
+      - run: npm run test:package
         working-directory: editors/vscode
       - run: npm run format:check
         working-directory: editors/vscode
@@ -46,3 +53,40 @@ jobs:
           export IBCMD_TEST_ROWS="${TMPDIR:-/tmp}/ibcmd-external-editor-server-protocol/rows/demo"
           xvfb-run -a npm run test:host
         working-directory: editors/vscode
+      - name: Build Windows platform VSIX
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: editors/vscode
+        run: |
+          cargo build --locked --release --no-default-features --manifest-path ../../Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'Binary build failed' }
+          $env:SOURCE_DATE_EPOCH = git log -1 --format=%ct
+          python scripts/package.py --target win32-x64 --binary ../../target/release/ibcmd-rs.exe --out ../../target/vsix/ibcmd-rs-win32-x64.vsix
+          if ($LASTEXITCODE -ne 0) { throw 'VSIX packaging failed' }
+          python scripts/package.py --target win32-x64 --binary ../../target/release/ibcmd-rs.exe --out ../../target/vsix/repeated.vsix
+          if ($LASTEXITCODE -ne 0) { throw 'Repeated VSIX packaging failed' }
+          if ((Get-FileHash ../../target/vsix/ibcmd-rs-win32-x64.vsix).Hash -ne (Get-FileHash ../../target/vsix/repeated.vsix).Hash) { throw 'Non-reproducible VSIX' }
+      - name: Install packaged Windows extension in clean editor and verify offline tree
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: editors/vscode
+        run: |
+          $env:IBCMD_TEST_ROOT = Join-Path $env:RUNNER_TEMP 'ibcmd-installed-host'
+          $env:IBCMD_TEST_VSIX = Join-Path $env:GITHUB_WORKSPACE 'target/vsix/ibcmd-rs-win32-x64.vsix'
+          $env:IBCMD_TEST_ROWS = Join-Path ([System.IO.Path]::GetTempPath()) 'ibcmd-external-editor-server-protocol/rows/demo'
+          npm run test:installed
+          if ($LASTEXITCODE -ne 0) { throw 'Installed extension acceptance failed' }
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: vscode-win32-x64
+          path: |
+            target/vsix/ibcmd-rs-win32-x64.vsix
+            target/vsix/ibcmd-rs-win32-x64.vsix.sha256
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: vscode-installed-acceptance
+          path: ${{ runner.temp }}/ibcmd-installed-host/**/acceptance.json
+          if-no-files-found: warn

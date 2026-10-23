@@ -4,6 +4,7 @@ import { RpcClient, RpcError } from "./rpc";
 import { Database, editConfig, idOf, snapshot, saveConfig } from "./config";
 import { Base, Metadata, Generation, pendingText } from "./status";
 
+import { resolveExecutable } from "./executable";
 import { ObjectView } from "./object-view";
 
 export function secretKey(folder: string, id: string, user: string): string {
@@ -27,6 +28,12 @@ export async function activate(context: vscode.ExtensionContext) {
   const generation = new Generation();
   const config = (f: vscode.WorkspaceFolder) =>
     vscode.workspace.getConfiguration("ibcmd", f.uri);
+  const executable = () =>
+    resolveExecutable(
+      context.extensionPath,
+      vscode.workspace.getConfiguration("ibcmd-rs").get<string>("path", ""),
+      vscode.workspace.getConfiguration("ibcmd").get<string>("executable", ""),
+    );
   const file = (f: vscode.WorkspaceFolder) =>
     path.join(f.uri.fsPath, "ibcmd-rs.toml");
   const metadata = (f: vscode.WorkspaceFolder): Record<string, Metadata> =>
@@ -54,11 +61,7 @@ export async function activate(context: vscode.ExtensionContext) {
   }
   async function start(f: vscode.WorkspaceFolder, onCrash = () => {}) {
     // Executable is machine-scoped: workspace content cannot choose a program to execute.
-    const rpc = new RpcClient(
-      config(f).get<string>("executable", "ibcmd-rs"),
-      f.uri.fsPath,
-      onCrash,
-    );
+    const rpc = new RpcClient(executable(), f.uri.fsPath, onCrash);
     try {
       await rpc.request("initialize", {
         protocolVersion: "1.1",
@@ -401,10 +404,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const local = readLocal(expected, old?.id);
     const next = editConfig(expected, local ? old?.id : undefined, database);
     // Validate the exact platform with the real server before writing the file. No login/query.
-    const validator = new RpcClient(
-      config(f).get("executable", "ibcmd-rs"),
-      f.uri.fsPath,
-    );
+    const validator = new RpcClient(executable(), f.uri.fsPath);
     try {
       await validator.request("initialize", {
         protocolVersion: "1.1",
@@ -478,7 +478,8 @@ export async function activate(context: vscode.ExtensionContext) {
     );
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("ibcmd")) void invalidate();
+      if (e.affectsConfiguration("ibcmd") || e.affectsConfiguration("ibcmd-rs"))
+        void invalidate();
     }),
   );
   const watcher = vscode.workspace.createFileSystemWatcher("**/ibcmd-rs.toml");
