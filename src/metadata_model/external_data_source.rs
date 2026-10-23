@@ -135,7 +135,8 @@ impl Record {
 
     fn from_brace(row: &Brace) -> Result<Self> {
         let outer = list(row)?;
-        if outer.len() < schema::OUTER_ARITY || atom(&outer[0])? != "1" || atom(&outer[2])? != "3" {
+        if outer.len() != schema::OUTER_ARITY || atom(&outer[0])? != "1" || atom(&outer[2])? != "3"
+        {
             bail!("ExternalDataSource invalid outer layout");
         }
         let body = list(&outer[1])?;
@@ -193,17 +194,25 @@ impl Record {
         let mut cubes = Vec::new();
         let mut tables = Vec::new();
         let mut functions = Vec::new();
+        let mut seen_collections = BTreeSet::new();
         for collection in &outer[3..] {
             let fields = list(collection)?;
             if fields.len() < 2 {
                 bail!("ExternalDataSource short child collection");
             }
+            if !seen_collections.insert(atom(&fields[0])?) {
+                bail!("ExternalDataSource duplicate child collection");
+            }
             let count = atom(&fields[1])?
                 .parse::<usize>()
                 .map_err(|_| anyhow!("ExternalDataSource child count"))?;
-            let members = fields
-                .get(2..2 + count)
-                .ok_or_else(|| anyhow!("ExternalDataSource short child collection"))?;
+            let end = 2usize
+                .checked_add(count)
+                .ok_or_else(|| anyhow!("ExternalDataSource child count overflows"))?;
+            if fields.len() != end {
+                bail!("ExternalDataSource child count does not match members");
+            }
+            let members = &fields[2..];
             match atom(&fields[0])? {
                 id if id == child_schema::ROOT_CUBES_COLLECTION => {
                     cubes = uuid_members(members)?;

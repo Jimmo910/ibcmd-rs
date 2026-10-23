@@ -536,3 +536,25 @@ fn a_compact_bag_group_reads_popup_behavior() {
     let xml = format_form_child_items_xml(&[item], 1);
     assert!(xml.contains("<Behavior>PopUp</Behavior>"), "{xml}");
 }
+
+#[test]
+fn eds_guard_stored_reference_is_not_marked_foreign() {
+    let id = "aaaaaaaa-0000-4000-8000-000000000001";
+    let mut indexes = MetadataTypeIndexes::default();
+    indexes
+        .references
+        .insert(id.to_owned(), "cfg:CatalogRef.Own".to_owned());
+    merge_foreign_type_references(
+        &mut indexes,
+        &ForeignReferences {
+            objects: BTreeMap::new(),
+            types: vec![(
+                id.to_owned(),
+                "cfg:CatalogRef.Foreign".to_owned(),
+                "Ref".to_owned(),
+            )],
+        },
+    );
+    assert!(indexes.foreign.is_empty());
+    assert_eq!(indexes.references[id], "cfg:CatalogRef.Own");
+}

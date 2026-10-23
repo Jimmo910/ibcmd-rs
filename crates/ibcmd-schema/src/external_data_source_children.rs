@@ -229,3 +229,283 @@ pub const fn record_code(kind: &str) -> &'static str {
         _ => "",
     }
 }
+
+/// Unrendered body properties. The exact defaults are shared by the public
+/// eds-matrix/eds-corpus2 rows and the independent eds-branch table.
+/// A one-member brace wrapper retains scalar/string/list distinctions.
+pub struct UnmodeledDefault {
+    pub body_slot: usize,
+    pub wrapped_value: &'static str,
+}
+
+pub const TABLE_PRESENTATION_SLOT: usize = 32;
+pub const TABLE_KEY_FIELDS_SLOT: usize = 18;
+pub const TABLE_INPUT_BY_STRING_SLOT: usize = 33;
+pub const CUBE_UNMODELED_DEFAULTS: &[UnmodeledDefault] = &[
+    UnmodeledDefault {
+        body_slot: 15,
+        wrapped_value: r#"{0}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 17,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 18,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 19,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 20,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 21,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 22,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 23,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 24,
+        wrapped_value: r#"{{0,{0}}}"#,
+    },
+];
+
+pub const TABLE_UNMODELED_DEFAULTS: &[UnmodeledDefault] = &[
+    UnmodeledDefault {
+        body_slot: 19,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 23,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 24,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 25,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 26,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 27,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 28,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 29,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 30,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 31,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: TABLE_PRESENTATION_SLOT,
+        wrapped_value: r#"{{0,{0}}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 34,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 35,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 38,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 39,
+        wrapped_value: r#"{{"U"}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 40,
+        wrapped_value: r#"{0}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 41,
+        wrapped_value: r#"{{1,2,0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 42,
+        wrapped_value: r#"{0}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 43,
+        wrapped_value: r#"{0}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 44,
+        wrapped_value: r#"{{0,"","",{0,0,0}}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 45,
+        wrapped_value: r#"{0}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 46,
+        wrapped_value: r#"{0}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 47,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 48,
+        wrapped_value: r#"{1}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 49,
+        wrapped_value: r#"{{0,0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 50,
+        wrapped_value: r#"{{1,{0,0}}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 51,
+        wrapped_value: r#"{0}"#,
+    },
+];
+
+pub const DIMENSION_TABLE_UNMODELED_DEFAULTS: &[UnmodeledDefault] = &[
+    UnmodeledDefault {
+        body_slot: 10,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 11,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 12,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 15,
+        wrapped_value: r#"{00000000-0000-0000-0000-000000000000}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 18,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 19,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 20,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 21,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 22,
+        wrapped_value: r#"{{0,{0}}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 23,
+        wrapped_value: r#"{{0}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 24,
+        wrapped_value: r#"{0}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 25,
+        wrapped_value: r#"{{0,{0}}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 26,
+        wrapped_value: r#"{""}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 27,
+        wrapped_value: r#"{0}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 29,
+        wrapped_value: r#"{{"U"}}"#,
+    },
+    UnmodeledDefault {
+        body_slot: 30,
+        wrapped_value: r#"{0}"#,
+    },
+];
+
+#[must_use]
+pub fn unmodeled_defaults(kind: &str) -> &'static [UnmodeledDefault] {
+    match kind {
+        CUBE_KIND => CUBE_UNMODELED_DEFAULTS,
+        TABLE_KIND => TABLE_UNMODELED_DEFAULTS,
+        DIMENSION_TABLE_KIND => DIMENSION_TABLE_UNMODELED_DEFAULTS,
+        _ => &[],
+    }
+}
+
+pub const ROW_COLLECTION_COUNT_SLOT: usize = 2;
+pub const ROW_COLLECTIONS_START: usize = 3;
+pub const COLLECTION_COUNT_SLOT: usize = 1;
+pub const COLLECTION_ITEMS_START: usize = 2;
+pub const DIMENSION_PRESENTATION_FIELD_SLOT: usize = 14;
+pub const DIMENSION_MEMBER_FIELD_SLOT: usize = 31;
+pub const DIMENSION_PARENT_FIELD_SLOT: usize = 32;
+pub const KEY_FIELD_REF_TYPE: &str = "157fa490-4ce9-11d4-9415-008048da11f9";
+pub const INPUT_BY_STRING_REF_TYPE: &str = "60ea359f-3a6e-48bb-8e71-d2a457572918";
+pub const INPUT_BY_STRING_ITEMS_SLOT: usize = 1;
+
+/// Known collections and whether their members can be rendered.
+#[must_use]
+pub fn collection_is_rendered(kind: &str, id: &str) -> Option<bool> {
+    let collections: &[(&str, bool)] = match kind {
+        CUBE_KIND => &[
+            (CUBE_FORMS_COLLECTION, false),
+            (TEMPLATES_COLLECTION, false),
+            (CUBE_COMMANDS_COLLECTION, false),
+            (CUBE_DIMENSION_TABLES_COLLECTION, true),
+            (CUBE_INLINE_DIMENSIONS_COLLECTION, true),
+            (CUBE_INLINE_RESOURCES_COLLECTION, true),
+        ],
+        TABLE_KIND => &[
+            (TABLE_FORMS_COLLECTION, false),
+            (TEMPLATES_COLLECTION, false),
+            (TABLE_COMMANDS_COLLECTION, false),
+            (FIELDS_COLLECTION, true),
+        ],
+        DIMENSION_TABLE_KIND => &[
+            (DIMENSION_TABLE_FORMS_COLLECTION, false),
+            (TEMPLATES_COLLECTION, false),
+            (DIMENSION_TABLE_COMMANDS_COLLECTION, false),
+            (FIELDS_COLLECTION, true),
+        ],
+        _ => &[],
+    };
+    collections
+        .iter()
+        .find_map(|(known, rendered)| (*known == id).then_some(*rendered))
+}

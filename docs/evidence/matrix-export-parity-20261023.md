@@ -18,8 +18,8 @@ missing   1  (ConfigDumpInfo.xml, known exception)
 extra     0
 ```
 
-All eight matrix objects are byte-identical to the platform, including their
-tabular sections and nested attributes:
+The ten matrix roots below are byte-identical to the platform, including their
+tabular sections and nested attributes. The EDS tree is listed separately:
 
 - `Catalogs/Справочник1.xml` — cross-object `ChoiceForm`;
 - `Documents/Документ1.xml` — same;

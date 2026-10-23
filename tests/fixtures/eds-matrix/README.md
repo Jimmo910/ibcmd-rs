@@ -63,3 +63,12 @@ ibcmd-rs cf export --overwrite --platform 8.3.27.2214 \
 The four expected files above must be byte-identical to
 `tests/fixtures/eds-matrix/*.xml`; no file under `IntegrationServices/` may be
 named `Куб1.xml` or `ТаблицаИзмерения1.xml`.
+
+The native XML oracle files in eds-matrix and eds-corpus2 retain CRLF bytes
+in Git via the scoped .gitattributes rules. The tests compare the complete
+bytes on every OS; they do not normalize XML text or string values.
+
+Unrendered EDS properties are admitted only at their exact schema-owned
+measured defaults. Nonempty presentation data, changed unmodeled scalars,
+malformed child collections and nonempty unsupported form/template/command
+collections are refused rather than exported as empty/default XML.

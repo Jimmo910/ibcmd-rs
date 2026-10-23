@@ -22,11 +22,6 @@ use super::export::{
 };
 use super::xml::Element;
 
-/// Type id of a `KeyFields` typed reference list.
-const KEY_FIELD_REF_TYPE: &str = "157fa490-4ce9-11d4-9415-008048da11f9";
-/// Type id of an `InputByString` typed reference list (stored one level deeper).
-const INPUT_BY_STRING_REF_TYPE: &str = "60ea359f-3a6e-48bb-8e71-d2a457572918";
-
 /// The owner payload of a child descriptor: `{<code>,<header>,<types...>,...}`.
 struct Row<'a> {
     root: &'a [Brace],
@@ -55,28 +50,49 @@ impl<'a> Row<'a> {
         header(&Brace::List(head.to_vec()))
     }
 
-    fn items(&self, collection: &str) -> Result<&'a [Brace]> {
-        let count = usize::try_from(super::export::number(item(self.root, 2)?)?)
-            .map_err(|_| anyhow!("collection count does not fit"))?;
-        let fields = self
-            .root
-            .iter()
-            .skip(3)
-            .take(count)
-            .find_map(|node| {
-                let fields = node.as_list()?;
-                (fields.first()?.as_atom()? == collection).then_some(fields)
-            })
-            .ok_or_else(|| anyhow!("no {collection} collection"))?;
-        let count = usize::try_from(super::export::number(item(fields, 1)?)?)
+    fn optional_items(&self, collection: &str) -> Result<Option<&'a [Brace]>> {
+        let count = usize::try_from(super::export::number(item(
+            self.root,
+            schema::ROW_COLLECTION_COUNT_SLOT,
+        )?)?)
+        .map_err(|_| anyhow!("collection count does not fit"))?;
+        if self.root.len().checked_sub(schema::ROW_COLLECTIONS_START) != Some(count) {
+            bail!("descriptor collection count does not match its members");
+        }
+        let mut found = None;
+        let mut seen = std::collections::BTreeSet::new();
+        for node in &self.root[schema::ROW_COLLECTIONS_START..] {
+            let fields = list(node)?;
+            let id = atom(item(fields, 0)?)?;
+            if !seen.insert(id) {
+                bail!("duplicate {id} collection");
+            }
+            let count = usize::try_from(super::export::number(item(
+                fields,
+                schema::COLLECTION_COUNT_SLOT,
+            )?)?)
             .map_err(|_| anyhow!("item count does not fit"))?;
-        fields
-            .get(2..2 + count)
-            .ok_or_else(|| anyhow!("{collection} is shorter than {count}"))
+            let end = schema::COLLECTION_ITEMS_START
+                .checked_add(count)
+                .ok_or_else(|| anyhow!("{id} count overflows"))?;
+            if fields.len() != end {
+                bail!("{id} count does not match its members");
+            }
+            let rendered = schema::collection_is_rendered(parsed_kind(self.payload)?, id)
+                .ok_or_else(|| anyhow!("unknown {id} child collection"))?;
+            if count != 0 && !rendered {
+                bail!("nonempty {id} child collection is not supported");
+            }
+            if id == collection {
+                found = Some(&fields[schema::COLLECTION_ITEMS_START..]);
+            }
+        }
+        Ok(found)
     }
 
-    fn has_collection(&self, collection: &str) -> bool {
-        self.items(collection).is_ok()
+    fn items(&self, collection: &str) -> Result<&'a [Brace]> {
+        self.optional_items(collection)?
+            .ok_or_else(|| anyhow!("no {collection} collection"))
     }
 }
 
@@ -299,23 +315,29 @@ fn table_ref_lists(row: &Row<'_>) -> Result<(Vec<String>, Vec<String>)> {
             })
             .collect()
     };
-    let mut key_fields = Vec::new();
-    for node in row.payload.iter().skip(2) {
-        if let Some(ids) = typed_ref_list(node, KEY_FIELD_REF_TYPE) {
-            key_fields = resolve(ids)?;
-        }
+    let key_fields = resolve(typed_ref_list(
+        item(row.payload, schema::TABLE_KEY_FIELDS_SLOT)?,
+        schema::KEY_FIELD_REF_TYPE,
+        "1",
+    )?)?;
+    let input = list(item(row.payload, schema::TABLE_INPUT_BY_STRING_SLOT)?)?;
+    if input.len() != 2 || atom(item(input, 0)?)? != "1" {
+        bail!("Table: invalid InputByString wrapper");
     }
-    let input_by_string =
-        find_typed_ref_list(&Brace::List(row.payload.to_vec()), INPUT_BY_STRING_REF_TYPE)
-            .map(resolve)
-            .transpose()?
-            .unwrap_or_default();
+    let input_by_string = resolve(typed_ref_list(
+        item(input, schema::INPUT_BY_STRING_ITEMS_SLOT)?,
+        schema::INPUT_BY_STRING_REF_TYPE,
+        "0",
+    )?)?;
     Ok((key_fields, input_by_string))
 }
 
 fn field_names(row: &Row<'_>) -> Result<std::collections::BTreeMap<String, String>> {
     let mut names = std::collections::BTreeMap::new();
-    for entry in row.items(schema::FIELDS_COLLECTION).unwrap_or_default() {
+    for entry in row
+        .optional_items(schema::FIELDS_COLLECTION)?
+        .unwrap_or_default()
+    {
         let wrapper = list(entry)?;
         let record = list(item(wrapper, 0)?)?;
         let body = item(record, 1)?;
@@ -327,37 +349,39 @@ fn field_names(row: &Row<'_>) -> Result<std::collections::BTreeMap<String, Strin
 }
 
 /// `{0,<count>,{"#",<type>,{<kind>,<uuid>}}…}` -> field UUIDs of `type`.
-fn typed_ref_list(node: &Brace, type_id: &str) -> Option<Vec<String>> {
-    let items = list(node).ok()?;
-    if items.first().and_then(Brace::as_atom) != Some("0") {
-        return None;
+fn typed_ref_list(node: &Brace, type_id: &str, reference_kind: &str) -> Result<Vec<String>> {
+    let fields = list(node)?;
+    if atom(item(fields, 0)?)? != "0" {
+        bail!("invalid typed-reference list marker");
     }
-    let mut identities = Vec::new();
-    for entry in items.iter().skip(2) {
-        let typed = list(entry).ok()?;
-        if typed.first().and_then(Brace::as_str) != Some("#")
-            || typed.get(1).and_then(Brace::as_atom) != Some(type_id)
-        {
-            return None;
-        }
-        let inner = list(typed.get(2)?).ok()?;
-        identities.push(inner.get(1).and_then(Brace::as_atom)?.to_string());
+    let count = usize::try_from(super::export::number(item(
+        fields,
+        schema::COLLECTION_COUNT_SLOT,
+    )?)?)
+    .map_err(|_| anyhow!("typed-reference count does not fit"))?;
+    let end = schema::COLLECTION_ITEMS_START
+        .checked_add(count)
+        .ok_or_else(|| anyhow!("typed-reference count overflows"))?;
+    if fields.len() != end {
+        bail!("typed-reference count does not match members");
     }
-    // An empty `{0,0,…}` list of the same shape is not the property.
-    (!identities.is_empty()).then_some(identities)
-}
-
-fn find_typed_ref_list(node: &Brace, type_id: &str) -> Option<Vec<String>> {
-    if let Some(identities) = typed_ref_list(node, type_id) {
-        return Some(identities);
-    }
-    let items = list(node).ok()?;
-    for child in items {
-        if let Some(identities) = find_typed_ref_list(child, type_id) {
-            return Some(identities);
-        }
-    }
-    None
+    fields[schema::COLLECTION_ITEMS_START..]
+        .iter()
+        .map(|entry| {
+            let typed = list(entry)?;
+            if typed.len() != 3
+                || string(item(typed, 0)?)? != "#"
+                || atom(item(typed, 1)?)? != type_id
+            {
+                bail!("unexpected typed-reference member");
+            }
+            let inner = list(item(typed, 2)?)?;
+            if inner.len() != 2 || atom(item(inner, 0)?)? != reference_kind {
+                bail!("unexpected typed-reference identity");
+            }
+            Ok(atom(item(inner, 1)?)?.to_owned())
+        })
+        .collect()
 }
 
 /// DimensionTable properties, in Designer order. Every value except
@@ -396,64 +420,34 @@ fn dimension_properties(row: &Row<'_>, head: &Header) -> Result<Element> {
 /// This keeps the exporter from silently publishing a default where the source
 /// held something else until the slot is evidenced.
 fn check_row_shape(row: &Row<'_>, kind: &str) -> Result<()> {
-    let p = row.payload;
-    match kind {
-        "Cube" => {
-            if list(item(p, 24)?)?.len() != 2 {
-                bail!("Cube: unverified slot 24 changed");
-            }
-        }
-        "Table" => {
-            // Slots 18, 19, 23..35, 38..51 are not decoded yet. Their measured
-            // values are compared structurally where they are lists and by the
-            // exact scalar values where they are atoms.
-            for index in [
-                18usize, 19, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 38, 39, 40, 41,
-                42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
-            ] {
-                if item(p, index).is_err() {
-                    bail!("Table: short row at slot {index}");
-                }
-            }
-            if list(item(p, 18)?)?.first().and_then(Brace::as_atom) != Some("0") {
-                bail!("Table: unverified KeyFields slot changed");
-            }
-            if !is_list_of(item(p, 32)?, 2) || !is_list_of(item(p, 33)?, 2) {
-                bail!("Table: unverified presentation slots changed");
-            }
-            if !is_list_of(item(p, 44)?, 4) {
-                bail!("Table: unverified edit slots changed");
-            }
-            if !is_list_of(item(p, 49)?, 2) || !is_list_of(item(p, 50)?, 2) {
-                bail!("Table: unverified lock slots changed");
-            }
-        }
-        "DimensionTable" => {
-            // Slots 14 (PresentationField reference to MEMBER_UNIQUE_NAME),
-            // 28 (PARENT_UNIQUE_NAME identity) and the built-in field pair
-            // 31/32 are structural. The remaining slots are measured defaults.
-            for index in [
-                10usize, 11, 12, 15, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 29, 30,
-            ] {
-                if item(p, index).is_err() {
-                    bail!("DimensionTable: short row at slot {index}");
-                }
-            }
-            if list(item(p, 14)?)?.len() != 3
-                || list(item(p, 25)?)?.len() != 2
-                || list(item(p, 31)?)?.len() != 2
-                || list(item(p, 32)?)?.len() != 2
-            {
-                bail!("DimensionTable: unverified structural slots changed");
-            }
-        }
-        other => bail!("unknown EDS child kind {other}"),
+    if schema::unmodeled_defaults(kind).is_empty() {
+        bail!("unknown EDS child kind {kind}");
     }
+    for expected in schema::unmodeled_defaults(kind) {
+        let wrapped = parse_row(expected.wrapped_value.as_bytes())?;
+        let expected_value = item(list(&wrapped)?, 0)?;
+        if item(row.payload, expected.body_slot)? != expected_value {
+            bail!(
+                "{kind}: unmodeled property at slot {} changed",
+                expected.body_slot
+            );
+        }
+    }
+    if kind == schema::DIMENSION_TABLE_KIND
+        && (list(item(
+            row.payload,
+            schema::DIMENSION_PRESENTATION_FIELD_SLOT,
+        )?)?
+        .len()
+            != 3
+            || list(item(row.payload, schema::DIMENSION_MEMBER_FIELD_SLOT)?)?.len() != 2
+            || list(item(row.payload, schema::DIMENSION_PARENT_FIELD_SLOT)?)?.len() != 2)
+    {
+        bail!("DimensionTable: unverified structural slots changed");
+    }
+    // A malformed optional collection must not become an absent collection.
+    let _ = row.optional_items(schema::FIELDS_COLLECTION)?;
     Ok(())
-}
-
-fn is_list_of(node: &Brace, len: usize) -> bool {
-    node.as_list().is_some_and(|fields| fields.len() == len)
 }
 
 /// `{27,{2,<header>,<pattern>},...}` -> `<Properties>` for an inline Dimension.
@@ -627,16 +621,16 @@ fn child_objects(
     };
     match kind {
         schema::CUBE_KIND => {
-            if row.has_collection(schema::CUBE_DIMENSION_TABLES_COLLECTION) {
-                for entry in row.items(schema::CUBE_DIMENSION_TABLES_COLLECTION)? {
+            if let Some(entries) = row.optional_items(schema::CUBE_DIMENSION_TABLES_COLLECTION)? {
+                for entry in entries {
                     objects.children.push(leaf(
                         "DimensionTable",
                         short_name(&context.names, atom(entry)?)?,
                     ));
                 }
             }
-            if row.has_collection(schema::CUBE_INLINE_DIMENSIONS_COLLECTION) {
-                for entry in row.items(schema::CUBE_INLINE_DIMENSIONS_COLLECTION)? {
+            if let Some(entries) = row.optional_items(schema::CUBE_INLINE_DIMENSIONS_COLLECTION)? {
+                for entry in entries {
                     let wrapper = list(entry)?;
                     let record = list(item(wrapper, 0)?)?;
                     let body = item(record, 1)?;
@@ -649,8 +643,8 @@ fn child_objects(
                     );
                 }
             }
-            if row.has_collection(schema::CUBE_INLINE_RESOURCES_COLLECTION) {
-                for entry in row.items(schema::CUBE_INLINE_RESOURCES_COLLECTION)? {
+            if let Some(entries) = row.optional_items(schema::CUBE_INLINE_RESOURCES_COLLECTION)? {
+                for entry in entries {
                     let wrapper = list(entry)?;
                     let record = list(item(wrapper, 0)?)?;
                     let body = item(record, 1)?;
@@ -665,8 +659,8 @@ fn child_objects(
             }
         }
         schema::TABLE_KIND | schema::DIMENSION_TABLE_KIND => {
-            if row.has_collection(schema::FIELDS_COLLECTION) {
-                for entry in row.items(schema::FIELDS_COLLECTION)? {
+            if let Some(entries) = row.optional_items(schema::FIELDS_COLLECTION)? {
+                for entry in entries {
                     let wrapper = list(entry)?;
                     let record = list(item(wrapper, 0)?)?;
                     let body = item(record, 1)?;
@@ -706,7 +700,7 @@ pub(crate) fn owned_names(kind: &str, row: &Brace, owner: &str) -> Result<Object
             value_id,
         });
     }
-    let children = inline_children(kind, &parsed, &full_name).unwrap_or_default();
+    let children = inline_children(kind, &parsed, &full_name)?;
     Ok(ObjectNames {
         uuid: head.uuid,
         full_name,
@@ -728,19 +722,22 @@ fn inline_children(kind: &str, row: &Row<'_>, full_name: &str) -> Result<Vec<(St
     };
     match kind {
         schema::CUBE_KIND => {
-            if row.has_collection(schema::CUBE_INLINE_DIMENSIONS_COLLECTION) {
-                for entry in row.items(schema::CUBE_INLINE_DIMENSIONS_COLLECTION)? {
+            if let Some(entries) = row.optional_items(schema::CUBE_INLINE_DIMENSIONS_COLLECTION)? {
+                for entry in entries {
                     add("Dimension", entry)?;
                 }
             }
-            if row.has_collection(schema::CUBE_INLINE_RESOURCES_COLLECTION) {
-                for entry in row.items(schema::CUBE_INLINE_RESOURCES_COLLECTION)? {
+            if let Some(entries) = row.optional_items(schema::CUBE_INLINE_RESOURCES_COLLECTION)? {
+                for entry in entries {
                     add("Resource", entry)?;
                 }
             }
         }
         schema::TABLE_KIND | schema::DIMENSION_TABLE_KIND => {
-            for entry in row.items(schema::FIELDS_COLLECTION).unwrap_or_default() {
+            for entry in row
+                .optional_items(schema::FIELDS_COLLECTION)?
+                .unwrap_or_default()
+            {
                 add("Field", entry)?;
             }
         }
@@ -889,5 +886,137 @@ mod tests {
             );
         }
         assert_eq!(patterns, ["N", "S"]);
+    }
+}
+
+#[cfg(test)]
+mod eds_guard_regressions {
+    use super::*;
+    const TABLE: &[u8] =
+        include_bytes!("../../tests/fixtures/eds-branch/external_data_source_table_row.txt");
+
+    #[test]
+    fn eds_guard_refuses_nonempty_presentation() {
+        let mut row = parse_row(TABLE).unwrap();
+        row.as_list_mut().unwrap()[1].as_list_mut().unwrap()[schema::TABLE_PRESENTATION_SLOT] =
+            parse_row(br#"{1,{"ru","Changed presentation"}}"#).unwrap();
+        let parsed = Row::parse(&row, schema::TABLE_KIND).unwrap();
+        let head = parsed.header(schema::TABLE_KIND).unwrap();
+        assert!(table_properties(&parsed, &head, "ExternalDataSource.Review.Table.T").is_err());
+    }
+
+    #[test]
+    fn eds_guard_refuses_changed_unmodeled_scalar() {
+        let mut row = parse_row(TABLE).unwrap();
+        row.as_list_mut().unwrap()[1].as_list_mut().unwrap()[40] = Brace::num(1);
+        let parsed = Row::parse(&row, schema::TABLE_KIND).unwrap();
+        let head = parsed.header(schema::TABLE_KIND).unwrap();
+        assert!(table_properties(&parsed, &head, "ExternalDataSource.Review.Table.T").is_err());
+    }
+
+    #[test]
+    fn eds_guard_refuses_malformed_child_collections_at_name_boundary() {
+        for bad_count in ["invalid", "999", "18446744073709551615"] {
+            let mut row = parse_row(TABLE).unwrap();
+            let outer = row.as_list_mut().unwrap();
+            let fields = outer
+                .iter_mut()
+                .skip(3)
+                .find_map(|node| {
+                    let fields = node.as_list_mut()?;
+                    (fields.first()?.as_atom()? == schema::FIELDS_COLLECTION).then_some(fields)
+                })
+                .unwrap();
+            fields[1] = Brace::atom(bad_count);
+            assert!(
+                owned_names(schema::TABLE_KIND, &row, "ExternalDataSource.Review").is_err(),
+                "{bad_count}"
+            );
+        }
+    }
+
+    #[test]
+    fn eds_guard_refuses_collection_members_after_declared_count() {
+        let mut row = parse_row(TABLE).unwrap();
+        let outer = row.as_list_mut().unwrap();
+        let fields = outer
+            .iter_mut()
+            .skip(3)
+            .find_map(|node| {
+                let fields = node.as_list_mut()?;
+                (fields.first()?.as_atom()? == schema::FIELDS_COLLECTION).then_some(fields)
+            })
+            .unwrap();
+        fields[1] = Brace::num(0);
+        assert!(owned_names(schema::TABLE_KIND, &row, "ExternalDataSource.Review").is_err());
+    }
+}
+
+#[cfg(test)]
+mod eds_guard_additional {
+    use super::*;
+    #[test]
+    fn eds_guard_checks_every_declared_default_structurally() {
+        for (kind, bytes) in [
+            (
+                schema::CUBE_KIND,
+                include_bytes!("../../tests/fixtures/eds-matrix/cube.txt").as_slice(),
+            ),
+            (
+                schema::TABLE_KIND,
+                include_bytes!("../../tests/fixtures/eds-matrix/table.txt").as_slice(),
+            ),
+            (
+                schema::DIMENSION_TABLE_KIND,
+                include_bytes!("../../tests/fixtures/eds-matrix/dimension.txt").as_slice(),
+            ),
+        ] {
+            let valid = parse_row(bytes).unwrap();
+            check_row_shape(&Row::parse(&valid, kind).unwrap(), kind).unwrap();
+            for expected in schema::unmodeled_defaults(kind) {
+                let mut changed = valid.clone();
+                changed.as_list_mut().unwrap()[1].as_list_mut().unwrap()[expected.body_slot] =
+                    Brace::str("changed");
+                assert!(
+                    check_row_shape(&Row::parse(&changed, kind).unwrap(), kind).is_err(),
+                    "{kind} slot {}",
+                    expected.body_slot
+                );
+            }
+        }
+    }
+    #[test]
+    fn eds_guard_rejects_malformed_typed_reference_counts() {
+        let mut row = parse_row(include_bytes!(
+            "../../tests/fixtures/eds-branch/external_data_source_table_row.txt"
+        ))
+        .unwrap();
+        row.as_list_mut().unwrap()[1].as_list_mut().unwrap()[schema::TABLE_KEY_FIELDS_SLOT]
+            .as_list_mut()
+            .unwrap()[schema::COLLECTION_COUNT_SLOT] = Brace::num(0);
+        assert!(table_ref_lists(&Row::parse(&row, schema::TABLE_KIND).unwrap()).is_err());
+    }
+    #[test]
+    fn eds_guard_distinguishes_absent_from_malformed_collections() {
+        let mut row =
+            parse_row(include_bytes!("../../tests/fixtures/eds-matrix/table.txt")).unwrap();
+        let outer = row.as_list_mut().unwrap();
+        let at = outer
+            .iter()
+            .position(|n| {
+                n.as_list().and_then(|v| v.first()).and_then(Brace::as_atom)
+                    == Some(schema::FIELDS_COLLECTION)
+            })
+            .unwrap();
+        outer.remove(at);
+        outer[schema::ROW_COLLECTION_COUNT_SLOT] =
+            Brace::num((outer.len() - schema::ROW_COLLECTIONS_START) as i64);
+        assert!(
+            Row::parse(&row, schema::TABLE_KIND)
+                .unwrap()
+                .optional_items(schema::FIELDS_COLLECTION)
+                .unwrap()
+                .is_none()
+        );
     }
 }

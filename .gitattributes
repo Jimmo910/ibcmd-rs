@@ -18,3 +18,7 @@ tests/fixtures/file-infobase/*.gz binary
 tests/fixtures/file-infobase/tiny-xml/** -text whitespace=cr-at-eol
 tests/fixtures/file-infobase/tiny-source/** -text whitespace=cr-at-eol
 src/load/seeds/** -text
+
+# Native EDS oracle bytes must be identical on every checkout platform.
+tests/fixtures/eds-matrix/**/*.xml -text whitespace=cr-at-eol
+tests/fixtures/eds-corpus2/*.xml -text whitespace=cr-at-eol
