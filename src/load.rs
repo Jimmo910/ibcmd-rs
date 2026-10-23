@@ -421,8 +421,13 @@ fn verify_loaded(
     for path in tree.union(&back).filter(|path| in_scope(path)) {
         let same = match (tree.contains(path), back.contains(path)) {
             (true, true) => {
-                fs::read(edited.join(path)).context("tree file")?
-                    == fs::read(scratch.0.join(path)).context("exported file")?
+                let (mine, theirs) = (
+                    fs::read(edited.join(path)).context("tree file")?,
+                    fs::read(scratch.0.join(path)).context("exported file")?,
+                );
+                mine == theirs
+                    || path.ends_with(".xml")
+                        && ibcmd_xml::equal_ignoring_structural_line_endings(&mine, &theirs)
             }
             _ => false,
         };

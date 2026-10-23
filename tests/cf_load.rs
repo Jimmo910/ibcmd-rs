@@ -531,3 +531,27 @@ fn a_tree_left_by_an_interrupted_update_is_refused() {
     assert!(text.contains("interrupted"), "{text}");
     assert!(!out.exists());
 }
+
+#[test]
+fn a_form_saved_with_lf_line_breaks_loads() {
+    // Editors and git on Linux and macOS save the exported CRLF tree with LF
+    // (#471); structural indentation can use either line ending.
+    let (base, tree) = exported("test_processor", "input.epf", "load-lf");
+    let form = tree.join("ТестОбработка/Forms/Форма/Ext/Form.xml");
+    let text = fs::read_to_string(&form).unwrap();
+    assert!(text.contains("\r\n"));
+    fs::write(&form, text.replace("\r\n", "\n")).unwrap();
+
+    let out = fresh_output("load-lf-out", "epf");
+    let run = load(&tree, &out, &base);
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let back = common::temp_dir("load-lf-back");
+    assert!(common::export(&out, &back).status.success());
+    fs::write(&form, text).unwrap();
+    common::assert_tree_eq(&tree, &back);
+}
