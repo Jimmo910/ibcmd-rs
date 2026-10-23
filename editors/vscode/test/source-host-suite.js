@@ -156,6 +156,23 @@ exports.run = async () => {
       vscode.Uri.file(path.join(local, module.path)).fsPath,
     );
     assert.deepEqual(errors, []);
+    const configFile = nodes.find(
+      (n) => n.type === "file" && n.parent.kind === "ConfigurationFiles",
+    );
+    assert.ok(configFile);
+    await fs.appendFile(path.join(local, configFile.path), "\r\n");
+    choices = undefined;
+    vscode.window.showQuickPick = async (items) => {
+      choices = await items;
+      return undefined;
+    };
+    await vscode.commands.executeCommand(
+      "ibcmd.source.compare",
+      configFile.parent,
+    );
+    assert.ok(choices.some((i) => i.difference.path === configFile.path));
+    assert.ok(choices.every((i) => i.difference.path.startsWith("Ext/")));
+    assert.deepEqual(errors, []);
     api.configuration.disconnect();
     await assert.rejects(vscode.workspace.fs.readFile(uri));
     console.log(

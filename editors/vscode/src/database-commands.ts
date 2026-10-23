@@ -120,13 +120,16 @@ export function registerDatabaseCommands(
             throw new Notice(
               "Сохраните местные изменения перед сравнением группы",
             );
-          return differences(
+          const result = differences(
             await current.rpc.request(
               "objects/status",
               { infobase: current.infobase, objects: names, sourceDir },
               abort.signal,
             ),
           );
+          return node.kind === "ConfigurationFiles"
+            ? result.filter((d) => d.path.startsWith("Ext/"))
+            : result;
         } finally {
           cancel.dispose();
           changed.dispose();

@@ -154,6 +154,7 @@ export class ConfigurationView
     const visit = async (current: Node): Promise<string[]> => {
       if (signal.aborted || this.model !== model)
         throw new Error("Чтение отменено");
+      if (current.kind === "ConfigurationFiles") return ["Configuration"];
       if (current.type === "object" && current.fullName)
         return [current.fullName];
       if (current.type === "property" || current.type === "file") return [];
@@ -185,7 +186,10 @@ export class ConfigurationView
       .filter(Boolean)
       .join("\n");
     item.contextValue =
-      node.type === "property"
+      node.type === "property" ||
+      (node.type === "group" &&
+        !!node.children?.length &&
+        node.children.every((child) => child.type === "property"))
         ? "ibcmd.property"
         : node.path
           ? "ibcmd.source"
