@@ -159,6 +159,8 @@ async function harness({
             clear() {}
           },
         };
+      if (id === "./executable") return require("../out/executable");
+
       if (id === "./status") return require("../out/status");
       if (id === "./import") return require("../out/import");
       if (id === "./configuration-view")
@@ -175,6 +177,7 @@ async function harness({
   });
   const api = await module.exports.activate({
     subscriptions: [],
+    extensionPath: path.resolve(__dirname, ".."),
     secrets: {
       get: async () => stored,
       delete: async () => {},

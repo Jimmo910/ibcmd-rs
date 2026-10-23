@@ -105,6 +105,47 @@ exports.run = async () => {
     assert.ok(edited.includes("8.5.1"));
     assert.ok(!edited.includes("changed-test-secret-378"));
     assert.equal((edited.match(/\[\[database\]\]/g) || []).length, 1);
+    // Real server parsing plus picker contract: SQL Edit cannot mutate a file-db entry.
+    const fileDb = path.join(f.uri.fsPath, "untouched-file-db");
+    await fs.mkdir(fileDb);
+    const mixed =
+      edited +
+      '\n[[database]]\nname="file-fixture"\nplatform="8.3.27"\ndb-path=' +
+      JSON.stringify(fileDb) +
+      "\n";
+    const configFile = path.join(f.uri.fsPath, "ibcmd-rs.toml");
+    await fs.writeFile(configFile, mixed);
+    let editable = [];
+    vscode.window.showQuickPick = async (items) => {
+      editable = await items;
+      return undefined;
+    };
+    await vscode.commands.executeCommand("ibcmd.edit");
+    assert.deepEqual(errors, []);
+    assert.ok(
+      editable.some((item) => item.base?.id === "sql-test/editor_database"),
+    );
+    assert.ok(!editable.some((item) => item.base?.source === "file-db"));
+    assert.equal(await fs.readFile(configFile, "utf8"), mixed);
+    const mixedReport = JSON.parse(
+      execFileSync(
+        process.env.IBCMD_TEST_BINARY,
+        ["settings", "show", "--json"],
+        {
+          cwd: f.uri.fsPath,
+          env: { ...process.env, IBCMD_RS_CONFIG: configFile },
+          encoding: "utf8",
+        },
+      ),
+    );
+    assert.ok(
+      mixedReport.databases.some((base) => base.name === "file-fixture"),
+    );
+    await fs.writeFile(
+      path.join(f.uri.fsPath, "file-db-edit-evidence.toml"),
+      mixed,
+    );
+    await fs.writeFile(configFile, edited);
     const rows = process.env.IBCMD_TEST_ROWS;
     if (!rows)
       throw new Error(

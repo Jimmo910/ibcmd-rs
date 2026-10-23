@@ -504,3 +504,13 @@ Import только создаёт CONFIGSAVE; штатный apply выполн
 закрывает доступ до перезапуска и нового закрепления identity. SQL и запись в
 rows-dir через MCP закрыты. Подробности policy, ограничения и evidence —
 [OpenSpec MCP](openspec/changes/add-mcp-adapter/design.md).
+
+## Расширение VS Code и Cursor
+
+Клиент показывает подключения и дерево объектов лабораторной базы. Платформенный
+VSIX включает `ibcmd-rs`; Windows x64 — `ibcmd-rs.exe`. Свой исполняемый файл задаётся
+машинной настройкой `ibcmd-rs.path`. [Установка, сборка и проверки](editors/vscode/README.md#platform-vsix-packaging-and-installation).
+
+![Дерево офлайн-фикстуры — иллюстрация, проверенная через API редактора](editors/vscode/images/offline-tree.svg)
+
+Публикация Marketplace/Open VSX и выпуск релиза остаются шагами владельца.

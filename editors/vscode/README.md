@@ -7,8 +7,7 @@ Requires VS Code 1.95+ and an `ibcmd-rs` executable speaking editor protocol **1
 ## Use
 
 1. Compile with `npm ci && npm run compile` in this directory. Launch this directory
-   as an extension development host (example below). Packaging/Marketplace release
-   is separate work.
+   as an extension development host (example below), or install a platform VSIX.
 2. Open a **trusted, local workspace folder**. Set **ibcmd: Executable** in user or
    remote-machine settings to the executable path; this setting is machine scoped,
    so workspace content cannot select a program to execute. No shell is used.
@@ -124,8 +123,7 @@ code --extensionDevelopmentPath="$PWD" \
   --extensions-dir="$IBCMD_TEST_ROOT/manual-extensions" /path/to/workspace
 ```
 
-Object trees, export/import/apply UI, VSIX/Marketplace delivery and live SQL
-verification are outside this connection-only candidate.
+Export/import/apply UI and live SQL verification belong to separate work.
 
 ## Object status (#380)
 
@@ -329,3 +327,74 @@ file-db, partial-import and source-traversal tests. Their newly owned fixture
 directories are then retained, including after assertion failure. Without this
 flag, disposable CI fixtures are cleaned on scope exit. This test-only switch
 does not change production temporary-file cleanup or recovery artifacts.
+
+## Platform VSIX packaging and installation
+
+Tooling requires Node.js 22+ and Python 3. The engineering package uses locked npm dependencies, an esbuild CommonJS bundle
+with only `vscode` external, and `vsce --no-dependencies`. Python 3 normalizes ZIP
+entry order, timestamps, permissions and compression. Given the same source,
+locked toolchain, binary and `SOURCE_DATE_EPOCH`, repeated VSIX files have identical
+SHA-256. This does not claim that binaries built by different Rust toolchains are
+identical. Staging directories and test profiles are retained for inspection.
+
+```sh
+npm ci
+npm run bundle
+npm run test:package
+# Build the release binary on Windows using Rust 1.95.0:
+# cargo build --locked --release --no-default-features --target x86_64-pc-windows-msvc
+npm run package -- --target win32-x64 \
+  --binary ../../target/x86_64-pc-windows-msvc/release/ibcmd-rs.exe \
+  --out /path/to/artifacts/ibcmd-rs-win32-x64.vsix
+```
+
+Windows packages contain `bin/ibcmd-rs.exe`; macOS arm64 lab packages contain
+`bin/ibcmd-rs`. A binary for the wrong target is rejected. Choose **Extensions →
+Install from VSIX** in VS Code or Cursor, then open a trusted local workspace,
+bind/select the laboratory connection and refresh **ibcmd-rs Objects**. Packages
+are platform specific; a Windows VSIX is not a Mac installation candidate.
+
+Set **ibcmd-rs: Path** (`ibcmd-rs.path`) in user/machine settings to use another
+executable. Empty uses the bundle, then `ibcmd-rs` on PATH for development builds.
+The existing machine setting `ibcmd.executable` remains supported, below
+`ibcmd-rs.path` in precedence. Neither setting accepts a shell command.
+
+[Offline tree illustration](https://github.com/Untru/ibcmd-rs/blob/master/editors/vscode/images/offline-tree.svg) (based on asserted fixture object names).
+
+The question marks above are honest unknown states without a comparison baseline;
+seeing the tree does not establish native version equality or a live SQL login.
+This is an illustration, not a screenshot. Computer Use screenshot access was
+unavailable in the lab execution environment.
+
+`test:installed` installs the actual VSIX into a fresh extensions/profile directory,
+loads only a separate empty test driver as a development extension, and asserts
+that the production extension was loaded from the installed location. It verifies
+the bundled executable, fixture inventory/tree and explicit path override.
+
+```sh
+export IBCMD_TEST_ROOT=/external/lab/tmp/installed-check
+export IBCMD_TEST_VSIX=/external/lab/artifacts/ibcmd-rs-darwin-arm64.vsix
+export IBCMD_TEST_ROWS=/external/lab/tmp/ibcmd-external-editor-server-protocol/rows/demo
+export VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code"
+# Cursor: /Applications/Cursor.app/Contents/MacOS/Cursor
+npm run test:installed
+```
+
+CI builds and compares two Windows VSIX files, checks installation/tree in a clean
+Windows VS Code host and uploads VSIX/checksum plus acceptance JSON. The existing
+release workflow packages the Windows release binary into a VSIX and includes it
+in the audited-artifact download/attachment path. No Marketplace/Open VSX publishing
+or publisher credentials are configured here. The owner must create accounts and
+perform publication; a release must still pass the repository release gates.
+
+## Source-specific editing and configuration views
+
+Edit Connection supports SQL and read-only rows-directory entries. Omitted servers
+continue to inherit normal settings, and copied inherited rows-directory entries
+retain their resolved directory. File databases and unknown source types are
+excluded from this editor. The TOML writer also refuses `db-path` replacements,
+including when a local entry changes source while a prompt is open.
+
+Without a native comparison baseline, object status and tree requests both use the
+active configuration. With a native baseline, both use main configuration and the
+server's version-evidence path. Missing version evidence remains unknown.
