@@ -51,7 +51,12 @@ pub(crate) fn check_layout(table: &Table) -> Result<()> {
             .iter()
             .zip(LAYOUT)
             .all(|(f, (name, kind, len))| {
-                f.name == name && f.kind == kind && f.length == len && !f.nullable
+                f.name == name
+                    && f.kind == kind
+                    && f.length == len
+                    && f.precision == 0
+                    && !f.nullable
+                    && f.case_insensitive == (name == "FILENAME")
             });
     if !same {
         return Err(Error::Refused(format!(

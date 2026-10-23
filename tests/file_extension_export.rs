@@ -365,3 +365,53 @@ fn unknown_staging_record_flags_cannot_hide_a_prepared_image() {
     assert!(!output.exists());
     assert_eq!(fs::read(file).unwrap(), bytes);
 }
+
+#[test]
+fn unmeasured_config_field_precision_and_collation_are_refused() {
+    for (tag, from, to) in [
+        (
+            "part-precision",
+            r#"{"PARTNO","N",0,10,0,"CS"}"#,
+            r#"{"PARTNO","N",0,10,1,"CS"}"#,
+        ),
+        (
+            "size-precision",
+            r#"{"DATASIZE","N",0,20,0,"CS"}"#,
+            r#"{"DATASIZE","N",0,20,1,"CS"}"#,
+        ),
+        (
+            "name-collation",
+            r#"{"FILENAME","NVC",0,128,0,"CI"}"#,
+            r#"{"FILENAME","NVC",0,128,0,"CS"}"#,
+        ),
+        (
+            "part-collation",
+            r#"{"PARTNO","N",0,10,0,"CS"}"#,
+            r#"{"PARTNO","N",0,10,0,"CI"}"#,
+        ),
+    ] {
+        let root = setup(tag, "applied");
+        let file = root.0.join("1Cv8.1CD");
+        let mut bytes = fs::read(&file).unwrap();
+        assert_eq!(from.len(), to.len());
+        let offsets: Vec<_> = bytes
+            .windows(from.len())
+            .enumerate()
+            .filter(|(_, value)| *value == from.as_bytes())
+            .map(|(at, _)| at)
+            .collect();
+        assert!(!offsets.is_empty());
+        for at in offsets {
+            bytes[at..at + to.len()].copy_from_slice(to.as_bytes());
+        }
+        fs::write(&file, &bytes).unwrap();
+        let output = root.0.join("unknown-profile");
+        let result = export(&root.0, "ТестРасширение", &output);
+        assert!(
+            !result.status.success(),
+            "unmeasured {tag} profile was published"
+        );
+        assert!(!output.exists());
+        assert_eq!(fs::read(file).unwrap(), bytes);
+    }
+}
