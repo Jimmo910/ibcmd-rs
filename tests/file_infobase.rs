@@ -30,8 +30,12 @@ impl Drop for Scratch {
 }
 
 fn scratch(tag: &str) -> Scratch {
-    let dir =
-        std::env::temp_dir().join(format!("ibcmd-file-infobase-{}-{tag}", std::process::id()));
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "ibcmd-file-infobase-{}-{sequence}-{tag}",
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     Scratch(dir)
@@ -343,4 +347,76 @@ fn an_infobase_without_a_configuration_exports_the_default_one() {
     let mut actual = masked(&out);
     actual.remove("ConfigDumpInfo.xml");
     assert_eq!(expected, actual);
+}
+
+#[test]
+fn empty_configuration_supports_base_and_sync_exports() {
+    let (_base_dir, base_out) = export_empty("8.5.1", "en");
+    let base = base_out.join("ConfigDumpInfo.xml");
+    for (tag, use_base, sync) in [
+        ("base", true, false),
+        ("sync", false, true),
+        ("base-sync", true, true),
+    ] {
+        let dir = scratch(&format!("empty-{tag}"));
+        let db = infobase(&dir, "empty");
+        let out = dir.join("xml");
+        if sync {
+            fs::create_dir_all(out.join("Catalogs")).unwrap();
+            fs::write(out.join("Catalogs/Stale.xml"), "obsolete").unwrap();
+            fs::write(out.join("notes.txt"), "keep me").unwrap();
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
+        command
+            .env("IBCMD_RS_LANGUAGE", "en")
+            .args(["infobase", "config", "export", "--platform=8.5.1"])
+            .arg(db_path(&db))
+            .arg(&out);
+        if use_base {
+            command.arg("--base").arg(&base);
+        }
+        if sync {
+            command.arg("--sync");
+        }
+        ok(&command.output().unwrap());
+        let mut actual = masked(&out);
+        if sync {
+            assert_eq!(actual.remove("notes.txt").as_deref(), Some("keep me"));
+            assert!(!out.join("Catalogs/Stale.xml").exists());
+        }
+        assert_eq!(masked(&base_out), actual, "{tag}");
+    }
+}
+
+#[test]
+fn empty_configuration_has_complete_zero_inventories() {
+    let dir = scratch("empty-completeness");
+    let db = infobase(&dir, "empty");
+    let out = dir.join("xml");
+    let output = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+        .env("IBCMD_RS_LANGUAGE", "en")
+        .args([
+            "mssql-dump-config",
+            "--main-configuration",
+            "--extract-metadata-xml",
+            "--extract-module-text",
+            "--no-binary-rows",
+            "--require-complete-source-assets",
+            "--require-complete-root-metadata",
+            "--platform=8.5.1",
+        ])
+        .arg("--file-infobase")
+        .arg(&db)
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .unwrap();
+    ok(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let assets = &report["source_assets"];
+    assert_eq!(assets["scope"], "full");
+    assert_eq!(assets["status"], "complete");
+    assert_eq!(assets["candidate_set_complete"], true);
+    assert_eq!(assets["expected"], 0);
+    assert!(out.join("Configuration.xml").is_file());
 }
