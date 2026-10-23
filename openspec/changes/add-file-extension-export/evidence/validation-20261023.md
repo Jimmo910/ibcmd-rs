@@ -1,6 +1,6 @@
 # Validation, 2026-10-23
 
-Implementation commit: `e1e9a720dc5a9d378084a5e3c0c84eac38d580f1`, based on `1be98ec77a8096553915d555cdd5ffb10fe34e99`.
+Final functional commit: `792bd71573c335eb7e69c49e5791e4f8eed7669c` (initial implementation `e1e9a720dc5a9d378084a5e3c0c84eac38d580f1`), based on `1be98ec77a8096553915d555cdd5ffb10fe34e99`.
 
 ## Native differential
 
@@ -23,7 +23,9 @@ Both hashes remained unchanged after native exports and the Rust comparisons. Na
 
 The initial iter differential was bound to binary `875e7b73214d368ae20051366ed0c77078f66f2abd0af308eca13af984c9a8a6` and source-patch SHA-256 `88ea5971e838f425191b40676317e74b8ae80a19150ad96cdfbc9d3971e29820`. It proved the three XML trees, then exposed inherited CLI exit 255 for refusal. That result is not attributed to a later binary.
 
-The final safe check used debug product binary SHA-256 `dd500d2cb65b37311b066de0837ef045ca6ff0f289e74720b2dfd16d9c86fa06`. Its ten end-to-end cases include the same complete native hash inventories, code-1/no-output refusal, prepared-state refusal, corrupt file/envelope/CAS, physical part-number overflow and preservation of nonempty output. The CLI reports version 0.4.1; it has no embedded Git commit, so source commit and binary hashes are recorded explicitly.
+The pre-review safe check used debug product binary SHA-256 `dd500d2cb65b37311b066de0837ef045ca6ff0f289e74720b2dfd16d9c86fa06`. Its ten end-to-end cases included the same complete native hash inventories, code-1/no-output refusal, prepared-state refusal, corrupt file/envelope/CAS, physical part-number overflow and preservation of nonempty output. The CLI reports version 0.4.1; it has no embedded Git commit, so source commit and binary hashes are recorded explicitly.
+
+The final reviewed debug binary SHA-256 is `be6d44a0196b9f5adae7e5aef56b6e683c49ca01fd520c869867fd3fdaaa26b1`, built from functional commit `792bd71573c335eb7e69c49e5791e4f8eed7669c`. Its **11** end-to-end tests repeat the native hash inventories and add a valid selected CAS manifest rewritten to unsupported format 80501: code 1, no publication and unchanged database bytes. Three additional file-base budget units cover per-row and aggregate boundaries plus actual production-limit refusal before legacy indexing. The file route admits only measured storage format 80327; base metadata is preflighted with a fixed 16 KiB buffer and 64 MiB per-row / 256 MiB aggregate inflated-byte limits. Shared SQL/CFE admission is unchanged.
 
 ## Reproducible local checks
 
@@ -31,11 +33,12 @@ Pinned Rust **1.95.0**, jobs **1**, tests serialized, external CARGO_HOME/RUSTUP
 
 - `cargo xtask check --base 1be98ec77a8096553915d555cdd5ffb10fe34e99`: all 6 steps passed, including workspace-crate strict Clippy and root all-target checking.
 - `cargo test --locked -p ibcmd-filedb`: **16 unit + 8 integration**, 0 failed/ignored.
-- `cargo test --locked -p ibcmd-rs --test file_extension_export --no-default-features`: **10 passed**, 0 failed/ignored.
+- `cargo test --locked -p ibcmd-rs --test file_extension_export --no-default-features`: **11 passed**, 0 failed/ignored.
 - `cargo test --locked -p ibcmd-rs --test file_infobase --no-default-features`: **6 passed**, 0 failed/ignored.
 - Root CFE suites `extension_adopted`, `extension_adopted_properties`, `extension_export`: **8 + 11 + 11 passed**, 0 failed/ignored.
 - Root unit filters `mssql_extensions::tests` and `mssql_dump::cas::tests`: **12 + 14 passed**, 0 failed/ignored.
-- **96 distinct focused tests passed**. SQL coverage is offline registry/CAS contracts, not a live SQL acceptance claim.
+- Root unit filter `file_base_budget_tests`: **3 passed**, 0 failed/ignored.
+- **100 distinct focused tests passed**. SQL coverage is offline registry/CAS contracts, not a live SQL acceptance claim.
 - `OPENSPEC_TELEMETRY=0 npx --offline --yes @fission-ai/openspec@1.6.0 validate add-file-extension-export --strict --no-interactive`: valid.
 
 Failing-first evidence: the measured-registry test first refused the supported layout. The actual CLI first returned 255 for an unknown name. The physical N(10) part value 2^32 first wrapped to zero and returned success; the new regression failed with `left: Some(0), right: Some(1)` before the bounded-reader fix. It now refuses before publication.
@@ -56,6 +59,8 @@ This initial file profile exports the applied image only when CONFIGCASSAVE and 
 
 Full local `cargo xtask ci` was **not run**: unrelated legacy Rust/Python/PowerShell teardown does not consistently retain fixtures. Automatic approval review also rejected the entire proposed local batch containing PowerShell policy/corpus guards for potential system-temp creation/deletion. That rejected batch did not execute; no local guard retry occurred. The scanner and policy baseline are unchanged. Safe Cargo-only checks above subsequently ran successfully. Full gates/guard self-tests on unrestricted disposable CI runners and upstream required checks remain pending; none is claimed passed here.
 
-Independent Rust review and PR CI are separate pending gates at this evidence revision. The PR remains Draft; Refs #520 and #348, with no automatic issue closure.
+A fresh independent Rust reviewer initially requested two P2 corrections (file-format admission and base inflation limits). Both were fixed in `792bd715`; the same reviewer returned **APPROVE**, no remaining actionable findings, after a source-only re-review and inspection of the 11/11 and 3/3 logs. The prior compiled ten-test executable had also been independently rerun successfully. Final `cargo xtask check` repeated all six steps successfully after the fixes, and strict OpenSpec validation passed again. Review does not substitute for full disposable CI or PowerShell guards, which remain pending. The PR remains Draft; Refs #520 and #348, with no automatic issue closure.
 
 Current upstream advanced to `1688c73b9bef00df31aa87aa0f259a1133fc3624` (#519) during validation. The comparison adds the 1.95 toolchain pin, documentation/temp cleanup and a test include-file relocation; no production Rust change overlaps this feature. The feature has not cherry-picked the parallel unpublished #520 implementation. CI must validate the actual PR merge context.
+
+Duplicate-owner coordination: the issue author disclosed a parallel unpublished implementation in https://github.com/Untru/ibcmd-rs/issues/520#issuecomment-6367028153. Our frozen published branch and the applied-only boundary were shared in https://github.com/Untru/ibcmd-rs/issues/520#issuecomment-6367946968. Neither implementation was discarded or combined; common-base selection remains open until the author's source is published.
