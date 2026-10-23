@@ -1095,6 +1095,9 @@ fn editor_apply_requires_consent_and_leaves_file_db_to_client() {
     let mut output = fs::File::create(&db).unwrap();
     std::io::copy(&mut decoder, &mut output).unwrap();
     drop(output);
+    // Exercise a lexical alias on every host; Windows TEMP may also use an
+    // 8.3 short-name alias which Session::open resolves to its canonical path.
+    let db = corpus.root.join("disposable/../disposable/1Cv8.1CD");
     let before = fs::read(&db).unwrap();
     let mut params = corpus.initialize_params();
     params["infobases"]
@@ -1113,7 +1116,10 @@ fn editor_apply_requires_consent_and_leaves_file_db_to_client() {
     let plan = server.ok("config/apply/prepare", json!({"infobase":"apply-file"}));
     assert_eq!(plan["backend"], "external-native");
     assert_eq!(plan["modes"], json!(["exclusive"]));
-    assert_eq!(plan["dbPath"], json!(db.parent().unwrap()));
+    let canonical_db = fs::canonicalize(&db).unwrap();
+    assert_eq!(plan["dbPath"], json!(canonical_db.parent().unwrap()));
+    let planned_db = Path::new(plan["dbPath"].as_str().unwrap()).join("1Cv8.1CD");
+    assert_eq!(fs::canonicalize(planned_db).unwrap(), canonical_db);
     let pending = server.ok("config/pending", json!({"infobase":"apply-file"}));
     assert_eq!(pending["conclusive"], true);
     assert_eq!(pending["pending"], false);
