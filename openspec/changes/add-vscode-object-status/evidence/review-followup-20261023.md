@@ -64,3 +64,30 @@ six states, Explorer/filter, stale/cancellation and multiple-workspace scenarios
 No new native or live SQL acceptance is claimed for this follow-up. Its profile
 and fixtures remain under the external lab for user-controlled Trash cleanup.
 Independent read-only review found no confirmed P1/P2.
+
+## Shared client follow-up pending batched publication
+
+Adapted reviewed donors `b6aca400fd7fddc556b7a5dc20aa579e94127651` and
+`a3ede3682b99efde6d9caee730bfa736acb78c3e`: Edit preserves inherited SQL
+server resolution and inherited rows sources, rejects file-db edits in the SQL
+editor, and strips case-insensitive Windows sensitive environment selectors.
+Intentional disposal does not report a crash; current startup/connect crashes
+report one sanitized error before generation invalidation. Stale callbacks remain
+silent. The password test now checks captured prompts/parameters after completion
+so production error handling cannot swallow its assertions.
+
+The adapted port preserves #380 ObjectView clearing and the connection VM loader's
+ObjectView isolation; native/status/protocol/import behavior is not replaced.
+Its new startup/connect regression failed before the final source fix (zero
+notifications instead of one). All 45 integrated client tests passed after the
+fix, including actual CLI/RPC; Prettier and diff checks passed. New host scenarios
+were imported but have not run locally: the parent heavy/host queue is reserved
+for #485, #357 and #483. Earlier host evidence above predates this shared port;
+donor host coverage is not claimed as integrated acceptance.
+
+Independent integration review caught a host-only picker-lifetime conflict: the
+new file-db Edit scenario replaced the picker needed by the existing sibling
+selection. The adapted scenario now restores that picker in `finally`. This
+correction awaits the same queued host run; static review is not host execution.
+Narrow independent re-review confirmed the picker restoration on success/error;
+no confirmed P1/P2 remain in this port. Host/fake-host syntax checks pass.

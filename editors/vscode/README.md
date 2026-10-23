@@ -252,3 +252,9 @@ a safe reusable cache needs completed-only publication, tree+repository+prefix
 identity, and an integrity/partial-cancellation policy. The current pinned-tree,
 path/link guards and Trash-controlled retention remain; this PR does not claim
 ERP-scale Git baseline performance.
+
+Edit Connection supports SQL and read-only rows-directory entries. An omitted server
+stays omitted so normal `db-server`/environment resolution still applies. Copying an
+inherited rows-directory entry keeps its resolved source directory. File databases
+and unknown source types are excluded from this editor; edit their settings using
+the appropriate source-specific tooling instead.

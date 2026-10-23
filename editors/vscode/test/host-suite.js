@@ -801,6 +801,74 @@ exports.run = async () => {
     vscode.window.withProgress = progress;
     await selectA();
     assert.equal(prompts, 2, "Cancelled connect must not persist its password");
+    // Rejected initialize on the connection process must reach the command error UI.
+    // The list process initializes first; the marker rejects only the next process.
+    process.env.IBCMD_FAKE_INITIALIZE_MARKER = path.join(
+      f.uri.fsPath,
+      "initialize-marker",
+    );
+    const beforeInitializeError = errors.length;
+    await selectA("connect-initialize-error");
+    assert.equal(
+      errors.length,
+      beforeInitializeError + 1,
+      "Connection initialize error must be visible",
+    );
+    assert.ok(api.status().includes("disconnected"), api.status());
+    delete process.env.IBCMD_FAKE_INITIALIZE_MARKER;
+    process.env.IBCMD_FAKE_MODE = "pending";
+    process.env.IBCMD_FAKE_INCLUDE_FILEDB = "1";
+    const tomlFile = path.join(f.uri.fsPath, "ibcmd-rs.toml");
+    const withFileDb =
+      (await fs.readFile(tomlFile, "utf8")) +
+      '\n[[database]]\nname="file"\nplatform="8.3.27"\ndb-path="protected-filedb"\n';
+    await fs.writeFile(tomlFile, withFileDb);
+    const metadataBeforeFileEdit = JSON.stringify(
+      vscode.workspace
+        .getConfiguration("ibcmd", f.uri)
+        .get("connectionMetadata"),
+    );
+    let filePickerReached = false;
+    const errorsBeforeFileEdit = errors.length;
+    const selectionPicker = vscode.window.showQuickPick;
+    vscode.window.showQuickPick = async (items) => {
+      filePickerReached = true;
+      const offered = await items;
+      assert.ok(
+        !offered.some((item) => item.base?.source === "file-db"),
+        "File databases must be excluded from SQL Edit",
+      );
+      return undefined;
+    };
+    try {
+      await vscode.commands.executeCommand("ibcmd.edit");
+    } finally {
+      vscode.window.showQuickPick = selectionPicker;
+    }
+    assert.equal(
+      filePickerReached,
+      true,
+      "Edit must reach the source-filtered picker",
+    );
+    assert.equal(
+      errors.length,
+      errorsBeforeFileEdit,
+      "Edit list/start must succeed",
+    );
+    assert.equal(
+      await fs.readFile(tomlFile, "utf8"),
+      withFileDb,
+      "File-db TOML must stay byte-for-byte unchanged",
+    );
+    assert.equal(
+      JSON.stringify(
+        vscode.workspace
+          .getConfiguration("ibcmd", f.uri)
+          .get("connectionMetadata"),
+      ),
+      metadataBeforeFileEdit,
+    );
+    delete process.env.IBCMD_FAKE_INCLUDE_FILEDB;
     delete process.env.IBCMD_FAKE_CONNECT_GATE;
     console.log(
       "SQL password persistence: failed/cancelled/stale operations, successful reuse and existing-password behavior passed (synthetic login only).",
@@ -883,5 +951,7 @@ exports.run = async () => {
     delete process.env.IBCMD_FAKE_CONNECT_GATE;
     delete process.env.IBCMD_FAKE_LIST_GATE;
     delete process.env.IBCMD_FAKE_MODE;
+    delete process.env.IBCMD_FAKE_INCLUDE_FILEDB;
+    delete process.env.IBCMD_FAKE_INITIALIZE_MARKER;
   }
 };
