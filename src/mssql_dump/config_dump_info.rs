@@ -1,7 +1,8 @@
 use super::*;
+use std::sync::Mutex;
 use uuid::Uuid;
 
-const CONFIG_DUMP_INFO_FILE_NAME: &str = "ConfigDumpInfo.xml";
+const CONFIG_DUMP_INFO_FILE_NAME: &str = ibcmd_xml::config_dump_info::FILE_NAME;
 /// Service names a `Config` table's `versions` row may embed inside its own
 /// blob content (see [`VersionsBlobOrigin`]), and which are therefore stripped
 /// from the parsed entry list.
@@ -119,17 +120,9 @@ struct ConfigVersionEntry {
     counted: bool,
 }
 
-struct ConfigDumpMetadata {
-    name: String,
-    id: String,
-    config_version: String,
-    children: Vec<ConfigDumpChildMetadata>,
-}
-
-struct ConfigDumpChildMetadata {
-    name: String,
-    id: String,
-}
+use ibcmd_xml::config_dump_info::{
+    ConfigDumpInfo, Entry as ConfigDumpMetadata, NativeVersion, Part as ConfigDumpChildMetadata,
+};
 
 pub(super) struct ConfigDumpInfoInventory<'a> {
     pub(super) file_names: &'a BTreeSet<String>,
@@ -427,7 +420,7 @@ fn write_config_dump_info_entries(
     }
 
     metadata.sort_by(|left, right| left.name.cmp(&right.name));
-    let xml = format_config_dump_info_xml(source_version, &metadata);
+    let xml = format_config_dump_info_xml(source_version, metadata)?;
     let path = output_dir.join(CONFIG_DUMP_INFO_FILE_NAME);
     output
         .write(&path, xml)
@@ -1055,38 +1048,15 @@ fn config_version(version: Uuid) -> String {
 
 fn format_config_dump_info_xml(
     source_version: InfobaseConfigSourceVersion,
-    metadata: &[ConfigDumpMetadata],
-) -> Vec<u8> {
-    let mut xml = String::new();
-    xml.push('\u{feff}');
-    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n");
-    xml.push_str("<ConfigDumpInfo xmlns=\"http://v8.1c.ru/8.3/xcf/dumpinfo\" xmlns:xen=\"http://v8.1c.ru/8.3/xcf/enums\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" format=\"Hierarchical\" version=\"");
-    xml.push_str(source_version.as_str());
-    xml.push_str("\">\r\n\t<ConfigVersions>\r\n");
-    for entry in metadata {
-        xml.push_str("\t\t<Metadata name=\"");
-        xml.push_str(&escape_xml_text(&entry.name));
-        xml.push_str("\" id=\"");
-        xml.push_str(&escape_xml_text(&entry.id));
-        xml.push_str("\" configVersion=\"");
-        xml.push_str(&entry.config_version);
-        if entry.children.is_empty() {
-            xml.push_str("\"/>\r\n");
-            continue;
-        }
-        xml.push_str("\">\r\n");
-        for child in &entry.children {
-            xml.push_str("\t\t\t<Metadata name=\"");
-            xml.push_str(&escape_xml_text(&child.name));
-            xml.push_str("\" id=\"");
-            xml.push_str(&escape_xml_text(&child.id));
-            xml.push_str("\"/>\r\n");
-        }
-        xml.push_str("\t\t</Metadata>\r\n");
-    }
-    xml.push_str("\t</ConfigVersions>\r\n</ConfigDumpInfo>");
-    xml.into_bytes()
+    metadata: Vec<ConfigDumpMetadata>,
+) -> Result<Vec<u8>> {
+    let version = match source_version {
+        InfobaseConfigSourceVersion::V2_20 => NativeVersion::V2_20,
+        InfobaseConfigSourceVersion::V2_21 => NativeVersion::V2_21,
+    };
+    Ok(ConfigDumpInfo::native(version, metadata).to_native_bytes()?)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1275,4 +1245,66 @@ mod tests {
         let row = encoder.finish().unwrap();
         assert!(parse_versions_blob(&row, VersionsBlobOrigin::MssqlConfigTable).is_err());
     }
+}
+
+struct InventorySink(Mutex<Option<Vec<u8>>>);
+impl FileSink for InventorySink {
+    fn inventory_only(&self) -> bool {
+        true
+    }
+    fn accept(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+        if path
+            .file_name()
+            .is_some_and(|name| name == CONFIG_DUMP_INFO_FILE_NAME)
+        {
+            *self
+                .0
+                .lock()
+                .map_err(|_| anyhow!("inventory sink poisoned"))? = Some(bytes.to_vec());
+        }
+        Ok(())
+    }
+}
+
+/// Reads ConfigDumpInfo using the export's view and exact XML writer. No files
+/// are written. `main_configuration` selects completed ConfigSave over Config;
+/// this does not change the editor's custom byte-diff or raw Config APIs.
+pub fn read_config_dump_info(args: &MssqlDumpConfigArgs) -> Result<Vec<u8>> {
+    read_config_dump_info_with_sql(args, None)
+}
+
+pub(crate) fn read_config_dump_info_with_sql(
+    args: &MssqlDumpConfigArgs,
+    sql: Option<crate::sql::SqlExec>,
+) -> Result<Vec<u8>> {
+    if args.runtime_journal.is_some()
+        || args.inflate
+        || !args.file_names.is_empty()
+        || !args.file_name_lists.is_empty()
+        || !args.objects.is_empty()
+        || args.include_config_save
+        || args.base.is_some()
+        || args.sync
+        || !args.extract_metadata_xml
+        || !args.extract_module_text
+    {
+        bail!(
+            "ConfigDumpInfo requires an unfiltered read-only inventory without runtime_journal or inflate"
+        );
+    }
+    let sink = Arc::new(InventorySink(Mutex::new(None)));
+    dump_config_with(
+        args,
+        DumpHooks {
+            sql,
+            sink: Some(sink.clone()),
+            object_recursion: None,
+        },
+    )?;
+    let bytes = sink
+        .0
+        .lock()
+        .map_err(|_| anyhow!("inventory sink poisoned"))?
+        .take();
+    bytes.ok_or_else(|| anyhow!("configuration inventory was not emitted"))
 }

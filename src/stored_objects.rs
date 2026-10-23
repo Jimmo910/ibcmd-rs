@@ -31,6 +31,8 @@
 //! views, the platform it noted, `crate::cancel`), so the operations of a
 //! [`StoredConfiguration`] take one lock and run one at a time.
 
+mod version_status;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -198,6 +200,31 @@ pub struct ObjectStatus {
     pub base_only: Vec<String>,
     /// Files of the object the folder holds and the database does not export.
     pub local_only: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database_version_status: Option<DatabaseVersionEvidence>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseVersionEvidence {
+    pub basis: &'static str,
+    pub object: String,
+    pub object_version: Option<String>,
+    pub baseline_identity: String,
+    pub database_snapshot: String,
+    pub conclusive: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionedObjectStatus {
+    pub objects: Vec<ObjectStatus>,
+    pub full_required: bool,
+    pub database_snapshot: String,
+    pub native_changes: Vec<crate::native_export_status::VersionChange>,
+    pub native_owners: crate::native_export_status::NativeVersionOwners,
 }
 
 /// What an export of one object into a source folder changed there.
@@ -705,15 +732,39 @@ impl Inventory {
 
 /// The rows of the named objects, read through the view the caller (the
 /// export, for `mssql-dump-config --object`) has begun.
-pub(crate) fn stored_rows_of(
+pub(crate) fn stored_rows_selected(
     table: &ConfigTable<'_>,
     names: &[String],
+    recursive: Option<bool>,
 ) -> Result<BTreeSet<String>> {
     let mut inventory = Inventory::read(table, table.names()?)?;
     let mut rows = BTreeSet::new();
     for name in names {
         let object = inventory.resolve(table, name)?;
-        rows.extend(inventory.rows_of(table, &object)?);
+        if recursive.unwrap_or(true) {
+            rows.extend(inventory.rows_of(table, &object)?);
+            if object.kind == "Configuration" && recursive == Some(true) {
+                for (kind, _) in inventory.kinds() {
+                    inventory.name_kind(table, kind)?;
+                }
+                let top = inventory
+                    .top
+                    .iter()
+                    .filter_map(|(_, id)| inventory.objects.get(id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for child in top {
+                    rows.extend(inventory.rows_of(table, &child)?);
+                }
+            }
+        } else {
+            inventory.rows_under(&object.uuid, &mut rows);
+            if object.kind == "Configuration" {
+                for id in inventory.contained.clone() {
+                    inventory.rows_under(&id, &mut rows);
+                }
+            }
+        }
     }
     Ok(rows)
 }
@@ -846,6 +897,8 @@ pub struct StoredConfiguration {
     /// By full name, for the inventory's digest.
     exports: HashMap<String, Arc<ObjectFiles>>,
     cached_bytes: usize,
+    main_configuration: bool,
+    main_view_cache: Option<Box<StoredConfiguration>>,
 }
 
 impl StoredConfiguration {
@@ -857,6 +910,8 @@ impl StoredConfiguration {
             inventory: None,
             exports: HashMap::new(),
             cached_bytes: 0,
+            main_configuration: false,
+            main_view_cache: None,
         }
     }
 
@@ -870,6 +925,27 @@ impl StoredConfiguration {
         let mut configuration = Self::new(source, platform);
         configuration.rows_snapshot = Some(Arc::new(rows));
         configuration
+    }
+
+    /// Separate cache/view for native main-state reads. Legacy active-state readers stay unchanged.
+    pub fn main_view(&self) -> Self {
+        let mut view = Self::new(self.source.clone(), self.platform);
+        view.main_configuration = true;
+        view
+    }
+
+    /// One session-owned main cache, separate from the legacy active-state cache.
+    /// Each operation still checks the main versions digest before using cached exports.
+    pub fn main_view_mut(&mut self) -> &mut Self {
+        if self.main_configuration {
+            return self;
+        }
+        if self.main_view_cache.is_none() {
+            self.main_view_cache = Some(Box::new(self.main_view()));
+        }
+        self.main_view_cache
+            .as_deref_mut()
+            .expect("initialized above")
     }
 
     pub fn source(&self) -> &ConfigSource {
@@ -891,6 +967,7 @@ impl StoredConfiguration {
             inventory,
             exports,
             cached_bytes,
+            main_configuration,
             ..
         } = self;
         let run = |table: &ConfigTable<'_>| -> Result<T> {
@@ -916,8 +993,28 @@ impl StoredConfiguration {
         match source {
             ConfigSource::RowsDir(dir) => with_rows_dir_table(dir, run),
             ConfigSource::FileDb(path) => crate::mssql_dump::with_file_db_table(path, run),
-            ConfigSource::Database { sql, database } => with_database_table(sql, database, run),
+            ConfigSource::Database { sql, database } => {
+                if *main_configuration {
+                    crate::mssql_dump::with_main_database_table(sql, database, run)
+                } else {
+                    with_database_table(sql, database, run)
+                }
+            }
         }
+    }
+
+    /// Native ConfigDumpInfo of the main configuration (completed ConfigSave
+    /// included), for native version status. Does not replace `status`, which
+    /// compares exported bytes with a source folder.
+    pub fn native_config_dump_info(&mut self) -> Result<Vec<u8>> {
+        let _engine = engine();
+        let mut args = export_args(&self.source, self.platform, Vec::new());
+        args.main_configuration = true;
+        let sql = match &self.source {
+            ConfigSource::Database { sql, .. } => Some(sql.clone()),
+            _ => None,
+        };
+        crate::mssql_dump::read_config_dump_info_with_sql(&args, sql)
     }
 
     /// The children of a node of the tree (`None`: the configuration).
@@ -1035,7 +1132,7 @@ impl StoredConfiguration {
         if rows.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let args = export_args(&self.source, self.platform, rows.into_iter().collect());
+        let args = self.view_export_args(rows);
         let sink = Arc::new(MemorySink {
             root: PathBuf::from(MEMORY_ROOT),
             files: Mutex::new(BTreeMap::new()),
@@ -1050,11 +1147,82 @@ impl StoredConfiguration {
             DumpHooks {
                 rows_snapshot: self.rows_snapshot.clone(),
                 sql,
+                object_recursion: None,
                 sink: Some(sink.clone()),
             },
         )?;
         let files = std::mem::take(&mut *sink.files.lock().unwrap_or_else(PoisonError::into_inner));
         Ok(files)
+    }
+
+    fn view_export_args(&self, rows: BTreeSet<String>) -> MssqlDumpConfigArgs {
+        let mut args = export_args(&self.source, self.platform, rows.into_iter().collect());
+        if self.main_configuration {
+            args.main_configuration = true;
+            // Selected SQL rows cannot reconstruct the completed ConfigSave overlay.
+            // Read the shared whole main view, then partition its files by object.
+            if matches!(self.source, ConfigSource::Database { .. }) {
+                args.file_names.clear();
+            }
+        }
+        args
+    }
+
+    /// Native DB-version evidence combined with the existing byte comparison.
+    /// Bracket all reads with the shared native inventory; external mutations
+    /// or a changed reference fail instead of attaching stale native evidence.
+    pub fn status_with_versions(
+        &mut self,
+        names: Option<&[String]>,
+        source_dir: &Path,
+        baseline_dir: &Path,
+        progress: Progress<'_>,
+    ) -> Result<VersionedObjectStatus> {
+        use crate::native_export_status::ConfigDumpInfoSnapshot;
+        if !self.main_configuration {
+            return self.main_view_mut().status_with_versions(
+                names,
+                source_dir,
+                baseline_dir,
+                progress,
+            );
+        }
+        let reference_path = baseline_dir.join("ConfigDumpInfo.xml");
+        if !fs::symlink_metadata(&reference_path)?.file_type().is_file() {
+            bail!("native status requires a regular ConfigDumpInfo.xml reference");
+        }
+        let reference_bytes = fs::read(&reference_path)?;
+        let reference = ConfigDumpInfoSnapshot::parse(&reference_bytes)?;
+        let before = self.native_config_dump_info()?;
+        let current = ConfigDumpInfoSnapshot::parse(&before)?;
+        crate::cancel::check()?;
+        let objects = {
+            let _engine = engine();
+            self.all_objects()?
+        };
+        let mut statuses = self.status(names, source_dir, progress)?;
+        crate::cancel::check()?;
+        if self.native_config_dump_info()? != before
+            || fs::read(&reference_path)? != reference_bytes
+        {
+            bail!("configuration or native reference changed during status comparison");
+        }
+        let native = current.compare(&reference);
+        version_status::attach(
+            &objects,
+            &current,
+            &native,
+            &sha256_hex(&reference_bytes),
+            &sha256_hex(&before),
+            &mut statuses,
+        );
+        Ok(VersionedObjectStatus {
+            objects: statuses,
+            full_required: native.full_required,
+            database_snapshot: sha256_hex(&before),
+            native_changes: native.changes,
+            native_owners: current.owners(),
+        })
     }
 
     /// What the export writes for the objects, in memory.
@@ -1174,6 +1342,7 @@ impl StoredConfiguration {
                 kind: files.object.kind.clone(),
                 status: StatusKind::Same,
                 version: Some(files.version.clone()),
+                database_version_status: None,
                 changed: Vec::new(),
                 base_only: Vec::new(),
                 local_only: Vec::new(),
@@ -1213,6 +1382,7 @@ impl StoredConfiguration {
                 kind: object.kind,
                 status: StatusKind::NotInBase,
                 version: None,
+                database_version_status: None,
                 changed: Vec::new(),
                 base_only: Vec::new(),
                 local_only: local.into_keys().collect(),
@@ -1446,6 +1616,94 @@ pub fn require_database(source: &ConfigSource, what: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_view_reuses_exports_separately_and_invalidates_on_versions_change() {
+        const CHILD: &str = "IBCMD_MAIN_VIEW_CACHE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "stored_objects::tests::main_view_reuses_exports_separately_and_invalidates_on_versions_change", "--nocapture"])
+                .env(CHILD, "1").output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("test result: ok. 1 passed; 0 failed;"),
+                "{stdout}"
+            );
+            return;
+        }
+        use std::io::{Read, Write};
+        let root = std::env::temp_dir().join(format!("main-view-cache-{}", uuid::Uuid::new_v4()));
+        let db = root.join("db");
+        let rows_dir = root.join("rows");
+        fs::create_dir_all(&db).unwrap();
+        fs::create_dir(&rows_dir).unwrap();
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase/tiny.1CD.gz");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(fixture).unwrap())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+        let rows = exclusive(|| {
+            crate::mssql_dump::with_file_db_table(&db, |table| table.rows(&table.names()?))
+        })
+        .unwrap();
+        for (name, bytes) in rows {
+            fs::write(rows_dir.join(format!("{name}__part0.bin")), bytes).unwrap();
+        }
+        let mut config = StoredConfiguration::new(
+            ConfigSource::RowsDir(rows_dir.clone()),
+            crate::platform::parse("8.5.1").unwrap(),
+        );
+        let names = vec!["CommonModule.ФайловаяБазаПроверка".into()];
+        let progress = |_, _, _: &str| {};
+        let first = config
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        // A different native tree request must keep the same owned export cache.
+        config.main_view_mut().children(None).unwrap();
+        let second = config
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "main exports survive between requests"
+        );
+        let active = config.export(&names, &progress).unwrap().remove(0);
+        assert!(
+            !Arc::ptr_eq(&first, &active),
+            "active and main exports cannot share their cache"
+        );
+        let versions_path = rows_dir.join("versions__part0.bin");
+        let stored = fs::read(&versions_path).unwrap();
+        let mut decoded = inflate_raw(&stored).unwrap_or(stored);
+        decoded.push(b' ');
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&decoded).unwrap();
+        fs::write(versions_path, encoder.finish().unwrap()).unwrap();
+        let refreshed = config
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        assert!(
+            !Arc::ptr_eq(&first, &refreshed),
+            "changed versions invalidates the retained main cache"
+        );
+        assert_eq!(first.files, refreshed.files);
+        assert!(!config.main_configuration);
+        eprintln!("retained fixture: {}", root.display());
+    }
 
     #[test]
     fn a_path_names_its_top_level_object() {

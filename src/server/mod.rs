@@ -366,6 +366,8 @@ struct InfobaseParams {
 struct ChildrenParams {
     infobase: String,
     node: Option<String>,
+    #[serde(default)]
+    main_configuration: bool,
 }
 
 #[derive(Deserialize)]
@@ -374,6 +376,7 @@ struct StatusParams {
     infobase: String,
     source_dir: PathBuf,
     objects: Option<Vec<String>>,
+    version_baseline_dir: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -606,10 +609,15 @@ impl State {
 
     fn children(&mut self, params: ChildrenParams) -> Result<Value, RpcError> {
         let session = self.session(&params.infobase)?;
-        let nodes = session
-            .configuration
-            .children(params.node.as_deref())
-            .map_err(failure)?;
+        let nodes = if params.main_configuration {
+            session
+                .configuration
+                .main_view_mut()
+                .children(params.node.as_deref())
+        } else {
+            session.configuration.children(params.node.as_deref())
+        }
+        .map_err(failure)?;
         Ok(json!({ "nodes": nodes }))
     }
 
@@ -627,6 +635,20 @@ impl State {
     fn status(&mut self, id: &Value, params: StatusParams) -> Result<Value, RpcError> {
         let progress = self.progress(id);
         let session = self.session(&params.infobase)?;
+        if let Some(baseline) = params.version_baseline_dir {
+            return serde_json::to_value(
+                session
+                    .configuration
+                    .status_with_versions(
+                        params.objects.as_deref(),
+                        &params.source_dir,
+                        &baseline,
+                        &progress,
+                    )
+                    .map_err(failure)?,
+            )
+            .map_err(|error| failure(error.into()));
+        }
         let statuses = session
             .configuration
             .status(params.objects.as_deref(), &params.source_dir, &progress)

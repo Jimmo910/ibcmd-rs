@@ -127,6 +127,132 @@ code --extensionDevelopmentPath="$PWD" \
 Object trees, export/import/apply UI, VSIX/Marketplace delivery and live SQL
 verification are outside this connection-only candidate.
 
+## Object status (#380)
+
+The Explorer **ibcmd-rs Objects** view is a minimal flat list of full names. Select
+an existing connection, configure the source and reference for that workspace
+folder, then run **Refresh Object Status**. **Reload Connections and Refresh
+Status** also refreshes objects after reconnecting. The toolbar toggles **Changed
+Objects Only**; unknown remains visible. Matching source files receive Explorer
+badges. This does not implement #379's full metadata browser or ERP performance work.
+
+```json
+{
+  "ibcmd.sourceDirectory": "src",
+  "ibcmd.statusBaselineDirectory": "/external/reference-export"
+}
+```
+
+The reference is a separate export from the last synchronization, including its
+`ConfigDumpInfo.xml`. Refresh never updates it. Alternatively use
+`ibcmd.statusGitRef` (commit/branch/tag) and an absolute `ibcmd.statusCacheDirectory`
+under the external lab root. Git takes precedence over the reference directory;
+its ref is pinned to one tree before reading committed source blobs. There is no
+checkout, hook, shell or native process in production. Inspectable snapshots are
+retained for user-controlled Trash cleanup.
+
+| Label | Badge | Evidence |
+| --- | --- | --- |
+| Совпадает | = | Native DB versions and local files both equal reference |
+| Изменён в базе | Б | Native DB version changed; local files equal reference |
+| Изменён в файлах | Ф | Native DB version unchanged; local files changed |
+| Изменён в базе и файлах | БФ | Native DB version and local files both changed |
+| Только в базе | +Б | DB object has no local files |
+| Только в файлах | +Ф | Local object is absent in DB |
+| Статус неизвестен | ? | Missing/inconclusive/unsupported/stale evidence |
+
+Native mode is the default. It reuses #362's typed ConfigDumpInfo comparison.
+Native version changes are independent of file bytes: importing a configuration
+can restamp Language/Configuration without changing their XML. Local/reference
+bytes are compared separately, including additions, deletions and binary files.
+The server brackets its reads with native snapshots; both client RPC comparisons
+must agree on the object token, complete native snapshot and reference identity.
+These hashes/tokens check freshness; they are never used as native configVersion.
+
+Cancellation, RPC failures, malformed replies, changed references/snapshots,
+symlink paths, missing folders and unsaved source editors clear old badges and
+cannot become clean. Connection/configuration/workspace changes invalidate old
+refreshes. A native `fullRequired` response stays explicit and common-object
+change direction becomes unknown rather than unchanged.
+
+Status reads use `ibcmd.statusTimeoutSeconds` (default 600 seconds, integer range
+30–3600) for each source/reference request. Invalid runtime values use the default.
+The progress notification remains cancellable; cancellation clears badges and
+late responses cannot republish them. Other RPC methods retain their existing
+30-second default. Windows dirty-editor and decoration paths are URI-normalized
+and compared without casing, with directory/drive boundaries preserved; POSIX
+path casing stays significant.
+
+### Supported scope and remaining gates
+
+The shared filedb READ backend is integrated from #382 `644684f2`; native helper
+from #362 `b46cd919`. No duplicate backend/parser or production native process is
+provided. Canonical owner helper #362 `a5fdd226` supplies immediate/native/root
+owners, including ordinary object modules and form bodies. Supported nested files
+roll up explicitly to the intended UI objects. Unmapped coverage is inconclusive.
+
+Native SQL status uses the same main configuration view for version, tree and byte
+reads, through the existing read-only CONFIGSAVE overlay and session-owned main cache.
+Main and active exports remain separate and each checks its versions digest before
+reuse; native before/after snapshots remain required freshness checks. Legacy
+byte/tree requests retain their active view. SQL adapter tests use a recording
+client that rejects writes; a live SQL server was not tested. For explicit byte-only
+inspection, set `ibcmd.statusComparison` to `bytes`; that mode remains a labelled
+preview. Native mode never silently falls back to byte equality.
+
+Actual 8.5.1.1592 filedb acceptance covers all six UI/Explorer states, native
+selected module imports plus independent local edits, folder/Git baseline,
+changed-only filtering, and byte-identical DB after READ. It uses supported release
+profile `8.5.1`; exact build 8.5.1.1592 is not yet in the profile registry.
+This is native command validation, not a Configurator GUI run. Parent review,
+live SQL and any required GUI acceptance remain explicit evidence gaps.
+Evidence: `openspec/changes/add-vscode-object-status/evidence/native-integration-20261022.md`.
+
+### Reproduce native acceptance (opt-in)
+
+Keep all paths in the external lab. Existing Rust fixture tests use fixed scratch
+names, so use a dedicated `TMPDIR` for #380. No global extension install is needed.
+After building/testing the binary and generating rows as described above:
+
+```sh
+export IBCMD_TEST_NATIVE_BINARY=/opt/1cv8/8.5.1.1592/ibcmd
+export IBCMD_TEST_ROOT="$LAB/tmp/issue-380-native-acceptance"
+python3 editors/vscode/test/prepare-native-six.py
+export IBCMD_TEST_SIXSTATE_ROOT="$(cat "$IBCMD_TEST_ROOT/native-six-run-path")"
+export IBCMD_TEST_BINARY="$LAB/build/issue-380/debug/ibcmd-rs"
+export IBCMD_TEST_ROWS="$TMPDIR/ibcmd-external-editor-server-protocol/rows/demo"
+export VSCODE_EXECUTABLE_PATH="/Applications/Visual Studio Code.app/Contents/MacOS/Code"
+npm run test:host --prefix editors/vscode
+```
+
+The generator creates a unique disposable DB from committed public tiny fixtures.
+Every native command has explicit DB/data/temp paths. It preserves commands,
+stdout/stderr, expected states and source/reference trees; it deletes nothing.
+The host records `ui-evidence.json` and checks that UI reads do not mutate 1CD bytes.
+`IBCMD_TEST_FILEDB_ROOT` optionally adds the separate version-only whole-import
+regression case documented in the historical `native-read-20261022.md` evidence.
+
+Opt-in Catalog/module/form owner regression (new disposable DB only):
+
+```sh
+IBCMD_TEST_ROOT=/absolute/external/owners \
+IBCMD_TEST_NATIVE_BINARY=/opt/1cv8/8.5.1.1592/ibcmd \
+IBCMD_TEST_BINARY=/absolute/external/build/debug/ibcmd-rs \
+python3 editors/vscode/test/prepare-native-owners.py
+```
+
+This public fixture test checks identical and platform-modified inventories, an
+unrelated common module and DB byte immutability. Artifacts are retained.
+
+### Deferred Git baseline performance work
+
+Each refresh currently creates a retained snapshot and reads blobs in individual
+Git processes. Cross-refresh reuse and batched extraction are deferred to #379:
+a safe reusable cache needs completed-only publication, tree+repository+prefix
+identity, and an integrity/partial-cancellation policy. The current pinned-tree,
+path/link guards and Trash-controlled retention remain; this PR does not claim
+ERP-scale Git baseline performance.
+
 Edit Connection supports SQL and read-only rows-directory entries. An omitted server
 stays omitted so normal `db-server`/environment resolution still applies. Copying an
 inherited rows-directory entry keeps its resolved source directory. File databases

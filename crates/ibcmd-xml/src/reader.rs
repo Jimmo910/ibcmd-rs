@@ -415,7 +415,7 @@ fn valid_xml_char(value: char) -> bool {
         || ('\u{e000}'..='\u{fffd}').contains(&value)
         || ('\u{10000}'..='\u{10ffff}').contains(&value)
 }
-fn validate_declaration(input: &[u8], pos: usize, raw: &str) -> Result<(), XmlError> {
+pub(crate) fn validate_declaration(input: &[u8], pos: usize, raw: &str) -> Result<(), XmlError> {
     let content = raw
         .strip_prefix("<?xml")
         .and_then(|value| value.strip_suffix("?>"))

@@ -11,6 +11,13 @@ const { runTests } = require("@vscode/test-electron");
   const run = await fs.mkdtemp(path.join(root, "host-"));
   const workspace = path.join(run, "workspace");
   await fs.mkdir(workspace);
+  const sibling = path.join(run, "sibling");
+  await fs.mkdir(sibling);
+  const workspaceFile = path.join(run, "test.code-workspace");
+  await fs.writeFile(
+    workspaceFile,
+    JSON.stringify({ folders: [{ path: workspace }, { path: sibling }] }),
+  );
   const rows = process.env.IBCMD_TEST_ROWS;
   if (!rows)
     throw new Error("Set IBCMD_TEST_ROWS (see README test instructions)");
@@ -22,7 +29,7 @@ const { runTests } = require("@vscode/test-electron");
       ? { vscodeExecutablePath: executable }
       : { cachePath: path.join(root, "vscode-download") }),
     launchArgs: [
-      workspace,
+      workspaceFile,
       "--user-data-dir",
       path.join(run, "user-data"),
       "--extensions-dir",

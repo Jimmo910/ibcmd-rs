@@ -152,6 +152,13 @@ async function harness({
             saved.push(next);
           },
         };
+      // Object rendering is covered separately; isolate the connection state machine.
+      if (id === "./object-view")
+        return {
+          ObjectView: class {
+            clear() {}
+          },
+        };
       if (id === "./status") return require("../out/status");
       if (id === "./import") return require("../out/import");
       return require(id);

@@ -970,6 +970,8 @@ mod characteristics {
 mod additional_indexes;
 pub mod cas;
 mod command_interface;
+pub use config_dump_info::read_config_dump_info;
+pub(crate) use config_dump_info::read_config_dump_info_with_sql;
 mod config_dump_info;
 mod config_rows;
 pub mod config_save;
@@ -2071,6 +2073,7 @@ pub(crate) fn dump_config_with_sql(
         DumpHooks {
             rows_snapshot: None,
             sql: sql_override,
+            object_recursion: None,
             sink: None,
         },
     )
@@ -2087,6 +2090,9 @@ pub(crate) struct DumpHooks {
     /// between runs, instead of one built from the arguments' login. Not
     /// used with `--rows-dir`.
     pub(crate) sql: Option<crate::sql::SqlExec>,
+    /// Native objects supplies explicit recursion; None retains the custom
+    /// --object contract (owned descendants, Configuration itself only).
+    pub(crate) object_recursion: Option<bool>,
     /// Where the files go instead of `output_dir`: nothing is written to the
     /// disk -- no folder prepared, no manifest, no raw rows -- and
     /// `output_dir` only names the files the sink receives.
@@ -2100,12 +2106,25 @@ pub(crate) struct DumpHooks {
 pub(crate) struct ConfigTable<'a> {
     sql: &'a crate::sql::SqlExec,
     database: &'a str,
+    main_configuration: bool,
 }
 
 impl<'a> ConfigTable<'a> {
     /// The table a running export reads: its folder active, its view begun.
     pub(crate) fn active(sql: &'a crate::sql::SqlExec, database: &'a str) -> Self {
-        Self { sql, database }
+        Self {
+            sql,
+            database,
+            main_configuration: false,
+        }
+    }
+
+    pub(crate) fn main(sql: &'a crate::sql::SqlExec, database: &'a str) -> Self {
+        Self {
+            sql,
+            database,
+            main_configuration: true,
+        }
     }
 
     /// Every published row name. Installs the table's view for the reads
@@ -2119,7 +2138,7 @@ impl<'a> ConfigTable<'a> {
             table,
             &BTreeSet::new(),
             headers,
-            false,
+            self.main_configuration,
         )?;
         Ok(headers.into_iter().map(|header| header.file_name).collect())
     }
@@ -2257,10 +2276,19 @@ mod descriptor_snapshot_tests {
         // from legacy SQL mocks rather than sharing their mutable state.
         const CHILD: &str = "IBCMD_DESCRIPTOR_SNAPSHOT_TEST_CHILD";
         if std::env::var_os(CHILD).is_none() {
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "mssql_dump::descriptor_snapshot_tests::snapshot_uses_active_generation_and_preserves_no_marker_semantics", "--nocapture"])
-                .env(CHILD, "1").status().unwrap();
-            assert!(status.success());
+                .env(CHILD, "1").output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("test result: ok. 1 passed; 0 failed;"),
+                "{stdout}"
+            );
             return;
         }
         let generation = "b627e390-8fad-4a95-afe6-674f54813188";
@@ -2347,6 +2375,16 @@ pub(crate) fn with_database_table<T>(
 ) -> Result<T> {
     let _views = dynamic_generation::StorageViewScope::begin(database);
     read(&ConfigTable::active(sql, database))
+}
+
+/// Main CONFIG + completed CONFIGSAVE table view through the existing read-only overlay.
+pub(crate) fn with_main_database_table<T>(
+    sql: &crate::sql::SqlExec,
+    database: &str,
+    read: impl FnOnce(&ConfigTable<'_>) -> Result<T>,
+) -> Result<T> {
+    let _views = dynamic_generation::StorageViewScope::begin(database);
+    read(&ConfigTable::main(sql, database))
 }
 
 /// [`dump_config`] with the caller's [`DumpHooks`]: the same export, the
@@ -2522,9 +2560,15 @@ fn dump_config_inner(
     // selects them (`crate::stored_objects`), read through the view just
     // begun.
     if !args.objects.is_empty() {
-        selected_file_names.extend(crate::stored_objects::stored_rows_of(
-            &ConfigTable::active(&sql, &args.database),
+        let table = if hooks.object_recursion.is_some() && args.main_configuration {
+            ConfigTable::main(&sql, &args.database)
+        } else {
+            ConfigTable::active(&sql, &args.database)
+        };
+        selected_file_names.extend(crate::stored_objects::stored_rows_selected(
+            &table,
             &args.objects,
+            hooks.object_recursion,
         )?);
     }
 
@@ -2561,6 +2605,7 @@ fn dump_config_inner(
             incremental
                 .as_ref()
                 .filter(|_| role == MssqlConfigurationTableRole::Current),
+            hooks.object_recursion.is_some() && args.main_configuration && !args.objects.is_empty(),
         )?;
         let mut dumped = dumped;
         if dumped.incremental.is_some() {
@@ -2826,6 +2871,7 @@ pub(crate) fn export_staged_state(
             // The state is the rows of the memory, not a database's tables.
             false,
             None,
+            false,
         )
     };
     dumped?;
@@ -4572,6 +4618,7 @@ fn dump_table_rows_streamed(
     sink: Option<Arc<dyn FileSink>>,
     main_configuration: bool,
     incremental: Option<&incremental::IncrementalExport>,
+    main_view_selected: bool,
 ) -> Result<DumpedTable> {
     let table = inventory_plan.role().sql_name();
     let generate_config_dump_info = inventory_plan.config_dump_info_eligible();
@@ -4606,14 +4653,18 @@ fn dump_table_rows_streamed(
     // Everything below reads the configuration an active dynamic generation
     // publishes; without one this leaves the headers and every later query
     // exactly as they were.
-    let headers = install_storage_overlay(
-        sql,
-        database,
-        table,
-        selected_file_names,
-        headers,
-        main_configuration,
-    )?;
+    let headers = if main_view_selected {
+        headers
+    } else {
+        install_storage_overlay(
+            sql,
+            database,
+            table,
+            selected_file_names,
+            headers,
+            main_configuration,
+        )?
+    };
     let fetch_headers_ms = elapsed_ms(headers_started);
     let mut timings = MssqlDumpTimingReport {
         fetch_headers_ms,
@@ -5740,6 +5791,57 @@ fn dump_table_rows_streamed(
         "prepare.reference_indexes",
         reference_indexes_cpu,
     );
+    // Native export info/status need the same inventory and writer as a full
+    // export, but never fetch or convert the body batches below.
+    if sink.as_ref().is_some_and(|sink| sink.inventory_only()) {
+        let blob = fetch_binary_rows(
+            sql,
+            database,
+            table,
+            &BTreeSet::from([STAGE_INVENTORY_ROW.to_owned()]),
+            false,
+        )?
+        .into_iter()
+        .find(|row| row.file_name == STAGE_INVENTORY_ROW && row.part_no == 0)
+        .ok_or_else(|| anyhow!("full Config export has no versions row"))?;
+        let output = OutputWriter::from_env_to_sink(sink.unwrap());
+        write_config_dump_info(
+            &output,
+            output_dir,
+            source_version,
+            &blob.binary,
+            VersionsBlobOrigin::MssqlConfigTable,
+            ConfigDumpInfoPartialInventoryPolicy::Fail,
+            ConfigDumpInfoInventory {
+                file_names: &file_names,
+                metadata_texts: &index_metadata_texts,
+                object_refs: &object_refs,
+                form_refs: &form_refs,
+                template_refs: &template_refs,
+                subsystem_refs: &subsystem_refs,
+                module_text_paths: &module_text_paths,
+                source_assets: &source_assets,
+                emitted_source_asset_paths: &BTreeMap::new(),
+                configuration_module_groups: &configuration_module_groups,
+            },
+        )?;
+        output.finish()?;
+        timings.prepare_indexes_ms = elapsed_ms(prepare_started);
+        return Ok(DumpedTable {
+            rows: Vec::new(),
+            failed_rows: Vec::new(),
+            binary_bytes: 0,
+            inflated_rows: 0,
+            module_text_rows: 0,
+            metadata_xml_rows: 0,
+            source_asset_rows: 0,
+            source_assets: SourceAssetCompletenessReport::default(),
+            metadata_root_inventory: RootMetadataInventoryReport::default(),
+            timings,
+            incremental: None,
+        });
+    }
+
     // `--model-export`: the descriptors of the modelled kinds are decoded
     // from their rows; names come from an index of the whole row set, so a
     // run that fetched only part of it keeps the legacy converters.

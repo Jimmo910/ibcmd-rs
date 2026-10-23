@@ -20,6 +20,8 @@ exports.run = async () => {
   ])
     assert.ok(all.includes(`ibcmd.${c}`));
   const f = vscode.workspace.workspaceFolders[0];
+  const folderPick = vscode.window.showWorkspaceFolderPick;
+  vscode.window.showWorkspaceFolderPick = async () => f;
   const cfg = vscode.workspace.getConfiguration("ibcmd", f.uri);
   await cfg.update(
     "executable",
@@ -121,9 +123,347 @@ exports.run = async () => {
     assert.deepEqual(errors, []);
     assert.ok(api.status().includes("pending unknown"), api.status());
     assert.ok(!api.status().includes("disconnected"), api.status());
+    await cfg.update(
+      "statusComparison",
+      "bytes",
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    // Actual RPC/rows-dir integration, separately from synthetic direction/lifecycle tests.
+    const realSource = path.join(f.uri.fsPath, "real-source");
+    const realBaseline = path.join(f.uri.fsPath, "real-baseline");
+    await fs.mkdir(realSource);
+    const cli = (...args) =>
+      JSON.parse(
+        execFileSync(process.env.IBCMD_TEST_BINARY, args, {
+          cwd: f.uri.fsPath,
+          encoding: "utf8",
+        }),
+      );
+    const inventory = cli(
+      "objects",
+      "status",
+      "--platform",
+      "8.3.27",
+      "--rows-dir",
+      rows,
+      "--source-dir",
+      realSource,
+    ).objects;
+    const args = [
+      "objects",
+      "export",
+      "--platform",
+      "8.3.27",
+      "--rows-dir",
+      rows,
+      "--target-dir",
+      realSource,
+    ];
+    for (const object of inventory) args.push("--object", object.object);
+    cli(...args);
+    await fs.cp(realSource, realBaseline, { recursive: true });
+    await cfg.update(
+      "sourceDirectory",
+      realSource,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    await cfg.update(
+      "statusBaselineDirectory",
+      realBaseline,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    await vscode.commands.executeCommand("ibcmd.select");
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.equal(api.objects().length, inventory.length);
+    assert.ok(
+      api.objects().every((r) => r.state === "same"),
+      JSON.stringify(api.objects()),
+    );
+    const missing = path.join(f.uri.fsPath, "missing-export");
+    await fs.mkdir(missing);
+    const fileList = cli(
+      "objects",
+      "status",
+      "--platform",
+      "8.3.27",
+      "--rows-dir",
+      rows,
+      "--source-dir",
+      missing,
+    ).objects;
+    const module = fileList
+      .flatMap((r) => r.baseOnly)
+      .find((p) => p.endsWith(".bsl"));
+    assert.ok(module, "Committed demo fixture has a module");
+    await fs.appendFile(
+      path.join(realSource, module),
+      "\n// local #380 test\n",
+    );
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.ok(
+      api.objects().some((r) => r.state === "file"),
+      JSON.stringify(api.objects()),
+    );
+    assert.equal(
+      api.objectDecoration(vscode.Uri.file(path.join(realSource, module)))
+        .badge,
+      "Ф",
+    );
     await vscode.commands.executeCommand("ibcmd.forgetPassword");
     assert.deepEqual(errors, []);
     assert.ok(api.status().includes("ibcmd-rs"));
+    // Opt-in actual native-mutated filedb READ smoke. This records byte-preview evidence,
+    // not native-version parity: native may report version changes with unchanged bytes.
+    const nativeRoot = process.env.IBCMD_TEST_FILEDB_ROOT;
+    if (nativeRoot) {
+      await cfg.update(
+        "statusComparison",
+        "native",
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      const filedb = path.join(nativeRoot, "db/1Cv8.1CD");
+      const beforeRead = await fs.readFile(filedb);
+      await fs.writeFile(
+        path.join(f.uri.fsPath, "ibcmd-rs.toml"),
+        await fs.readFile(path.join(nativeRoot, "workspace/ibcmd-rs.toml")),
+      );
+      await cfg.update(
+        "connections",
+        ["issue380-native"],
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "connectionMetadata",
+        {},
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "sourceDirectory",
+        path.join(nativeRoot, "source"),
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "statusBaselineDirectory",
+        path.join(nativeRoot, "baseline"),
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      vscode.window.showQuickPick = async (items) => (await items)[0];
+      await vscode.commands.executeCommand("ibcmd.select");
+      await vscode.commands.executeCommand("ibcmd.objects.refresh");
+      const actual = api.objects();
+      const byName = new Map(actual.map((row) => [row.object, row.state]));
+      assert.equal(byName.get("CommonModule.ФайловаяБазаПроверка"), "database");
+      assert.equal(byName.get("Configuration"), "both");
+      assert.equal(byName.get("Language.English"), "database");
+      assert.equal(
+        api.objectDecoration(
+          vscode.Uri.file(
+            path.join(
+              nativeRoot,
+              "source/CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl",
+            ),
+          ),
+        ).badge,
+        "Б",
+      );
+      assert.ok(
+        api
+          .objectDecoration(
+            vscode.Uri.file(
+              path.join(nativeRoot, "source/Languages/English.xml"),
+            ),
+          )
+          .tooltip.includes("Версии БД и локальные файлы"),
+      );
+      const nativeStatus = await fs.readFile(
+        path.join(nativeRoot, "module-status.stdout"),
+        "utf8",
+      );
+      assert.ok(nativeStatus.includes("modified: Language.English"));
+      assert.ok(nativeStatus.includes("modified: Configuration.Configuration"));
+      await fs.writeFile(
+        path.join(nativeRoot, "ui-evidence.json"),
+        JSON.stringify(
+          { labels: actual, nativeStatus, nativeVersionParity: true },
+          null,
+          2,
+        ),
+      );
+      assert.deepEqual(
+        await fs.readFile(filedb),
+        beforeRead,
+        "UI READ must not mutate the actual filedb",
+      );
+      // Same actual native comparison through a pinned Git baseline.
+      const gitSource = path.join(f.uri.fsPath, "native-git-source");
+      await fs.cp(path.join(nativeRoot, "baseline"), gitSource, {
+        recursive: true,
+      });
+      const git = (...args) =>
+        execFileSync("git", ["-C", gitSource, ...args], { stdio: "pipe" });
+      git("init");
+      git("add", ".");
+      git(
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-m",
+        "native baseline",
+      );
+      await fs.appendFile(
+        path.join(gitSource, "Configuration.xml"),
+        "\n<!-- local Git source edit -->\n",
+      );
+      await cfg.update(
+        "sourceDirectory",
+        gitSource,
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "statusGitRef",
+        "HEAD",
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "statusCacheDirectory",
+        path.join(f.uri.fsPath, "native-git-cache"),
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await vscode.commands.executeCommand("ibcmd.select");
+      await vscode.commands.executeCommand("ibcmd.objects.refresh");
+      assert.deepEqual(
+        api.objects(),
+        actual,
+        "Native folder and Git baseline states agree",
+      );
+      assert.deepEqual(
+        await fs.readFile(filedb),
+        beforeRead,
+        "Git native refresh is read-only",
+      );
+      await cfg.update(
+        "statusGitRef",
+        "",
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      console.log(
+        "Actual filedb native-version UI matches measured module/root/language changes; READ leaves DB bytes unchanged.",
+      );
+    }
+    const sixRoot = process.env.IBCMD_TEST_SIXSTATE_ROOT;
+    if (sixRoot) {
+      const dbFile = path.join(sixRoot, "db/1Cv8.1CD");
+      const before = await fs.readFile(dbFile);
+      await fs.writeFile(
+        path.join(f.uri.fsPath, "ibcmd-rs.toml"),
+        await fs.readFile(path.join(sixRoot, "workspace/ibcmd-rs.toml")),
+      );
+      await cfg.update(
+        "connections",
+        ["issue380-native"],
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "connectionMetadata",
+        {},
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "statusComparison",
+        "native",
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "sourceDirectory",
+        path.join(sixRoot, "source"),
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "statusBaselineDirectory",
+        path.join(sixRoot, "baseline"),
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      await cfg.update(
+        "statusGitRef",
+        "",
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      vscode.window.showQuickPick = async (items) => (await items)[0];
+      await vscode.commands.executeCommand("ibcmd.select");
+      await vscode.commands.executeCommand("ibcmd.objects.refresh");
+      const expected = JSON.parse(
+        await fs.readFile(path.join(sixRoot, "expected-states.json"), "utf8"),
+      );
+      const labels = api.objects();
+      const actual = new Map(labels.map((row) => [row.object, row.state]));
+      const nativeStatus = await fs.readFile(
+        path.join(sixRoot, "module-status.stdout"),
+        "utf8",
+      );
+      const nativeNames = nativeStatus
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => line.replace(/^modified: /, ""));
+      for (const [object, state] of Object.entries(expected)) {
+        assert.equal(
+          actual.get(object),
+          state,
+          `Actual native six-state ${object}: ${JSON.stringify(labels)}`,
+        );
+        const name = object.slice("CommonModule.".length);
+        const decoration = api.objectDecoration(
+          vscode.Uri.file(
+            path.join(sixRoot, "source/CommonModules", name + ".xml"),
+          ),
+        );
+        assert.ok(decoration, `Explorer decoration for ${object}`);
+        if (["database", "both"].includes(state))
+          assert.ok(
+            nativeNames.includes(object) ||
+              nativeNames.includes(object + ".Module"),
+          );
+        if (["same", "file"].includes(state))
+          assert.ok(
+            !nativeNames.includes(object) &&
+              !nativeNames.includes(object + ".Module"),
+          );
+      }
+      assert.deepEqual(
+        [...new Set(Object.values(expected))].sort(),
+        ["same", "database", "file", "both", "databaseOnly", "fileOnly"].sort(),
+      );
+      await vscode.commands.executeCommand("ibcmd.objects.changedOnly");
+      assert.ok(api.visibleObjects().every((row) => row.state !== "same"));
+      await vscode.commands.executeCommand("ibcmd.objects.changedOnly");
+      assert.deepEqual(
+        await fs.readFile(dbFile),
+        before,
+        "Six-state UI refresh never writes filedb",
+      );
+      await fs.writeFile(
+        path.join(sixRoot, "ui-evidence.json"),
+        JSON.stringify(
+          {
+            labels,
+            nativeStatus,
+            allSixStates: true,
+            nativeVersionParity: true,
+          },
+          null,
+          2,
+        ),
+      );
+      console.log(
+        "Actual native filedb: all SIX UI/Explorer states match independent native version/local file evidence; changed-only and read-only checks passed.",
+      );
+    }
     // Real extension UI/state machine against a clearly synthetic server, covering failure/races.
     const fake = path.join(__dirname, "fake-host-server.js");
     await fs.chmod(fake, 0o755);
@@ -157,6 +497,119 @@ exports.run = async () => {
       assert.ok(api.status().includes(expected), `${mode}: ${api.status()}`);
       assert.ok(api.status().includes("8.5.1"), api.status());
     }
+    // #380: real extension host and UI providers against explicitly synthetic six-state RPC.
+    const source = path.join(f.uri.fsPath, "status-source");
+    const baseline = path.join(f.uri.fsPath, "status-baseline");
+    await fs.mkdir(source);
+    await fs.mkdir(baseline);
+    await fs.writeFile(
+      path.join(baseline, "ConfigDumpInfo.xml"),
+      "synthetic-native-reference",
+    );
+    await cfg.update(
+      "statusComparison",
+      "native",
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    for (const name of [
+      "Same",
+      "Database",
+      "File",
+      "Both",
+      "DatabaseOnly",
+      "FileOnly",
+    ]) {
+      await fs.writeFile(path.join(baseline, `${name}.xml`), "baseline");
+      await fs.writeFile(
+        path.join(source, `${name}.xml`),
+        ["File", "Both"].includes(name) ? "local" : "baseline",
+      );
+    }
+    await cfg.update(
+      "sourceDirectory",
+      source,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    await cfg.update(
+      "statusBaselineDirectory",
+      baseline,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    process.env.IBCMD_FAKE_MODE = "status";
+    await vscode.commands.executeCommand("ibcmd.select");
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.deepEqual(
+      api.objects().map((r) => r.state),
+      ["same", "database", "file", "both", "databaseOnly", "fileOnly"],
+    );
+    assert.equal(
+      api.objectDecoration(vscode.Uri.file(path.join(source, "File.xml")))
+        .badge,
+      "Ф",
+    );
+    assert.equal(
+      api.objectDecoration(vscode.Uri.file(path.join(baseline, "File.xml"))),
+      undefined,
+    );
+    await vscode.commands.executeCommand("ibcmd.objects.changedOnly");
+    assert.equal(api.visibleObjects().length, 5);
+    await vscode.commands.executeCommand("ibcmd.objects.changedOnly");
+    assert.equal(api.visibleObjects().length, 6);
+    process.env.IBCMD_FAKE_MODE = "status-error";
+    await vscode.commands.executeCommand("ibcmd.select");
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.deepEqual(api.objects(), []);
+    assert.equal(
+      api.objectDecoration(vscode.Uri.file(path.join(source, "File.xml"))),
+      undefined,
+    );
+    // Even contradictory clean row evidence cannot hide top-level fullRequired.
+    process.env.IBCMD_FAKE_MODE = "status-full";
+    await vscode.commands.executeCommand("ibcmd.select");
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.ok(
+      api
+        .objects()
+        .slice(0, 4)
+        .every((row) => row.state === "unknown"),
+    );
+    // A cancelled refresh never publishes old clean decorations.
+    process.env.IBCMD_FAKE_MODE = "status-slow";
+    await vscode.commands.executeCommand("ibcmd.select");
+    const progress = vscode.window.withProgress;
+    vscode.window.withProgress = async (_, run) =>
+      run(
+        {},
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: (cb) => {
+            const timer = setTimeout(cb, 20);
+            return { dispose: () => clearTimeout(timer) };
+          },
+        },
+      );
+    try {
+      await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    } finally {
+      vscode.window.withProgress = progress;
+    }
+    assert.deepEqual(api.objects(), []);
+    const stale = vscode.commands.executeCommand("ibcmd.objects.refresh");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    pick = "fake/b";
+    process.env.IBCMD_FAKE_MODE = "status";
+    await vscode.commands.executeCommand("ibcmd.select");
+    await stale;
+    assert.deepEqual(api.objects(), []);
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.equal(api.objects().length, 6);
+    // No status leaks into a sibling workspace root, including identical relative paths.
+    const sibling = path.join(path.dirname(f.uri.fsPath), "sibling");
+    await fs.mkdir(sibling, { recursive: true });
+    assert.equal(
+      api.objectDecoration(vscode.Uri.file(path.join(sibling, "File.xml"))),
+      undefined,
+    );
     process.env.IBCMD_FAKE_MODE = "slow";
     pick = "fake/a";
     const slow = vscode.commands.executeCommand("ibcmd.select");
@@ -377,6 +830,7 @@ exports.run = async () => {
     );
     let filePickerReached = false;
     const errorsBeforeFileEdit = errors.length;
+    const selectionPicker = vscode.window.showQuickPick;
     vscode.window.showQuickPick = async (items) => {
       filePickerReached = true;
       const offered = await items;
@@ -386,7 +840,11 @@ exports.run = async () => {
       );
       return undefined;
     };
-    await vscode.commands.executeCommand("ibcmd.edit");
+    try {
+      await vscode.commands.executeCommand("ibcmd.edit");
+    } finally {
+      vscode.window.showQuickPick = selectionPicker;
+    }
     assert.equal(
       filePickerReached,
       true,
@@ -415,12 +873,76 @@ exports.run = async () => {
     console.log(
       "SQL password persistence: failed/cancelled/stale operations, successful reuse and existing-password behavior passed (synthetic login only).",
     );
+    // Switch to another real workspace folder, then remove it without changing the first root.
+    const sf = vscode.workspace.workspaceFolders.find(
+      (w) => w.uri.fsPath === sibling,
+    );
+    assert.ok(sf);
+    const siblingSource = path.join(sibling, "status-source");
+    await fs.cp(source, siblingSource, { recursive: true });
+    const scfg = vscode.workspace.getConfiguration("ibcmd", sf.uri);
+    await scfg.update(
+      "connections",
+      ["fake/b"],
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    await scfg.update(
+      "connectionMetadata",
+      { "fake/b": { auth: "windows" } },
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    await scfg.update(
+      "sourceDirectory",
+      siblingSource,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    await scfg.update(
+      "statusBaselineDirectory",
+      baseline,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    pick = "fake/b"; // Reset the selection after the SQL password scenarios.
+    vscode.window.showWorkspaceFolderPick = async () => sf;
+    await vscode.commands.executeCommand("ibcmd.select");
+    await vscode.commands.executeCommand("ibcmd.objects.refresh");
+    assert.equal(api.objects().length, 6);
+    assert.equal(
+      api.objectDecoration(vscode.Uri.file(path.join(source, "File.xml"))),
+      undefined,
+    );
+    assert.equal(
+      api.objectDecoration(
+        vscode.Uri.file(path.join(siblingSource, "File.xml")),
+      ).badge,
+      "Ф",
+    );
+    const changed = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        sub.dispose();
+        reject(new Error("Workspace removal event timed out"));
+      }, 5000);
+      const sub = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        clearTimeout(timer);
+        sub.dispose();
+        resolve();
+      });
+    });
+    assert.equal(vscode.workspace.updateWorkspaceFolders(sf.index, 1), true);
+    await changed;
+    assert.deepEqual(api.objects(), []);
+    assert.equal(
+      api.objectDecoration(
+        vscode.Uri.file(path.join(siblingSource, "File.xml")),
+      ),
+      undefined,
+    );
     delete process.env.IBCMD_FAKE_LIST_GATE;
     delete process.env.IBCMD_FAKE_MODE;
     console.log(
-      "Extension host: activation, Add/Edit, workspace metadata/bindings, SecretStorage save/delete flow, and real settings show passed.",
+      "Extension host: connection lifecycle, real rows-dir object comparison/local file edit, synthetic six states, Explorer/filter, cancellation/stale selection and multi-root removal passed.",
     );
   } finally {
+    vscode.window.showWorkspaceFolderPick = folderPick;
     vscode.window.showInputBox = input;
     vscode.window.showQuickPick = quick;
     vscode.window.showInformationMessage = info;

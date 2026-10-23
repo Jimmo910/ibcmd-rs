@@ -24,7 +24,7 @@
   },
   "scripts": {
     "compile": "tsc -p .",
-    "test": "npm run compile && node --test test/core.test.js test/real.test.js test/import.test.js test/connection.test.js",
+    "test": "npm run compile && node --test test/object-status.test.js test/core.test.js test/real.test.js test/import.test.js test/connection.test.js test/object-view.test.js",
     "test:host": "npm run compile && node test/host.js",
     "format": "prettier --write src test package.json tsconfig.json",
     "format:check": "prettier --check src test package.json tsconfig.json"
@@ -57,11 +57,19 @@
       },
       {
         "command": "ibcmd.importSelected",
-        "title": "ibcmd-rs: Загрузить в базу"
+        "title": "ibcmd-rs: \u0417\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0432 \u0431\u0430\u0437\u0443"
       },
       {
         "command": "ibcmd.importChanged",
-        "title": "ibcmd-rs: Загрузить изменённые"
+        "title": "ibcmd-rs: \u0417\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0438\u0437\u043c\u0435\u043d\u0451\u043d\u043d\u044b\u0435"
+      },
+      {
+        "command": "ibcmd.objects.refresh",
+        "title": "ibcmd-rs: Refresh Object Status"
+      },
+      {
+        "command": "ibcmd.objects.changedOnly",
+        "title": "ibcmd-rs: Toggle Changed Objects Only"
       }
     ],
     "configuration": {
@@ -112,6 +120,42 @@
           "default": ".",
           "scope": "resource",
           "description": "Configuration source directory, relative to the workspace folder."
+        },
+        "ibcmd.statusBaselineDirectory": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Read-only reference export folder (last synchronization or a separate Git checkout). Without a baseline, change direction is unknown."
+        },
+        "ibcmd.statusGitRef": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Git commit/ref used as baseline (overrides baseline directory). Snapshot is pinned to a resolved Git tree."
+        },
+        "ibcmd.statusCacheDirectory": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Absolute cache directory for inspectable Git baseline snapshots. Required for Git comparison; snapshots are retained for Trash cleanup."
+        },
+        "ibcmd.statusComparison": {
+          "type": "string",
+          "enum": [
+            "native",
+            "bytes"
+          ],
+          "default": "native",
+          "scope": "resource",
+          "description": "Native DB versions + local baseline bytes by default. Bytes is an explicit legacy preview, without native version parity."
+        },
+        "ibcmd.statusTimeoutSeconds": {
+          "type": "integer",
+          "default": 600,
+          "minimum": 30,
+          "maximum": 3600,
+          "scope": "resource",
+          "description": "Deadline per object-status read in seconds (30\u20133600). User cancellation remains available; other RPC timeouts are unchanged."
         }
       }
     },
@@ -147,6 +191,24 @@
           "command": "ibcmd.importChanged",
           "when": "view == ibcmd.objects",
           "group": "navigation@3"
+        },
+        {
+          "command": "ibcmd.objects.refresh",
+          "when": "view == ibcmd.objects",
+          "group": "navigation"
+        },
+        {
+          "command": "ibcmd.objects.changedOnly",
+          "when": "view == ibcmd.objects",
+          "group": "navigation"
+        }
+      ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "ibcmd.objects",
+          "name": "ibcmd-rs Objects"
         }
       ]
     }
