@@ -2191,7 +2191,9 @@ mod descriptor_snapshot_tests {
             struct Scratch(std::path::PathBuf);
             impl Drop for Scratch {
                 fn drop(&mut self) {
-                    let _ = fs::remove_dir_all(&self.0);
+                    if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                        let _ = fs::remove_dir_all(&self.0);
+                    }
                 }
             }
             let path = std::env::temp_dir()

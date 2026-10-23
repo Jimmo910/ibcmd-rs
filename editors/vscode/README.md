@@ -146,3 +146,9 @@ stale database/staging versions rather than reverting them. Refresh the export
 baseline after synchronization, or explicitly select files when reviewing a
 conflict. Successful import leaves CONFIGSAVE staged; apply remains a separate
 platform operation (#384). File-db pending status is currently unknown.
+
+For local evidence collection, set `IBCMD_TEST_KEEP_FIXTURES=1` before the Rust
+file-db, partial-import and source-traversal tests. Their newly owned fixture
+directories are then retained, including after assertion failure. Without this
+flag, disposable CI fixtures are cleaned on scope exit. This test-only switch
+does not change production temporary-file cleanup or recovery artifacts.
