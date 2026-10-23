@@ -191,3 +191,75 @@ test("published recovery error remains explicit without exposing server paths", 
   );
   assert.ok(!importErrorMessage(error).includes("sentinel"));
 });
+
+test("dependency expansion covers every canonical root collection", async () => {
+  const fs = require("node:fs"),
+    path = require("node:path");
+  const index = fs
+    .readFileSync(
+      path.join(__dirname, "../../../src/metadata_model/index.rs"),
+      "utf8",
+    )
+    .split("pub const ROOT_COLLECTIONS:")[1]
+    .split("];", 1)[0];
+  const pairs = [...index.matchAll(/\("([^"\n]+)", "([^"\n]+)"\)/g)].map(
+    (m) => [m[1], m[2]],
+  );
+  const websocket = fs.readFileSync(
+    path.join(
+      __dirname,
+      "../../../crates/ibcmd-schema/src/websocket_client.rs",
+    ),
+    "utf8",
+  );
+  pairs.push([
+    websocket.match(/FOLDER:.*?= "([^"]+)"/)[1],
+    websocket.match(/KIND:.*?= "([^"]+)"/)[1],
+  ]);
+  assert.equal(pairs.length, 47);
+  for (const [collection, kind] of pairs) {
+    const files = [
+      `${collection}/Example.xml`,
+      `${collection}/Example/Ext/Module.bsl`,
+    ];
+    for (const changed of [false, true]) {
+      const missing = {
+        plan: "missing",
+        preflight: {
+          ready: false,
+          files,
+          missingReferences: [
+            {
+              reference: "Catalog.Dependency",
+              suggestedObject: "Catalog.Dependency",
+            },
+          ],
+        },
+      };
+      const { rpc, calls } = harness([missing, ready]);
+      let confirmations = 0;
+      await runImport(
+        rpc,
+        {
+          infobase: "lab",
+          sourceDir: "/sources",
+          ...(changed ? { changed: true } : { files }),
+        },
+        {
+          current: async () => true,
+          confirm: async () => {
+            confirmations++;
+            return true;
+          },
+        },
+      );
+      assert.deepEqual(
+        calls[1].params.objects,
+        [`${kind}.Example`, "Catalog.Dependency"],
+        `${collection}/${changed}`,
+      );
+      assert.equal(confirmations, 2);
+      assert.equal(calls[2].method, "objects/import");
+    }
+  }
+});
