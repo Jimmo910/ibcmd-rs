@@ -16283,7 +16283,7 @@ fn table_auto_add_incomplete_uses_validated_fixed_tail_scalar() {
 #[test]
 fn table_auto_add_incomplete_tail_rule_beats_slot_40_end_to_end() {
     // Saved production wrapper-55 layout; cases change only scalar values.
-    const TABLE: &str = include_str!("../../.tmp_zhurnal_spisokdokumentov_table_raw.txt");
+    const TABLE: &str = include_str!("../../tests/fixtures/form_table_spisokdokumentov_raw.txt");
     struct Sink;
     impl FormItemTraceSink for Sink {
         fn record(&self, _event: FormItemTraceEvent) {}
@@ -16372,7 +16372,7 @@ fn table_auto_max_width_tail_rule_is_end_to_end_and_traced() {
 
     // A saved real wrapper-55 layout with a nonempty counted property bag.
     // Cases below mutate only the independently validated scalars under test.
-    const TABLE: &str = include_str!("../../.tmp_zhurnal_spisokdokumentov_table_raw.txt");
+    const TABLE: &str = include_str!("../../tests/fixtures/form_table_spisokdokumentov_raw.txt");
 
     fn run(table: String) -> (FormChildItem, FormItemSchemaTraceEvent) {
         let layout = format!("{{1,aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa,{table}}}");

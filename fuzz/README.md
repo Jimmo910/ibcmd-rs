@@ -9,7 +9,7 @@ It is an opt-in developer target, not a default workspace member or a release
 dependency. After installing a Rust nightly toolchain and `cargo-fuzz`:
 
 ```text
-cargo fuzz run cf_parse -- -max_len=1048576
+cargo +nightly fuzz run cf_parse -- -max_len=1048576
 ```
 
 Permanent minimized regressions belong in

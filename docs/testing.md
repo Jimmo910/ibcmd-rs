@@ -51,7 +51,8 @@ inputs include:
 - source-tree scans that read `lab/ssl_*`, `lab/sfc`, or `D:\УХА\sfc`;
 - module-blob probes that read the same lab/SFC trees or `E:\ibcmd_lab`;
 - MOXEL comparisons and diagnostics that read `lab/ut_ibcmd_*`,
-  `E:\ibcmd_lab`, or `.tmp_selected_dp_outdir.txt`;
+  `E:\ibcmd_lab`, or `.tmp_selected_dp_outdir.txt` (a local, untracked file
+  holding the path of a selected export; `.tmp*` is ignored by Git);
 - the external Avansovy round-trip diagnostic in `source_audit`.
 
 Three pre-existing, ignored `module_blob` spreadsheet-packing diagnostics use
