@@ -58,7 +58,7 @@ class Controls(unittest.TestCase):
         lab.oracle.write_json(root / "installation.json", manifest)
         return SimpleNamespace(lab_root=root, edt_installation_manifest=root / "installation.json", run=run,
             native=native, ours_exe=root / "ours", edt_exe=edt, edt_vm=java,
-            source_version="2.21", edt_build="2025.2.3.30", timeout=1, heap_gib=4)
+            edt_vm_library=None, source_version="2.21", edt_build="2025.2.3.30", timeout=1, heap_gib=4)
 
     def capture(self, args, *, version=None, diagnostics=b"", mutation=None, missing_tsv=False):
         class SyntheticCapture:
@@ -70,10 +70,12 @@ class Controls(unittest.TestCase):
             def command(self, label, argv, workspace=None):
                 self.labels.append(label)
                 for suffix in ("stdout", "stderr"):
-                    write(args.run / f"{label}.{suffix}", b"")
+                    write(args.run / f"{label}.{suffix}", b'{"loss_policy": "error"}\n' if suffix == "stdout" and label in ("xml-to-edt", "edt-to-xml") else b"")
                 return b"synthetic; never executed"
             def edt(self, label, operation, workspace_name=None):
                 self.command(label, operation)
+                if mutation == "ambient-errors" and label in ("edt-export-native", "edt-export-generated", "edt-validate-native", "edt-validate-generated"):
+                    write(args.run / f"{label}.workspace-log", b"!ENTRY sdk.bundle 4 0 timestamp\n!MESSAGE exact ambient\n")
                 if label == "edt-version":
                     return (version or args.edt_build).encode()
                 if label == "edt-import-native":
@@ -81,7 +83,10 @@ class Controls(unittest.TestCase):
                 elif label in ("edt-export-native", "edt-export-generated"):
                     target = Path(operation[operation.index("--configuration-files") + 1])
                     write(target / "Configuration.xml", b"different" if mutation == "serializer" and label == "edt-export-generated" else b"same installed serializer")
-                elif label == "edt-validate-generated":
+                elif label in ("edt-validate-native", "edt-validate-generated"):
+                    if label == "edt-validate-native":
+                        write(args.run / "native-validation.tsv", b"")
+                        return b""
                     if not missing_tsv:
                         write(args.run / "generated-validation.tsv", diagnostics)
                     if mutation == "workspace-error":
@@ -89,6 +94,8 @@ class Controls(unittest.TestCase):
                     if mutation in ("cli-error", "shutdown-error"):
                         suffix = "1cedtcli.log" if mutation == "cli-error" else "1cedtcli-shutdown-hook.log"
                         write(args.run / f"{label}.workspace-{suffix}", b"ERROR failed\n")
+                    if mutation == "mixed-fatal":
+                        write(args.run / f"{label}.stdout", b"[Fatal Error] :1:1: Premature end of file.\n")
                     if mutation == "stream-error":
                         write(args.run / f"{label}.stderr", b"ERROR failed\n")
                 return b""
@@ -139,6 +146,10 @@ class Controls(unittest.TestCase):
                 args = self.fixture()
                 row = b"malformed" if category == "malformed" else (
                     f"2026-10-23T10:00:00Z\tError\t{category}\tp\tv\to\t1\tbad\n").encode()
+                if category == "malformed":
+                    with self.assertRaisesRegex(lab.Error, "Malformed validation"):
+                        self.capture(args, diagnostics=row)
+                    continue
                 result = self.capture(args, diagnostics=row)
                 self.assertEqual(result["status"], "FAIL")
                 self.assertFalse(result["gates"]["no_source_errors_or_unknown_validation_rows"])
@@ -150,6 +161,7 @@ class Controls(unittest.TestCase):
                  "native": "native_unchanged", "generated": "generated_project_unchanged",
                  "tool": "tools_unchanged", "workspace-error": "no_command_or_workspace_errors",
                  "stream-error": "no_command_or_workspace_errors",
+                 "mixed-fatal": "no_command_or_workspace_errors",
                  "cli-error": "no_command_or_workspace_errors",
                  "shutdown-error": "no_command_or_workspace_errors"}
         for mutation, gate in gates.items():
@@ -301,6 +313,52 @@ class Controls(unittest.TestCase):
         write(other.edt_exe.parent / "1cedt.ini", b"no JVM section")
         with self.assertRaisesRegex(lab.Error, "JVM section"):
             lab.Capture(other)
+
+    def test_matched_phase_rule_keeps_exact_text_counts_streams_and_phase(self):
+        args = self.fixture()
+        for phase in ("export", "validate"):
+            for who in ("native", "generated"):
+                label = f"edt-{phase}-{who}"
+                write(args.run / f"{label}.stdout", b"[Fatal Error] :1:1: Premature end of file.\n")
+                write(args.run / f"{label}.stderr", b"")
+                stamp = "1" if who == "native" else "2"
+                write(args.run / f"{label}.workspace-log", (f"!ENTRY sdk.bundle 4 0 timestamp-{stamp}\n!MESSAGE exact ambient\n").encode())
+        self.assertTrue(lab.compare_matched_phase_errors(args.run)["no_new_error_records"])
+        label = "edt-validate-generated"
+        write(args.run / f"{label}.stderr", b"ERROR new converter failure\n")
+        result = lab.compare_matched_phase_errors(args.run)
+        self.assertFalse(result["no_new_error_records"])
+        self.assertTrue(result["phases"]["export"]["exact_error_multiset_equal"])
+        write(args.run / f"{label}.stderr", b"")
+        write(args.run / f"{label}.stdout", b"[Fatal Error] :1:1: Premature end of file.\n" * 2)
+        self.assertFalse(lab.compare_matched_phase_errors(args.run)["no_new_error_records"])
+        # A removed export error cannot cancel an added validation error.
+        write(args.run / "edt-export-native.stdout", b"[Fatal Error] :1:1: Premature end of file.\n" * 2)
+        self.assertFalse(lab.compare_matched_phase_errors(args.run)["no_new_error_records"])
+        write(args.run / f"{label}.stdout", b"[Fatal Error] :1:1: Premature end of file.\n")
+        write(args.run / f"{label}.workspace-log", b"!ENTRY sdk.bundle 4 0 timestamp-2\n!MESSAGE changed candidate error\n")
+        self.assertFalse(lab.compare_matched_phase_errors(args.run)["no_new_error_records"])
+
+    def test_matching_ambient_errors_never_make_strict_acceptance_pass(self):
+        result = self.capture(self.fixture(), mutation="ambient-errors")
+        self.assertTrue(result["gates"]["no_new_matched_phase_errors"])
+        self.assertFalse(result["gates"]["no_command_or_workspace_errors"])
+        self.assertEqual(result["status"], "FAIL")
+
+    def test_explicit_server_library_is_used_and_must_be_bound(self):
+        args = self.fixture()
+        args.edt_vm_library = args.edt_vm.parent.parent / "lib/server/libjvm.dylib"
+        write(args.edt_vm_library, b"synthetic Server VM; never executed")
+        with self.assertRaisesRegex(lab.Error, "omits required"):
+            lab.bind_installation(args)
+        manifest = json.loads(args.edt_installation_manifest.read_text())
+        manifest["runtime_files"].append({"path": str(args.edt_vm_library), "bytes": args.edt_vm_library.stat().st_size,
+                                          "sha256": lab.oracle.digest(args.edt_vm_library)})
+        args.edt_installation_manifest.write_text(json.dumps(manifest))
+        lab.bind_installation(args)
+        cap = lab.Capture(args)
+        ini = cap.ini.read_text().splitlines()
+        self.assertEqual(ini[ini.index("-vm") + 1], str(args.edt_vm_library))
 
     @unittest.skipUnless(os.name == "posix", "POSIX lock runtime")
     def test_native_slot_refuses_concurrent_capture(self):

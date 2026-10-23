@@ -55,7 +55,8 @@ python3 scripts/edt-lab/xml_to_edt_macos.py \
   --ours-exe /Volumes/Work/Dev/ibcmd-rs-lab/build/issue-357/debug/ibcmd-rs \
   --edt-exe /Volumes/Work/Dev/ibcmd-rs-lab/tools/EXTERNAL-EDT/VERIFIED-CLI \
   --edt-vm /PATH/TO/VERIFIED/JAVA \
-  --edt-installation-manifest /Volumes/Work/Dev/ibcmd-rs-lab/logs/issue358-current-discovery-001/installation.json \
+  --edt-vm-library /PATH/TO/VERIFIED/JDK/lib/server/libjvm.dylib \
+  --edt-installation-manifest /Volumes/Work/Dev/ibcmd-rs-lab/logs/issue358-current-server-discovery-001/installation.json \
   --source-version 2.21 --edt-build 2026.2.1.3
 ```
 
@@ -64,8 +65,15 @@ from these placeholders. Repeat independently for 2.20 with its genuine source
 and required runtime 8.3.27. The 2.21 route stamps runtime 8.5.1. A runtime missing
 from the installed model is a failed route, never an automatic profile upgrade.
 
+For the installed Axiom JDK, the executable selects Server VM with `-server`,
+but Eclipse resolving `-vm .../bin/java` selected Client VM. #358 verified that
+passing the actual `lib/server/libjvm.dylib` in the retained INI selects Server VM
+without changing `java.vm.name`. Its bytes must be included in the installation
+manifest. No VM-name spoof or error waiver is used.
+
 The harness first verifies the actual exact EDT version. It imports the native
-XML and exports it as the authentic same-serializer control. It then converts
+XML and loads/exports and validates that authentic project in fresh workspaces
+using the same direct-project command routes as the generated project. It then converts
 the original XML to EDT using the declared legacy model profile, makes a full
 copy omitting only `.ibcmd-provenance`, and makes installed EDT load/export and
 validate that copy in separate fresh workspaces. It copies files into that
@@ -108,4 +116,25 @@ genuine empty 2.21 (3 files), and public subsystem 2.21 (6 files). Every path an
 byte matched and each source stayed unchanged. Local evidence is in
 `fixtures/issue357-offline-001/summary.json` beneath the external lab root.
 These results do not launch EDT and do not establish installed acceptance.
-Current-version installed results are recorded separately after #358 setup.
+The first actual EDT 2026.2.1.3 empty-2.21 run is retained in
+`fixtures/issue357-current-empty221-001`. All commands returned zero; the
+installed same-serializer trees matched exactly, the original three XML files
+(including dump information) were recovered exactly, and every input/tool/project
+manifest stayed unchanged. **Overall result: FAIL**, because workspace logs
+contained unsupported Client VM and missing-workbench errors; direct generated
+export/validation also emitted `[Fatal Error] :1:1: Premature end of file.` despite
+an empty TSV. These errors remain preserved and unwaived. A genuine native-control
+direct export independently emitted the same fatal line (#356); matched Server VM
+native-control validation did not (#358). That distinction requires another
+matched generated-project run; it cannot be dismissed as generic ambient noise.
+
+The harness now also records `matched-phase-diagnostics.json`: per export and
+validation phase, error records are compared as exact multisets with multiplicity.
+Stream kind, message/stack text, bundle, severity and code remain exact; only the
+Eclipse `!ENTRY` header timestamp is omitted. No project-path/text normalization
+or cancellation across phases is allowed. Added errors, changed error text,
+changed streams, or duplicate errors fail the control. Raw error-free acceptance
+remains an independent strict gate; equivalent SDK errors are never removed from
+logs or silently converted into a clean PASS. Structured validation separately
+compares all rows except execution timestamp and project label, while errors and
+unknown/malformed rows in either project still fail acceptance.

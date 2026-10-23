@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from collections import Counter
 import importlib.util
 import json
 import os
@@ -53,6 +54,11 @@ def preflight(args) -> None:
             raise Error("Parent traversal is refused")
         oracle.no_links(path)
         setattr(args, field, path)
+    if args.edt_vm_library is not None:
+        args.edt_vm_library = args.edt_vm_library.absolute()
+        oracle.no_links(args.edt_vm_library)
+        if ".." in args.edt_vm_library.parts or not args.edt_vm_library.is_file():
+            raise Error("Explicit VM library must be a physical file")
     if not is_external_lab_root(args.lab_root):
         raise Error("An existing external /Volumes/ lab root is required")
     contained(args.run, args.lab_root)
@@ -94,7 +100,7 @@ def write_launcher_ini(args) -> Path:
             if index + 1 >= len(launcher):
                 raise Error("Malformed installed launcher INI")
             del launcher[index:index + 2]
-    launcher += ["-vm", str(args.edt_vm), "-configuration", str(args.edt_exe.parent / "configuration"),
+    launcher += ["-vm", str(args.edt_vm_library or args.edt_vm), "-configuration", str(args.edt_exe.parent / "configuration"),
                  "-user", str(args.run / "user"), "-nl", "en_US"]
     path = args.run / "1cedt.ini"
     with path.open("x", encoding="utf-8", newline="\n") as stream:
@@ -203,14 +209,17 @@ def copy_without_provenance(project: Path, target: Path) -> dict:
 def diagnostics_for_all_logs(run: Path, labels: list[str]) -> dict:
     result = oracle.command_diagnostics(run, labels)
     for label in labels:
-        for suffix in ("1cedtcli.log", "1cedtcli-shutdown-hook.log"):
-            path = run / f"{label}.workspace-{suffix}"
+        seen = {(row["file"], row["line"]) for row in result[label]["error_lines"]}
+        for suffix in ("stdout", "stderr", "workspace-1cedtcli.log", "workspace-1cedtcli-shutdown-hook.log"):
+            path = run / f"{label}.{suffix}"
             if not path.is_file():
                 continue
             for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-                if re.search(r"\b(?:ERROR|FATAL)\b|^Exception in thread |^!ENTRY \S+ [48] ", line):
-                    result[label]["error_lines"].append({"file": path.name, "line": number, "text": line})
-                    result[label]["error_count"] += 1
+                if re.search(r"\b(?:ERROR|FATAL)\b|^\s*(?i:\[(?:Fatal\s+Error|Error)\]|(?:Fatal\s+Error|Error)\s*:)|^Exception in thread |^!ENTRY \S+ [48] ", line):
+                    if (path.name, number) not in seen:
+                        result[label]["error_lines"].append({"file": path.name, "line": number, "text": line})
+                        result[label]["error_count"] += 1
+                        seen.add((path.name, number))
     return result
 
 
@@ -236,6 +245,8 @@ def bind_installation(args) -> dict:
         eclipse / "configuration/org.eclipse.equinox.simpleconfigurator/bundles.info",
         eclipse.parent / "MacOS/1cedt",
         eclipse.parent / "Info.plist", args.edt_vm.parent.parent / "release")}
+    if args.edt_vm_library is not None:
+        required.add(str(args.edt_vm_library))
     listed = [row["path"] for row in runtime_files]
     if len(listed) != len(set(listed)) or not required.issubset(listed):
         raise Error("Installation runtime manifest omits required launcher/configuration/Java payloads")
@@ -247,6 +258,50 @@ def bind_installation(args) -> dict:
     return {"manifest_path": str(path), "manifest_sha256": oracle.digest(path),
             "plugins_tree_sha256": plugins["tree_sha256"], "runtime_files": runtime_files,
             "status": manifest.get("status")}
+
+
+def phase_error_records(run: Path, label: str) -> Counter:
+    """Exact error records; only Eclipse header timestamps are omitted."""
+    diagnostics = diagnostics_for_all_logs(run, [label])[label]
+    records = Counter()
+    for row in diagnostics["error_lines"]:
+        records[(row["file"].removeprefix(label + "."), row["text"])] += 1
+    path = run / f"{label}.workspace-log"
+    if path.is_file():
+        current, body = None, []
+        def save():
+            if current is not None:
+                records[("workspace-log", current, "\n".join(body))] += 1
+        for line in path.read_text(encoding="utf-8", errors="strict").splitlines():
+            if line.startswith("!ENTRY "):
+                save()
+                match = re.fullmatch(r"!ENTRY (\S+) ([0-9]+) ([0-9]+) (.+)", line)
+                if match is None:
+                    raise Error("Malformed workspace diagnostic entry")
+                bundle, severity, code, _timestamp = match.groups()
+                current = (bundle, severity, code) if severity in ("4", "8") else None
+                body = []
+            elif line.startswith("!SESSION "):
+                save()
+                current, body = None, []
+            elif current is not None:
+                body.append(line)
+        save()
+    return records
+
+
+def compare_matched_phase_errors(run: Path) -> dict:
+    phases = {}
+    for phase in ("export", "validate"):
+        baseline = phase_error_records(run, f"edt-{phase}-native")
+        candidate = phase_error_records(run, f"edt-{phase}-generated")
+        def rows(counter):
+            return [{"record": record, "count": count} for record, count in sorted(counter.items(), key=lambda item: repr(item[0]))]
+        phases[phase] = {"no_new_error_records": not (candidate - baseline),
+                         "exact_error_multiset_equal": baseline == candidate,
+                         "added": rows(candidate - baseline), "removed": rows(baseline - candidate)}
+    return {"no_new_error_records": all(row["no_new_error_records"] for row in phases.values()),
+            "phases": phases, "rule": "Match same-build, same-INI, same-phase fresh-workspace error multisets by stream kind and exact record text/count. Only Eclipse !ENTRY timestamp is omitted. No message, stack, severity, bundle, project path or stream normalization; no cancellation between phases. Raw error-free acceptance remains separate."}
 
 
 def execute(args) -> dict:
@@ -276,12 +331,21 @@ def execute(args) -> dict:
         "native-workspace")
     baseline = args.run / "native-workspace/NativeControl"
     oracle.require_project(baseline, runtime)
+    baseline_project_before = oracle.snapshot(baseline)
+    oracle.write_json(args.run / "authentic-native-control-project-before.json", baseline_project_before)
     authentic = args.run / "authentic-xml"
-    cap.edt("edt-export-native", ["export", "--project-name", "NativeControl",
-        "--configuration-files", str(authentic)], "native-workspace")
+    cap.edt("edt-export-native", ["export", "--project", str(baseline),
+        "--configuration-files", str(authentic)])
     oracle.require_xml(authentic, require_dump_info=False)
     authentic_before = oracle.snapshot(authentic)
     oracle.write_json(args.run / "authentic-xml.json", authentic_before)
+    native_tsv = args.run / "native-validation.tsv"
+    cap.edt("edt-validate-native", ["validate", "--file", str(native_tsv), "--project-list", str(baseline)])
+    if not native_tsv.is_file():
+        raise Error("Authentic native-control validation did not produce TSV")
+    native_validation = oracle.summarize_validation_tsv(native_tsv)
+    oracle.write_json(args.run / "native-validation.json", native_validation)
+    oracle.write_json(args.run / "authentic-native-control-project.json", oracle.snapshot(baseline))
     project = args.run / "generated-project"
     cap.convert("xml-to-edt", args.native, project)
     oracle.require_project(project, runtime)
@@ -302,6 +366,10 @@ def execute(args) -> dict:
         raise Error("Installed EDT validation did not produce its diagnostic TSV")
     validation = oracle.summarize_validation_tsv(tsv)
     oracle.write_json(args.run / "validation.json", validation)
+    validation_comparison = oracle.compare_validation_tsv(native_tsv, tsv)
+    oracle.write_json(args.run / "validation-differential.json", validation_comparison)
+    ambient = compare_matched_phase_errors(args.run)
+    oracle.write_json(args.run / "matched-phase-diagnostics.json", ambient)
     returned = args.run / "returned-xml"
     cap.convert("edt-to-xml", project, returned, reverse=True)
     oracle.require_xml(returned)
@@ -323,7 +391,11 @@ def execute(args) -> dict:
              "launcher_ini_unchanged": oracle.digest(cap.ini) == cap.ini_sha256,
              "exact_original_xml_tree_including_dump_info": exact["equal"],
              "same_installed_serializer_exact_tree": serialized["equal"],
+             "authentic_native_no_source_errors_or_unknown_rows": not native_validation["unresolved_source_diagnostics"],
+             "authentic_native_project_unchanged": oracle.snapshot(baseline) == baseline_project_before,
              "no_source_errors_or_unknown_validation_rows": not validation["unresolved_source_diagnostics"],
+             "no_new_structured_validation_diagnostics": validation_comparison["no_new_diagnostics"],
+             "no_new_matched_phase_errors": ambient["no_new_error_records"],
              "no_command_or_workspace_errors": not oracle.has_error_diagnostics(diagnostics.values()),
              "native_unchanged": native_before == native_after,
              "generated_project_unchanged": project_before == project_after,
@@ -341,6 +413,7 @@ def parser():
     result = argparse.ArgumentParser(description=__doc__)
     for name in ("lab-root", "native", "run", "ours-exe", "edt-exe", "edt-vm", "edt-installation-manifest"):
         result.add_argument(f"--{name}", type=Path, required=True)
+    result.add_argument("--edt-vm-library", type=Path, help="Explicit verified Server VM library; must be included in the installation manifest")
     result.add_argument("--source-version", choices=("2.20", "2.21"), required=True)
     result.add_argument("--edt-build", required=True)
     result.add_argument("--timeout", type=int, default=7200)
