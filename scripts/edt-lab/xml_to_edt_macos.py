@@ -83,6 +83,9 @@ def write_launcher_ini(args) -> Path:
         raise Error("Installed launcher INI must have exactly one JVM section")
     split = lines.index("-vmargs")
     launcher, vmargs = lines[:split], lines[split + 1:]
+    # Installed debug tracing prefixes the version command with framework dumps.
+    # Disable only that opt-in trace in this retained copy; errors/logs stay gated.
+    vmargs = [line for line in vmargs if line != "-Dosgi.debug" and not line.startswith("-Dosgi.debug=")]
     # The custom CLI accepts -ini-file, not generic Eclipse launcher flags.
     for option in ("-vm", "-configuration", "-user", "-nl"):
         while option in launcher:
