@@ -164,12 +164,17 @@ EDT report **Server VM**, without changing/spoofing VM properties. The additiona
 library hash is in runtime_files. Version-only evidence is retained at
 `logs/issue358-current-server-discovery-001`. On a copy of the authentic native
 project, matched validation with that actual Server VM completed with exit 0,
-empty TSV and **empty stderr**, with unchanged source/installation inventories
+empty TSV and **empty stderr**, but stdout contains
+`[Fatal Error] :1:1: Premature end of file.`, with unchanged source/installation inventories
 (`logs/issue358-server-native-validation-001`). The headless workbench lifecycle
 severity-4 record still appears; it is retained and has not been waived. This
 control does not retroactively turn the earlier generated validation into PASS;
 the generated route must be rerun with the same corrected VM before comparing
-phase-specific diagnostics.
+phase-specific diagnostics. The subsequent #357 Server VM empty run does reproduce
+the fatal line on both authentic and generated matching phases, with identical
+error multisets and all content/immutability gates true; its strict status remains
+FAIL. The Server VM selection fixed VM identity, not the XML fatal or headless
+workbench errors.
 
 Read-only inspection also identified the remaining workbench diagnostic's exact
 origin. The actual control INI and argument array contain no
@@ -185,3 +190,53 @@ read-only javap receipt, complete raw output and exact JAR hash are retained at
 published. This identifies the error source, not a waiver or evidence that all
 future headless errors are benign. Export and validation command results,
 complete XML equality and this error are reported separately.
+
+## Bounded nonempty current-version capture
+
+The next shared capture uses an existing genuine native 8.5.1.1592 export of the
+public synthetic `DcsFilterEvidence` configuration. The original `owned-create`
+and `owned-full` commands completed successfully in the retained #362 laboratory;
+#358 copied their evidence and all input bytes into
+`fixtures/issue358-nonempty-source-001`. Native input is XML 2.21, 19 files /
+86,112 bytes, tree SHA-256
+`efc5814c4b31e7c8892511003e591fe0f0567a9f0d1d69e3a2594ada60b51a72`.
+It has two nontrivial managed form XML bodies (19,444 / 8,283 bytes), catalogs and
+a DCS report/template. Its 492-byte form BSL modules contain region stubs, so
+this does not establish executable event-handler coverage.
+
+To avoid duplicate preparation, #357 ran one genuine current EDT native import,
+export and validation with actual Server VM. The installed-created project has
+19 files / 79,140 bytes; its native XML export has 18 files / 82,953 bytes. These
+are genuine installed EDT outputs, not a project synthesized by our converter.
+The source validation TSV retains 24 Minor style diagnostics (UI/Code style),
+zero Configuration-error rows and unclassified categories; no source-clean claim.
+Raw fatal/headless diagnostics remain unresolved.
+
+The same project then went through #356's fresh native file database creation,
+import and export. That native reference has 19 files / 86,112 bytes, tree hash
+`8628cfab808f7414be1e6e8912ff7912fe7c027b95ab4c303cf451d17141cc67`.
+All native commands completed successfully. Source project, tool, installation
+and schema evidence were unchanged in that reverse capture. Our independent
+post-failure inventories also confirm unchanged native input, authentic project,
+authentic export, plugin inventory and selected runtime payloads
+(`logs/issue358-current-nonempty-postcheck-001`). The failed #357 capture lacked
+its own final guards; this independent check is explicitly separate evidence,
+not a claim that those missing terminal checks ran.
+
+Both converter routes fail **closed before atomic output publication**:
+
+- XML→EDT rejects the native non-default ClientApplicationInterface.xml
+  `<top><panel ...>` layout where it only witnesses a default `<panelDef .../>`.
+- EDT→XML rejects the actual installed ClientApplicationInterface.cai LF header
+  where the pinned reader witnesses CRLF/default byte shape.
+
+These concrete reports were handed to the codec owners for a model-preserving
+fix. No sidecar was removed, no whitespace normalized, and no safety guard was
+relaxed. The complete [nonempty accounting report](../evidence/edt-current-dcs-accounting.json)
+retains every input/project/export hash row and both exact converter failure
+reports. The independent native-versus-EDT pair contains 19 union rows: 16 byte
+equal and three different/missing. That pair is not a three-way success: no
+candidate output exists, so all candidate-dependent route results are blocked.
+An empty or unrelated output is never substituted. Fresh captures remain at
+`fixtures/issue357-current-server-dcs-001` and
+`fixtures/issue356-current-server-dcs-001`; no BSP/UH acceptance is implied.
