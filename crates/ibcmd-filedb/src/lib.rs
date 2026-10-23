@@ -26,6 +26,8 @@ mod object;
 mod pager;
 mod read_limits;
 mod record;
+#[cfg(windows)]
+mod windows_security;
 mod write_paths;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -583,7 +585,7 @@ impl WriteSession {
         // Prepare recovery data without replacing an existing backup. Rejection
         // or interruption before the final check preserves both published files.
         let backup_work = sibling(&self.path, ".ibcmd-rs.bak.new");
-        let prepare_backup = || -> Result<()> {
+        let prepare_backup = || -> Result<Option<File>> {
             self.check_binding()?;
             prepare_backup_file(
                 &self.paths,
@@ -597,14 +599,24 @@ impl WriteSession {
                 },
             )
         };
-        if let Err(error) = prepare_backup() {
-            let _ = self.paths.remove(&work);
-            return Err(error);
-        }
+        let backup_copy = match prepare_backup() {
+            Ok(file) => file,
+            Err(error) => {
+                let _ = self.paths.remove(&work);
+                return Err(error);
+            }
+        };
         if let Err(error) = check(&self.file.metadata()?).and_then(|()| {
             self.check_binding()?;
             #[cfg(any(unix, windows))]
             self.paths.require_leaf(&work, &copy)?;
+            require_owner_and_mode(&self.file, &copy)?;
+            if let Some(backup_copy) = &backup_copy {
+                self.paths.require_leaf(&backup_work, backup_copy)?;
+                require_owner_and_mode(&self.file, backup_copy)?;
+            } else {
+                self.paths.require_leaf(&backup_work, &self.file)?;
+            }
             Ok(())
         }) {
             let _ = self.paths.remove(&work);
@@ -639,8 +651,8 @@ impl WriteSession {
     ) -> Result<ReplaceReport> {
         let mut original = &self.file;
         original.seek(SeekFrom::Start(0))?;
-        self.copy_checked(&mut original, copy)?;
         keep_owner_and_mode(&self.file, copy, &self.path)?;
+        self.copy_checked(&mut original, copy)?;
 
         // The table's pages are its own: nothing else would change with them.
         let (pages_before, rows_before, others) = {
@@ -748,10 +760,10 @@ fn prepare_backup_file(
     path: &Path,
     hard_link: impl FnOnce() -> std::io::Result<()>,
     copy: impl FnOnce(&mut File) -> Result<()>,
-) -> Result<()> {
+) -> Result<Option<File>> {
     if hard_link().is_ok() {
         paths.require_leaf(path, original)?;
-        return Ok(());
+        return Ok(None);
     }
     let mut out = match paths.create_new(path, false) {
         Ok(out) => out,
@@ -763,12 +775,18 @@ fn prepare_backup_file(
         }
         Err(error) => return Err(Error::Io(error)),
     };
-    let result = copy(&mut out).and_then(|()| Ok(out.sync_all()?));
-    if result.is_err() {
-        drop(out);
-        let _ = paths.remove(path);
+    let result = keep_owner_and_mode(original, &out, path)
+        .and_then(|()| copy(&mut out))
+        .and_then(|()| require_owner_and_mode(original, &out))
+        .and_then(|()| Ok(out.sync_all()?));
+    match result {
+        Ok(()) => Ok(Some(out)),
+        Err(error) => {
+            drop(out);
+            let _ = paths.remove(path);
+            Err(error)
+        }
     }
-    result
 }
 
 // Two-step publication deliberately has a recoverable partial-success state:
@@ -796,12 +814,14 @@ fn publish_files(
     Ok(())
 }
 
-/// The new data file gets the original's permissions and, on Unix, its owner
-/// and group; a write that cannot keep them is refused (a server running as
-/// the owner would lose access to the infobase).
+/// Before copying content, set the Unix owner/group/mode or require an already
+/// matching Windows owner/group/DACL. Windows ACL differences are refused,
+/// not rewritten; its readonly attribute is copied separately. SACL, auditing
+/// and mandatory labels are outside this check's scope.
 fn keep_owner_and_mode(original: &File, copy: &File, path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    windows_security::require_same(original, copy)?;
     let metadata = original.metadata()?;
-    copy.set_permissions(metadata.permissions())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -818,8 +838,34 @@ fn keep_owner_and_mode(original: &File, copy: &File, path: &Path) -> Result<()> 
             )));
         }
     }
+    copy.set_permissions(metadata.permissions())?;
     #[cfg(not(unix))]
     let _ = path;
+    require_owner_and_mode(original, copy)
+}
+
+// Recheck the held source/work descriptors without changing their security.
+fn require_owner_and_mode(original: &File, copy: &File) -> Result<()> {
+    #[cfg(windows)]
+    windows_security::require_same(original, copy)?;
+    let original = original.metadata()?;
+    let copy = copy.metadata()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if (original.uid(), original.gid(), original.mode())
+            != (copy.uid(), copy.gid(), copy.mode())
+        {
+            return Err(Error::Refused(
+                "file owner/group/mode changed before publication".into(),
+            ));
+        }
+    }
+    if original.permissions().readonly() != copy.permissions().readonly() {
+        return Err(Error::Refused(
+            "file readonly attribute changed before publication".into(),
+        ));
+    }
     Ok(())
 }
 
