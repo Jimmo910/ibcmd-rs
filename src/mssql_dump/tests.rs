@@ -80449,3 +80449,32 @@ fn form_root_read_only_uses_its_own_head_flag_and_native_xml_position() {
     unsupported[0] = "99";
     assert_eq!(extract_form_read_only(&unsupported), None);
 }
+
+#[test]
+fn a_data_processor_of_revision_16_indexes_its_object_and_manager_types() {
+    // ЗУП 3.1.18 `DataProcessors/РасчетЗарплаты`: 8.3.27.2214 dumps
+    // DataProcessorObject fada799c-… and DataProcessorManager d3985c5b-….
+    let text = "{1,\r\n{16,fada799c-d476-400d-a17b-7f06cb05c404,c860ba98-e76d-4281-bdc4-8d9126aedbc8,\r\n{0,\r\n{1,\r\n{0,0,84871d25-90e1-43a9-8431-aaa4e9749b2d},\"РасчетЗарплаты\",\r\n{1,\"ru\",\"Расчеты и выплаты\"},\"\",0,0}\r\n},a6f35643-81e5-447b-9a32-dc8d1e3edbf3,0,0,d3985c5b-0dce-44be-8828-860eb5a6f62e,de359b87-41da-4795-9e0c-535e0733d84d,00000000-0000-0000-0000-000000000000,\r\n{0},\r\n{0}\r\n},5,\r\n{2bcef0d1-0981-11d6-b9b8-0050bae0a95d,0},\r\n{3daea016-69b7-4ed4-9453-127911372fe6,0},\r\n{45556acb-826a-4f73-898a-6025fc9536e1,0},\r\n{d5b0e5ed-256d-401c-9c36-f630cafd8a62,1,a6f35643-81e5-447b-9a32-dc8d1e3edbf3},\r\n{ec6bb5e5-b7a8-4d75-bec9-658107a699cf,0}\r\n}";
+    let entries = parse_generated_type_entries_from_blob(
+        &deflate_for_test(text.as_bytes()),
+        "84871d25-90e1-43a9-8431-aaa4e9749b2d",
+    )
+    .unwrap();
+    for (type_id, reference) in [
+        (
+            "fada799c-d476-400d-a17b-7f06cb05c404",
+            "cfg:DataProcessorObject.РасчетЗарплаты",
+        ),
+        (
+            "d3985c5b-0dce-44be-8828-860eb5a6f62e",
+            "cfg:DataProcessorManager.РасчетЗарплаты",
+        ),
+    ] {
+        assert!(
+            entries
+                .iter()
+                .any(|(id, name)| id == type_id && name == reference),
+            "{entries:?}"
+        );
+    }
+}

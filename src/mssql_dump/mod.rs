@@ -12201,6 +12201,26 @@ const RAW_GENERATED_TYPE_SCHEMAS: &[RawGeneratedTypeSchema] = &[
             },
         ],
     },
+    // A data processor of record revision 16 (12 fields, its header third;
+    // `metadata::metadata_kind_for_object_code` tells it from a constant so)
+    // keeps both types where 17 does: ЗУП 3.1.18 `РасчетЗарплаты` stores
+    // `DataProcessorObject` at 1 and `DataProcessorManager` at 7, the ids of
+    // its native dump. Without it the 14 such processors' types stayed bare
+    // ids in the forms that use them.
+    RawGeneratedTypeSchema {
+        object_codes: &[16],
+        conditions: &[RawGeneratedTypeCondition::HeaderIndex(3)],
+        slots: &[
+            RawGeneratedTypeSlot {
+                field_index: 1,
+                generated_type: "DataProcessorObject",
+            },
+            RawGeneratedTypeSlot {
+                field_index: 7,
+                generated_type: "DataProcessorManager",
+            },
+        ],
+    },
     RawGeneratedTypeSchema {
         object_codes: &[19],
         conditions: &[],
