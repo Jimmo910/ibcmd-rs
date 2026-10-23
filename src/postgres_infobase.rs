@@ -265,6 +265,7 @@ mod tests {
             batch_size: None,
             path_prefix: vec![],
             files: vec![],
+            native_files: None,
             script_output: None,
             stage_mode: InfobaseImportStageMode::Auto,
             verify: InfobaseImportVerify::Auto,
