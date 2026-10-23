@@ -44,6 +44,22 @@ CI builds its own Windows release binary with Rust 1.95.0; the release workflow
 packages the matching audited Windows release binary. Local new fixture/staging
 outputs are retained; no permanent deletion or original ERP access occurred.
 
+## Dependency audit follow-up
+
+The initial vsce 3.6.2 pin reported six high-severity transitive advisories. It was
+replaced by exact `@vscode/vsce` 4.0.0 (Node >=22, matching CI). `npm audit` now reports
+zero advisories at every severity. No scanner or baseline was disabled. Bundle,
+format, executable/archive tests and actual packaging pass with the patched tool.
+The retained patched packaging audit is `logs/issue-385-npm-audit-patched.json`.
+Two patched complete VSIX files are byte-identical with SHA-256
+`6863b55a6048b34eafd46b8ce9cdc0de6e9bbef75bb74333943dfabdd67c6c49`;
+see `build/issue-385/patched-vsce-{a,b}.vsix`. This supersedes the earlier package
+hash above. Installed checks also passed again with this patched tool in
+`tmp/issue-385-vsce4-vscode/installed-9RWXtY/acceptance.json` and
+`tmp/issue-385-vsce4-cursor/installed-xknz3f/acceptance.json`; logs are
+`logs/issue-385-vsce4-{vscode,cursor}.log`. The normalized epoch was the timestamp of the preceding engineering
+commit (0bf5b256); changing SOURCE_DATE_EPOCH intentionally changes ZIP bytes.
+
 ## Remaining owner/external acceptance
 
 No release was dispatched or created, and Marketplace/Open VSX publication and

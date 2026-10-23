@@ -253,7 +253,7 @@ ERP-scale Git baseline performance.
 
 ## Platform VSIX packaging and installation
 
-The engineering package uses locked npm dependencies, an esbuild CommonJS bundle
+Tooling requires Node.js 22+ and Python 3. The engineering package uses locked npm dependencies, an esbuild CommonJS bundle
 with only `vscode` external, and `vsce --no-dependencies`. Python 3 normalizes ZIP
 entry order, timestamps, permissions and compression. Given the same source,
 locked toolchain, binary and `SOURCE_DATE_EPOCH`, repeated VSIX files have identical
@@ -266,7 +266,7 @@ npm run bundle
 npm run test:package
 # Build the release binary on Windows using Rust 1.95.0:
 # cargo build --locked --release --no-default-features --target x86_64-pc-windows-msvc
-python3 scripts/package.py --target win32-x64 \
+npm run package -- --target win32-x64 \
   --binary ../../target/x86_64-pc-windows-msvc/release/ibcmd-rs.exe \
   --out /path/to/artifacts/ibcmd-rs-win32-x64.vsix
 ```
