@@ -56,6 +56,12 @@ pub(crate) fn export(
         bail!("CAS расширения: контрольная сумма корня не совпадает");
     }
     let manifest = CasManifest::decode(packed)?;
+    if manifest.identity().storage_format != 80_327 {
+        bail!(
+            "Неподдержанный файловый формат расширения {}: требуется измеренный 80327",
+            manifest.identity().storage_format
+        );
+    }
     let names = manifest
         .referenced_hashes()
         .iter()
@@ -82,7 +88,7 @@ pub(crate) fn export(
             .map_err(|e| anyhow!("{e}"))?,
     )?;
     let provider =
-        crate::mssql_dump::extension::file_base_index_provider(base.published, source_version);
+        crate::mssql_dump::extension::file_base_index_provider(base.published, source_version)?;
     let parent = output
         .parent()
         .ok_or_else(|| anyhow!("output has no parent"))?;

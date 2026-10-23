@@ -248,3 +248,105 @@ fn out_of_range_physical_part_number_is_refused() {
     assert!(!out.exists());
     assert_eq!(fs::read(path).unwrap(), bytes);
 }
+
+#[test]
+fn unsupported_80501_manifest_refuses_before_publication() {
+    use std::io::Write;
+    let dir = Scratch::new("unsupported-manifest");
+    let db = dir.db("two-extensions");
+    let out = dir.0.join("output");
+    let old_root = "3d99fb8542039bb258a28a4b0b30bb6b8693e304";
+    let row = ibcmd_filedb::FileDb::open(&db)
+        .unwrap()
+        .config_rows("CONFIGCAS")
+        .unwrap()
+        .into_iter()
+        .find(|r| r.file_name == old_root)
+        .unwrap();
+    let mut plain = String::new();
+    flate2::read::DeflateDecoder::new(row.binary.as_slice())
+        .read_to_string(&mut plain)
+        .unwrap();
+    assert_eq!(plain.matches("80327").count(), 1);
+    let changed = plain.replace("80327", "80501");
+    let mut packed = (1..=9)
+        .map(|level| {
+            let mut encoder =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(level));
+            encoder.write_all(changed.as_bytes()).unwrap();
+            encoder.finish().unwrap()
+        })
+        .min_by_key(Vec::len)
+        .unwrap();
+    assert!(packed.len() <= row.binary.len());
+    // Keep the measured blob size/pointer intact; raw DEFLATE permits trailing
+    // bytes, and the CAS digest covers those exact packed bytes as stored.
+    packed.resize(row.binary.len(), 0);
+    let mut decoded = String::new();
+    flate2::read::DeflateDecoder::new(packed.as_slice())
+        .read_to_string(&mut decoded)
+        .unwrap();
+    assert_eq!(decoded, changed);
+    let new_root = format!("{:x}", sha1::Sha1::digest(&packed));
+    let path = db.join("1Cv8.1CD");
+    let mut bytes = fs::read(&path).unwrap();
+    // Documented blob blocks carry at most 250 payload bytes between their
+    // six-byte headers; find each original chunk before changing any bytes.
+    let payload_positions = row
+        .binary
+        .chunks(250)
+        .map(|chunk| {
+            let positions = bytes
+                .windows(chunk.len())
+                .enumerate()
+                .filter_map(|(i, w)| (w == chunk).then_some(i))
+                .collect::<Vec<_>>();
+            assert_eq!(positions.len(), 1);
+            positions[0]
+        })
+        .collect::<Vec<_>>();
+    for (at, chunk) in payload_positions.into_iter().zip(packed.chunks(250)) {
+        bytes[at..at + chunk.len()].copy_from_slice(chunk);
+    }
+    let old_name = old_root
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    let new_name = new_root
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    let name_positions = bytes
+        .windows(old_name.len())
+        .enumerate()
+        .filter_map(|(i, w)| (w == old_name).then_some(i))
+        .collect::<Vec<_>>();
+    assert_eq!(name_positions.len(), 1);
+    let at = name_positions[0];
+    bytes[at..at + new_name.len()].copy_from_slice(&new_name);
+    let decode_hash = |hex: &str| {
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let marker = [0x43, 0xc2, 0x9a, 0x14]
+        .into_iter()
+        .chain(decode_hash(old_root))
+        .collect::<Vec<_>>();
+    let positions = bytes
+        .windows(marker.len())
+        .enumerate()
+        .filter_map(|(i, w)| (w == marker).then_some(i))
+        .collect::<Vec<_>>();
+    assert_eq!(positions.len(), 1);
+    // Measured envelope: four-byte magic, then exactly the twenty-byte root.
+    let at = positions[0] + 4;
+    bytes[at..at + 20].copy_from_slice(&decode_hash(&new_root));
+    fs::write(&path, &bytes).unwrap();
+    let run = export(&db, "Second520", &out);
+    assert_eq!(run.status.code(), Some(1));
+    assert!(!out.exists());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("80501"));
+    assert_eq!(fs::read(path).unwrap(), bytes);
+}

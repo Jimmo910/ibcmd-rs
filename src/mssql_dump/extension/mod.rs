@@ -919,7 +919,11 @@ pub(crate) fn base_index_provider(
 pub(crate) fn file_base_index_provider(
     rows: BTreeMap<String, Vec<u8>>,
     source_version: InfobaseConfigSourceVersion,
-) -> BaseIndexProvider {
+) -> Result<BaseIndexProvider> {
+    // The legacy index builder inflates metadata rows. Preflight the identical
+    // immutable input with a fixed buffer before handing it that input. This
+    // bounds both individual allocations and all concurrently retained texts.
+    check_file_base_metadata_budget(&rows, 64 * 1024 * 1024, 256 * 1024 * 1024)?;
     let rows = rows
         .into_iter()
         .map(|(file_name, bytes)| super::ConfigRow {
@@ -932,7 +936,86 @@ pub(crate) fn file_base_index_provider(
         })
         .collect::<Vec<_>>();
     let indexes = base_indexes_from_rows(&rows, source_version);
-    Arc::new(move || Some(indexes.clone()))
+    Ok(Arc::new(move || Some(indexes.clone())))
+}
+
+/// Matches the legacy builder's no-dot metadata selection and raw DEFLATE
+/// decoder, without allocating its inflated output. Malformed streams retain
+/// the legacy extraction-miss behavior, but bytes emitted before an error still
+/// consume the total budget.
+fn check_file_base_metadata_budget(
+    rows: &BTreeMap<String, Vec<u8>>,
+    per_row: usize,
+    aggregate: usize,
+) -> Result<()> {
+    use std::io::Read;
+    let mut total = 0usize;
+    let mut buffer = [0u8; 16 * 1024];
+    for (name, packed) in rows.iter().filter(|(name, _)| !name.contains('.')) {
+        let allowed = per_row.min(aggregate.saturating_sub(total));
+        let mut decoder =
+            flate2::read::DeflateDecoder::new(packed.as_slice()).take(allowed as u64 + 1);
+        let mut count = 0usize;
+        loop {
+            let read = match decoder.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => read,
+            };
+            count += read;
+            if count > allowed {
+                bail!("Файловая базовая метадата {name}: превышен лимит распаковки");
+            }
+        }
+        total += count;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod file_base_budget_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn packed(bytes: &[u8]) -> Vec<u8> {
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(bytes).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn file_base_metadata_per_row_limit_refuses_compressed_bomb() {
+        let rows = BTreeMap::from([("metadata".into(), packed(&[b'x'; 1025]))]);
+        assert!(check_file_base_metadata_budget(&rows, 1024, 4096).is_err());
+        assert!(check_file_base_metadata_budget(&rows, 1025, 4096).is_ok());
+    }
+
+    #[test]
+    fn file_base_index_provider_propagates_production_budget_refusal() {
+        use std::io::Read;
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::copy(
+            &mut std::io::repeat(b'x').take(64 * 1024 * 1024 + 1),
+            &mut encoder,
+        )
+        .unwrap();
+        let rows = BTreeMap::from([("metadata".into(), encoder.finish().unwrap())]);
+        let error = file_base_index_provider(rows, InfobaseConfigSourceVersion::V2_20)
+            .err()
+            .expect("oversize metadata must refuse before legacy indexing");
+        assert!(error.to_string().contains("лимит распаковки"));
+    }
+
+    #[test]
+    fn file_base_metadata_total_limit_counts_multiple_rows() {
+        let rows = BTreeMap::from([
+            ("one".into(), packed(&[b'x'; 600])),
+            ("two".into(), packed(&[b'y'; 600])),
+        ]);
+        assert!(check_file_base_metadata_budget(&rows, 1024, 1199).is_err());
+        assert!(check_file_base_metadata_budget(&rows, 1024, 1200).is_ok());
+    }
 }
 
 /// The indexes of [`fetch_base_indexes`] over metadata rows already read.

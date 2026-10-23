@@ -40,3 +40,14 @@ The command SHALL fail before publishing output when selection, physical profile
 - **GIVEN** selected storage that the existing XML exporter cannot represent exactly
 - **WHEN** rendering reports opaque or failed entries
 - **THEN** output SHALL not be published.
+
+
+#### Scenario: Unsupported manifest storage version
+- **GIVEN** a well-formed selected CAS manifest with format 80501 instead of the measured file format 80327
+- **WHEN** export is requested
+- **THEN** it SHALL refuse before publication and leave the database unchanged.
+
+#### Scenario: Inflated base metadata exceeds budget
+- **GIVEN** selected base metadata whose inflated size exceeds the 64 MiB per-row or 256 MiB aggregate limit
+- **WHEN** export is requested
+- **THEN** it SHALL refuse before legacy index construction or output publication and leave the database unchanged.
