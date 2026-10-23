@@ -2069,6 +2069,7 @@ pub(crate) fn dump_config_with_sql(
     dump_config_with(
         args,
         DumpHooks {
+            rows_snapshot: None,
             sql: sql_override,
             sink: None,
         },
@@ -2080,6 +2081,8 @@ pub(crate) fn dump_config_with_sql(
 /// default is the command line's export.
 #[derive(Default)]
 pub(crate) struct DumpHooks {
+    /// Capability-checked immutable Config rows, through the existing offline reader.
+    pub(crate) rows_snapshot: Option<Arc<BTreeMap<String, Arc<Vec<u8>>>>>,
     /// The database handle to read with, whose connections the caller keeps
     /// between runs, instead of one built from the arguments' login. Not
     /// used with `--rows-dir`.
@@ -2146,6 +2149,20 @@ pub(crate) fn with_rows_dir_table<T>(
     let _active = offline_rows::activate(dir)?;
     let _views = dynamic_generation::StorageViewScope::begin("");
     let sql = crate::sql::SqlExec::detached("a rows folder answers every read itself");
+    read(&ConfigTable::active(&sql, ""))
+}
+
+/// Runs a bounded immutable snapshot through the same offline Config table reader.
+pub(crate) fn with_memory_rows_table<T>(
+    rows: &BTreeMap<String, Arc<Vec<u8>>>,
+    read: impl FnOnce(&ConfigTable<'_>) -> Result<T>,
+) -> Result<T> {
+    let _active = offline_rows::activate_rows(offline_rows::OfflineRows::from_memory(
+        rows.iter()
+            .map(|(name, bytes)| (name.clone(), bytes.clone())),
+    ))?;
+    let _views = dynamic_generation::StorageViewScope::begin("");
+    let sql = crate::sql::SqlExec::detached("immutable rows answer every read");
     read(&ConfigTable::active(&sql, ""))
 }
 
@@ -2380,28 +2397,37 @@ fn dump_config_inner(
         .transpose()?;
     // `--rows-dir`: every Config read of this run comes from the folder and
     // no query reaches a server.
-    let _offline_rows = match (&args.rows_dir, &args.file_infobase) {
-        (Some(dir), _) => {
-            if args.include_config_save {
-                bail!("--rows-dir reads the Config table only; drop --include-config-save");
+    let _offline_rows = if let Some(rows) = &hooks.rows_snapshot {
+        Some(offline_rows::activate_rows(
+            offline_rows::OfflineRows::from_memory(
+                rows.iter()
+                    .map(|(name, bytes)| (name.clone(), bytes.clone())),
+            ),
+        )?)
+    } else {
+        match (&args.rows_dir, &args.file_infobase) {
+            (Some(dir), _) => {
+                if args.include_config_save {
+                    bail!("--rows-dir reads the Config table only; drop --include-config-save");
+                }
+                Some(offline_rows::activate(dir)?)
             }
-            Some(offline_rows::activate(dir)?)
-        }
-        // `--file-infobase` (#373): the file infobase's rows, its completed
-        // ConfigSave stage folded in, answer every read the same way.
-        (None, Some(path)) => {
-            if args.include_config_save {
-                bail!(
-                    "--file-infobase publishes the main configuration; drop --include-config-save"
-                );
+            // `--file-infobase` (#373): the file infobase's rows, its completed
+            // ConfigSave stage folded in, answer every read the same way.
+            (None, Some(path)) => {
+                if args.include_config_save {
+                    bail!(
+                        "--file-infobase publishes the main configuration; drop --include-config-save"
+                    );
+                }
+                Some(offline_rows::activate_rows(file_infobase::load(path)?)?)
             }
-            Some(offline_rows::activate_rows(file_infobase::load(path)?)?)
-        }
-        (None, None) => {
-            if args.database.trim().is_empty() {
-                bail!("--database is required unless --rows-dir or --file-infobase is given");
+            (None, None) => {
+                if args.database.trim().is_empty() {
+                    bail!("--database is required unless --rows-dir or --file-infobase is given");
+                }
+                None
             }
-            None
         }
     };
     let legacy_adapter = MssqlLegacyAdapter::from_legacy_selector(args.source_version);
