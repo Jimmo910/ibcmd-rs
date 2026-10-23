@@ -88,7 +88,8 @@
     "CURRENT chart design projection retains validated Designer names-only factory presence while replacing values with freshly computed native defaults; EDT hidden source spelling is cleared",
     "Witnessed current EDT LF form framing is a source-only lexical facet; declaration-bound verbatim text retains explicit carriage-return edits while legacy CRLF defaults and native envelope validation remain unchanged",
     "Witnessed current EDT ListSettings.dcss LF framing is a source-only lexical facet with verbatim typed text; legacy CRLF emission, semantic emptiness and native empty ListSettings self-closing spelling remain unchanged",
-    "Witnessed current EDT ConditionalAppearance.dcssca LF framing uses an explicit framed API and a source-only FormBody facet; legacy CRLF API/defaults, complete ordered typed accounting and empty-sidecar omission remain unchanged"
+    "Witnessed current EDT ConditionalAppearance.dcssca LF framing uses an explicit framed API and a source-only FormBody facet; legacy CRLF API/defaults, complete ordered typed accounting and empty-sidecar omission remain unchanged",
+    "Witnessed current EDT DCS element-only structural LF becomes canonical CRLF with a source-only owner facet restoring same-EDT output; mixed content, CDATA, xml:space scopes and leaf values remain exact and mixed eligible source separators fail closed"
   ],
   "files": [
     {
@@ -161,7 +162,7 @@
     },
     {
       "path": "crates/core/src/ir/mod.rs",
-      "sha256": "62934d6f16cc8b742b17b1c1586e3b8e4024e672823a43ac52cf3c1c2e687e7f"
+      "sha256": "58431e475368c2afb0d1a3633209873ca0036b49adec79041ec5d0c69e62b98f"
     },
     {
       "path": "crates/core/src/ir/semantic_view.rs",
@@ -2629,7 +2630,7 @@
     },
     {
       "path": "crates/pipeline/src/dcs_read.rs",
-      "sha256": "f129faf9ce58c5c462ddc204832d1595c3e67d4ff60606ad3e2670dee2167e64"
+      "sha256": "8d3470d1a71f2f6a3efade855bfa2ab11280f66e0f160d0f91bcb6c3ed5700c5"
     },
     {
       "path": "crates/pipeline/src/exchange_plan_content_read.rs",
@@ -2689,7 +2690,7 @@
     },
     {
       "path": "crates/pipeline/src/lib.rs",
-      "sha256": "cdabb0a062006f94c2675810e8253f7dc8a3b2dc89bc2a739575c2d2d8b80f6b"
+      "sha256": "461d5441ee463e1b0073cc8ec6fce7b8edbb8f88760c1c1435328d6465e4d81e"
     },
     {
       "path": "crates/pipeline/src/metadata_picture_semantics.rs",
@@ -2733,7 +2734,7 @@
     },
     {
       "path": "crates/pipeline/src/sdk_body_projection.rs",
-      "sha256": "20cbbf5e84a50c7cb6b9580da156985ce070a5c324975d18e7e0a03e27e0190f"
+      "sha256": "0ac643feea8c1ee9cfff2008519508e32fad4d24a89815580b2d5e4c7a1b4fa9"
     },
     {
       "path": "crates/pipeline/src/sidecar_version.rs",

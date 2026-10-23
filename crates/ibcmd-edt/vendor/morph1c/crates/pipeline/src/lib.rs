@@ -77,6 +77,8 @@ mod ws_definition_read;
 mod xdto_read;
 
 pub use convert::{read_config, write_config};
+#[doc(hidden)]
+pub use dcs_read::{attach_dcs_bodies, write_dcs_bodies};
 // Private adapter lab access to the same typed form/sidecar pipeline as whole
 // configuration conversion. This adds no ibcmd public canonical model surface.
 #[doc(hidden)]
