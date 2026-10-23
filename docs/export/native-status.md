@@ -47,3 +47,17 @@ file path for status: parent traversal (`..`) and terminal directory syntax
 (a separator or `/.`) are refused rather than rewritten as a file target.
 Object export keeps its strict linked-component checks. These path checks do
 not claim safety against hostile concurrent replacement of parent directories.
+
+An explicitly empty `--out` is refused before resolving the database. For
+`objects`, the selected output root and every existing ancestor must themselves
+be plain directories; resolving aliases before checking them would bypass the
+object publication guard. Failed queries with `--report` write `ok: false` and
+the original diagnostic, including when the report replaces an older success.
+A report publication failure is a secondary diagnostic.
+
+Native incremental export validates removed/renamed rows and nested parts against
+the inventory used by the actual export, before preparing its output directory
+or starting writers. Body-row roles use current typed source-asset routing,
+never the reference's role spelling. This supplements the CLI preflight; it does
+not claim transactional consistency across concurrent SQL changes. The custom
+export command retains its documented full-export fallback and pruning behavior.

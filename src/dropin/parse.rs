@@ -828,7 +828,10 @@ fn parse_export_query(scan: &Scan) -> Result<Invocation, Refusal> {
         NodeKind::ExportStatus => ExportQueryKind::Status,
         _ => ExportQueryKind::Objects,
     };
-    let out = scan.value(Opt::Out).map(PathBuf::from);
+    let out = match scan.value(Opt::Out) {
+        Some("") => return Err(Refusal::MissingValue("out".into())),
+        value => value.map(PathBuf::from),
+    };
     if kind == ExportQueryKind::Status && !scan.has(Opt::Base) {
         return Err(Refusal::NativeMalformed(
             "Не указан путь к файлу ConfigDumpInfo.xml".into(),

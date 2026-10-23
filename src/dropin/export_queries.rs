@@ -13,6 +13,11 @@ use std::{
 
 pub(super) fn run(mut request: ExportQueryRequest) -> i32 {
     let kind = request.kind;
+    let command = match kind {
+        ExportQueryKind::Info => "infobase config export info",
+        ExportQueryKind::Status => "infobase config export status",
+        ExportQueryKind::Objects => "infobase config export objects",
+    };
     let title = match kind {
         ExportQueryKind::Info => {
             "Получение информации о состоянии конфигурации информационной базы"
@@ -84,15 +89,9 @@ pub(super) fn run(mut request: ExportQueryRequest) -> i32 {
     match result {
         Ok(()) => {
             if let Some(path) = request.export.common.report.as_deref() {
-                let command = match kind {
-                    ExportQueryKind::Info => "info",
-                    ExportQueryKind::Status => "status",
-                    ExportQueryKind::Objects => "objects",
-                };
-                if let Err(error) = super::write_json(
-                    path,
-                    &serde_json::json!({"operation":format!("infobase config export {command}"),"ok":true}),
-                ) {
+                if let Err(error) =
+                    super::write_json(path, &serde_json::json!({"operation":command,"ok":true}))
+                {
                     eprintln!("[ERROR] {error:#}");
                     return EXIT_FAILED;
                 }
@@ -108,13 +107,26 @@ pub(super) fn run(mut request: ExportQueryRequest) -> i32 {
             0
         }
         Err(error) => {
-            if let Some(unknown) = error.downcast_ref::<crate::stored_objects::UnknownObject>() {
-                eprintln!(
-                    "[ERROR] Операция невозможна, при выполнении экспорта объектов конфигурации в XML обнаружены ошибки: Объект метаданных {} не существует в конфигурации.",
+            let message = if let Some(unknown) =
+                error.downcast_ref::<crate::stored_objects::UnknownObject>()
+            {
+                format!(
+                    "Операция невозможна, при выполнении экспорта объектов конфигурации в XML обнаружены ошибки: Объект метаданных {} не существует в конфигурации.",
                     unknown.0
-                );
+                )
             } else {
-                eprintln!("[ERROR] {error:#}");
+                format!("{error:#}")
+            };
+            eprintln!("[ERROR] {message}");
+            if let Some(path) = request.export.common.report.as_deref() {
+                let failure = super::FailureReport {
+                    operation: command,
+                    ok: false,
+                    error: message,
+                };
+                if let Err(report_error) = super::write_json(path, &failure) {
+                    eprintln!("[ERROR] {report_error:#}");
+                }
             }
             EXIT_FAILED
         }

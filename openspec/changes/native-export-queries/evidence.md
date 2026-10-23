@@ -59,3 +59,46 @@ standalone Clippy, 1,252 standalone tests (80 ignored), 427 root integration tes
 The 15 query cases and both staging tests pass; the final helper reorder has an
 additional check/query/unit recheck. Independent review found no remaining P1/P2.
 Exact-head multi-platform workflow results are recorded in the PR separately.
+
+
+## Codex follow-up: output safety and actual-selection validation (2026-10-23)
+
+On the preceding PR head, disposable own tiny databases/files reproduced three
+reported failures: an explicitly empty objects output overwrote a cwd sentinel;
+root/ancestor aliases bypassed the object output guard; and an unsuccessful query
+left an earlier `ok: true` JSON report untouched. These were local executions of
+our branch, not executions of another contributor's code or of private ERP data.
+
+The parser now refuses an explicit empty output before database resolution, and
+the objects API independently rejects an empty path. Object roots retain lexical
+paths and check links/reparse points before resolution; info/status parent alias
+support remains query-specific. Failed queries publish the original error in an
+`ok: false` report, with any report failure reported separately.
+
+Four real-pipeline tests first failed on the old native incremental boundary.
+The final isolated child-process regression checks removed rows, renamed owners,
+removed nested parts, renamed body-row roles, and unchanged existing sync output.
+It bypasses the CLI preflight deliberately to exercise the inventory actually
+used for export. Its isolation avoids the physical offline adapter's process-wide
+active state interfering with unrelated parallel unit tests. Native selection
+requires exact current reference-row names through the shared typed source-asset
+routing, and rejects unreadable names. Custom fallback remains covered separately.
+Both earlier directory preparations are deferred until this validation succeeds.
+Only reference IDs require additional routing, so unlisted native tail entries do
+not acquire an extra validation demand. This is a pre-publication guard, not a
+claim of SQL transaction snapshot consistency.
+
+Independent static review found and closed the body-role gap and the potential
+extra routing demand for unlisted tails. Physical policy baseline/scanner remain
+unchanged. Exact final-head local and CI results are recorded in the PR receipt.
+Native Windows console encoding/line-ending parity is still unmeasured locally;
+the supplied Windows cp866/CRLF observation is additional human evidence, not a
+result of the Mac 8.5.1.1592 oracle used here.
+
+Local follow-up checks: 1,252 standalone tests passed (80 ignored), 430 root
+integration tests passed (4 ignored), 18 query cases, 9 custom base/sync cases,
+13 incremental unit cases and the isolated five-scenario native pipeline case
+passed. Formatting, all-target workspace check, mandatory standalone Clippy,
+strict OpenSpec and physical policy/self-tests passed. Release compilation was
+interrupted by the coordinator's build-slot rescheduling after tests completed;
+it remains pending and is not recorded as a compiler failure or a passed gate.
