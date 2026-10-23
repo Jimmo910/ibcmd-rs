@@ -11227,6 +11227,20 @@ fn list_settings_transliteration_fails_closed_outside_the_evidenced_vocabulary()
 /// `CommonForms/МашиночитаемыеДоверенности`, whose
 /// `ref="0:4a6c2c50-ce27-4fc2-bd95-d719c0a331be"` is exported as
 /// `ref="style:ЗачеркнутыйШрифтБЭД"`.
+/// A `StyleItem` font whose style slot is the bare `{0}` names no style item,
+/// and 8.3.27.2214 writes it `ref="0"`: ЗУП 3.1.18 stores `{7,2,0,{0},1,100}`
+/// on `Documents/ВедомостьНаВыплатуЗарплатыВБанк/Forms/ФормаДокумента`
+/// `СоставФинансирование` and the platform writes
+/// `<Font ref="0" kind="StyleItem"/>` (21 fonts in 16 forms; two more carry a
+/// height in another stand corpus).
+#[test]
+fn a_style_item_font_without_a_style_reads_as_ref_zero() {
+    assert_eq!(
+        parse_form_font_tuple_xml_tag("{7,2,0,{0},1,100}", &BTreeMap::new(), "Font").as_deref(),
+        Some("<Font ref=\"0\" kind=\"StyleItem\"/>")
+    );
+}
+
 #[test]
 fn transliterated_appearance_resolves_style_item_font_references() {
     let document = concat!(

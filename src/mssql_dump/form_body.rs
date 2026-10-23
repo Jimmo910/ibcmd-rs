@@ -19958,6 +19958,13 @@ pub(super) fn parse_form_font_style_ref(
     let style_slot = split_1c_braced_fields(fields.get(3)?.trim(), 0)?;
     if style_slot.len() == 1 {
         let code = style_slot.first()?.trim().parse::<i32>().ok()?;
+        // The bare `{0}` names no style item, and 8.3.27.2214 writes it as
+        // `ref="0"`: 21 ЗУП 3.1.18 fonts stored `{7,2,0,{0},1,100}` come out as
+        // `<Font ref="0" kind="StyleItem"/>`, two more in another stand corpus
+        // add a height.
+        if code == 0 {
+            return Some(code.to_string());
+        }
         return standard_style_item_for_code(code).map(|(_, name)| format!("style:{name}"));
     }
     if style_slot.first().map(|value| value.trim()) != Some("0") {
