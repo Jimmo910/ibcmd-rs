@@ -14,9 +14,20 @@ hashes before and after inspection, rejects changing inputs, and records hashes
 of every `.ecore`, `.xcore`, and `.genmodel` resource in the inspected bundles.
 The output is created exclusively; earlier evidence is never replaced. Output
 must be below an existing external `/Volumes` lab with no symlink ancestors.
-Model resources are streamed with a 256 MiB diagnostic cap and manifests are
-bounded to a 64 KiB main section (signed per-entry digest tails are not read); exceeding these limits fails the diagnostic rather than
-truncating evidence. The archive is inspected and hashed through the same open
+The mounted filesystem must differ from the root filesystem; read-only `diskutil`
+metadata must identify the volume and every APFS physical store as noninternal,
+nonsystem storage on USB, Thunderbolt or FireWire. Missing or unverifiable
+metadata fails closed. This diagnostic supports those explicitly verified Mac
+storage transports; a pathname prefix alone is insufficient. Output creation is
+exclusive and bound to an open directory on the verified device.
+
+Model resources are streamed with a 256 MiB per-entry diagnostic cap and a
+shared **256 MiB run-wide decompression budget**, including manifest main
+sections across all inspected bundles. Reports retain the budget and actual
+consumption. Exhaustion writes an explicit `LIMIT_EXCEEDED` failure report and
+exits nonzero; it never emits truncated success evidence. Manifest main sections
+are bounded to 64 KiB and recognize CR, LF and CRLF section boundaries, so signed
+per-entry digest tails are not read. The archive is inspected and hashed through the same open
 file descriptor, with final pathname and descriptor identity checks.
 
 Use exact paths under the external laboratory for the output and any shell
