@@ -282,3 +282,26 @@ unavailable. Exact reports and minimal genuine public source bytes at
 ownership remains unchanged. Full release was reported immediately for #381's
 next integration phase. No retry occurs without another grant; all BSP/current
 schema/strict SDK acceptance limitations remain open.
+
+
+## Post-DCSSCA candidate: conversion completes, exact native comparison fails
+
+The single granted direct conversion with clean source `c0cd767b` and candidate
+SHA-256 `6340fd5458a19aa7e40a1208dd35bb29138d79313ce8d2534ad5aa458d2bf471`
+completed with exit code 0 after the combined twelve tests passed. The
+[full public inventories and comparison](evidence/356-post-dcssca-direct-20261023.json)
+bind `fixtures/issue356-current-server-dcs-fixed-direct-004`. Complete authentic
+project, installed-export, reused native-reference, candidate and evidence
+bindings were renewed and remained unchanged afterward. No SDK, JVM or build
+was launched; the slot was released immediately after this one conversion.
+
+The output has 18 files; the native reference has 19. Exact comparison fails on
+four paths: both managed form `Module.bsl` files (474 versus 492 bytes), report
+`Template.xml` (3189 versus 3264 bytes), and absent `ConfigDumpInfo.xml` (3084
+native bytes). The three shared-file differences consist exactly of LF versus
+CRLF bytes in this capture. That diagnostic does not normalize the acceptance
+comparison: both strict equality and configuration-content equality remain
+false. The report preserves every file inventory and differing row, including
+the excluded CDI row. This public smoke supplies no BSP/UH acceptance, current
+model schema certification, or waiver of retained SDK/style errors. Earlier
+failed captures remain intact.
