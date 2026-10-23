@@ -5,7 +5,7 @@ Fixtures are retained; the lab runner sets TMPDIR to the external disk.
 import importlib.util
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import sys
 import tempfile
 import subprocess
@@ -344,11 +344,22 @@ class Controls(unittest.TestCase):
         self.assertNotIn("-vm", argv)
         self.assertNotIn("-Dosgi.debug=synthetic.options", cap.ini.read_text())
         ini = cap.ini.read_text().splitlines()
-        self.assertEqual(ini[ini.index("-startup") + 1], str(args.edt_exe.parent / "plugins/synthetic.jar"))
+        self.assertEqual(Path(ini[ini.index("-startup") + 1]), args.edt_exe.parent / "plugins/synthetic.jar")
         self.assertEqual(ini[ini.index("-vm") + 1], str(args.edt_vm))
         self.assertEqual(ini[ini.index("-user") + 1], str(args.run / "user"))
         self.assertIn(f"-Duser.home={args.run / 'home'}", argv)
         self.assertIn(f"-Djava.io.tmpdir={args.run / 'tmp'}", argv)
+
+    def test_windows_startup_path_spelling_keeps_exact_external_target(self):
+        # Launcher INI replacement preserves the vendor's '/' suffix. Windows
+        # accepts both separators; target identity, rather than string spelling,
+        # is the contract exercised by the portable synthetic control.
+        external = PureWindowsPath("D:/lab/tools/Contents/Eclipse")
+        mixed = str(external) + "/plugins/synthetic.jar"
+        self.assertEqual(PureWindowsPath(mixed), external / "plugins/synthetic.jar")
+        self.assertTrue(PureWindowsPath(mixed).is_absolute())
+        self.assertNotEqual(PureWindowsPath(mixed), PureWindowsPath("C:/internal/plugins/synthetic.jar"))
+        self.assertNotEqual(PureWindowsPath(mixed), external / "plugins/other.jar")
 
     def test_installation_binding_refuses_changed_plugins_and_runtime(self):
         for mutation in ("plugin", "java", "manifest-cli", "wrong-plugins-root", "omit-config"):
