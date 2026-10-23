@@ -290,9 +290,30 @@ mod read_budget_tests {
         },
     };
 
+    struct Fixture {
+        root: PathBuf,
+        file: PathBuf,
+    }
+    impl std::ops::Deref for Fixture {
+        type Target = std::path::Path;
+        fn deref(&self) -> &Self::Target {
+            &self.file
+        }
+    }
+    impl AsRef<std::path::Path> for Fixture {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.file
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
     // This deliberately malformed fixture repeats one blob pointer in two live
     // records. Its physical file size does not bound cloned row materialization.
-    fn aliased_fixture() -> (PathBuf, u64) {
+    fn aliased_fixture() -> (Fixture, u64) {
         let root = std::env::temp_dir().join(format!(
             "ibcmd-budget-{}-{}",
             std::process::id(),
@@ -302,13 +323,16 @@ mod read_budget_tests {
                 .as_nanos()
         ));
         fs::create_dir(&root).unwrap();
+        let path = Fixture {
+            file: root.join("1Cv8.1CD"),
+            root,
+        };
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/file-infobase/tiny.1CD.gz");
         let mut bytes = Vec::new();
         flate2::read::GzDecoder::new(fs::File::open(fixture).unwrap())
             .read_to_end(&mut bytes)
             .unwrap();
-        let path = root.join("1Cv8.1CD");
         fs::write(&path, bytes).unwrap();
         let db = FileDb::open(&path).unwrap();
         let table = db.table("CONFIG").unwrap().clone();
@@ -424,6 +448,28 @@ mod read_budget_tests {
                 .contains("cancelled")
         );
     }
+    // Find the single-descriptor threshold rather than encoding incidental FAT,
+    // descriptor-parser or metadata bookkeeping constants into this regression.
+    fn initialization_budget(path: &std::path::Path) -> u64 {
+        let mut low = 0;
+        let mut high = limits(u64::MAX, 100_000).max_object_bytes;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let mut budget = limits(u64::MAX, 100_000);
+            budget.max_object_bytes = middle;
+            match FileDb::from_file_with_limits(fs::File::open(path).unwrap(), budget, || Ok(())) {
+                Ok(_) => high = middle,
+                Err(error) => {
+                    assert!(
+                        error.to_string().contains("object materialization limit"),
+                        "{error}"
+                    );
+                    low = middle + 1;
+                }
+            }
+        }
+        low
+    }
     #[test]
     fn descriptor_aliases_consume_cumulative_budget_during_initialization() {
         let (path, _) = aliased_fixture();
@@ -439,18 +485,50 @@ mod read_budget_tests {
         let first = u32::from_le_bytes(old_head[36..40].try_into().unwrap());
         let descriptor = crate::blob::read_chain(&data, first, None).unwrap();
         let mut head = old_head[..36].to_vec();
-        head[32..36].copy_from_slice(&2u32.to_le_bytes());
+        head[32..36].copy_from_slice(&1u32.to_le_bytes());
         head.extend_from_slice(&2u32.to_le_bytes());
+        let (control, refs) =
+            crate::blob::build(&[&head, &descriptor], data.len() / crate::blob::BLOCK).unwrap();
+        assert_eq!(refs[1].0, 2);
+        root.rewrite(&mut pager, &control).unwrap();
+        drop(pager);
+        let mut budget = limits(u64::MAX, 100_000);
+        let slack = descriptor.len() as u64 / 2;
+        assert!(
+            slack > 4,
+            "slack covers the extra root pointer, not a second descriptor"
+        );
+        budget.max_object_bytes = initialization_budget(&path) + slack;
+        // Passing non-aliased control at the EXACT budget used below. Without
+        // this, a low budget could fail on common root/FAT overhead instead.
+        let reader =
+            FileDb::from_file_with_limits(fs::File::open(&path).unwrap(), budget, || Ok(()))
+                .unwrap();
+        assert_eq!(reader.tables().count(), 1);
+        drop(reader);
+
+        head[32..36].copy_from_slice(&2u32.to_le_bytes());
         head.extend_from_slice(&2u32.to_le_bytes());
         let (aliased, refs) =
             crate::blob::build(&[&head, &descriptor], data.len() / crate::blob::BLOCK).unwrap();
         assert_eq!(refs[1].0, 2);
-        root.rewrite(&mut pager, &aliased).unwrap();
+        assert_eq!(
+            control.len(),
+            aliased.len(),
+            "same root-object extent and FAT allocation"
+        );
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let mut pager = Pager::new(file).unwrap();
+        Object::open(&mut pager, 2)
+            .unwrap()
+            .rewrite(&mut pager, &aliased)
+            .unwrap();
         drop(pager);
         assert_eq!(FileDb::open(&path).unwrap().tables().count(), 1);
-        let mut budget = limits(u64::MAX, 100_000);
-        budget.max_object_bytes =
-            aliased.len() as u64 + head.len() as u64 + descriptor.len() as u64;
         let error =
             FileDb::from_file_with_limits(fs::File::open(&path).unwrap(), budget, || Ok(()))
                 .err()

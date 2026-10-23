@@ -10,6 +10,10 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
+#[path = "support/owned_scratch.rs"]
+mod owned_scratch;
+use owned_scratch::OwnedScratch;
+
 // Cancellation scopes are process-global. Serialize whole test bodies, not
 // only the flag mutation, so another export never observes a sibling's scope.
 fn serial() -> std::sync::MutexGuard<'static, ()> {
@@ -22,8 +26,8 @@ const DESCRIPTOR: &str = "CommonModules/ФайловаяБазаПроверка
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase")
 }
-fn setup() -> (PathBuf, PathBuf) {
-    let root = std::env::temp_dir().join(format!("issue382-partial-{}", uuid::Uuid::new_v4()));
+fn setup() -> (OwnedScratch, PathBuf, PathBuf) {
+    let root = OwnedScratch::new("issue382-partial");
     let db = root.join("db");
     let tree = root.join("src");
     fs::create_dir_all(&db).unwrap();
@@ -47,7 +51,7 @@ fn setup() -> (PathBuf, PathBuf) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::copy(entry.path(), path).unwrap();
     }
-    (db, tree)
+    (root, db, tree)
 }
 fn selected(path: &str) -> Selection {
     Selection {
@@ -80,7 +84,7 @@ fn read(db: &Path, path: &str) -> Vec<u8> {
 #[test]
 fn selected_module_preserves_unselected_files_and_previous_staging() {
     let _serial = serial();
-    let (db, tree) = setup();
+    let (_scratch, db, tree) = setup();
     edit(
         &tree,
         DESCRIPTOR,
@@ -128,7 +132,7 @@ fn selected_module_preserves_unselected_files_and_previous_staging() {
 fn changed_target_source_or_connection_refuses_before_writes() {
     let _serial = serial();
     for scenario in 0..3 {
-        let (db, tree) = setup();
+        let (_scratch, db, tree) = setup();
         let text = fs::read_to_string(tree.join(MODULE)).unwrap() + "\r\n// edit\r\n";
         fs::write(tree.join(MODULE), text).unwrap();
         let plan = prepare(&db, &tree, MODULE);
@@ -141,8 +145,9 @@ fn changed_target_source_or_connection_refuses_before_writes() {
             session.replace("CONFIGSAVE", &[]).unwrap();
         }
         let before = fs::read(db.join("1Cv8.1CD")).unwrap();
-        let current = if scenario == 2 { setup().0 } else { db.clone() };
-        assert!(plan.publish(&current).is_err());
+        let other = (scenario == 2).then(setup);
+        let current = other.as_ref().map(|(_, db, _)| db).unwrap_or(&db);
+        assert!(plan.publish(current).is_err());
         assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
     }
 }
@@ -150,7 +155,7 @@ fn changed_target_source_or_connection_refuses_before_writes() {
 fn new_or_missing_files_and_incomplete_stage_refuse_before_writes() {
     let _serial = serial();
     for scenario in 0..3 {
-        let (db, tree) = setup();
+        let (_scratch, db, tree) = setup();
         let before = fs::read(db.join("1Cv8.1CD")).unwrap();
         let selected_path = if scenario == 0 {
             let new = "CommonModules/New.xml";
@@ -193,7 +198,7 @@ fn cancellation_preserves_database_and_existing_backup() {
         Arc,
         atomic::{AtomicBool, Ordering},
     };
-    let (db, tree) = setup();
+    let (_scratch, db, tree) = setup();
     fs::write(
         tree.join(MODULE),
         fs::read_to_string(tree.join(MODULE)).unwrap() + "\r\n// cancelled\r\n",
@@ -220,7 +225,7 @@ fn cancellation_preserves_database_and_existing_backup() {
 #[test]
 fn late_publication_rejection_preserves_the_previous_backup() {
     let _serial = serial();
-    let (db, _) = setup();
+    let (_scratch, db, _) = setup();
     let before = fs::read(db.join("1Cv8.1CD")).unwrap();
     fs::write(ibcmd_filedb::backup_file(&db), b"previous backup").unwrap();
     let mut checks = 0;
@@ -265,7 +270,7 @@ fn interruption_child() {
 #[test]
 fn process_interruption_preserves_published_files_and_refuses_stale_work() {
     let _serial = serial();
-    let (db, _) = setup();
+    let (_scratch, db, _) = setup();
     let before = fs::read(db.join("1Cv8.1CD")).unwrap();
     fs::write(ibcmd_filedb::backup_file(&db), b"old backup").unwrap();
     let status = std::process::Command::new(std::env::current_exe().unwrap())
@@ -289,7 +294,7 @@ fn process_interruption_preserves_published_files_and_refuses_stale_work() {
 fn operator_guards_check_consumed_identity_and_final_publication_policy() {
     let _serial = serial();
     use std::os::unix::fs::MetadataExt;
-    let (db, tree) = setup();
+    let (_scratch, db, tree) = setup();
     fs::write(
         tree.join(MODULE),
         fs::read_to_string(tree.join(MODULE)).unwrap() + "\r\n// guarded\r\n",
@@ -356,7 +361,7 @@ fn operator_guards_check_consumed_identity_and_final_publication_policy() {
 #[test]
 fn stage_versions_cannot_name_an_absent_row() {
     let _serial = serial();
-    let (db, tree) = setup();
+    let (_scratch, db, tree) = setup();
     let mut session = ibcmd_filedb::open_for_write(&db).unwrap();
     let mut rows = session.config_rows("CONFIG").unwrap();
     let versions = rows
@@ -402,7 +407,7 @@ fn cancellation_at_the_final_policy_gate_is_checked_after_long_checks() {
         Arc,
         atomic::{AtomicBool, Ordering},
     };
-    let (db, tree) = setup();
+    let (_scratch, db, tree) = setup();
     fs::write(
         tree.join(MODULE),
         fs::read_to_string(tree.join(MODULE)).unwrap() + "\r\n// final cancel\r\n",
@@ -435,7 +440,7 @@ fn cancellation_at_the_final_policy_gate_is_checked_after_long_checks() {
 #[test]
 fn changed_import_uses_native_sync_versions_and_refuses_stale_staging() {
     let _serial = serial();
-    let (db, tree) = setup();
+    let (_scratch, db, tree) = setup();
     fs::write(
         tree.join(MODULE),
         fs::read_to_string(tree.join(MODULE)).unwrap() + "\r\n// local change\r\n",
@@ -483,7 +488,7 @@ fn bounded_plan_retains_cancellation_control_for_publish() {
         Arc,
         atomic::{AtomicBool, Ordering},
     };
-    let (db, tree) = setup();
+    let (_scratch, db, tree) = setup();
     fs::write(
         tree.join(MODULE),
         fs::read_to_string(tree.join(MODULE)).unwrap() + "\r\n// bounded\r\n",
@@ -531,7 +536,7 @@ fn bounded_plan_checks_retained_callback_after_final_operator_guard() {
         Arc,
         atomic::{AtomicBool, Ordering},
     };
-    let (db, tree) = setup();
+    let (_scratch, db, tree) = setup();
     fs::write(
         tree.join(MODULE),
         fs::read_to_string(tree.join(MODULE)).unwrap() + "\r\n// deadline\r\n",
