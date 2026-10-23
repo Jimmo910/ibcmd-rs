@@ -900,3 +900,560 @@ fn postgres_query_routes_refuse_before_connecting_or_publishing() {
         failures.join("\n")
     );
 }
+
+fn mutate_descriptor(
+    db: &Path,
+    id: &str,
+    mutate: impl FnOnce(&mut ibcmd_rs::metadata_model::brace::Brace),
+) {
+    use ibcmd_rs::metadata_model::brace::{parse_row, serialize_row};
+    use std::io::Write;
+    let mut source = ibcmd_filedb::FileDb::open(db).unwrap();
+    let mut rows = source.config_rows("CONFIG").unwrap();
+    drop(source);
+    let row = rows.iter_mut().find(|row| row.file_name == id).unwrap();
+    let mut plain = Vec::new();
+    flate2::read::DeflateDecoder::new(row.binary.as_slice())
+        .read_to_end(&mut plain)
+        .unwrap();
+    let mut descriptor = parse_row(&plain).unwrap();
+    mutate(&mut descriptor);
+    let mut packed = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+    packed.write_all(&serialize_row(&descriptor)).unwrap();
+    row.binary = packed.finish().unwrap();
+    row.data_size = row.binary.len() as u64;
+    ibcmd_filedb::replace_config_table(db, "CONFIG", &rows).unwrap();
+}
+
+fn install_unadmitted_common_module_descriptor(db: &Path) {
+    use ibcmd_rs::metadata_model::brace::Brace;
+    mutate_descriptor(db, "6d1c2a0e-1cd0-4f00-9a00-000000000001", |descriptor| {
+        let fields = descriptor.as_list_mut().unwrap()[1].as_list_mut().unwrap();
+        assert_eq!(fields[0].as_atom(), Some("12"));
+        assert_eq!(fields[8].as_atom(), Some("0"));
+        // A clean-room unknown ReturnValuesReuse discriminator leaves the object's
+        // identity and its independent, valid module body intact.
+        fields[8] = Brace::num(99);
+    });
+}
+
+#[test]
+fn selected_object_conversion_refusal_preserves_the_entire_destination() {
+    let (root, db) = lab("selected-incomplete-descriptor");
+    install_unadmitted_common_module_descriptor(&db);
+    let database_before = fs::read(db.join("1Cv8.1CD")).unwrap();
+    let mut failures = Vec::new();
+    for existing in [false, true] {
+        let target = root.join(if existing { "existing" } else { "absent" });
+        if existing {
+            let module = target.join("CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl");
+            fs::create_dir_all(module.parent().unwrap()).unwrap();
+            fs::write(module, b"keep selected existing module").unwrap();
+            fs::write(target.join("sentinel.txt"), b"keep unrelated local bytes").unwrap();
+        }
+        let before = if existing {
+            tree(&target)
+        } else {
+            BTreeMap::new()
+        };
+        let output = run(
+            &db,
+            &["objects"],
+            &[
+                opt("out", &target),
+                "CommonModule.ФайловаяБазаПроверка".into(),
+            ],
+        );
+        let after = if target.exists() {
+            tree(&target)
+        } else {
+            BTreeMap::new()
+        };
+        let preserved = after == before && target.exists() == existing;
+        eprintln!(
+            "selected unsupported descriptor: existing={existing}, code={:?}, preserved={preserved}, files={}",
+            output.status.code(),
+            after.len()
+        );
+        if output.status.code() != Some(FAILED) || !preserved {
+            failures.push(format!(
+                "existing={existing}, code={:?}, preserved={preserved}, files={:?}, stderr={}",
+                output.status.code(),
+                after.keys(),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), database_before);
+    assert!(
+        failures.is_empty(),
+        "incomplete selected export published output:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn unselected_unsupported_descriptor_does_not_block_a_selected_object() {
+    let (root, db) = lab("unselected-incomplete-descriptor");
+    install_unadmitted_common_module_descriptor(&db);
+    let target = root.join("language");
+    let output = run(
+        &db,
+        &["objects"],
+        &[opt("out", &target), "Language.English".into()],
+    );
+    ok(&output);
+    assert_eq!(
+        tree(&target),
+        tree(&fixture().join("tiny-xml"))
+            .into_iter()
+            .filter(|(name, _)| name.starts_with("Languages/"))
+            .collect()
+    );
+}
+
+fn install_synthetic_object(
+    db: &Path,
+    kind: &str,
+    name: &str,
+    uuid: &str,
+    object: &[u8],
+    body: Option<&[u8]>,
+) {
+    use ibcmd_rs::metadata_model::{DescriptorContext, compile_descriptor, root};
+    use std::{io::Write, sync::Arc};
+    let source = fixture().join("tiny-source");
+    let configuration = fs::read_to_string(source.join("Configuration.xml"))
+        .unwrap()
+        .replace(
+            "</ChildObjects>",
+            &format!("<{kind}>{name}</{kind}></ChildObjects>"),
+        )
+        .into_bytes();
+    let mut files = tree(&source)
+        .into_iter()
+        .filter(|(name, _)| name.ends_with(".xml"))
+        .map(|(name, bytes)| (source.join(name), Arc::new(bytes)))
+        .collect::<Vec<_>>();
+    *files
+        .iter_mut()
+        .find(|(path, _)| *path == source.join("Configuration.xml"))
+        .unwrap() = (
+        source.join("Configuration.xml"),
+        Arc::new(configuration.clone()),
+    );
+    let object_path = source.join(format!("{kind}s/{name}.xml"));
+    files.push((object_path.clone(), Arc::new(object.to_vec())));
+    let context = DescriptorContext::with_files(&source, "2.21", &files).unwrap();
+    let configuration_uuid = root::configuration_facts(&configuration).unwrap().uuid;
+    let configuration = compile_descriptor(
+        "Configuration",
+        &source.join("Configuration.xml"),
+        &configuration,
+        &context,
+    )
+    .unwrap();
+    let object = compile_descriptor(kind, &object_path, object, &context).unwrap();
+    let mut source = ibcmd_filedb::FileDb::open(db).unwrap();
+    let mut rows = source.config_rows("CONFIG").unwrap();
+    drop(source);
+    let template = rows[0].clone();
+    let mut replace = |name: String, bytes: &[u8]| {
+        let mut packed =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        packed.write_all(bytes).unwrap();
+        let mut row = template.clone();
+        row.file_name = name.clone();
+        row.binary = packed.finish().unwrap();
+        row.data_size = row.binary.len() as u64;
+        if let Some(old) = rows.iter_mut().find(|row| row.file_name == name) {
+            *old = row;
+        } else {
+            rows.push(row);
+        }
+    };
+    replace(configuration_uuid, &configuration);
+    replace(uuid.into(), &object);
+    if let Some(body) = body {
+        replace(format!("{uuid}.0"), body);
+    }
+    let versions = root::versions_row(
+        &rows
+            .iter()
+            .map(|row| row.file_name.clone())
+            .collect::<Vec<_>>(),
+        || uuid::Uuid::new_v4().to_string(),
+    );
+    let versions_row = rows
+        .iter_mut()
+        .find(|row| row.file_name == "versions")
+        .unwrap();
+    let mut packed = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+    packed.write_all(&versions).unwrap();
+    versions_row.binary = packed.finish().unwrap();
+    versions_row.data_size = versions_row.binary.len() as u64;
+    ibcmd_filedb::replace_config_table(db, "CONFIG", &rows).unwrap();
+}
+
+fn install_unadmitted_form_asset(db: &Path, opaque: bool) {
+    let form_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa1";
+    let form = format!(r#"<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.21"><CommonForm uuid="{form_uuid}"><Properties><Name>OpaqueForm</Name><FormType>Managed</FormType><IncludeHelpInContents>false</IncludeHelpInContents><UseStandardCommands>false</UseStandardCommands></Properties></CommonForm></MetaDataObject>"#).into_bytes();
+    // This clean-room managed-form body has a valid module and a diagnosed,
+    // unsupported dynamic-list property. The form XML must be withheld.
+    let attribute = format!(
+        r##"{{9,{{17}},0,"List",{{1,0}},{{"Pattern",{{"#",65abad24-838b-4987-8b35-ed9e2bd4d9c8}}}},{{0,{{0,{{"B",1}},0}}}},{{0,{{0,{{"B",1}},0}}}},{{0,0}},{{0,0}},0,0,0,0,{{0,3,"MainTable",{{"#",fc01b5df-97fe-449b-83d4-218a090e681e,11111111-1111-4111-8111-111111111111}},"AutoSaveUserSettings",{{"B",1}},"ItemsViewMode",{{"S","{}"}}}},{{0,0}}}}"##,
+        '\u{1}'
+    );
+    let opaque_radio = r#"{37,{38,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,5,"OpaqueRadio",1,0,{1,0},{1,0},{0},{0},1,0,2,0,2,{1,0},{1,0},1,1,0,3,0,3,1,3,0,{4,0,{0},"",-1,-1,1,0,""},{4,0,{0},"",-1,-1,1,0,""},{3,4,{0}},{7,3,0,1,100},{3,4,{0}},{3,4,{0}},{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{8,{9,2}}}"#;
+    let body = if opaque {
+        // A diagnosed opaque ChoiceList is normally an observational report,
+        // rather than a conversion error. Selected export must reject it too.
+        format!("{{4,{{59,1,cccccccc-cccc-4ccc-8ccc-cccccccccccc,{opaque_radio}}},\"Procedure KeepMe()\r\nEndProcedure\r\n\",{{0}}}}")
+    } else {
+        format!("{{4,{{0}},\"Procedure KeepMe()\r\nEndProcedure\r\n\",{{4,1,{attribute}}}}}")
+    }.into_bytes();
+    install_synthetic_object(
+        db,
+        "CommonForm",
+        "OpaqueForm",
+        form_uuid,
+        &form,
+        Some(&body),
+    );
+}
+
+#[test]
+fn selected_source_asset_refusal_preserves_existing_and_absent_destinations() {
+    let mut failures = Vec::new();
+    for opaque in [true, false] {
+        let (root, db) = lab("selected-incomplete-asset");
+        install_unadmitted_form_asset(&db, opaque);
+        let database_before = fs::read(db.join("1Cv8.1CD")).unwrap();
+        for existing in [false, true] {
+            let target = root.join(if existing { "existing" } else { "absent" });
+            if existing {
+                fs::create_dir(&target).unwrap();
+                fs::write(target.join("sentinel.txt"), b"keep local bytes").unwrap();
+            }
+            let before = if existing {
+                tree(&target)
+            } else {
+                BTreeMap::new()
+            };
+            let output = run(
+                &db,
+                &["objects"],
+                &[opt("out", &target), "CommonForm.OpaqueForm".into()],
+            );
+            let after = if target.exists() {
+                tree(&target)
+            } else {
+                BTreeMap::new()
+            };
+            let preserved = before == after && target.exists() == existing;
+            eprintln!(
+                "selected unsupported source asset: opaque={opaque}, existing={existing}, code={:?}, preserved={preserved}, files={}",
+                output.status.code(),
+                after.len()
+            );
+            if output.status.code() != Some(FAILED) || !preserved {
+                failures.push(format!(
+                    "existing={existing}, code={:?}, preserved={preserved}, files={:?}, stderr={}",
+                    output.status.code(),
+                    after.keys(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+        }
+        assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), database_before);
+        // The same unsupported body is outside this selection and must not turn
+        // a complete selected module into a whole-configuration strict check.
+        let target = root.join("module");
+        ok(&run(
+            &db,
+            &["objects"],
+            &[
+                opt("out", &target),
+                "CommonModule.ФайловаяБазаПроверка".into(),
+            ],
+        ));
+        assert_eq!(
+            tree(&target),
+            tree(&fixture().join("tiny-xml"))
+                .into_iter()
+                .filter(|(name, _)| name.starts_with("CommonModules/"))
+                .collect()
+        );
+    }
+    assert!(
+        failures.is_empty(),
+        "incomplete selected source asset published output:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn selected_nested_descriptor_refusal_does_not_hide_behind_the_root_inventory() {
+    use ibcmd_rs::metadata_model::brace::Brace;
+    let (_, recorded_db, recorded) = recorded_lab("owned");
+    let mut source = ibcmd_filedb::FileDb::open(&recorded_db).unwrap();
+    let rows = source.config_rows("CONFIG").unwrap();
+    drop(source);
+    // Keep the measured writable collation of the own tiny database. The
+    // recorded export-only source uses en_US, which this writer refuses.
+    let (root, db) = lab("nested-descriptor");
+    ibcmd_filedb::replace_config_table(&db, "CONFIG", &rows).unwrap();
+    mutate_descriptor(&db, "c099c30b-8a08-45b0-be7d-9594366e78a5", |descriptor| {
+        let wrapper = descriptor.as_list_mut().unwrap()[1].as_list_mut().unwrap();
+        assert_eq!(wrapper[0].as_atom(), Some("0"));
+        let form = wrapper[1].as_list_mut().unwrap();
+        assert_eq!(form[0].as_atom(), Some("13"));
+        assert_eq!(form[2].as_atom(), Some("0"));
+        form[2] = Brace::num(99); // Unknown IncludeHelpInContents; form type stays valid.
+    });
+    let database_before = fs::read(db.join("1Cv8.1CD")).unwrap();
+    let mut failures = Vec::new();
+    for (tag, names) in [
+        ("leaf", vec!["Catalog.CorpusList.Form.ListForm".into()]),
+        (
+            "recursive",
+            vec!["--recursive".into(), "Catalog.CorpusList".into()],
+        ),
+    ] {
+        let target = root.join(tag);
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("sentinel.txt"), b"unchanged").unwrap();
+        let before = tree(&target);
+        let mut options = vec![opt("out", &target)];
+        options.extend(names);
+        let output = run(&db, &["objects"], &options);
+        let preserved = tree(&target) == before;
+        eprintln!(
+            "selected nested descriptor: {tag}, code={:?}, preserved={preserved}",
+            output.status.code()
+        );
+        if output.status.code() != Some(FAILED) || !preserved {
+            failures.push(format!(
+                "{tag}: code={:?}, preserved={preserved}, stderr={}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
+    // Its parent without --recursive does not select this form.
+    let target = root.join("shallow");
+    ok(&run(
+        &db,
+        &["objects"],
+        &[opt("out", &target), "Catalog.CorpusList".into()],
+    ));
+    assert_eq!(tree(&target), tree(&recorded.join("shallow")));
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), database_before);
+    assert!(
+        failures.is_empty(),
+        "nested descriptor conversion was not checked:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn unselected_orphan_form_diagnostics_do_not_expand_selected_completeness() {
+    use std::io::Write;
+    let (_, recorded_db, recorded) = recorded_lab("owned");
+    let mut source = ibcmd_filedb::FileDb::open(&recorded_db).unwrap();
+    let mut rows = source.config_rows("CONFIG").unwrap();
+    drop(source);
+    let form_uuid = "c099c30b-8a08-45b0-be7d-9594366e78a5";
+    let orphan_uuid = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    let mut orphan = rows
+        .iter()
+        .find(|row| row.file_name == form_uuid)
+        .unwrap()
+        .clone();
+    let mut plain = String::new();
+    flate2::read::DeflateDecoder::new(orphan.binary.as_slice())
+        .read_to_string(&mut plain)
+        .unwrap();
+    let mut packed = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+    packed
+        .write_all(
+            plain
+                .replace(form_uuid, orphan_uuid)
+                .replace("ListForm", "OrphanForm")
+                .as_bytes(),
+        )
+        .unwrap();
+    orphan.file_name = orphan_uuid.into();
+    orphan.binary = packed.finish().unwrap();
+    orphan.data_size = orphan.binary.len() as u64;
+    let mut body = rows
+        .iter()
+        .find(|row| row.file_name == format!("{form_uuid}.0"))
+        .unwrap()
+        .clone();
+    body.file_name = format!("{orphan_uuid}.0");
+    rows.extend([orphan, body]);
+    let (root, db) = lab("unselected-orphan-form");
+    ibcmd_filedb::replace_config_table(&db, "CONFIG", &rows).unwrap();
+    let before = fs::read(db.join("1Cv8.1CD")).unwrap();
+    // A broad owner index sees this form with no owner. The selected parent
+    // still has its own, valid child identity and its shallow native output.
+    for (tag, flags, expected) in [
+        ("shallow", vec![], recorded.join("shallow")),
+        (
+            "recursive",
+            vec![OsString::from("--recursive")],
+            recorded.join("recursive"),
+        ),
+    ] {
+        let target = root.join(tag);
+        let mut options = vec![opt("out", &target), "Catalog.CorpusList".into()];
+        options.extend(flags);
+        ok(&run(&db, &["objects"], &options));
+        assert_eq!(tree(&target), tree(&expected));
+    }
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+}
+
+fn selected_with_legacy(db: &Path, target: &Path, names: &[&str], legacy: bool) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+        .args(["infobase", "config", "export", "objects"])
+        .arg(opt("db-path", db))
+        .arg("--platform=8.5.1")
+        .arg(opt("out", target))
+        .args(names)
+        .env("IBCMD_RS_LEGACY_EXPORT", if legacy { "1" } else { "0" })
+        .env_remove("IBCMD_RS_MODEL_EXPORT")
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn selected_semantic_refusal_also_checks_narrow_and_legacy_writer_paths() {
+    use ibcmd_rs::metadata_model::brace::Brace;
+    let (root, db) = lab("invalid-module-bool");
+    mutate_descriptor(&db, "6d1c2a0e-1cd0-4f00-9a00-000000000001", |descriptor| {
+        let fields = descriptor.as_list_mut().unwrap()[1].as_list_mut().unwrap();
+        assert_eq!(fields[2].as_atom(), Some("1"));
+        fields[2] = Brace::num(99);
+    });
+    let mut failures = Vec::new();
+    for legacy in [false, true] {
+        let target = root.join(if legacy { "legacy" } else { "default" });
+        let output =
+            selected_with_legacy(&db, &target, &["CommonModule.ФайловаяБазаПроверка"], legacy);
+        eprintln!(
+            "selected invalid bool: legacy={legacy}, code={:?}, absent={}",
+            output.status.code(),
+            !target.exists()
+        );
+        if output.status.code() != Some(FAILED) || target.exists() {
+            failures.push(format!(
+                "legacy={legacy}, code={:?}, absent={}, stderr={}",
+                output.status.code(),
+                !target.exists(),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
+    let (_, recorded_db, _) = recorded_lab("owned");
+    let mut source = ibcmd_filedb::FileDb::open(&recorded_db).unwrap();
+    let rows = source.config_rows("CONFIG").unwrap();
+    drop(source);
+    for (tag, invalid) in [
+        ("numeric", Brace::num(99)),
+        ("token", Brace::atom("unknown")),
+        ("string", Brace::str("unknown")),
+        ("list", Brace::list(vec![Brace::num(0)])),
+    ] {
+        let (root, db) = lab("invalid-form-bool");
+        ibcmd_filedb::replace_config_table(&db, "CONFIG", &rows).unwrap();
+        mutate_descriptor(&db, "c099c30b-8a08-45b0-be7d-9594366e78a5", |descriptor| {
+            let wrapper = descriptor.as_list_mut().unwrap()[1].as_list_mut().unwrap();
+            wrapper[1].as_list_mut().unwrap()[2] = invalid;
+        });
+        for legacy in [false, true] {
+            let target = root.join(if legacy { "legacy" } else { "default" });
+            let output =
+                selected_with_legacy(&db, &target, &["--recursive", "Catalog.CorpusList"], legacy);
+            eprintln!(
+                "selected invalid form bool: {tag}, legacy={legacy}, code={:?}, absent={}",
+                output.status.code(),
+                !target.exists()
+            );
+            if output.status.code() != Some(FAILED) || target.exists() {
+                failures.push(format!(
+                    "{tag}, legacy={legacy}, code={:?}, absent={}, stderr={}",
+                    output.status.code(),
+                    !target.exists(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "selected semantic refusal bypassed:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn selected_supported_legacy_shape_retains_a_real_model_coverage_fallback() {
+    use ibcmd_rs::metadata_model::brace::Brace;
+    let (root, db) = lab("supported-old-subsystem");
+    let uuid = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    let xml = format!(
+        r#"<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.21"><Subsystem uuid="{uuid}"><Properties><Name>LegacySubsystem</Name><IncludeHelpInContents>false</IncludeHelpInContents><IncludeInCommandInterface>true</IncludeInCommandInterface><UseOneCommand>false</UseOneCommand><Picture/><Explanation/><Content/></Properties><ChildObjects/></Subsystem></MetaDataObject>"#
+    );
+    install_synthetic_object(
+        &db,
+        "Subsystem",
+        "LegacySubsystem",
+        uuid,
+        xml.as_bytes(),
+        None,
+    );
+    let expected_path = root.join("current");
+    let output = selected_with_legacy(
+        &db,
+        &expected_path,
+        &["--recursive", "Configuration.Configuration"],
+        false,
+    );
+    ok(&output);
+    let expected = tree(&expected_path);
+    mutate_descriptor(&db, uuid, |descriptor| {
+        let fields = descriptor.as_list_mut().unwrap()[1].as_list_mut().unwrap();
+        assert_eq!(fields[0].as_atom(), Some("22"));
+        // The legacy reader documents code 21 with the same property layout;
+        // the model decoder currently accepts only the code-22 subsystem.
+        fields[0] = Brace::num(21);
+    });
+    for legacy in [false, true] {
+        let target = root.join(if legacy { "legacy" } else { "model-fallback" });
+        let output = selected_with_legacy(
+            &db,
+            &target,
+            &["--recursive", "Configuration.Configuration"],
+            legacy,
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!(
+            "supported Subsystem21: legacy={legacy}, code={:?}, Some(Err) fallback={}",
+            output.status.code(),
+            stderr.contains("the legacy converter writes it")
+        );
+
+        assert_eq!(output.status.code(), Some(0), "{stderr}");
+        assert_eq!(tree(&target), expected);
+        if legacy {
+            assert!(stderr.is_empty(), "{stderr}");
+        } else {
+            assert!(
+                stderr.contains("Subsystem") && stderr.contains("the legacy converter writes it"),
+                "not a real Some(Err) model fallback: {stderr}"
+            );
+        }
+    }
+}
