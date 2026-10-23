@@ -293,6 +293,22 @@ export function descriptor(
           fullName,
         };
         node.children = contained(item, node, directory);
+        if (kind === "Command") {
+          const prefix =
+            [directory, "Commands", label, "Ext"].filter(Boolean).join("/") +
+            "/";
+          for (const file of files
+            .filter((file) => file.startsWith(prefix))
+            .sort()) {
+            node.children.push({
+              id: `${fullName}:file:${file}`,
+              label: file.slice(prefix.length),
+              kind: "file",
+              type: "file",
+              path: relativePath(file),
+            });
+          }
+        }
       } else {
         const collection = plurals[kind];
         if (!collection)
@@ -416,6 +432,8 @@ export class XmlSource implements Source {
       }
     };
     await walk(prefix);
+    if (node.kind !== "Configuration")
+      await walk(node.path!.replace(/\.xml$/, "") + "/Commands");
     return descriptor(bytes, node, files);
   }
 }

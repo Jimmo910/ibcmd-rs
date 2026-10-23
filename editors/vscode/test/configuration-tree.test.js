@@ -12,6 +12,52 @@ const {
   readResult,
 } = require("../out/configuration-tree");
 const signal = () => new AbortController().signal;
+
+test("модуль встроенной команды из штатного описания виден у команды", async () => {
+  const bytes = await fs.readFile(
+    path.resolve(
+      __dirname,
+      "../../../tests/fixtures/native-evidence/8.3.27.2214/task-assignee/native/Tasks/ЗадачаИсполнителя.xml",
+    ),
+  );
+  const owner = {
+    id: "Task.ЗадачаИсполнителя",
+    fullName: "Task.ЗадачаИсполнителя",
+    label: "ЗадачаИсполнителя",
+    kind: "Task",
+    type: "object",
+    path: "Tasks/ЗадачаИсполнителя.xml",
+  };
+  const modulePath =
+    "Tasks/ЗадачаИсполнителя/Commands/ВсеЗадачи/Ext/CommandModule.bsl";
+  const groups = descriptor(bytes, owner, [modulePath]);
+  const commands = groups.find((node) => node.kind === "Command");
+  assert.equal(commands.children.length, 4);
+  const command = commands.children.find((node) => node.label === "ВсеЗадачи");
+  assert.equal(command.children[0].path, modulePath);
+  assert.equal(command.children[0].type, "file");
+  const temporary = await fs.mkdtemp(
+    path.join(os.tmpdir(), "ibcmd-command-tree-"),
+  );
+  try {
+    await fs.mkdir(path.dirname(path.join(temporary, modulePath)), {
+      recursive: true,
+    });
+    await fs.writeFile(path.join(temporary, owner.path), bytes);
+    await fs.writeFile(
+      path.join(temporary, modulePath),
+      "// Проверка модуля команды\r\n",
+    );
+    const local = await new XmlSource(temporary).children(owner, signal());
+    assert.equal(
+      local.find((node) => node.kind === "Command").children[0].children[0]
+        .path,
+      modulePath,
+    );
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true });
+  }
+});
 const xml = (kind, content) =>
   Buffer.from(
     `<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:v8="http://v8.1c.ru/8.1/data/core"><${kind}>${content}</${kind}></MetaDataObject>`,
