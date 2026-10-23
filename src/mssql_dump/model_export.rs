@@ -638,6 +638,18 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
             trust_server_certificate: true,
         })?
     };
+    // Match the export's published main view for platform detection too.
+    // No rows is a valid uninitialized configuration; nonempty malformed rows
+    // still have to provide and decode their root below.
+    let _view = super::dynamic_generation::StorageViewScope::begin(&args.database);
+    let table = if args.main_configuration {
+        super::ConfigTable::main(&sql, &args.database)
+    } else {
+        super::ConfigTable::active(&sql, &args.database)
+    };
+    if table.names()?.is_empty() {
+        return Ok(false);
+    }
     let read = |name: &str| -> Result<crate::metadata_model::brace::Brace> {
         let names = BTreeSet::from([name.to_string()]);
         let rows = fetch_binary_rows(

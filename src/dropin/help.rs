@@ -129,16 +129,26 @@ pub fn infobase_help(program: &str) -> String {
                     только объекты, версия (configVersion) которых отличается
                     от указанной в файле, и ConfigDumpInfo.xml всей
                     конфигурации; файлы остальных объектов не записываются.
-                    Если объект или его реквизит переименован, выгружается вся
-                    конфигурация. Каталог может содержать предыдущую выгрузку
+                    При удалении или переименовании требуется полная выгрузка
+                    (код -1). Без изменений ничего не записывается.
 
                 --sync
-                    Синхронизировать каталог с конфигурацией: после выгрузки
-                    удалить файлы, которых нет в полной выгрузке (удаленных и
-                    переименованных объектов). Затрагиваются только
-                    Configuration.xml, ConfigDumpInfo.xml, Ext и каталоги
-                    объектов метаданных, каталоги с точкой (.git) - никогда.
-                    Вместе с --base - инкрементальное обновление выгрузки
+                    Обновить существующий каталог по его ConfigDumpInfo.xml.
+                    При удалении/переименовании требуется полная выгрузка
+                    (код -1); при отсутствии изменений файлы не записываются.
+                    Нельзя указывать вместе с --base (код 2).
+
+                info [--out=<directory>]
+                    ConfigDumpInfo без конвертации тел объектов. Без --out:
+                    XML в stdout без BOM; --out: существующий каталог.
+
+                status --base=<ConfigDumpInfo.xml> [--out=<file>] [--short]
+                    Изменения версий: added/modified; при удалении или
+                    переименовании modified: all. Без изменений stdout пуст.
+
+                objects --out=<directory> [--recursive] <objects...>
+                    Выбранные объекты по полному имени. Дочерние объекты
+                    включаются только с --recursive. Без ConfigDumpInfo.xml.
 
                 <path>
                     путь к каталогу файлов конфигурации
@@ -365,13 +375,15 @@ mod tests {
         for command in [
             "ibcmd infobase create",
             "ibcmd infobase config check",
-            "ibcmd infobase config export info",
             "ibcmd infobase config import all-extensions",
             "ibcmd infobase config support",
             "ibcmd infobase config extension",
         ] {
             assert!(help.contains(command), "{command}");
         }
+        assert!(help.contains("info [--out=<directory>]"));
+        assert!(help.contains("status --base=<ConfigDumpInfo.xml>"));
+        assert!(help.contains("objects --out=<directory>"));
         // import files is served (#363): described, not listed as refused
         assert!(!help.contains("ibcmd infobase config import files"));
         for word in ["--base-dir=<path>", "--partial", "--no-check", "<file> ..."] {

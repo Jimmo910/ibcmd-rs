@@ -1040,6 +1040,12 @@ fn config_version(version: Uuid) -> String {
     value
 }
 
+pub(super) fn empty_config_dump_info(
+    source_version: InfobaseConfigSourceVersion,
+) -> Result<Vec<u8>> {
+    format_config_dump_info_xml(source_version, Vec::new())
+}
+
 fn format_config_dump_info_xml(
     source_version: InfobaseConfigSourceVersion,
     metadata: Vec<ConfigDumpMetadata>,
@@ -1293,6 +1299,7 @@ pub(crate) fn read_config_dump_info_with_sql(
             sql,
             sink: Some(sink.clone()),
             object_recursion: None,
+            native_versions: false,
         },
     )?;
     let bytes = sink

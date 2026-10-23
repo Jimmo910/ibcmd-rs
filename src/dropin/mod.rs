@@ -31,6 +31,7 @@
 //! 1 for `config apply` only when its metadata check finds errors).
 
 pub mod apply;
+mod export_queries;
 pub mod help;
 pub mod parse;
 
@@ -64,7 +65,8 @@ pub const EXIT_FAILED: i32 = -1;
 /// would refuse too, ibcmd-rs's own for one the platform would run.
 pub fn refusal_exit_code(refusal: &Refusal) -> i32 {
     match refusal {
-        Refusal::Parse(_)
+        Refusal::NativeMalformed(_)
+        | Refusal::Parse(_)
         | Refusal::MissingValue(_)
         | Refusal::Incomplete { .. }
         | Refusal::UnknownDbms(_)
@@ -111,6 +113,7 @@ pub fn run_infobase(args: &[OsString]) -> i32 {
             0
         }
         Ok(Invocation::Export(request)) => run_export(request),
+        Ok(Invocation::ExportQuery(request)) => export_queries::run(request),
         Ok(Invocation::Import(request)) => run_import(request),
         // A file infobase is exported and imported; the rest stays the
         // platform's for now.
@@ -183,6 +186,7 @@ pub fn unsupported_mode_message(mode: &str) -> String {
 /// (the platform prints the list of an incomplete command there).
 pub fn refusal_message(refusal: &Refusal, program: &str) -> (String, bool) {
     let message = match refusal {
+        Refusal::NativeMalformed(message) => message.clone(),
         Refusal::Parse(argument) => format!("Ошибка разбора параметра: {argument}"),
         Refusal::MissingValue(name) => format!("Не указано значение параметра: {name}"),
         Refusal::Incomplete { path } => return (incomplete_message(path, program), true),
@@ -456,6 +460,7 @@ fn write_json(path: &Path, value: &impl Serialize) -> anyhow::Result<()> {
 }
 
 /// One operation with the platform's messages around it.
+#[derive(Clone, Copy)]
 struct Operation {
     /// `infobase config export`, for the report.
     command: &'static str,
@@ -485,7 +490,11 @@ impl Operation {
         for line in message.lines() {
             eprintln!("[ERROR] {line}");
         }
-        eprintln!("[ERROR] {} {} с ошибкой", self.title, self.ended);
+        eprintln!(
+            "[ERROR] {} {} с ошибкой",
+            self.title,
+            self.ended.trim_end_matches('.')
+        );
         self.record_failure(message, report);
         EXIT_FAILED
     }
@@ -552,10 +561,25 @@ const SAVE: Operation = Operation {
 };
 
 fn run_export(mut request: ExportRequest) -> i32 {
+    let operation = if request.sync {
+        Operation {
+            command: EXPORT.command,
+            title: "Синхронизация ранее экспортированной конфигурации c конфигурацией информационной базы",
+            ended: "завершен.",
+        }
+    } else if request.base.is_some() {
+        Operation {
+            command: EXPORT.command,
+            title: "Экспорт изменений конфигурации в XML",
+            ended: "завершен",
+        }
+    } else {
+        EXPORT
+    };
     let report = request.common.report.clone();
     if let Err(message) = read_requested_password(&mut request.common) {
-        EXPORT.start();
-        return EXPORT.fail_with(&message, report.as_deref());
+        operation.start();
+        return operation.fail_with(&message, report.as_deref());
     }
     if let Some(threads) = request.threads {
         crate::parallel::request_workers(threads);
@@ -565,20 +589,58 @@ fn run_export(mut request: ExportRequest) -> i32 {
     crate::mssql_dump::model_export::set_quiet_summaries(
         std::env::var_os("IBCMD_RS_VERBOSE").is_none_or(|value| value != "1"),
     );
-    let args = export_args(&request);
-    EXPORT.start();
-    match crate::infobase::export_config(&args) {
-        Ok(value) => EXPORT.succeed(report.as_deref(), &value),
+    let mut args = export_args(&request);
+    operation.start();
+    if request.sync {
+        if !args.output_dir.is_dir() {
+            eprintln!(
+                "[ERROR] Операция невозможна, при выполнении экспорта конфигурации в XML обнаружены ошибки: Каталог {} не существует.",
+                args.output_dir.display()
+            );
+            return EXIT_FAILED;
+        }
+        args.base = Some(args.output_dir.join("ConfigDumpInfo.xml"));
+    }
+    if let Some(base_path) = &args.base {
+        let changes = (|| -> anyhow::Result<String> {
+            let base = std::fs::read(base_path)?;
+            let current = crate::infobase::export_commands::info(&args)?;
+            crate::infobase::export_commands::status(&current, &base, false)
+        })();
+        match changes {
+            Ok(changes) if changes == "modified: all\n" => {
+                let export = if request.sync {
+                    "экспорта конфигурации"
+                } else {
+                    "экспорта изменений конфигурации"
+                };
+                let message = format!(
+                    "Операция невозможна, при выполнении {export} в XML обнаружены ошибки: Требуется экспортировать конфигурацию полностью."
+                );
+                eprintln!("[ERROR] {message}");
+                operation.record_failure(&message, report.as_deref());
+                return EXIT_FAILED;
+            }
+            Ok(changes) if changes.is_empty() => {
+                return operation
+                    .succeed(report.as_deref(), &serde_json::json!({ "unchanged": true }));
+            }
+            Ok(_) => {}
+            Err(error) => return operation.fail_with(&format!("{error:#}"), report.as_deref()),
+        }
+    }
+    match crate::infobase::export_config_native(&args) {
+        Ok(value) => operation.succeed(report.as_deref(), &value),
         Err(error) if error.downcast_ref::<OutputDirectoryNotEmpty>().is_some() => {
             let message = format!(
                 "Операция невозможна, при выполнении экспорта конфигурации в XML обнаружены ошибки: Каталог {} не пуст.",
                 Path::new(&request.path).display()
             );
             eprintln!("[ERROR] {message}");
-            EXPORT.record_failure(&message, report.as_deref());
+            operation.record_failure(&message, report.as_deref());
             EXIT_FAILED
         }
-        Err(error) => EXPORT.fail_with(&format!("{error:#}"), report.as_deref()),
+        Err(error) => operation.fail_with(&format!("{error:#}"), report.as_deref()),
     }
 }
 

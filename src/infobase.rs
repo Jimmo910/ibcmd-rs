@@ -9,6 +9,8 @@
 //! The drop-in command line (`crate::dropin`) and the research round trip
 //! (`crate::infobase_oracle`, `platform-oracle` builds only) call these.
 
+pub mod export_commands;
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -315,6 +317,19 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
 }
 
 pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigExportReport> {
+    export_config_policy(args, false)
+}
+
+pub(crate) fn export_config_native(
+    args: &InfobaseConfigExportArgs,
+) -> Result<InfobaseConfigExportReport> {
+    export_config_policy(args, true)
+}
+
+fn export_config_policy(
+    args: &InfobaseConfigExportArgs,
+    native_versions: bool,
+) -> Result<InfobaseConfigExportReport> {
     let config = resolve_connection(args.connection())?;
     if config.file_infobase.is_none() {
         ensure_mssql(&config.dbms)?;
@@ -333,7 +348,7 @@ pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigEx
             &args.output_dir,
         );
     }
-    export_config_report(
+    export_config_report_policy(
         &config,
         args.sqlcmd.as_deref(),
         &args.db_pwd_env,
@@ -343,6 +358,7 @@ pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigEx
         Vec::new(),
         args.base.as_deref(),
         args.sync,
+        native_versions,
     )
 }
 
@@ -361,6 +377,33 @@ pub(crate) fn export_config_report(
     base: Option<&Path>,
     sync: bool,
 ) -> Result<InfobaseConfigExportReport> {
+    export_config_report_policy(
+        config,
+        sqlcmd,
+        db_pwd_env,
+        output_dir_arg,
+        overwrite,
+        count_exported_files,
+        file_names,
+        base,
+        sync,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_config_report_policy(
+    config: &ConnectionConfig,
+    sqlcmd: Option<&Path>,
+    db_pwd_env: &str,
+    output_dir_arg: &Path,
+    overwrite: bool,
+    count_exported_files: bool,
+    file_names: Vec<String>,
+    base: Option<&Path>,
+    sync: bool,
+    native_versions: bool,
+) -> Result<InfobaseConfigExportReport> {
     let source_version = config.legacy_source_version()?;
     let output_dir = absolute_path(output_dir_arg)?;
     if base.is_some() || sync {
@@ -378,7 +421,13 @@ pub(crate) fn export_config_report(
     );
     dump_args.base = base.map(Path::to_path_buf);
     dump_args.sync = sync;
-    let dump = crate::mssql_dump::dump_config(&dump_args)?;
+    let dump = crate::mssql_dump::dump_config_with(
+        &dump_args,
+        crate::mssql_dump::DumpHooks {
+            native_versions,
+            ..Default::default()
+        },
+    )?;
 
     let exported_files = if count_exported_files {
         Some(count_files(&output_dir)?)
