@@ -988,6 +988,9 @@ pub struct MetadataObject {
     /// Consulted only while the CURRENT typed Point is exactly (-1,-1).
     #[serde(skip)]
     pub picture_wrapper_sentinel_explicit: bool,
+    /// Current EDT DCS inter-element LF framing only; body values remain authoritative.
+    #[serde(skip)]
+    pub source_dcs_edt_lf: bool,
 }
 
 impl MetadataObject {
@@ -1030,6 +1033,7 @@ impl MetadataObject {
             source_extensions: source_extensions::SourceExtensions::default(),
             metadata_picture_resource_commands: Vec::new(),
             picture_wrapper_sentinel_explicit: false,
+            source_dcs_edt_lf: false,
         }
     }
 
