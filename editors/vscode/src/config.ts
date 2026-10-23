@@ -111,11 +111,15 @@ export async function saveConfig(
   next: string,
 ): Promise<void> {
   const lock = file + ".ibcmd-lock";
-  const handle = await fs.open(lock, "wx", 0o600).catch(() => {
-    throw new Error(
-      "Another connection edit is in progress (settings lock exists)",
-    );
-  });
+  const handle = await fs
+    .open(lock, "wx", 0o600)
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "EEXIST")
+        throw new Error(
+          "Another connection edit is in progress (settings lock exists)",
+        );
+      throw error;
+    });
   const temp = path.join(path.dirname(file), `.ibcmd-${randomUUID()}.tmp`);
   let created = false;
   try {
