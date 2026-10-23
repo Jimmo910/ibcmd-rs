@@ -175,6 +175,36 @@ class Controls(unittest.TestCase):
             with self.subTest(options=options), self.assertRaises(lab.Error):
                 self.capture(self.fixture(), **options)
 
+    def test_failed_route_still_audits_sources_installation_and_created_projects(self):
+        args = self.fixture()
+        with self.assertRaisesRegex(lab.Error, "validation did not produce"):
+            self.capture(args, missing_tsv=True)
+        audit = json.loads((args.run / "terminal-audit.json").read_text())
+        self.assertEqual(audit["route_status"], "FAILED_BEFORE_VERDICT")
+        self.assertTrue(audit["trees"]["native"]["unchanged"])
+        self.assertTrue(audit["trees"]["authentic-project"]["unchanged"])
+        self.assertTrue(audit["trees"]["generated-project"]["unchanged"])
+        self.assertTrue(audit["installation_unchanged"])
+        self.assertTrue(audit["tools_unchanged"])
+        self.assertTrue(audit["immutable_audits_passed"])
+        self.assertFalse((args.run / "acceptance.json").exists())
+
+    def test_terminal_publication_failure_preserves_primary_route_error(self):
+        for primary_failure in (True, False):
+            args = self.fixture()
+            original_write = lab.oracle.write_json
+            def failing_write(path, value):
+                if path.name == "terminal-audit.json":
+                    raise OSError("synthetic full disk")
+                return original_write(path, value)
+            with self.subTest(primary_failure=primary_failure), patch.object(lab.oracle, "write_json", side_effect=failing_write):
+                expected = "validation did not produce" if primary_failure else "Terminal audit publication failed"
+                with self.assertRaisesRegex(lab.Error, expected) as raised:
+                    self.capture(args, missing_tsv=primary_failure)
+                if primary_failure:
+                    self.assertIn("Terminal audit publication failed", raised.exception.__notes__[0])
+            self.assertFalse((args.run / "acceptance.json").exists())
+
     def test_project_links_refused_before_copy(self):
         args = self.fixture()
         original = args.run / "project"

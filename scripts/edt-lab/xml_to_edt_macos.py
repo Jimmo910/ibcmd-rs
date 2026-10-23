@@ -304,7 +304,7 @@ def compare_matched_phase_errors(run: Path) -> dict:
             "phases": phases, "rule": "Match same-build, same-INI, same-phase fresh-workspace error multisets by stream kind and exact record text/count. Only Eclipse !ENTRY timestamp is omitted. No message, stack, severity, bundle, project path or stream normalization; no cancellation between phases. Raw error-free acceptance remains separate."}
 
 
-def execute(args) -> dict:
+def execute_routes(args) -> dict:
     cap = Capture(args)
     installation_before = bind_installation(args)
     oracle.write_json(args.run / "installation-binding-before.json", installation_before)
@@ -409,6 +409,83 @@ def execute(args) -> dict:
         "scope": "This supplied corpus and exact tool build only. Exact XML return uses the retained generated project with provenance; installed EDT loads the separate provenance-free copy. This does not claim exact native XML from EDT's own serializer or unrestricted configuration support."}
 
 
+def execute(args) -> dict:
+    """Audit immutable inputs and every published stage even when a route raises."""
+    native_before = oracle.snapshot(args.native)
+    installation_before = bind_installation(args)
+    tool_paths = [args.ours_exe, args.edt_exe, args.edt_vm]
+    if args.edt_vm_library is not None:
+        tool_paths.append(args.edt_vm_library)
+    tools_before = {str(path): oracle.digest(path) for path in tool_paths}
+    oracle.write_json(args.run / "terminal-audit-before.json", {
+        "native": native_before, "installation": installation_before, "tools": tools_before})
+    result, route_error, route_exception = None, None, None
+    try:
+        result = execute_routes(args)
+        return result
+    except BaseException as error:
+        route_exception = error
+        route_error = {"type": type(error).__name__, "message": str(error)}
+        raise
+    finally:
+        audit = {"route_status": result["status"] if result is not None else "FAILED_BEFORE_VERDICT",
+                 "route_error": route_error, "trees": {}, "errors": []}
+        watched = [
+            ("native", args.native, native_before),
+            ("authentic-project", args.run / "native-workspace/NativeControl", "authentic-native-control-project-before.json"),
+            ("authentic-export", args.run / "authentic-xml", "authentic-xml.json"),
+            ("generated-project", args.run / "generated-project", "generated-project-before.json"),
+            ("stripped-project", args.run / "generated-without-provenance", "stripped-project-before.json"),
+            ("installed-export", args.run / "installed-generated-xml", "installed-generated-xml.json"),
+            ("returned-xml", args.run / "returned-xml", "returned-xml.json"),
+        ]
+        for name, path, baseline in watched:
+            try:
+                if isinstance(baseline, str):
+                    manifest = args.run / baseline
+                    baseline = json.loads(manifest.read_text()) if manifest.is_file() else None
+                if not path.exists() and baseline is None:
+                    audit["trees"][name] = {"exists": False, "compared": False}
+                    continue
+                current = oracle.snapshot(path)
+                oracle.write_json(args.run / f"terminal-{name}.json", current)
+                row = {"exists": True, "compared": baseline is not None,
+                       "unchanged": current == baseline if baseline is not None else None}
+                audit["trees"][name] = row
+                if row["unchanged"] is False:
+                    audit["errors"].append(f"Immutable {name} changed")
+            except Exception as error:
+                audit["errors"].append(f"{name}: {type(error).__name__}: {error}")
+        try:
+            installation_after = bind_installation(args)
+            oracle.write_json(args.run / "terminal-installation-binding.json", installation_after)
+            audit["installation_unchanged"] = installation_after == installation_before
+            if not audit["installation_unchanged"]:
+                audit["errors"].append("Installation binding changed")
+        except Exception as error:
+            audit["installation_unchanged"] = False
+            audit["errors"].append(f"installation: {type(error).__name__}: {error}")
+        try:
+            audit["tools_unchanged"] = all(oracle.digest(Path(path)) == value for path, value in tools_before.items())
+            if not audit["tools_unchanged"]:
+                audit["errors"].append("Tool payload changed")
+        except Exception as error:
+            audit["tools_unchanged"] = False
+            audit["errors"].append(f"tools: {type(error).__name__}: {error}")
+        audit["immutable_audits_passed"] = not audit["errors"]
+        audit["scope"] = "Immutability compares available saved baselines; partial stages without baselines are captured only."
+        try:
+            oracle.write_json(args.run / "terminal-audit.json", audit)
+        except Exception as error:
+            if route_exception is None:
+                raise Error(f"Terminal audit publication failed: {error}") from error
+            route_exception.add_note(f"Terminal audit publication failed: {type(error).__name__}: {error}")
+        if result is not None:
+            result["gates"]["terminal_immutable_audits_passed"] = audit["immutable_audits_passed"]
+            if not audit["immutable_audits_passed"]:
+                result["status"] = "FAIL"
+
+
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     for name in ("lab-root", "native", "run", "ours-exe", "edt-exe", "edt-vm", "edt-installation-manifest"):
@@ -456,8 +533,13 @@ def main():
         return 0 if result["status"] == "PASS" else 1
     except (Error, OSError, ValueError, KeyError, TypeError, KeyboardInterrupt) as error:
         result = {"status": "FAIL", "error": str(error), "installed_acceptance": False}
+        if getattr(error, "__notes__", None):
+            result["notes"] = error.__notes__
         if created:
-            oracle.write_json(args.run / "failure.json", result)
+            try:
+                oracle.write_json(args.run / "failure.json", result)
+            except Exception as receipt_error:
+                result["failure_receipt_error"] = f"{type(receipt_error).__name__}: {receipt_error}"
         print(json.dumps(result, ensure_ascii=False), file=sys.stderr)
         return 1
 

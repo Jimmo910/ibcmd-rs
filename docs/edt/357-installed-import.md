@@ -125,8 +125,17 @@ contained unsupported Client VM and missing-workbench errors; direct generated
 export/validation also emitted `[Fatal Error] :1:1: Premature end of file.` despite
 an empty TSV. These errors remain preserved and unwaived. A genuine native-control
 direct export independently emitted the same fatal line (#356); matched Server VM
-native-control validation did not (#358). That distinction requires another
-matched generated-project run; it cannot be dismissed as generic ambient noise.
+native-control validation also emitted it on stdout (#358), while stderr was empty.
+The initial report that this control had no fatal output was corrected after both
+streams were inspected; the raw files were preserved throughout.
+
+The complete Server VM empty-2.21 rerun is retained in
+`fixtures/issue357-current-server-empty221-001`. Both exact tree comparisons,
+both clean validation TSVs, all immutability checks and the exact matched export
+and validation error multisets passed. The raw error-free gate remained false,
+so the overall result remains **FAIL**. Genuine native and generated phases show
+the same fatal line and the vendor CLI no-workbench lifecycle error; neither is
+silently waived. Actual Server VM selection fixes the Client VM exception only.
 
 The harness now also records `matched-phase-diagnostics.json`: per export and
 validation phase, error records are compared as exact multisets with multiplicity.
@@ -138,3 +147,22 @@ remains an independent strict gate; equivalent SDK errors are never removed from
 logs or silently converted into a clean PASS. Structured validation separately
 compares all rows except execution timestamp and project label, while errors and
 unknown/malformed rows in either project still fail acceptance.
+
+
+The shared public nonempty DcsFilterEvidence capture
+`fixtures/issue357-current-server-dcs-001` imported authentic native XML into
+EDT, exported its real project, and preserved the control's validation output.
+The forward converter then failed closed before publishing a project: its
+client-interface codec assumed grouped panels and all six standard panel types,
+while the native fixture contains direct panels and five declarations. Actual
+EDT also writes this sidecar with LF framing. The focused fix models those
+shapes and declarations and retains the framing separately from semantic data;
+it does not introduce a current schema profile. Nonempty installed acceptance
+requires a new tested candidate and rerun, and remains incomplete.
+
+Terminal audits now run after route failures as well as successful routes.
+Previously saved stage baselines are compared, partial stages without baselines
+are captured with `compared=false`, and receipt publication failure cannot turn
+an unsuccessful capture into PASS or hide its primary error. The original
+failed nonempty capture predates these final guards; no missing historical
+terminal checks are claimed to have run.
