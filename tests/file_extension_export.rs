@@ -286,3 +286,44 @@ fn output_symlinks_are_refused_without_writing_the_target() {
     assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
     assert!(link.is_symlink());
 }
+
+#[test]
+fn an_oversized_physical_part_number_cannot_wrap_into_part_zero() {
+    let root = setup("part-range", "applied");
+    let mut db = ibcmd_filedb::FileDb::open(&root.0).unwrap();
+    let rows = db.config_rows("CONFIGCAS").unwrap();
+    let table = db.table("CONFIGCAS").unwrap();
+    let part_offset = 1 + table
+        .fields
+        .iter()
+        .take_while(|f| f.name != "PARTNO")
+        .map(ibcmd_filedb::Field::size)
+        .sum::<usize>();
+    let needle: Vec<u8> = rows[0]
+        .file_name
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    drop(db);
+    let file = root.0.join("1Cv8.1CD");
+    let mut bytes = fs::read(&file).unwrap();
+    let text_at = bytes
+        .windows(needle.len())
+        .position(|v| v == needle)
+        .unwrap();
+    // The free flag and NVC character count precede the first UTF-16 unit.
+    let record_at = text_at - 1 - std::mem::size_of::<u16>();
+    // N(10): positive 4294967296, one past u32::MAX; formerly cast to zero.
+    bytes[record_at + part_offset..record_at + part_offset + 6]
+        .copy_from_slice(&[0x14, 0x29, 0x49, 0x67, 0x29, 0x60]);
+    fs::write(&file, bytes).unwrap();
+    let before = fs::read(&file).unwrap();
+    let out = root.0.join("out");
+    let result = export(&root.0, "ТестРасширение", &out);
+    assert!(
+        !result.status.success(),
+        "an invalid physical part was published"
+    );
+    assert!(!out.exists());
+    assert_eq!(fs::read(&file).unwrap(), before);
+}

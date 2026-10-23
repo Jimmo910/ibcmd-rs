@@ -101,6 +101,15 @@ pub(crate) fn read_records(
     table: &Table,
     with_binary: bool,
 ) -> Result<Vec<RawRecord>> {
+    read_records_bounded(pager, table, with_binary, u64::MAX)
+}
+
+pub(crate) fn read_records_bounded(
+    pager: &mut Pager<'_>,
+    table: &Table,
+    with_binary: bool,
+    max_retained_bytes: u64,
+) -> Result<Vec<RawRecord>> {
     check_layout(table)?;
     debug_assert_eq!(table.record_size(), RECORD);
     let records = Object::open(pager, table.records_page)?.read_all(pager)?;
@@ -117,6 +126,7 @@ pub(crate) fn read_records(
         Vec::new()
     };
     let mut out = Vec::new();
+    let mut remaining_bytes = max_retained_bytes;
     for (number, rec) in records.as_chunks::<RECORD>().0.iter().enumerate().skip(1) {
         if rec[0] != 0 {
             continue;
@@ -125,6 +135,12 @@ pub(crate) fn read_records(
         let block = u32::from_le_bytes(rec[BINARY..BINARY + 4].try_into().unwrap());
         let len = u32::from_le_bytes(rec[BINARY + 4..BINARY + 8].try_into().unwrap());
         let binary = if with_binary && block != 0 {
+            remaining_bytes = remaining_bytes.checked_sub(u64::from(len)).ok_or_else(|| {
+                Error::Refused(format!(
+                    "{}: retained binary exceeds its read budget",
+                    table.name
+                ))
+            })?;
             blob::read_chain(&blob_object, block, Some(len as u64))?
         } else if with_binary && len != 0 {
             return Err(corrupt(format!(
@@ -133,11 +149,13 @@ pub(crate) fn read_records(
         } else {
             Vec::new()
         };
+        let part_no = u32::try_from(unpack_decimal(&rec[PARTNO..RECORD], 10)?)
+            .map_err(|_| corrupt(format!("Строка {file_name}: PARTNO вне диапазона u32")))?;
         out.push(RawRecord {
             number: number as u32,
             row: ConfigRow {
                 file_name,
-                part_no: unpack_decimal(&rec[PARTNO..RECORD], 10)? as u32,
+                part_no,
                 creation: Timestamp(rec[CREATION..MODIFIED].try_into().unwrap()),
                 modified: Timestamp(rec[MODIFIED..ATTRIBUTES].try_into().unwrap()),
                 attributes: unpack_decimal(&rec[ATTRIBUTES..DATASIZE], 5)? as u32,

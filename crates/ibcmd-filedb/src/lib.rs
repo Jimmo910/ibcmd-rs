@@ -155,6 +155,8 @@ impl FileDb {
 
     /// Refuses oversized physical objects before allocating their contents.
     /// Free records and unused blob blocks count toward the physical budget.
+    /// The same limit separately bounds retained binary values, including
+    /// repeated references to a shared blob chain.
     pub fn config_rows_bounded(
         &mut self,
         name: &str,
@@ -172,7 +174,12 @@ impl FileDb {
                 "{name}: physical extension storage exceeds its read budget"
             )));
         }
-        read_rows(&mut self.pager, &self.tables, name, true)
+        Ok(
+            config::read_records_bounded(&mut self.pager, &table, true, max_bytes)?
+                .into_iter()
+                .map(|record| record.row)
+                .collect(),
+        )
     }
 
     /// Row headers without the binary data.
