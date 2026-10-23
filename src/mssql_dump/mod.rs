@@ -976,6 +976,7 @@ pub mod config_save;
 mod configuration_properties_evidence;
 mod dcs;
 mod dynamic_generation;
+mod empty_configuration;
 pub(crate) mod extension;
 pub(crate) mod extension_types;
 mod fetch;
@@ -4419,6 +4420,57 @@ fn dump_table_rows_streamed(
         fetch_headers_sqlcmd_ms: fetch_headers_ms,
         ..MssqlDumpTimingReport::default()
     };
+    // An infobase right after `infobase create`: no row at all (#469). The
+    // platform exports the default configuration it makes up for it.
+    if headers.is_empty()
+        && main_configuration
+        && generate_config_dump_info
+        && extract_metadata_xml
+        && selected_file_names.is_empty()
+    {
+        let output = match sink {
+            Some(sink) => OutputWriter::from_env_to_sink(sink),
+            None => OutputWriter::from_env().with_existing_folder(output_dir),
+        };
+        let output = if incremental.is_some() {
+            output.recording_written()
+        } else {
+            output
+        };
+        empty_configuration::write(&output, output_dir, source_version)?;
+        let (written, written_paths) = output.finish_with_written()?;
+        timings.add_output_write(&written);
+        let incremental = incremental
+            .map(|plan| {
+                let selection = plan.select(
+                    &BTreeMap::new(),
+                    Some(&incremental::ConfigurationNames::default()),
+                    source_version,
+                );
+                plan.finish(output_dir, &written_paths, &selection)
+            })
+            .transpose()?;
+        let mut source_assets = SourceAssetCompletenessReport::default();
+        source_assets.finish_inventory(source_asset_scope, true, 0);
+        let metadata_root_inventory = RootMetadataInventoryReport {
+            scope: inventory_scope,
+            candidate_set_complete: true,
+            ..RootMetadataInventoryReport::default()
+        };
+        return Ok(DumpedTable {
+            rows: Vec::new(),
+            failed_rows: Vec::new(),
+            binary_bytes: 0,
+            inflated_rows: 0,
+            module_text_rows: 0,
+            metadata_xml_rows: 0,
+            source_asset_rows: 0,
+            source_assets,
+            metadata_root_inventory,
+            timings,
+            incremental,
+        });
+    }
     let prepare_started = Instant::now();
     let prepare_cpu = process_cpu_ms();
     let mut file_names = headers

@@ -30,8 +30,12 @@ impl Drop for Scratch {
 }
 
 fn scratch(tag: &str) -> Scratch {
-    let dir =
-        std::env::temp_dir().join(format!("ibcmd-file-infobase-{}-{tag}", std::process::id()));
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "ibcmd-file-infobase-{}-{sequence}-{tag}",
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     Scratch(dir)
@@ -273,4 +277,146 @@ fn broken_files_fail_closed() {
     let output = export(&dir.join("absent"), &dir.join("xml-absent"));
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("1Cv8.1CD"));
+}
+
+/// `files` with every uuid but the fixed class ids masked: the platform
+/// makes up a new configuration for an empty `Config` at each export, with
+/// fresh uuids (two exports of one empty infobase differ only in them).
+fn masked(root: &Path) -> BTreeMap<String, String> {
+    let mask = |mut text: String| {
+        for prefix in ["uuid=\"", "<xr:ObjectId>"] {
+            let mut from = 0;
+            while let Some(at) = text[from..].find(prefix) {
+                let start = from + at + prefix.len();
+                if text
+                    .get(start..start + 36)
+                    .is_some_and(|id| id.len() == 36 && id.matches('-').count() == 4)
+                {
+                    text.replace_range(start..start + 36, "U");
+                }
+                from = start;
+            }
+        }
+        text
+    };
+    files(root)
+        .into_iter()
+        .map(|(path, bytes)| (path, mask(String::from_utf8(bytes).unwrap())))
+        .collect()
+}
+
+fn export_empty(platform: &str, language: &str) -> (Scratch, PathBuf) {
+    let dir = scratch(&format!("export-empty-{platform}-{language}"));
+    let db = infobase(&dir, "empty");
+    let out = dir.join("xml");
+    let mut arg = std::ffi::OsString::from("--platform=");
+    arg.push(platform);
+    ok(&Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+        .env("IBCMD_RS_LANGUAGE", language)
+        .args(["infobase", "config", "export"])
+        .arg(db_path(&db))
+        .arg(arg)
+        .arg(&out)
+        .output()
+        .unwrap());
+    (dir, out)
+}
+
+#[test]
+fn an_infobase_without_a_configuration_exports_the_default_one() {
+    // `empty-xml-*`: the platform's export of an empty infobase (8.5.1.1529
+    // ibcmd, 8.3.27.2214 Designer), interface language Russian (#469).
+    for (platform, expected) in [("8.3.27", "empty-xml-8.3.27"), ("8.5.1", "empty-xml-8.5.1")] {
+        let (_dir, out) = export_empty(platform, "ru");
+        assert_eq!(
+            masked(&fixtures().join(expected)),
+            masked(&out),
+            "{platform}"
+        );
+    }
+    // An English interface (8.5.1.1150 on Linux): `tiny-source` is that
+    // export with one common module added.
+    let (_dir, out) = export_empty("8.5.1", "en");
+    let mut expected = masked(&fixtures().join("tiny-source"));
+    expected.retain(|path, _| !path.starts_with("CommonModules"));
+    let configuration = expected.get_mut("Configuration.xml").unwrap();
+    *configuration = configuration.replace(
+        "\t\t\t<CommonModule>ФайловаяБазаПроверка</CommonModule>\r\n",
+        "",
+    );
+    let mut actual = masked(&out);
+    actual.remove("ConfigDumpInfo.xml");
+    assert_eq!(expected, actual);
+}
+
+#[test]
+fn empty_configuration_supports_base_and_sync_exports() {
+    let (_base_dir, base_out) = export_empty("8.5.1", "en");
+    let base = base_out.join("ConfigDumpInfo.xml");
+    for (tag, use_base, sync) in [
+        ("base", true, false),
+        ("sync", false, true),
+        ("base-sync", true, true),
+    ] {
+        let dir = scratch(&format!("empty-{tag}"));
+        let db = infobase(&dir, "empty");
+        let out = dir.join("xml");
+        if sync {
+            fs::create_dir_all(out.join("Catalogs")).unwrap();
+            fs::write(out.join("Catalogs/Stale.xml"), "obsolete").unwrap();
+            fs::write(out.join("notes.txt"), "keep me").unwrap();
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
+        command
+            .env("IBCMD_RS_LANGUAGE", "en")
+            .args(["infobase", "config", "export", "--platform=8.5.1"])
+            .arg(db_path(&db))
+            .arg(&out);
+        if use_base {
+            command.arg("--base").arg(&base);
+        }
+        if sync {
+            command.arg("--sync");
+        }
+        ok(&command.output().unwrap());
+        let mut actual = masked(&out);
+        if sync {
+            assert_eq!(actual.remove("notes.txt").as_deref(), Some("keep me"));
+            assert!(!out.join("Catalogs/Stale.xml").exists());
+        }
+        assert_eq!(masked(&base_out), actual, "{tag}");
+    }
+}
+
+#[test]
+fn empty_configuration_has_complete_zero_inventories() {
+    let dir = scratch("empty-completeness");
+    let db = infobase(&dir, "empty");
+    let out = dir.join("xml");
+    let output = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+        .env("IBCMD_RS_LANGUAGE", "en")
+        .args([
+            "mssql-dump-config",
+            "--main-configuration",
+            "--extract-metadata-xml",
+            "--extract-module-text",
+            "--no-binary-rows",
+            "--require-complete-source-assets",
+            "--require-complete-root-metadata",
+            "--platform=8.5.1",
+        ])
+        .arg("--file-infobase")
+        .arg(&db)
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .unwrap();
+    ok(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let assets = &report["source_assets"];
+    assert_eq!(assets["scope"], "full");
+    assert_eq!(assets["status"], "complete");
+    assert_eq!(assets["candidate_set_complete"], true);
+    assert_eq!(assets["expected"], 0);
+    assert!(out.join("Configuration.xml").is_file());
 }
