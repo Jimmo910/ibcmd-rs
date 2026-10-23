@@ -103,7 +103,16 @@
   "diagnostics": {
     "post_capture_combined_workspace_error_entries": 3,
     "installed_edt_validation": "NOT_ACCEPTED; no error suppression or clean SDK validation claim",
-    "supplement": "post-capture-diagnostics.json; appended without modifying original capture records"
+    "supplement": "post-capture-diagnostics.json; appended without modifying original capture records",
+    "edt_export_stdout_error_count": 1,
+    "edt_export_stdout_error_lines": [
+      {
+        "file": "edt-export.stdout",
+        "line": 1,
+        "text": "[Fatal Error] :1:1: Premature end of file."
+      }
+    ],
+    "matched_route_origin": "Authentic installed-EDT native import, exported with --project into fresh workspace; also occurs without ours-generated project"
   },
   "jvm_provenance": "Selected Java executable/release rows only; libraries/modules not fully inventoried",
   "acceptance_limits": [

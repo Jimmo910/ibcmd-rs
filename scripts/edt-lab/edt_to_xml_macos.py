@@ -184,6 +184,24 @@ def command(run, label, argv, timeout):
     return (run / f'{label}.stdout').read_bytes()
 
 
+def capture_diagnostics(run, labels):
+    result = command_diagnostics(run, labels)
+    # Mac EDT also emits mixed-case "[Fatal Error]". Preserve every raw
+    # location without changing the shared historical Windows scanner.
+    for label, row in result.items():
+        lines = {(item['file'], item['line']): item for item in row['error_lines']}
+        for suffix in ('stdout', 'stderr', 'workspace-log', 'workspace-1cedtcli.log', 'workspace-1cedtcli-shutdown-hook.log'):
+            path = run / f'{label}.{suffix}'
+            if not path.is_file():
+                continue
+            for number, line in enumerate(path.read_bytes().decode('utf-8', errors='replace').splitlines(), 1):
+                if re.search(r'\b(?:error|fatal)\b|^exception in thread ', line, re.IGNORECASE):
+                    lines[(path.name, number)] = {'file': path.name, 'line': number, 'text': line}
+        row['error_lines'] = list(lines.values())
+        row['error_count'] = len(lines)
+    return result
+
+
 def capture(args):
     if sys.platform != 'darwin':
         raise OracleError('Native capture requires macOS')
@@ -296,16 +314,17 @@ def capture(args):
                 raise OracleError('Native reference changed during conversion')
             if json.loads((run / 'edt-xml-before.json').read_text()) != snapshot(baseline):
                 raise OracleError('EDT XML changed during native capture')
-            diagnostics = command_diagnostics(run, ['edt-version', 'edt-export'])
+            diagnostics = capture_diagnostics(run, ['edt-version', 'edt-export'])
             write_json(run / 'edt-diagnostics.json', diagnostics)
+            observed_errors = has_error_diagnostics(diagnostics.values())
             result = {'status': ('COMPATIBILITY_PROBE_MATCH' if report['configuration_content']['equal'] else 'COMPATIBILITY_PROBE_DIFFERENT')
-                        if getattr(args, 'compatibility_probe', False) else ('PASS' if report['configuration_content']['equal'] else 'FAIL'),
+                        if getattr(args, 'compatibility_probe', False) else (('CONTENT_MATCH_WITH_SDK_ERRORS' if observed_errors else 'PASS') if report['configuration_content']['equal'] else 'FAIL'),
                 'strict_equal': report['strict']['equal'], 'configuration_content_equal': report['configuration_content']['equal'],
                 'storage_inventory_exclusion': 'ConfigDumpInfo.xml; full original rows retained in comparison.json',
                 'scope': 'Same authentic EDT project, installed EDT export, fresh native file DB create/import/export; no activation claim',
                 'corpus_label': args.corpus_label,
                 'installed_edt_validation': 'NOT_EVALUATED; content comparison is not clean SDK validation',
-                'observed_edt_errors': has_error_diagnostics(diagnostics.values()),
+                'observed_edt_errors': observed_errors,
                 'versions': versions, 'source_profile': args.source_profile, 'runtime': args.runtime,
                 'xml_version': args.xml_version, 'schema_evidence_sha256': schema_hash,
                 'installation_manifest_sha256': installation_hash, 'counts': report['counts']}

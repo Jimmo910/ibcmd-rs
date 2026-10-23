@@ -284,6 +284,27 @@ class NativeReferenceControls(unittest.TestCase):
         self.assertEqual(report['edt']['workspace_error_count'], 1)
         self.assertTrue(harness.has_error_diagnostics(report.values()))
 
+    def test_mixed_case_fatal_error_is_not_missed(self):
+        run = self.root / 'fatal-control'
+        run.mkdir()
+        (run / 'edt.stdout').write_bytes(b'[Fatal Error] :1:1: Premature end of file.\n')
+        (run / 'edt.stderr').write_bytes(b'')
+        report = harness.capture_diagnostics(run, ['edt'])
+        self.assertEqual(report['edt']['error_count'], 1)
+        self.assertTrue(harness.has_error_diagnostics(report.values()))
+
+    def test_error_only_in_cli_or_shutdown_log_is_not_clean(self):
+        for suffix in ('workspace-1cedtcli.log', 'workspace-1cedtcli-shutdown-hook.log'):
+            with self.subTest(suffix=suffix):
+                run = self.root / suffix
+                run.mkdir()
+                for clean in ('stdout', 'stderr', 'workspace-log'):
+                    (run / f'edt.{clean}').write_bytes(b'')
+                (run / f'edt.{suffix}').write_bytes(b'Fatal shutdown error retained\n')
+                report = harness.capture_diagnostics(run, ['edt'])
+                self.assertTrue(harness.has_error_diagnostics(report.values()))
+                self.assertEqual(report['edt']['error_lines'][0]['file'], f'edt.{suffix}')
+
     def test_command_failure_records_raw_streams_and_exit(self):
         run = self.root / 'command'
         run.mkdir(); (run / 'tmp').mkdir()

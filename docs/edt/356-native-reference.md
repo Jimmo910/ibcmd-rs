@@ -76,12 +76,12 @@ changes; #358 owns installed EDT preparation. Real discrepancies must be sent
 with exact path/hash rows and minimal synthetic reproductions to #355 before
 codec edits.
 
-Twenty synthetic controls passed on 2026-10-23. They exercise correct native
+Twenty-two synthetic controls passed on 2026-10-23. They exercise correct native
 input routing, complete missing/extra/changed rows, CDI retention, source/tool/
 plugin/Java/schema/reference mutation, incomplete runtime manifests, failed native import, preserved failed command bytes,
 interrupted process cleanup, path/provenance guards, and compatibility verdicts.
 Fixtures are retained under the external TMPDIR. Local log:
-`/Volumes/Work/Dev/ibcmd-rs-lab/logs/issue356-harness-controls-r10.log`.
+`/Volumes/Work/Dev/ibcmd-rs-lab/logs/issue356-harness-controls-r12.log`.
 
 ```sh
 source /Volumes/Work/Dev/ibcmd-rs-lab/lab-env.sh
@@ -135,3 +135,15 @@ logs remain in the external run directory. No native/EDT corpus bodies are
 committed. The native slot was released after the run. Full BSP comparison,
 current-model semantic support and clean installed SDK acceptance remain open;
 PR #506 remains Draft and #356 is not closed.
+
+The original authentic-project `edt-export.stdout` also contains one mixed-case
+`[Fatal Error] :1:1: Premature end of file.` line. It is preserved in a separate
+`post-capture-stdout-diagnostics.json` supplement. The local scanner now detects
+case-insensitive error/fatal markers; its regression control retains this exact
+line. The same direct-project/fresh-workspace route therefore produces this
+error on a genuine native-import project too; it alone does not prove a codec
+regression. It is not waived as harmless.
+
+Retained CLI and shutdown-hook logs are scanned too; fatal-only records in either
+file prevent a clean diagnostic verdict even when stdout/stderr and `.log` are
+empty. The negative control exercises both files.
