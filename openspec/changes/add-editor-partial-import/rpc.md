@@ -60,3 +60,22 @@ means database publication succeeded but backup finalization failed; the editor
 shows a fixed recovery-required warning and must not describe it as cancellation
 or a no-op. Ordinary failures retain `-32014`; source cancellation retains
 `-32800` through the source-census error chain.
+
+
+The import client advertises protocol 1.2 during initialization; a 1.1-only
+server rejects initialization before any import or connection request.
+Dependency expansion uses every canonical root collection, including modules,
+forms and descriptors inside their owning objects.
+
+Consumed XML bytes are immutable and belong to the original source census.
+Their cache retains compact file and ordered relative-ancestor stamps rather
+than a descriptor chain per file. Final publication reopens each consumed name
+relative to the retained root, compares those stamps and the original digest,
+and repeats the complete census. Temporary file and ancestor handles remain
+open throughout each read and name verification. Selected OriginalSource
+capabilities retain their original handles separately. Resource use for cached
+XML handles is bounded by path depth, not XML count; byte and traversal budgets
+are unchanged. On Windows this detached cache detects ordinary replacements on
+revalidation instead of preventing moves between phases. File IDs/timestamps
+can be recycled or restored: this is not unconditional ABA exclusion against a
+non-cooperating same-user filesystem writer. Advisory-lock limitations remain.

@@ -14,6 +14,7 @@ function deferred() {
 }
 async function harness({
   stored,
+  initialize = async () => ({}),
   input = async () => "synthetic-new",
   connect = async () => ({}),
   store = async () => {},
@@ -65,7 +66,7 @@ async function harness({
       this.disposed = true;
     }
     async request(method, params, signal) {
-      if (method === "initialize") return {};
+      if (method === "initialize") return initialize(params);
       if (method === "infobases/list") return { infobases: bases };
       if (method === "infobases/connect") return connect(params, signal);
       return { conclusive: true, pending: false };
@@ -261,5 +262,26 @@ test("a stored password is reused without prompting or rewriting on failure", as
     },
   });
   await h.select();
+  assert.equal(h.stores.length, 0);
+});
+
+test("import-capable client advertises 1.2 and cannot connect to a 1.1-only server", async () => {
+  const versions = [];
+  let connections = 0;
+  const h = await harness({
+    initialize: async (params) => {
+      versions.push(params.protocolVersion);
+      if (params.protocolVersion !== "1.1")
+        throw new Error("unsupported protocol version");
+      return {};
+    },
+    connect: async () => {
+      connections++;
+      return {};
+    },
+  });
+  await h.select();
+  assert.deepEqual(versions, ["1.2"]);
+  assert.equal(connections, 0);
   assert.equal(h.stores.length, 0);
 });
