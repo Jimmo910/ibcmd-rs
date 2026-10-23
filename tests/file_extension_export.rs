@@ -327,3 +327,41 @@ fn an_oversized_physical_part_number_cannot_wrap_into_part_zero() {
     assert!(!out.exists());
     assert_eq!(fs::read(&file).unwrap(), before);
 }
+
+#[test]
+fn unknown_staging_record_flags_cannot_hide_a_prepared_image() {
+    let root = setup("unknown-staging-flag", "mixed");
+    let file = root.0.join("1Cv8.1CD");
+    let mut bytes = fs::read(&file).unwrap();
+    let rows = ibcmd_filedb::FileDb::open(&root.0)
+        .unwrap()
+        .config_rows("CONFIGCASSAVE")
+        .unwrap();
+    assert!(!rows.is_empty());
+    for row in rows {
+        let needle: Vec<_> = row
+            .file_name
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        let positions: Vec<_> = bytes
+            .windows(needle.len())
+            .enumerate()
+            .filter(|(at, value)| *at >= 3 && *value == needle && bytes[*at - 3] == 0)
+            .map(|(at, _)| at)
+            .collect();
+        assert_eq!(positions.len(), 1);
+        let record_start = positions[0] - 3;
+        assert_eq!(bytes[record_start], 0);
+        bytes[record_start] = 0xff;
+    }
+    fs::write(&file, &bytes).unwrap();
+    let output = root.0.join("unknown-flag");
+    let result = export(&root.0, "ТестРасширение", &output);
+    assert!(
+        !result.status.success(),
+        "a corrupt prepared image fell back to active"
+    );
+    assert!(!output.exists());
+    assert_eq!(fs::read(file).unwrap(), bytes);
+}

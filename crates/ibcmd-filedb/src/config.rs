@@ -128,8 +128,15 @@ pub(crate) fn read_records_bounded(
     let mut out = Vec::new();
     let mut remaining_bytes = max_retained_bytes;
     for (number, rec) in records.as_chunks::<RECORD>().0.iter().enumerate().skip(1) {
-        if rec[0] != 0 {
-            continue;
+        match rec[0] {
+            0 => {}
+            1 => continue,
+            flag => {
+                return Err(corrupt(format!(
+                    "Таблица {}: неизвестный флаг записи {number}: {flag:#x}",
+                    table.name
+                )));
+            }
         }
         let file_name = decode_var_string(&rec[NAME..CREATION], 128)?;
         let block = u32::from_le_bytes(rec[BINARY..BINARY + 4].try_into().unwrap());
