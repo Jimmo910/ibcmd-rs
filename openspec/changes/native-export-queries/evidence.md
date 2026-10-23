@@ -99,6 +99,8 @@ Local follow-up checks: 1,252 standalone tests passed (80 ignored), 430 root
 integration tests passed (4 ignored), 18 query cases, 9 custom base/sync cases,
 13 incremental unit cases and the isolated five-scenario native pipeline case
 passed. Formatting, all-target workspace check, mandatory standalone Clippy,
-strict OpenSpec and physical policy/self-tests passed. Release compilation was
-interrupted by the coordinator's build-slot rescheduling after tests completed;
-it remains pending and is not recorded as a compiler failure or a passed gate.
+strict OpenSpec and physical policy/self-tests passed. The first release attempt
+was interrupted for build-slot rescheduling. The subsequently granted resumed
+`cargo build --locked --release --no-default-features` completed successfully
+(rc=0, 2m45s), with jobs=2 and the separate external target. No timed ERP rerun
+was needed for these guarded-publication changes.
