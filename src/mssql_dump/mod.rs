@@ -14794,9 +14794,9 @@ fn parse_subsystem_properties_from_text(
         parse_command_group_picture_value(fields.get(5)?, object_refs)?;
     let picture_transparent_pixel = parse_metadata_picture_transparent_pixel(fields.get(5)?);
     Some(SubsystemProperties {
-        include_help_in_contents: parse_1c_bool_field(fields.get(2).copied()).unwrap_or(false),
-        include_in_command_interface: parse_1c_bool_field(fields.get(4).copied()).unwrap_or(true),
-        use_one_command: parse_1c_bool_field(fields.get(8).copied()).unwrap_or(false),
+        include_help_in_contents: parse_1c_bool_field_or_default(fields.get(2).copied(), false)?,
+        include_in_command_interface: parse_1c_bool_field_or_default(fields.get(4).copied(), true)?,
+        use_one_command: parse_1c_bool_field_or_default(fields.get(8).copied(), false)?,
         explanation: fields
             .get(6)
             .map(|field| parse_1c_synonyms(field))
@@ -33927,6 +33927,12 @@ fn parse_1c_bool_field(value: Option<&str>) -> Option<bool> {
     parse_1c_bool_flag(value?.trim())
 }
 
+// An absent legacy field can have a documented default. A present value
+// outside the Boolean domain is a conversion refusal, never that default.
+fn parse_1c_bool_field_or_default(value: Option<&str>, default: bool) -> Option<bool> {
+    value.map_or(Some(default), |value| parse_1c_bool_field(Some(value)))
+}
+
 fn braced_field_has_entries(field: Option<&str>) -> bool {
     split_1c_braced_fields(field.unwrap_or("{0}"), 0)
         .and_then(|fields| fields.first().map(|value| value.trim() != "0"))
@@ -36301,33 +36307,24 @@ fn parse_common_command_properties_from_text(
     let (picture_ref, picture_load_transparent) =
         parse_common_command_picture_value(fields.get(1)?, object_refs)?;
     let picture_transparent_pixel = parse_metadata_picture_transparent_pixel(fields.get(1)?);
-    let representation = common_command_representation_xml(fields.get(2)?.trim().parse().ok()?);
+    let representation = common_command_representation_xml(fields.get(2)?.trim().parse().ok()?)?;
     let tooltip = parse_1c_synonyms(fields.get(3).copied().unwrap_or("{0}"));
     let shortcut = fields
         .get(5)
         .and_then(|field| parse_common_command_shortcut_value(field));
-    let include_help_in_contents = fields
-        .get(6)
-        .and_then(|field| parse_1c_bool_flag(field.trim()))
-        .unwrap_or(false);
+    let include_help_in_contents = parse_1c_bool_field_or_default(fields.get(6).copied(), false)?;
     let group = fields
         .get(7)
         .and_then(|field| parse_common_command_group_value(field, object_refs));
     let command_parameter_types = parse_common_command_parameter_types(fields.get(8)?, type_index);
     let parameter_use_mode =
-        common_command_parameter_use_mode_xml(fields.get(11)?.trim().parse().ok()?);
-    let modifies_data = fields
-        .get(10)
-        .and_then(|field| parse_1c_bool_flag(field.trim()))
-        .unwrap_or(false);
+        common_command_parameter_use_mode_xml(fields.get(11)?.trim().parse().ok()?)?;
+    let modifies_data = parse_1c_bool_field_or_default(fields.get(10).copied(), false)?;
     // Confirmed against the native export of a record that omits this slot
     // (`CommonCommands/ВвестиЗначенияКритериевОценкиАльтернатив.xml`, ERP
-    // УХ 3.2.12.6): the platform still writes `Auto`, and the renderer
-    // below already collapses every observed value to that same constant,
-    // so an absent slot is read as the same "no override" case a present
-    // `0` already is -- not guessed, since the two are indistinguishable
-    // in the one place this value is used. A *present* slot that fails to
-    // parse still fails closed via `?`.
+    // УХ 3.2.12.6): the platform still writes `Auto`. Keep that default only
+    // for an absent slot; present values must belong to the model's shared
+    // enum domain, including on the older command layout.
     let on_main_server_unavailable_behavior_value = match fields.get(12) {
         Some(field) => field.trim().parse::<u8>().ok()?,
         None => 0,
@@ -36335,7 +36332,7 @@ fn parse_common_command_properties_from_text(
     let on_main_server_unavailable_behavior =
         common_command_on_main_server_unavailable_behavior_xml(
             on_main_server_unavailable_behavior_value,
-        );
+        )?;
 
     Some(CommonCommandProperties {
         representation,
@@ -36873,19 +36870,22 @@ fn command_group_representation_xml(value: u8) -> &'static str {
     }
 }
 
-fn common_command_representation_xml(value: u8) -> &'static str {
-    command_group_representation_xml(value)
+fn common_command_representation_xml(value: u8) -> Option<&'static str> {
+    crate::metadata_model::common::REPRESENTATIONS
+        .iter()
+        .find_map(|(name, code)| (*code == i64::from(value)).then_some(*name))
 }
 
-fn common_command_parameter_use_mode_xml(value: u8) -> &'static str {
-    match value {
-        1 => "Multiple",
-        _ => "Single",
-    }
+fn common_command_parameter_use_mode_xml(value: u8) -> Option<&'static str> {
+    crate::metadata_model::common::PARAMETER_USE_MODES
+        .iter()
+        .find_map(|(name, code)| (*code == i64::from(value)).then_some(*name))
 }
 
-fn common_command_on_main_server_unavailable_behavior_xml(_value: u8) -> &'static str {
-    "Auto"
+fn common_command_on_main_server_unavailable_behavior_xml(value: u8) -> Option<&'static str> {
+    crate::metadata_model::common::MAIN_SERVER_UNAVAILABLE_BEHAVIORS
+        .iter()
+        .find_map(|(name, code)| (*code == i64::from(value)).then_some(*name))
 }
 
 fn command_group_category_xml(value: u8) -> &'static str {
