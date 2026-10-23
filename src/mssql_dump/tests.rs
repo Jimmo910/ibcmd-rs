@@ -80581,3 +80581,50 @@ fn a_data_processor_of_revision_16_indexes_its_object_and_manager_types() {
         );
     }
 }
+
+#[test]
+fn an_older_root_without_the_analytics_client_right_grants_it() {
+    // ЗУП 3.1.18: 282 roles store the five window modes and not
+    // `AnalyticsSystemClient`, all with `setForNewObjects` false, and
+    // 8.3.27.2214 writes the analytics client `true` on all 282. (Монитор's
+    // two such roles have the flag true, so the `true` it takes there equals
+    // the default and is not written.)
+    let value = "{0,d066966a-ff6a-4a41-bd68-6191cab083bc,1,f6168734-8b8d-4a88-ab39-ef6b51758e83,1,\
+                 b9b44b51-3ac9-47cd-8b5a-df51afdcceb0,1,818fc6c3-4691-44e3-a80c-e8d424730ead,1,\
+                 155a0b35-4343-4047-989b-d385373b063e,1,d8682bbb-7800-4aa0-8590-d3cb11fe2a29,1}";
+    let rights = super::role_rights::parse_configuration_root_object_rights(value, false).unwrap();
+    let analytics = rights
+        .iter()
+        .find(|right| right.name == "AnalyticsSystemClient")
+        .expect("the analytics client right is printed");
+    assert!(analytics.value);
+}
+
+#[test]
+fn role_rights_configuration_root_rejects_duplicate_mode_names() {
+    let modes = [
+        "d066966a-ff6a-4a41-bd68-6191cab083bc",
+        "f6168734-8b8d-4a88-ab39-ef6b51758e83",
+        "b9b44b51-3ac9-47cd-8b5a-df51afdcceb0",
+        "818fc6c3-4691-44e3-a80c-e8d424730ead",
+        "155a0b35-4343-4047-989b-d385373b063e",
+    ];
+    for indices in [&[0, 1, 2, 3, 0][..], &[0, 1, 2, 3, 4, 0][..]] {
+        let pairs = indices
+            .iter()
+            .map(|&i| format!("{},1", modes[i]))
+            .collect::<Vec<_>>()
+            .join(",");
+        let value = format!("{{0,{pairs},d8682bbb-7800-4aa0-8590-d3cb11fe2a29,1}}");
+        for set_for_new_objects in [false, true] {
+            assert!(
+                super::role_rights::parse_configuration_root_object_rights(
+                    &value,
+                    set_for_new_objects
+                )
+                .is_none(),
+                "duplicate mode accepted with flag {set_for_new_objects}"
+            );
+        }
+    }
+}
