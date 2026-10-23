@@ -4,7 +4,7 @@ Refs #385. Dependency: pinned PR #484 (`8ddfa886b8318d979dc322e5a3b98195e3dd5a57
 which carries the connection/tree/status foundation from PR #477. No donor branch
 was rewritten. Review the issue-385 delta after that pin; merge the dependency first.
 Package tooling/lockfile/workflows are owned here; #381/#384 provide feature command
-and menu additions independently. No Rust production code changes in this delta.
+and menu additions independently. The original packaging delta did not change Rust production code; maintainer commit `c1c74850` later preserved the shared backend custody fix in this dependency tree.
 
 ## Local acceptance — 2026-10-23
 
@@ -167,3 +167,15 @@ Fork run `39939946627`, exact head `b273223e7b169e2fd19f476c7bd44b25abf15663`, w
 Terminal job logs confirm successful VSIX installation at 12:07:12 UTC, GUI extension-host startup at 12:07:14 and fixture inventory/export at 12:07:16. The unresolved wait is later in the suite, not the runner queue or installer. The old harness did not record finer phases, so a specific configuration/picker/activation wait is not yet proven. Retained local log: `/Volumes/Work/Dev/ibcmd-rs-lab/logs/issue-385-interrupted-windows-job.log`.
 
 The follow-up keeps every installed-tree and override assertion. An independent supervisor enforces an eight-minute whole-run deadline, including synchronous child hangs, and terminates only its spawned process tree. Installer and fixture CLI calls have 120/60-second deadlines; the workflow step has a 15-minute backstop. Phase JSONL and isolated editor logs are uploaded on failure, along with already-built VSIX artifacts. Local subprocess regressions cover success, nonzero exit, spawn failure, synchronous infinite-loop termination and descendant termination. Independent review found no blocking correctness issue; its phase-granularity suggestion was addressed with separate markers for every settings update. Windows process-tree termination and full installed acceptance still require the new-head CI run; no unchanged-code rerun was requested.
+
+### Installed picker API identity regression (2026-10-23)
+
+Exact-head Windows job [120465160770](https://github.com/Jimmo910/ibcmd-rs/actions/runs/39968660045/job/120465160770) failed its eight-minute watchdog on `c1c74850`. The retained 17-file diagnostic artifact ends at `select-connection`, after all four settings writes and extension activation. Package installation and reproducibility passed; the Windows VSIX SHA-256 was `b45a649fa22d5b83fd2d024cf61688f337fd0fe4d7c55f37e1f2f98a96c89582`.
+
+A local installed-host probe on the same pinned VS Code 1.95.3 reproduced selection waiting for input: the installed extension and external driver have distinct `vscode` API/window objects, and the driver-side mocked picker received zero calls before the 15-second diagnostic deadline failed. The suite had patched the external driver's API instead of the installed extension's API. This was a test harness UI wait, not evidence of a backend or installer failure. Red log: `logs/issue-385-picker-195-red.log`; downloaded Windows diagnostics: `logs/issue-385-c1c74850-windows-installed`.
+
+The fix obtains the installed extension's API with Node `createRequire` at its actual bundled entrypoint and patches/restores that window namespace. Assertions now require exactly the expected `lab/offline` picker item and exactly one invocation per selection, including after executable override. All original inventory, visible tree, object identity and override assertions remain. The eight-minute watchdog and CLI/workflow deadlines are unchanged. Independent read-only review found no blocker.
+
+The patched installed-host test on VS Code 1.95.3 passed, including two observed picker invocations and all four fixture objects. Green log: `logs/issue-385-picker-195-green.log`; retained acceptance: `tmp/issue-385-picker-195-green/installed-8emTfh/acceptance.json`. The VSIX uses the current unchanged runtime bundle and retained pinned-dependency Mac binary `build/issue-380/debug/ibcmd-rs`; it does not claim compilation of the newer shared Rust custody donor. This root-cause comparison used isolated external profiles/extensions/workspaces and retained every fixture. Exact new-head Windows CI remains required for that platform's final acceptance.
+
+The same patched installed suite also passed in actual Cursor 1.105.1 with a separate external profile, two observed picker invocations, exact fixture tree and executable override. Evidence: `logs/issue-385-picker-cursor-green.log` and `tmp/issue-385-picker-cursor-green/installed-7PQAgG/acceptance.json`. Both hosts exited 0, and no task editor processes remained after completion. Local host slot is released; no Rust build was needed. Six Node checks, three Python checks, TypeScript compilation, formatter and diff checks also passed after the fix.

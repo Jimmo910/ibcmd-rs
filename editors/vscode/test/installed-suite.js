@@ -3,6 +3,7 @@ const vscode = require("vscode");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const assert = require("node:assert/strict");
+const { createRequire } = require("node:module");
 const { execFileSync } = require("node:child_process");
 exports.run = async () => {
   phase("suite-start");
@@ -90,16 +91,34 @@ exports.run = async () => {
   );
   phase("activate-extension");
   const api = await ext.activate();
-  const quick = vscode.window.showQuickPick,
-    error = vscode.window.showErrorMessage;
+  // VS Code caches its API by the requiring extension's identity. The external
+  // driver has a different window namespace; patch the installed extension's API.
+  const installedVscode = createRequire(
+    path.join(ext.extensionPath, "dist", "extension.js"),
+  )("vscode");
+  phase("installed-api", { sharedWithDriver: installedVscode === vscode });
+  const window = installedVscode.window;
+  const quick = window.showQuickPick,
+    error = window.showErrorMessage;
+  let pickerSelections = 0;
   const errors = [];
-  vscode.window.showQuickPick = async (items) => (await items)[0];
-  vscode.window.showErrorMessage = async (msg) => {
+  window.showQuickPick = async (items) => {
+    const choices = await items;
+    assert.deepEqual(
+      choices.map((item) => item.base.id),
+      ["lab/offline"],
+    );
+    pickerSelections++;
+    phase("connection-picked", { id: choices[0].base.id, pickerSelections });
+    return choices[0];
+  };
+  window.showErrorMessage = async (msg) => {
     errors.push(msg);
   };
   try {
     phase("select-connection");
     await vscode.commands.executeCommand("ibcmd.select");
+    assert.equal(pickerSelections, 1);
     phase("refresh-tree");
     await vscode.commands.executeCommand("ibcmd.objects.refresh");
     assert.deepEqual(errors, []);
@@ -118,6 +137,7 @@ exports.run = async () => {
     await override.update("path", binary, vscode.ConfigurationTarget.Global);
     phase("select-connection");
     await vscode.commands.executeCommand("ibcmd.select");
+    assert.equal(pickerSelections, 2);
     phase("refresh-tree");
     await vscode.commands.executeCommand("ibcmd.objects.refresh");
     assert.deepEqual(
@@ -136,6 +156,7 @@ exports.run = async () => {
       binary,
       objects: api.objects(),
       override: true,
+      pickerSelections,
     };
     await fs.writeFile(
       path.join(process.env.IBCMD_ACCEPTANCE_RUN, "acceptance.json"),
@@ -143,7 +164,7 @@ exports.run = async () => {
     );
     console.log(JSON.stringify(evidence));
   } finally {
-    vscode.window.showQuickPick = quick;
-    vscode.window.showErrorMessage = error;
+    window.showQuickPick = quick;
+    window.showErrorMessage = error;
   }
 };
