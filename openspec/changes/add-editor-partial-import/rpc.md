@@ -41,10 +41,10 @@ Publication renames the verified new database first, retaining the previous back
 For untrusted consumers, `prepare_guarded_with_source_limits` takes an explicit
 `SourceInventoryLimits` alongside retained `ReadControl`. The guarded path also
 limits source directory entries (including empty directories) to `max_files`
-and depth to64, through initial custody and every final revalidation. The walker
+and depth to 64, through initial custody and every final revalidation. The walker
 keeps admitted ancestor iterators open to avoid eager directory caching outside
 the entry budget. Source census checks cancellation per entry; original file
-reads and hashing check it per64 KiB chunk. Ordinary editor `prepare` retains
+reads and hashing check it per 64 KiB chunk. Ordinary editor `prepare` retains
 its existing source admission defaults. These controls do not replace consumer
 policy checks or prove descriptor-relative publication confinement.
 

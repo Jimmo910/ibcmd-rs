@@ -94,8 +94,8 @@ or VS Code profile change is needed.
 # committed CF fixtures (no SQL Server).
 cargo test --locked --test editor_server --no-default-features
 export IBCMD_TEST_BINARY="$CARGO_TARGET_DIR/debug/ibcmd-rs"
-export IBCMD_TEST_ROWS="$TMPDIR/ibcmd-external-editor-server-protocol/rows/demo"
-export IBCMD_TEST_ROOT="$TMPDIR/ibcmd-vscode-tests"
+export IBCMD_TEST_ROWS="${TMPDIR:-/tmp}/ibcmd-external-editor-server-protocol/rows/demo"
+export IBCMD_TEST_ROOT="${TMPDIR:-/tmp}/ibcmd-vscode-tests"
 cd editors/vscode
 npm ci
 npm test
