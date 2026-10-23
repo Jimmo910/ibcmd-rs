@@ -219,3 +219,39 @@ unchanged. Thirty-three bounded retained-fixture controls pass; no native run,
 Rust build, private-input mutation or cleanup was needed for these review fixes.
 Older smoke evidence is preserved unchanged and is not retroactively described
 as having this stronger custody contract.
+
+
+## Corrected candidate: fast direct route and next DCS boundary
+
+The immutable candidate built from combined production head `5e5b5bcd`, SHA-256
+`6da274e498d6b21ef017c00bc8698cf6c14596d996604acce40a77bfe8431016`,
+passed #357's generated-project forward/return checks. We separately tested the
+**genuine installed-EDT project**, which is a different source route. The
+[non-private summary](evidence/356-current-dcs-fixed-direct-20261023.json) binds
+`fixtures/issue356-current-server-dcs-fixed-direct-002`.
+
+No SDK/JVM was restarted. Before running the converter, the local capture
+checked complete current/terminal genuine project inventories, complete current
+installed-export inventories against the exact original native-import input,
+the live native reference against its original full inventory, exact original
+native create/import/export command routes and exit codes, SDK binary identity,
+and the corrected candidate/build receipt. All selected raw receipts and input
+trees were checked again afterward. The original native reference was reused
+only because the entire installed-export input is identical, not because a
+summary or file count matches. Prior configuration-custody limitations remain
+visible and are not retroactively changed by this direct run.
+
+The candidate gets past the earlier client-interface refusal but still fails
+closed at encode preflight on
+`Catalogs/FilterProbe/Forms/ListForm/Attributes/Список/ExtInfo/ListSettings.dcss`:
+`dcss: must be CRLF, found Lf`. Decode completes, exit code is 2, and output is
+not published. Full native equality and a direct three-way report are therefore
+not reached. All input, reference, candidate and selected evidence hashes remain
+unchanged. Minimal authentic public sidecars are retained under
+`fixtures/issue356-dcss-repro-001`; exact reports and hashes were sent to #355
+(shared codec owner) and #357. This PR makes no independent shared codec edit.
+
+The retained `fixed-direct-001` attempt stopped on a capture receipt assertion
+before invoking the converter; the checker was corrected to bind #357's actual
+explicit-project export route and run in a fresh directory. Neither attempt
+rewrote old failures. Full BSP acceptance and clean SDK validation remain open.
