@@ -76,12 +76,12 @@ changes; #358 owns installed EDT preparation. Real discrepancies must be sent
 with exact path/hash rows and minimal synthetic reproductions to #355 before
 codec edits.
 
-Twenty-two synthetic controls passed on 2026-10-23. They exercise correct native
+Twenty-five synthetic controls passed on 2026-10-23. They exercise correct native
 input routing, complete missing/extra/changed rows, CDI retention, source/tool/
 plugin/Java/schema/reference mutation, incomplete runtime manifests, failed native import, preserved failed command bytes,
 interrupted process cleanup, path/provenance guards, and compatibility verdicts.
 Fixtures are retained under the external TMPDIR. Local log:
-`/Volumes/Work/Dev/ibcmd-rs-lab/logs/issue356-harness-controls-r12.log`.
+`/Volumes/Work/Dev/ibcmd-rs-lab/logs/issue356-harness-controls-r13.log`.
 
 ```sh
 source /Volumes/Work/Dev/ibcmd-rs-lab/lab-env.sh
@@ -147,3 +147,47 @@ regression. It is not waived as harmless.
 Retained CLI and shutdown-hook logs are scanned too; fatal-only records in either
 file prevent a clean diagnostic verdict even when stdout/stderr and `.log` are
 empty. The negative control exercises both files.
+
+
+## Nonempty public DCS/forms probe with Server JVM selection
+
+The parent authorized a bounded nonempty probe over the public DcsFilterEvidence
+native tree: 19 files, 86,112 bytes, tree
+`efc5814c4b31e7c8892511003e591fe0f0567a9f0d1d69e3a2594ada60b51a72`.
+#358 copied its provenance; #357 performed the single genuine installed-EDT
+import. We reused that exact authentic `NativeControl` project after #357
+released the shared slot, avoiding a second native-to-EDT import.
+
+The optional `--jvm-library` pins the bound Java home's
+`lib/server/libjvm.dylib`. It must appear in the installation runtime inventory,
+is hashed in the private launch receipt, and is rechecked after capture. The
+Java-executable selection remains available unchanged. Three additional controls
+cover explicit selection, omitted inventory and library mutation. This remains
+selected-runtime provenance, not a complete JVM modules/libraries inventory.
+
+[Non-private failure summary](evidence/356-current-server-dcs-20261023.json)
+records `fixtures/issue356-current-server-dcs-001`. Installed EDT export and fresh
+native create/import/export all returned 0. The authentic project contains
+19 files/79,140 bytes; the installed EDT export has 18 files/82,953 bytes;
+the fresh native reference has 19 files/86,112 bytes. Full inventories and hashes
+remain local. The candidate is the same immutable master Rust-tree binary used
+in the empty control.
+
+Our conversion decoded successfully but failed closed during encode preflight:
+`conversion.edt-encode-preflight-failed`. The canonical config-interface guard
+expects CRLF after the XML declaration/root of `ClientApplicationInterface.cai`;
+the genuine current serializer produces LF. No output was published, so full
+output equality was **not reached**. The 639-byte public sidecar reproducer is
+retained in `fixtures/issue356-sidecar-repro-001`, SHA-256
+`f1659827aed39cb1240e6dc9e4252c8efa66559a3c5448e7e75e96d29e52d62b`.
+The exact report and reproducer were sent to #357 (agreed sidecar-fix owner) and
+#355; this PR does not edit their shared codec files.
+
+The genuine direct-project export also emitted the same mixed-case Fatal Error
+and one severity-4 workspace entry. They remain in the per-command raw logs and
+`diagnostic-supplement.json`, unsuppressed. All original project, installation,
+schema and candidate hashes remained unchanged. The native slot was released.
+An overlapping #381 compilation was reported by the coordinator, so these
+command timings are not performance measurements. No further heavy phase or
+retest starts until the parent grants it. Full BSP/UH acceptance and clean SDK
+validation remain open; PR #506 remains Draft.

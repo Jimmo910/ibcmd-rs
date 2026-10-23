@@ -88,6 +88,19 @@ def bind_installation(path, edt):
     return data
 
 
+def select_vm(installation, library=None):
+    java = next(Path(row['path']) for row in installation['runtime_files'] if Path(row['path']).name == 'java')
+    if library is None:
+        return java
+    library = library.absolute()
+    no_links(library)
+    if library != java.parent.parent / 'lib/server/libjvm.dylib':
+        raise OracleError('Explicit Server JVM must belong to the bound Java home')
+    if str(library) not in {row['path'] for row in installation['runtime_files']}:
+        raise OracleError('Selected JVM library is absent from installation inventory')
+    return library
+
+
 def bind_schema(path, installation, build):
     data = json.loads(path.read_text(encoding='utf-8'))
     expected_release = '.'.join(build.split('.')[:3]) + '+' + build.split('.')[-1]
@@ -231,6 +244,7 @@ def capture(args):
                'oracle_sha256': digest(run / 'oracle-source.py')})
     before = snapshot(project)
     installation = bind_installation(args.installation, args.edt)
+    selected_vm = select_vm(installation, getattr(args, 'jvm_library', None))
     write_json(run / 'installation-bound.json', installation)
     installation_hash = digest(args.installation)
     lab_path(args.schema_evidence)
@@ -257,13 +271,12 @@ def capture(args):
             if original_ini.count('-vmargs') != 1:
                 raise OracleError('Expected one JVM section in pinned EDT INI')
             launcher, vmargs = original_ini.split('-vmargs', 1)
-            java = next(row['path'] for row in installation['runtime_files'] if Path(row['path']).name == 'java')
             ini = run / '1cedt.ini'
             launcher = launcher.replace('../Eclipse/', str(args.edt.parent) + '/')
-            ini.write_text(launcher + '-vm\n' + java + '\n-configuration\n' +
+            ini.write_text(launcher + '-vm\n' + str(selected_vm) + '\n-configuration\n' +
                 str(run / 'edt-configuration') + '\n-nl\nen_US\n-user\n' + str(run / 'user') +
                 '\n-vmargs' + vmargs, encoding='utf-8')
-            write_json(run / 'launch-ini.json', {'path': str(ini), 'sha256': digest(ini), 'java': java})
+            write_json(run / 'launch-ini.json', {'path': str(ini), 'sha256': digest(ini), 'selected_vm': str(selected_vm), 'selection_sha256': digest(selected_vm)})
             edt = [str(args.edt), '-ini-file', str(ini), '-data', str(run / 'workspace'),
                    '-timeout', str(args.timeout), '-vmargs', f'-Xmx{args.heap_gib}g',
                    f'-Duser.home={run / "home"}', f'-Djava.io.tmpdir={run / "tmp"}', '-command']
@@ -324,7 +337,7 @@ def capture(args):
                 'scope': 'Same authentic EDT project, installed EDT export, fresh native file DB create/import/export; no activation claim',
                 'corpus_label': args.corpus_label,
                 'installed_edt_validation': 'NOT_EVALUATED; content comparison is not clean SDK validation',
-                'observed_edt_errors': observed_errors,
+                'observed_edt_errors': observed_errors, 'selected_vm': str(selected_vm),
                 'versions': versions, 'source_profile': args.source_profile, 'runtime': args.runtime,
                 'xml_version': args.xml_version, 'schema_evidence_sha256': schema_hash,
                 'installation_manifest_sha256': installation_hash, 'counts': report['counts']}
@@ -356,6 +369,7 @@ def main():
         parser.add_argument(f'--{name}', type=Path, required=True)
     parser.add_argument('--edt-build', required=True, help='Exact CLI build; never inferred from a profile')
     parser.add_argument('--source-profile', required=True, help='Explicit supported EDT release/XML profile')
+    parser.add_argument('--jvm-library', type=Path, help='Explicit hash-bound Java-home lib/server/libjvm.dylib; default executable selection preserved')
     parser.add_argument('--corpus-label', required=True, help='Actual supplied corpus; empty controls never establish BSP acceptance')
     parser.add_argument('--compatibility-probe', action='store_true',
                         help='Explicitly compare a different tool/model release; never emit PASS')

@@ -183,6 +183,38 @@ class NativeReferenceControls(unittest.TestCase):
         with self.assertRaisesRegex(harness.OracleError, 'Schema bundle hash'):
             self.run_synthetic(args)
 
+    def server_fixture(self):
+        args = self.fixture()
+        library = self.root / 'jdk/lib/server/libjvm.dylib'
+        library.parent.mkdir(parents=True)
+        library.write_bytes(b'synthetic server JVM')
+        args.jvm_library = library
+        data = json.loads(args.installation.read_text())
+        data['runtime_files'].append({'path': str(library), 'bytes': library.stat().st_size, 'sha256': harness.digest(library)})
+        args.installation.write_text(json.dumps(data))
+        return args
+
+    def test_explicit_server_library_is_bound_and_selected_in_private_ini(self):
+        args = self.server_fixture()
+        code, _ = self.run_synthetic(args)
+        self.assertEqual(code, 0)
+        self.assertIn('-vm\n' + str(args.jvm_library) + '\n', (args.run / '1cedt.ini').read_text())
+        selection = json.loads((args.run / 'launch-ini.json').read_text())
+        self.assertEqual(selection['selection_sha256'], harness.digest(args.jvm_library))
+
+    def test_uninventoried_server_library_is_refused(self):
+        args = self.fixture()
+        args.jvm_library = self.root / 'jdk/lib/server/libjvm.dylib'
+        with self.assertRaisesRegex(harness.OracleError, 'absent from installation inventory'):
+            self.run_synthetic(args)
+        self.assertFalse((args.run / 'result.json').exists())
+
+    def test_server_library_mutation_cannot_leave_pass_result(self):
+        args = self.server_fixture()
+        with self.assertRaisesRegex(harness.OracleError, 'Runtime inventory differs'):
+            self.run_synthetic(args, mutation=lambda a, _: a.jvm_library.write_bytes(b'changed'))
+        self.assertFalse((args.run / 'result.json').exists())
+
     def test_any_content_difference_is_failure(self):
         args = self.fixture()
         code, _ = self.run_synthetic(args, changed=True)
