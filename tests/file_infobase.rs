@@ -234,9 +234,9 @@ fn an_infobase_in_an_unmeasured_locale_is_not_imported() {
     let output = import(&db, &fixtures().join("tiny-xml"));
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     assert!(stderr.contains("de_DE"), "{stderr}");
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     assert!(stderr.contains("not supported on this OS"), "{stderr}");
     assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
     assert_eq!(fs::read_dir(&db).unwrap().count(), 1);
@@ -373,10 +373,21 @@ fn empty_configuration_supports_base_and_sync_exports() {
             fs::write(out.join("notes.txt"), "keep me").unwrap();
         }
         let mut command = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
+        // Native infobase export has a distinct no-op protocol. The custom
+        // source exporter retains independent --base/--sync composition.
         command
             .env("IBCMD_RS_LANGUAGE", "en")
-            .args(["infobase", "config", "export", "--platform=8.5.1"])
-            .arg(db_path(&db))
+            .args([
+                "mssql-dump-config",
+                "--main-configuration",
+                "--source-version=2.21",
+                "--extract-metadata-xml",
+                "--extract-module-text",
+                "--no-binary-rows",
+                "--file-infobase",
+            ])
+            .arg(&db)
+            .arg("--output-dir")
             .arg(&out);
         if use_base {
             command.arg("--base").arg(&base);
@@ -386,6 +397,9 @@ fn empty_configuration_supports_base_and_sync_exports() {
         }
         ok(&command.output().unwrap());
         let mut actual = masked(&out);
+        // The custom CLI additionally emits its diagnostic manifest; compare
+        // every configuration file against the native default XML as before.
+        assert!(actual.remove("manifest.json").is_some());
         if sync {
             assert_eq!(actual.remove("notes.txt").as_deref(), Some("keep me"));
             assert!(!out.join("Catalogs/Stale.xml").exists());

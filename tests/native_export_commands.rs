@@ -739,3 +739,42 @@ fn object_root_and_ancestor_links_are_rejected_before_any_target_file_changes() 
         assert_eq!(value["ok"], false);
     }
 }
+
+#[test]
+fn native_empty_base_and_sync_noops_preserve_their_output_contracts() {
+    let (root, db) = lab("empty-incremental-noop");
+    let mut bytes = Vec::new();
+    flate2::read::GzDecoder::new(fs::File::open(fixture().join("empty.1CD.gz")).unwrap())
+        .read_to_end(&mut bytes)
+        .unwrap();
+    fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+    let current = run(&db, &["info"], &[]);
+    ok(&current);
+    let base = root.join("base.xml");
+    fs::write(&base, &current.stdout).unwrap();
+    let absent = root.join("absent-output");
+    ok(&run(
+        &db,
+        &[],
+        &[opt("base", &base), absent.clone().into_os_string()],
+    ));
+    assert!(
+        !absent.exists(),
+        "native equal-base export must stay a no-op"
+    );
+    let output = root.join("sync-output");
+    fs::create_dir(&output).unwrap();
+    fs::write(output.join("ConfigDumpInfo.xml"), current.stdout).unwrap();
+    fs::write(output.join("notes.txt"), b"keep local bytes").unwrap();
+    let before = tree(&output);
+    ok(&run(
+        &db,
+        &[],
+        &["--sync".into(), output.clone().into_os_string()],
+    ));
+    assert_eq!(
+        tree(&output),
+        before,
+        "native unchanged sync must not publish or prune"
+    );
+}

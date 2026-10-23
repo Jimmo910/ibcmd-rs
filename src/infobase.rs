@@ -1545,6 +1545,13 @@ mod tests {
         // This is the actual export boundary after any earlier preflight.
         // A freshly loaded reference can now require full export.
         match case {
+            "empty" => {
+                let mut bytes = Vec::new();
+                flate2::read::GzDecoder::new(fs::File::open(fixture.join("empty.1CD.gz")).unwrap())
+                    .read_to_end(&mut bytes)
+                    .unwrap();
+                fs::write(args.db_path.as_ref().unwrap().join("1Cv8.1CD"), bytes).unwrap();
+            }
             "rename" => base.entries[0].name.push_str("PreviousLabName"),
             "body-role" => {
                 let entry = base
@@ -1632,10 +1639,11 @@ mod tests {
         // real pipeline cases in a child isolated from other parallel unit tests.
         const CHILD: &str = "IBCMD_RS_TEST_NATIVE_SELECTION_CHILD";
         if std::env::var_os(CHILD).is_some() {
-            for case in ["remove", "rename", "removed-part", "body-role"] {
+            for case in ["remove", "rename", "removed-part", "body-role", "empty"] {
                 native_pipeline_refuses_stale_preflight_reference(case, false);
             }
             native_pipeline_refuses_stale_preflight_reference("remove", true);
+            native_pipeline_refuses_stale_preflight_reference("empty", true);
             return;
         }
         let output = std::process::Command::new(std::env::current_exe().unwrap())

@@ -4730,6 +4730,20 @@ fn dump_table_rows_streamed(
         && extract_metadata_xml
         && selected_file_names.is_empty()
     {
+        // Empty storage still owns native full-export validation. A reference
+        // containing removed rows must refuse before publishing defaults.
+        let selection = incremental
+            .map(|plan| {
+                plan.select_for_export(
+                    &BTreeMap::new(),
+                    Some(&incremental::ConfigurationNames::default()),
+                    source_version,
+                )
+            })
+            .transpose()?;
+        if incremental.is_some_and(|plan| plan.is_native()) {
+            incremental::prepare_output_dir(output_dir)?;
+        }
         let output = match sink {
             Some(sink) => OutputWriter::from_env_to_sink(sink),
             None => OutputWriter::from_env().with_existing_folder(output_dir),
@@ -4744,12 +4758,13 @@ fn dump_table_rows_streamed(
         timings.add_output_write(&written);
         let incremental = incremental
             .map(|plan| {
-                let selection = plan.select(
-                    &BTreeMap::new(),
-                    Some(&incremental::ConfigurationNames::default()),
-                    source_version,
-                );
-                plan.finish(output_dir, &written_paths, &selection)
+                plan.finish(
+                    output_dir,
+                    &written_paths,
+                    selection
+                        .as_ref()
+                        .expect("incremental selection prepared above"),
+                )
             })
             .transpose()?;
         let mut source_assets = SourceAssetCompletenessReport::default();
