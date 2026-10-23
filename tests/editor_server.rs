@@ -580,6 +580,12 @@ fn serve_exports_objects_as_the_command_line_does() {
             let read = server.ok("source/read", json!({"infobase": id, "path": path}));
             assert_eq!(read["exists"], true, "{id}: {path}");
             assert_eq!(read["path"], json!(path));
+            // Состав файлов принадлежит той же выгрузке, что и прочитанные байты.
+            let files = read["files"].as_array().expect("состав файлов объекта");
+            assert!(files.contains(&json!(path)));
+            for file in files {
+                assert!(expected.contains_key(file.as_str().unwrap()));
+            }
             assert!(content(&read) == *bytes, "{id}: source/read {path}");
         }
         let missing = server.ok(

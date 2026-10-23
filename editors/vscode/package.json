@@ -24,10 +24,11 @@
   },
   "scripts": {
     "compile": "tsc -p .",
-    "test": "npm run compile && node --test test/core.test.js test/real.test.js test/connection.test.js",
+    "test": "npm run compile && node --test test/core.test.js test/real.test.js test/connection.test.js test/configuration-tree.test.js",
     "test:host": "npm run compile && node test/host.js",
     "format": "prettier --write src test package.json tsconfig.json",
-    "format:check": "prettier --check src test package.json tsconfig.json"
+    "format:check": "prettier --check src test package.json tsconfig.json",
+    "test:tree-host": "npm run compile && node test/tree-host.js"
   },
   "contributes": {
     "commands": [
@@ -54,6 +55,24 @@
       {
         "command": "ibcmd.forgetPassword",
         "title": "ibcmd-rs: Forget Connection Password"
+      },
+      {
+        "command": "ibcmd.tree.xml",
+        "title": "ibcmd-rs: Открыть каталог XML"
+      },
+      {
+        "title": "ibcmd-rs: Обновить дерево",
+        "command": "ibcmd.tree.refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "title": "ibcmd-rs: Найти объект",
+        "command": "ibcmd.tree.search",
+        "icon": "$(search)"
+      },
+      {
+        "command": "ibcmd.tree.openLocal",
+        "title": "ibcmd-rs: Открыть местный файл"
       }
     ],
     "configuration": {
@@ -98,11 +117,46 @@
             "additionalProperties": false
           },
           "description": "Friendly names and authentication preferences; passwords belong in SecretStorage."
+        },
+        "ibcmd.sourceDirectory": {
+          "description": "Каталог XML для перехода к местным файлам, относительно папки рабочей области.",
+          "type": "string",
+          "default": ".",
+          "scope": "resource"
         }
       }
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "ibcmd.configuration",
+          "name": "Конфигурация 1С"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "group": "navigation",
+          "command": "ibcmd.tree.refresh",
+          "when": "view == ibcmd.configuration"
+        },
+        {
+          "group": "navigation",
+          "command": "ibcmd.tree.search",
+          "when": "view == ibcmd.configuration"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ibcmd.tree.openLocal",
+          "when": "view == ibcmd.configuration && viewItem == ibcmd.source"
+        }
+      ]
     }
   },
   "dependencies": {
+    "@xmldom/xmldom": "0.9.12",
     "toml-eslint-parser": "^0.10.0"
   },
   "devDependencies": {

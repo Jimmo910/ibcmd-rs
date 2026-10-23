@@ -650,6 +650,7 @@ impl State {
             "path": path,
             "object": exported.object.full_name,
             "version": exported.version,
+            "files": exported.files.keys().collect::<Vec<_>>(),
             "exists": false,
         });
         if let Some(bytes) = exported.files.get(&path) {

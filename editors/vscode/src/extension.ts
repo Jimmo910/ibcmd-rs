@@ -3,12 +3,14 @@ import * as path from "node:path";
 import { RpcClient, RpcError } from "./rpc";
 import { Database, editConfig, idOf, snapshot, saveConfig } from "./config";
 import { Base, Metadata, Generation, pendingText } from "./status";
+import { ConfigurationView } from "./configuration-view";
 
 export function secretKey(folder: string, id: string, user: string): string {
   return `ibcmd:${JSON.stringify([folder, id, user])}`;
 }
 export async function activate(context: vscode.ExtensionContext) {
   if (!vscode.workspace.isTrusted) return;
+  const configuration = new ConfigurationView(context);
   const status = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     40,
@@ -95,6 +97,7 @@ export async function activate(context: vscode.ExtensionContext) {
     )?.base;
   }
   async function switchTo(f: vscode.WorkspaceFolder, b: Base) {
+    configuration.disconnect();
     const stamp = generation.next();
     const previous = client;
     client = undefined;
@@ -143,6 +146,7 @@ export async function activate(context: vscode.ExtensionContext) {
       rpc = await start(f, () => {
         if (generation.current(stamp)) {
           generation.next();
+          configuration.disconnect();
           status.text = `$(warning) ${label(f, b)} · ${b.platform} · disconnected · pending unknown`;
         }
       });
@@ -197,6 +201,14 @@ export async function activate(context: vscode.ExtensionContext) {
               if (abort.signal.aborted) throw new Error("Cancelled");
             }
             if (generation.current(stamp)) {
+              configuration.connect(
+                rpc!,
+                path.resolve(
+                  f.uri.fsPath,
+                  config(f).get<string>("sourceDirectory", "."),
+                ),
+                b.id,
+              );
               status.text = `$(database) ${label(f, b)} · ${b.platform} · ${pending}`;
               status.tooltip = `${f.name}: ${b.id}. Click to switch; Reload Connections refreshes pending state.`;
               await context.workspaceState.update(
@@ -295,6 +307,7 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   };
   async function invalidate() {
+    configuration.disconnect();
     const stamp = generation.next();
     const old = client;
     client = undefined;
@@ -509,7 +522,7 @@ export async function activate(context: vscode.ExtensionContext) {
       void client?.dispose();
     },
   });
-  return { status: () => status.text };
+  return { status: () => status.text, configuration };
 }
 import { readConfig } from "./config";
 function readLocal(text: string, id: string | undefined) {
