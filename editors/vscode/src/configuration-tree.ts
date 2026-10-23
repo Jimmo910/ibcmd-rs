@@ -383,6 +383,17 @@ export class XmlSource implements Source {
       if (signal.aborted) throw new Error("Чтение отменено");
       let entries;
       try {
+        const resolved = await fs.realpath(localPath(this.directory, dir));
+        const relative = path.relative(
+          await fs.realpath(this.directory),
+          resolved,
+        );
+        if (
+          relative === ".." ||
+          relative.startsWith(".." + path.sep) ||
+          path.isAbsolute(relative)
+        )
+          throw new Error("Каталог находится вне дерева исходников");
         entries = await fs.readdir(localPath(this.directory, dir), {
           withFileTypes: true,
         });
