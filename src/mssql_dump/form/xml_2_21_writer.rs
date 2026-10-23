@@ -1701,7 +1701,12 @@ mod tests {
             ]),
             ..FormFactsV8_5_1::default()
         };
-        let (written, assets) = apply_form_facts_8_5_1(xml, &facts, &BTreeMap::new()).unwrap();
+        // The spelling of the oldest 8.5 build, whatever a parallel test noted.
+        let (written, assets) =
+            crate::platform::with_export_default_button_importance(false, || {
+                apply_form_facts_8_5_1(xml, &facts, &BTreeMap::new())
+            })
+            .unwrap();
         assert!(assets.is_empty());
         let expected = form(
             &[
