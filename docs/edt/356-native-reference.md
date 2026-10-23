@@ -11,7 +11,8 @@ The harness requires physical paths under
 `/Volumes/Work/Dev/ibcmd-rs-lab` for the project, candidate, copied EDT installation,
 installation/schema evidence and new run. Native SDK may remain installed under
 `/opt/1cv8`. It copies the Eclipse configuration and project into the new run,
-sets explicit workspace/configuration, Java home/temp, HOME/XDG and native
+uses the custom Mac CLI `-ini-file` to pin workspace/configuration and Java,
+sets Java home/temp, HOME/XDG and native
 `--data/--db-path/--temp` paths. Commands use a persistent advisory macOS lab lock;
 coordinate the native/heavy slot with the batch planner as well, because older
 harnesses do not use this lock. It does not replace the existing Windows oracle.
@@ -71,12 +72,12 @@ changes; #358 owns installed EDT preparation. Real discrepancies must be sent
 with exact path/hash rows and minimal synthetic reproductions to #355 before
 codec edits.
 
-Fourteen synthetic controls passed on 2026-10-23. They exercise correct native
+Seventeen synthetic controls passed on 2026-10-23. They exercise correct native
 input routing, complete missing/extra/changed rows, CDI retention, source/tool/
-plugin/reference mutation, failed native import, preserved failed command bytes,
+plugin/Java/schema/reference mutation, incomplete runtime manifests, failed native import, preserved failed command bytes,
 interrupted process cleanup, path/provenance guards, and compatibility verdicts.
 Fixtures are retained under the external TMPDIR. Local log:
-`/Volumes/Work/Dev/ibcmd-rs-lab/logs/issue356-harness-controls-r3.log`.
+`/Volumes/Work/Dev/ibcmd-rs-lab/logs/issue356-harness-controls-r6.log`.
 
 ```sh
 source /Volumes/Work/Dev/ibcmd-rs-lab/lab-env.sh

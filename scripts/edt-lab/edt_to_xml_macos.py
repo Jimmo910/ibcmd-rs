@@ -67,11 +67,19 @@ def bind_installation(path, edt):
     rows = data['runtime_files']
     if not rows or len({row['path'] for row in rows}) != len(rows):
         raise OracleError('Missing or duplicate runtime inventory rows')
-    required = {edt, edt.parent / '1cedt.ini', edt.parent / 'configuration/config.ini'}
+    java_rows = [Path(row['path']) for row in rows if Path(row['path']).name == 'java']
+    if len(java_rows) != 1:
+        raise OracleError('Runtime inventory must bind one explicit Java executable')
+    required = {edt, edt.parent / '1cedt.ini', edt.parent / 'configuration/config.ini',
+                edt.parent / '1cedtcli-startup.txt', edt.parent.parent / 'Info.plist',
+                java_rows[0], java_rows[0].parent.parent / 'release'}
     if not required.issubset({Path(row['path']) for row in rows}):
         raise OracleError('Runtime inventory omits launcher configuration')
     for row in rows:
-        file = lab_path(Path(row['path']))
+        file = Path(row['path'])
+        if not file.is_absolute():
+            raise OracleError('Runtime inventory paths must be absolute')
+        no_links(file)
         if file.stat().st_size != row['bytes'] or digest(file) != row['sha256']:
             raise OracleError(f'Runtime inventory differs: {file}')
     return data
@@ -98,6 +106,8 @@ def native_slot(run):
 
 def command(run, label, argv, timeout):
     env = os.environ.copy()
+    for key in ('JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS'):
+        env.pop(key, None)
     env.update({key: str(run / 'tmp') for key in ('TMPDIR', 'TEMP', 'TMP')})
     for key, directory in [('HOME', 'home'), ('XDG_CACHE_HOME', 'cache'),
                            ('XDG_CONFIG_HOME', 'config'), ('XDG_DATA_HOME', 'data'),
@@ -183,8 +193,20 @@ def capture(args):
                 raise OracleError('Copied EDT installation lacks Eclipse configuration')
             snapshot(configuration)  # reject links/special files before copying
             shutil.copytree(configuration, run / 'edt-configuration')
-            edt = [str(args.edt), '-configuration', str(run / 'edt-configuration'), '-data', str(run / 'workspace'), '-timeout', str(args.timeout),
-                   '-nl', 'en_US', '-vmargs', f'-Xmx{args.heap_gib}g',
+            # Mac 1cedtcli is a custom launcher: generic Eclipse switches
+            # belong in its -ini-file, not on the CLI (verified by #358).
+            original_ini = (args.edt.parent / '1cedt.ini').read_text(encoding='utf-8')
+            if original_ini.count('-vmargs') != 1:
+                raise OracleError('Expected one JVM section in pinned EDT INI')
+            launcher, vmargs = original_ini.split('-vmargs', 1)
+            java = next(row['path'] for row in installation['runtime_files'] if Path(row['path']).name == 'java')
+            ini = run / '1cedt.ini'
+            ini.write_text(launcher + '-vm\n' + java + '\n-configuration\n' +
+                str(run / 'edt-configuration') + '\n-user\n' + str(run / 'user') +
+                '\n-vmargs' + vmargs, encoding='utf-8')
+            write_json(run / 'launch-ini.json', {'path': str(ini), 'sha256': digest(ini), 'java': java})
+            edt = [str(args.edt), '-ini-file', str(ini), '-data', str(run / 'workspace'),
+                   '-timeout', str(args.timeout), '-vmargs', f'-Xmx{args.heap_gib}g',
                    f'-Duser.home={run / "home"}', f'-Djava.io.tmpdir={run / "tmp"}', '-command']
             versions = {
                 'native': command(run, 'native-version', native + ['--version'], 60).decode('utf-8').strip(),

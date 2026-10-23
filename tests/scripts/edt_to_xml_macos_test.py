@@ -25,7 +25,9 @@ class NativeReferenceControls(unittest.TestCase):
             self.fail('Set IBCMD_TEST_KEEP_FIXTURES=1; all synthetic fixtures are retained')
         temporary = Path(os.environ.get('TMPDIR', '')).absolute()
         harness.lab_path(temporary)
-        self.root = Path(tempfile.mkdtemp(prefix='issue356-controls-', dir=temporary))
+        retained = Path(tempfile.mkdtemp(prefix='issue356-controls-', dir=temporary))
+        self.root = retained / 'Eclipse'
+        self.root.mkdir()
 
     def fixture(self):
         project = self.root / 'project'
@@ -44,10 +46,19 @@ class NativeReferenceControls(unittest.TestCase):
         (self.root / 'configuration/config.ini').write_text('synthetic=true')
         (self.root / 'plugins').mkdir()
         (self.root / 'plugins/model.jar').write_bytes(b'synthetic model')
-        (self.root / '1cedt.ini').write_text('synthetic=true')
+        (self.root / '1cedt.ini').write_text('-startup\nsynthetic.jar\n-vmargs\n-Xmx1g\n')
         installation = self.root / 'installation.json'
+        java = self.root / 'jdk/bin/java'
+        java.parent.mkdir(parents=True)
+        java.write_bytes(b'synthetic java')
+        (self.root / 'jdk/release').write_bytes(b'synthetic runtime release')
+        (self.root / '1cedtcli-startup.txt').write_text('synthetic startup')
+        # Each retained fixture has its own installation parent.
+        plist = self.root.parent / 'Info.plist'
+        plist.write_text('synthetic plist')
         rows = [{'path': str(p), 'bytes': p.stat().st_size, 'sha256': harness.digest(p)}
-                for p in (tools[0], self.root / '1cedt.ini', self.root / 'configuration/config.ini')]
+                for p in (tools[0], self.root / '1cedt.ini', self.root / 'configuration/config.ini',
+                          self.root / '1cedtcli-startup.txt', plist, java, self.root / 'jdk/release')]
         harness.write_json(installation, {'schema_version': 1, 'edt_cli': str(tools[0]),
             'edt_cli_sha256': harness.digest(tools[0]), 'plugins': harness.snapshot(self.root / 'plugins'),
             'runtime_files': rows})
@@ -101,6 +112,10 @@ class NativeReferenceControls(unittest.TestCase):
         self.assertEqual(report['strict']['differing_rows'][0]['path'], 'ConfigDumpInfo.xml')
         self.assertIsNotNone(report['configuration_content']['original_excluded_rows'][0]['right']['sha256'])
         self.assertTrue((args.run / 'project-after.json').is_file())
+        edt_argv = dict(calls)['edt-export']
+        self.assertIn('-ini-file', edt_argv)
+        self.assertNotIn('-configuration', edt_argv)
+        self.assertIn(str(args.run / 'edt-configuration'), (args.run / '1cedt.ini').read_text())
 
     def test_compatibility_probe_never_claims_acceptance(self):
         args = self.fixture()
@@ -113,6 +128,27 @@ class NativeReferenceControls(unittest.TestCase):
         args = self.fixture()
         with self.assertRaisesRegex(harness.OracleError, 'plugin inventory'):
             self.run_synthetic(args, mutation=lambda a, _: (a.edt.parent / 'plugins/model.jar').write_bytes(b'changed'))
+        self.assertFalse((args.run / 'result.json').exists())
+
+    def test_java_mutation_cannot_leave_pass_result(self):
+        args = self.fixture()
+        with self.assertRaisesRegex(harness.OracleError, 'Runtime inventory differs'):
+            self.run_synthetic(args, mutation=lambda a, _: (a.edt.parent / 'jdk/bin/java').write_bytes(b'changed'))
+        self.assertFalse((args.run / 'result.json').exists())
+
+    def test_schema_evidence_mutation_cannot_leave_pass_result(self):
+        args = self.fixture()
+        with self.assertRaisesRegex(harness.OracleError, 'Source project or executable changed'):
+            self.run_synthetic(args, mutation=lambda a, _: a.schema_evidence.write_text('{}'))
+        self.assertFalse((args.run / 'result.json').exists())
+
+    def test_incomplete_installation_manifest_refused(self):
+        args = self.fixture()
+        data = json.loads(args.installation.read_text())
+        data['runtime_files'] = [row for row in data['runtime_files'] if not row['path'].endswith('/java')]
+        args.installation.write_text(json.dumps(data))
+        with self.assertRaisesRegex(harness.OracleError, 'explicit Java'):
+            self.run_synthetic(args)
         self.assertFalse((args.run / 'result.json').exists())
 
     def test_any_content_difference_is_failure(self):
