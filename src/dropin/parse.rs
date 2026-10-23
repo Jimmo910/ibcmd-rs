@@ -1870,12 +1870,11 @@ mod tests {
             ]),
             Err(Refusal::UnsupportedCommand("infobase create".to_string()))
         );
-        assert_eq!(
+        // load is served (#353): its file is the argument
+        assert!(matches!(
             parse(&["config", "load", "--db-name=b", "--user=Админ", "a.cf"]),
-            Err(Refusal::UnsupportedCommand(
-                "infobase config load".to_string()
-            ))
-        );
+            Ok(Invocation::Load(LoadRequest { path, .. })) if path == "a.cf"
+        ));
         assert_eq!(
             parse(&["config", "export", "objects", "-r", "Catalog.A"]),
             Err(Refusal::UnsupportedCommand(
