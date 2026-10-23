@@ -1457,3 +1457,131 @@ fn selected_supported_legacy_shape_retains_a_real_model_coverage_fallback() {
         }
     }
 }
+
+fn install_legacy_fallback_object(db: &Path, command: bool, invalid_slot: Option<usize>) -> String {
+    use ibcmd_rs::metadata_model::brace::Brace;
+    let uuid = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    let (kind, name, properties) = if command {
+        (
+            "CommonCommand",
+            "LegacyCommand",
+            "<Group>ActionsPanelTools</Group><Representation>Auto</Representation><Picture/><ToolTip/><Shortcut/><IncludeHelpInContents>false</IncludeHelpInContents><CommandParameterType/><ParameterUseMode>Single</ParameterUseMode><ModifiesData>false</ModifiesData><OnMainServerUnavalableBehavior>Auto</OnMainServerUnavalableBehavior>",
+        )
+    } else {
+        (
+            "Subsystem",
+            "LegacySubsystem",
+            "<IncludeHelpInContents>false</IncludeHelpInContents><IncludeInCommandInterface>true</IncludeInCommandInterface><UseOneCommand>false</UseOneCommand><Picture/><Explanation/><Content/>",
+        )
+    };
+    let xml = format!(
+        r#"<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.21"><{kind} uuid="{uuid}"><Properties><Name>{name}</Name>{properties}</Properties><ChildObjects/></{kind}></MetaDataObject>"#
+    );
+    install_synthetic_object(db, kind, name, uuid, xml.as_bytes(), None);
+    mutate_descriptor(db, uuid, |descriptor| {
+        let payload = descriptor.as_list_mut().unwrap()[1].as_list_mut().unwrap();
+        let fields = if command {
+            let body = payload[1].as_list_mut().unwrap();
+            let fields = body[2].as_list_mut().unwrap();
+            assert_eq!(fields[0].as_atom(), Some("9"));
+            assert_eq!(fields.pop().unwrap().as_atom(), Some("0"));
+            fields[0] = Brace::num(8);
+            fields
+        } else {
+            assert_eq!(payload[0].as_atom(), Some("22"));
+            payload[0] = Brace::num(21);
+            payload
+        };
+        if let Some(slot) = invalid_slot {
+            if slot == fields.len() {
+                fields.push(Brace::num(99));
+            } else {
+                fields[slot] = Brace::num(99);
+            }
+        }
+    });
+    format!("{kind}.{name}")
+}
+
+#[test]
+fn selected_legacy_aliases_never_default_present_invalid_scalars() {
+    let mut failures = Vec::new();
+    for (command, slot) in [
+        (false, 2),
+        (false, 4),
+        (false, 8),
+        (true, 6),
+        (true, 10),
+        (true, 2),
+        (true, 11),
+        (true, 12),
+    ] {
+        let (root, db) = lab("legacy-alias-invalid-scalar");
+        let name = install_legacy_fallback_object(&db, command, Some(slot));
+        let database_before = fs::read(db.join("1Cv8.1CD")).unwrap();
+        for legacy in [false, true] {
+            for existing in [false, true] {
+                let target = root.join(format!("out-{legacy}-{existing}"));
+                if existing {
+                    fs::create_dir(&target).unwrap();
+                    fs::write(target.join("sentinel.txt"), b"unchanged").unwrap();
+                }
+                let before = if existing {
+                    tree(&target)
+                } else {
+                    BTreeMap::new()
+                };
+                let output = selected_with_legacy(&db, &target, &[&name], legacy);
+                let preserved =
+                    target.exists() == existing && (!existing || tree(&target) == before);
+                eprintln!(
+                    "legacy alias scalar: command={command}, slot={slot}, legacy={legacy}, existing={existing}, code={:?}, preserved={preserved}",
+                    output.status.code()
+                );
+                if output.status.code() != Some(FAILED) || !preserved {
+                    failures.push(format!("command={command}, slot={slot}, legacy={legacy}, existing={existing}, code={:?}, preserved={preserved}, stderr={}",output.status.code(),String::from_utf8_lossy(&output.stderr)));
+                }
+            }
+        }
+        let target = root.join("unselected-language");
+        let output = selected_with_legacy(&db, &target, &["Language.English"], false);
+        ok(&output);
+        assert_eq!(
+            tree(&target),
+            tree(&fixture().join("tiny-xml"))
+                .into_iter()
+                .filter(|(name, _)| name.starts_with("Languages/"))
+                .collect()
+        );
+        assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), database_before);
+    }
+    assert!(
+        failures.is_empty(),
+        "legacy aliases silently accepted invalid present scalar values:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn selected_common_command_retains_its_own_model_coverage_fallback() {
+    let (root, db) = lab("legacy-command-coverage");
+    let name = install_legacy_fallback_object(&db, true, None);
+    let expected_path = root.join("legacy");
+    let output = selected_with_legacy(&db, &expected_path, &[&name], true);
+    ok(&output);
+    let target = root.join("model-fallback");
+    let output = selected_with_legacy(&db, &target, &[&name], false);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    eprintln!(
+        "CommonCommand8 exact row fallback: code={:?}, stderr={stderr}",
+        output.status.code()
+    );
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    assert!(
+        stderr.contains("ffffffff-ffff-4fff-8fff-ffffffffffff:")
+            && stderr.contains("CommonCommand")
+            && stderr.contains("the legacy converter writes it"),
+        "not this row's Some(Err) fallback: {stderr}"
+    );
+    assert_eq!(tree(&target), tree(&expected_path));
+}
