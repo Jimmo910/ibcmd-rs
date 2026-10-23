@@ -555,3 +555,190 @@ fn a_form_saved_with_lf_line_breaks_loads() {
     fs::write(&form, text).unwrap();
     common::assert_tree_eq(&tree, &back);
 }
+
+fn run_8_5(args: &[&std::ffi::OsStr]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+        .args(args)
+        .args(["--platform", "8.5.1"])
+        .output()
+        .expect("run ibcmd-rs")
+}
+
+/// The content of a subsystem, top-level or nested, is loaded (#417): the
+/// patch of a subsystem's base row kept its old content, and a nested one
+/// had no entry at all.
+#[test]
+fn an_edited_subsystem_content_loads_at_any_depth() {
+    let base = common::fixture("nested_subsystems").join("input.cf");
+    let module = "\t\t\t<Content>\r\n\t\t\t\t<xr:Item xsi:type=\"xr:MDObjectRef\">CommonModule.ФайловаяБазаПроверка</xr:Item>\r\n\t\t\t</Content>\r\n";
+    let empty = "\t\t\t<Content/>\r\n";
+    for (tag, file, from, to) in [
+        (
+            "nested",
+            "Subsystems/Верх/Subsystems/Низ.xml",
+            module,
+            empty,
+        ),
+        ("top", "Subsystems/Верх.xml", empty, module),
+    ] {
+        let tree = common::temp_dir(&format!("load-subsystem-{tag}"));
+        let run = run_8_5(&[
+            "cf".as_ref(),
+            "export".as_ref(),
+            base.as_os_str(),
+            tree.as_os_str(),
+        ]);
+        assert!(
+            run.status.success(),
+            "{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let path = tree.join(file);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains(from), "{tag}: {text}");
+        fs::write(&path, text.replace(from, to)).unwrap();
+
+        let out = fresh_output(&format!("load-subsystem-{tag}-out"), "cf");
+        let run = run_8_5(&[
+            "cf".as_ref(),
+            "load".as_ref(),
+            tree.as_os_str(),
+            out.as_os_str(),
+            "--base".as_ref(),
+            base.as_os_str(),
+        ]);
+        assert!(
+            run.status.success(),
+            "{tag}: {}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let back = common::temp_dir(&format!("load-subsystem-{tag}-back"));
+        let run = run_8_5(&[
+            "cf".as_ref(),
+            "export".as_ref(),
+            out.as_os_str(),
+            back.as_os_str(),
+        ]);
+        assert!(run.status.success());
+        let edited = fs::read(tree.join(file)).unwrap();
+        assert_eq!(fs::read(back.join(file)).unwrap(), edited, "{tag}");
+    }
+}
+
+fn plain_row(packed: &[u8]) -> String {
+    use std::io::Read;
+    let mut text = String::new();
+    flate2::read::DeflateDecoder::new(packed)
+        .read_to_string(&mut text)
+        .unwrap();
+    text
+}
+
+fn row_generation(packed: &[u8], name: &str) -> String {
+    let text = plain_row(packed);
+    let marker = format!("\"{name}\",");
+    let start = text.find(&marker).unwrap() + marker.len();
+    let generation = text[start..].trim_start().get(..36).unwrap();
+    uuid::Uuid::parse_str(generation).unwrap();
+    generation.to_owned()
+}
+
+#[test]
+fn a_recompiled_subsystem_updates_its_versions_entry() {
+    let base = common::fixture("nested_subsystems").join("input.cf");
+    let tree = common::temp_dir("load-subsystem-versions");
+    let output = run_8_5(&[
+        "cf".as_ref(),
+        "export".as_ref(),
+        base.as_os_str(),
+        tree.as_os_str(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let relative = "Subsystems/Верх/Subsystems/Низ.xml";
+    let file = tree.join(relative);
+    let xml = fs::read(&file).unwrap();
+    let subsystem = ibcmd_rs::module_blob::parse_simple_metadata_xml_properties(&xml)
+        .unwrap()
+        .uuid;
+    let module = ibcmd_rs::module_blob::parse_simple_metadata_xml_properties(
+        &fs::read(tree.join("CommonModules/ФайловаяБазаПроверка.xml")).unwrap(),
+    )
+    .unwrap()
+    .uuid;
+    let text = String::from_utf8(xml).unwrap();
+    let start = text.find("\t\t\t<Content>").unwrap();
+    let end = text[start..].find("</Content>").unwrap() + start + "</Content>".len();
+    let edited = format!("{}<Content/>{}", &text[..start + 3], &text[end..]);
+    fs::write(file, edited).unwrap();
+    let stored = packed_entries(&base);
+    let compiled = ibcmd_rs::mssql::compile_source_rows_offline(
+        &tree,
+        stored.clone().into_iter().collect(),
+        &[relative.to_owned()],
+        &[],
+    )
+    .unwrap();
+    assert_ne!(
+        compiled
+            .rows
+            .iter()
+            .find(|(id, _)| id == &subsystem)
+            .unwrap()
+            .1,
+        stored[&subsystem]
+    );
+    let updated = compiled.versions.unwrap();
+    assert_ne!(
+        row_generation(&updated, &subsystem),
+        row_generation(&stored["versions"], &subsystem)
+    );
+    assert_eq!(
+        row_generation(&updated, &module),
+        row_generation(&stored["versions"], &module)
+    );
+}
+
+#[test]
+fn an_adopted_subsystem_retains_its_stored_control_state() {
+    use ibcmd_rs::extension::adoption::{header_of, parse};
+    for fixture in ["props_b0", "props_b1", "props_b2", "props_all"] {
+        let (base, tree) = exported(
+            &format!("adopted/{fixture}"),
+            "input.cfe",
+            &format!("load-subsystem-adoption-{fixture}"),
+        );
+        let path = tree.join("Subsystems/Подсистема.xml");
+        let bytes = fs::read(&path).unwrap();
+        let uuid = ibcmd_rs::module_blob::parse_simple_metadata_xml_properties(&bytes)
+            .unwrap()
+            .uuid;
+        let original = plain_row(&packed_entries(&base)[&uuid]);
+        let adoption = parse(header_of(&original, &uuid).unwrap()).unwrap();
+        assert!(adoption.adopted);
+        let text = String::from_utf8(bytes).unwrap();
+        let edited = text.replace("<Comment/>", "<Comment>edited subsystem comment</Comment>");
+        assert_ne!(text, edited);
+        fs::write(&path, edited).unwrap();
+        let out = fresh_output(&format!("load-subsystem-adoption-{fixture}-out"), "cfe");
+        let output = load(&tree, &out, &base);
+        assert!(
+            output.status.success(),
+            "{fixture}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let loaded = plain_row(&packed_entries(&out)[&uuid]);
+        assert_eq!(
+            parse(header_of(&loaded, &uuid).unwrap()).unwrap(),
+            adoption,
+            "{fixture}"
+        );
+        let back = common::temp_dir(&format!("load-subsystem-adoption-{fixture}-back"));
+        assert!(common::export(&out, &back).status.success());
+        common::assert_tree_eq(&tree, &back);
+    }
+}

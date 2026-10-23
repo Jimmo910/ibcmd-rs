@@ -14,6 +14,9 @@ use super::*;
 /// The name the prefetched rows are filed under; no database is reached.
 const OFFLINE_DATABASE: &str = "offline-container";
 
+/// The metadata kind of a subsystem, as its XML names it.
+const SUBSYSTEM_KIND: &str = "Subsystem";
+
 /// The rows an offline compile gives.
 #[derive(Debug, Default)]
 pub struct CompiledContainerRows {
@@ -90,6 +93,24 @@ pub fn compile_source_rows_offline(
         let bytes =
             fs::read(xml).with_context(|| format!("failed to read XML {}", xml.display()))?;
         let properties = parse_simple_metadata_xml_properties(&bytes)?;
+        let metadata = crate::metadata_model::xml::MetadataXml::parse(&bytes)?;
+        let adopted = metadata
+            .object()?
+            .child("Properties")
+            .and_then(|properties| properties.child_text("ObjectBelonging"))
+            .map(str::trim)
+            == Some("Adopted");
+        // A subsystem is compiled whole from its XML: the patch of its base
+        // row keeps the base's content list and does not reach a nested
+        // subsystem (#417: an edited content, top-level or nested, did not
+        // export back), and the base-free compiler writes the БСП's 9 155
+        // files back byte for byte.
+        // An adopted subsystem's XML cannot express whether its always
+        // printed Content is controlled. Keep its original adoption header
+        // by patching the base row instead of inferring that state from XML.
+        if properties.kind == SUBSYSTEM_KIND && !adopted {
+            return Ok(false);
+        }
         let Some(row) = base_rows_for_structure.get(&properties.uuid) else {
             return Ok(false);
         };
@@ -102,9 +123,7 @@ pub fn compile_source_rows_offline(
         // sections, ...): an object whose children came or went is compiled
         // base-free -- which an adopted object's XML, holding only what the
         // extension controls, cannot be.
-        if String::from_utf8_lossy(&bytes).contains("<ObjectBelonging>Adopted</ObjectBelonging>")
-            && properties.kind != "Form"
-        {
+        if adopted && properties.kind != "Form" {
             bail!(
                 "{}: children added to or removed from an adopted object are not loaded yet",
                 relative(xml)
@@ -179,18 +198,6 @@ pub fn compile_source_rows_offline(
             rows.push((module.module_body_id.clone(), module.module_blob.clone()));
         }
     }
-    let versions = if has_versions {
-        let changes = source_stage_change_ids(&metadata_objects, &common_modules);
-        let blob = fetch_classified_versions_blob(
-            sql,
-            OFFLINE_DATABASE,
-            &legacy_non_xml_compile_axes(),
-            changes.len(),
-        )?;
-        Some(patch_versions_blob_bytes_allowing_additions(&blob, &changes, true)?.blob)
-    } else {
-        None
-    };
     if !new_xmls.is_empty() {
         new_xmls.sort();
         new_xmls.dedup();
@@ -207,6 +214,20 @@ pub fn compile_source_rows_offline(
             rows.extend(object.rows.into_iter().map(|row| (row.file_name, row.blob)));
         }
     }
+    let versions = if has_versions {
+        // Both patched and base-free rows changed, including subsystem
+        // descriptors compiled from new_xmls above.
+        let changes = rows.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>();
+        let blob = fetch_classified_versions_blob(
+            sql,
+            OFFLINE_DATABASE,
+            &legacy_non_xml_compile_axes(),
+            changes.len(),
+        )?;
+        Some(patch_versions_blob_bytes_allowing_additions(&blob, &changes, true)?.blob)
+    } else {
+        None
+    };
     Ok(CompiledContainerRows { rows, versions })
 }
 
