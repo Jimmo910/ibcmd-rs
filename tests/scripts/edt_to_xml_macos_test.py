@@ -1,0 +1,216 @@
+"""Synthetic controls only; fixtures retained, never native/EDT acceptance."""
+import contextlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts/edt-lab'))
+spec = importlib.util.spec_from_file_location('edt_to_xml_macos', ROOT / 'scripts/edt-lab/edt_to_xml_macos.py')
+harness = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(harness)
+
+
+class NativeReferenceControls(unittest.TestCase):
+    def setUp(self):
+        # Never run this test with a deleting teardown or an internal-disk temp.
+        if os.environ.get('IBCMD_TEST_KEEP_FIXTURES') != '1':
+            self.fail('Set IBCMD_TEST_KEEP_FIXTURES=1; all synthetic fixtures are retained')
+        temporary = Path(os.environ.get('TMPDIR', '')).absolute()
+        harness.lab_path(temporary)
+        self.root = Path(tempfile.mkdtemp(prefix='issue356-controls-', dir=temporary))
+
+    def fixture(self):
+        project = self.root / 'project'
+        for relative, content in [('.project', 'synthetic'), ('DT-INF/PROJECT.PMF', 'Runtime-Version: 8.5.1\n'),
+                                  ('src/Configuration/Configuration.mdo', '<synthetic/>')]:
+            path = project / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        tools = []
+        for name in ('edt', 'ours', 'native'):
+            path = self.root / name
+            path.write_text('synthetic tool; never executed')
+            path.chmod(0o700)
+            tools.append(path)
+        (self.root / 'configuration').mkdir()
+        (self.root / 'configuration/config.ini').write_text('synthetic=true')
+        (self.root / 'plugins').mkdir()
+        (self.root / 'plugins/model.jar').write_bytes(b'synthetic model')
+        (self.root / '1cedt.ini').write_text('synthetic=true')
+        installation = self.root / 'installation.json'
+        rows = [{'path': str(p), 'bytes': p.stat().st_size, 'sha256': harness.digest(p)}
+                for p in (tools[0], self.root / '1cedt.ini', self.root / 'configuration/config.ini')]
+        harness.write_json(installation, {'schema_version': 1, 'edt_cli': str(tools[0]),
+            'edt_cli_sha256': harness.digest(tools[0]), 'plugins': harness.snapshot(self.root / 'plugins'),
+            'runtime_files': rows})
+        schema = self.root / 'schema.json'
+        schema.write_text('{"synthetic": true}')
+        return SimpleNamespace(installation=installation, schema_evidence=schema, project=project, run=self.root / 'run', edt=tools[0], ours=tools[1], native=tools[2],
+                               runtime='8.5.1', edt_build='2025.2.3.30', native_build='8.5.1.1592',
+                               timeout=10, heap_gib=1, xml_version='2.21', source_profile='edt-2025.2.3-xml-2.21')
+
+    def fake_command(self, args, calls, *, changed=False, mutation=None, failed=None):
+        def command(run, label, argv, timeout):
+            calls.append((label, [str(x) for x in argv]))
+            harness.write_json(run / f'{label}.command.json', {'argv': [str(x) for x in argv],
+                'exit_code': 1 if label == failed else 0, 'synthetic': True})
+            if label == failed:
+                raise harness.OracleError('synthetic command failure')
+            if label.endswith('-version'):
+                return {'native-version': b'8.5.1.1592', 'ours-version': b'ibcmd-rs synthetic',
+                        'edt-version': args.edt_build.encode()}[label]
+            if label in ('edt-export', 'native-export', 'convert'):
+                directory = run / {'edt-export': 'edt-xml', 'native-export': 'native-xml', 'convert': 'ours-xml'}[label]
+                directory.mkdir()
+                (directory / 'Configuration.xml').write_bytes(b'<Configuration/>' if not (changed and label == 'convert') else b'<Changed/>')
+                if label == 'native-export':
+                    (directory / 'ConfigDumpInfo.xml').write_bytes(b'<storage-generation/>')
+            if label == 'convert' and mutation:
+                mutation(args, run)
+            return b''
+        return command
+
+    def run_synthetic(self, args, **options):
+        calls = []
+        with patch.object(harness.sys, 'platform', 'darwin'), patch.object(harness, 'native_slot', lambda _: contextlib.nullcontext()), \
+             patch.object(harness, 'command', side_effect=self.fake_command(args, calls, **options)):
+            code = harness.capture(args)
+        return code, calls
+
+    def test_same_project_export_is_native_import_input_and_full_diffs_retained(self):
+        args = self.fixture()
+        code, calls = self.run_synthetic(args)
+        self.assertEqual(code, 0)
+        imported = dict(calls)['native-import']
+        self.assertEqual(imported[-1], str(args.run / 'edt-xml'))
+        self.assertNotIn(str(args.run / 'ours-xml'), imported)
+        converted = dict(calls)['convert']
+        self.assertEqual(converted[2], str(args.project))
+        result = json.loads((args.run / 'result.json').read_text())
+        self.assertEqual(result['status'], 'PASS')
+        self.assertFalse(result['strict_equal'])
+        report = json.loads((args.run / 'comparison.json').read_text())
+        self.assertEqual(report['strict']['differing_rows'][0]['path'], 'ConfigDumpInfo.xml')
+        self.assertIsNotNone(report['configuration_content']['original_excluded_rows'][0]['right']['sha256'])
+        self.assertTrue((args.run / 'project-after.json').is_file())
+
+    def test_compatibility_probe_never_claims_acceptance(self):
+        args = self.fixture()
+        args.compatibility_probe = True
+        args.edt_build = '2026.2.1.3'
+        self.run_synthetic(args)
+        self.assertEqual(json.loads((args.run / 'result.json').read_text())['status'], 'COMPATIBILITY_PROBE_MATCH')
+
+    def test_plugin_mutation_cannot_leave_pass_result(self):
+        args = self.fixture()
+        with self.assertRaisesRegex(harness.OracleError, 'plugin inventory'):
+            self.run_synthetic(args, mutation=lambda a, _: (a.edt.parent / 'plugins/model.jar').write_bytes(b'changed'))
+        self.assertFalse((args.run / 'result.json').exists())
+
+    def test_any_content_difference_is_failure(self):
+        args = self.fixture()
+        code, _ = self.run_synthetic(args, changed=True)
+        self.assertEqual(code, 1)
+        report = json.loads((args.run / 'comparison.json').read_text())
+        self.assertEqual(report['configuration_content']['differing_rows'][0]['path'], 'Configuration.xml')
+        self.assertEqual(json.loads((args.run / 'result.json').read_text())['status'], 'FAIL')
+
+    def test_source_mutation_cannot_leave_pass_result(self):
+        args = self.fixture()
+        with self.assertRaisesRegex(harness.OracleError, 'Source project'):
+            self.run_synthetic(args, mutation=lambda a, _: (a.project / '.project').write_text('mutated'))
+        self.assertFalse((args.run / 'result.json').exists())
+        self.assertFalse(json.loads((args.run / 'immutability.json').read_text())['project_unchanged'])
+
+    def test_binary_mutation_cannot_leave_pass_result(self):
+        args = self.fixture()
+        with self.assertRaisesRegex(harness.OracleError, 'executable changed'):
+            self.run_synthetic(args, mutation=lambda a, _: a.ours.write_text('changed tool'))
+        self.assertFalse((args.run / 'result.json').exists())
+
+    def test_native_reference_mutation_cannot_leave_pass_result(self):
+        args = self.fixture()
+        with self.assertRaisesRegex(harness.OracleError, 'Native reference changed'):
+            self.run_synthetic(args, mutation=lambda _, r: (r / 'native-xml/Configuration.xml').write_text('changed'))
+        self.assertFalse((args.run / 'result.json').exists())
+        self.assertTrue((args.run / 'native-xml-after.json').is_file())
+
+    def test_interruption_kills_only_started_group_and_retains_receipt(self):
+        run = self.root / 'interrupted'
+        run.mkdir(); (run / 'tmp').mkdir()
+        from unittest.mock import Mock
+        proc = Mock(pid=987654)
+        proc.wait.side_effect = [KeyboardInterrupt(), -9]
+        with patch.object(harness.subprocess, 'Popen', return_value=proc), patch.object(harness.os, 'killpg') as kill:
+            with self.assertRaises(KeyboardInterrupt):
+                harness.command(run, 'interrupted', ['synthetic'], 1)
+        kill.assert_called_once_with(987654, harness.signal.SIGKILL)
+        record = json.loads((run / 'interrupted.command.json').read_text())
+        self.assertTrue(record['interrupted'])
+        self.assertEqual(record['exit_code'], -9)
+
+    def test_native_failure_preserves_evidence_and_does_not_convert(self):
+        args = self.fixture()
+        with self.assertRaisesRegex(harness.OracleError, 'synthetic command failure'):
+            self.run_synthetic(args, failed='native-import')
+        self.assertTrue((args.run / 'failure.json').is_file())
+        self.assertTrue((args.run / 'project-after.json').is_file())
+        self.assertFalse((args.run / 'convert.command.json').exists())
+        self.assertFalse((args.run / 'result.json').exists())
+
+    def test_existing_run_provenance_and_overlap_refused(self):
+        args = self.fixture()
+        args.run.mkdir()
+        with self.assertRaisesRegex(harness.OracleError, 'fresh'):
+            self.run_synthetic(args)
+        args.run = self.root / 'unused'
+        provenance = args.project / '.ibcmd-provenance'
+        provenance.mkdir()
+        with self.assertRaisesRegex(harness.OracleError, 'provenance'):
+            self.run_synthetic(args)
+        with self.assertRaisesRegex(harness.OracleError, 'Overlapping'):
+            harness.disjoint([args.project, args.project / 'output'])
+
+    def test_internal_disk_and_parent_traversal_refused(self):
+        for path in (Path('/tmp/issue356'), harness.LAB / 'tmp/../private'):
+            with self.assertRaises(harness.OracleError):
+                harness.lab_path(path)
+
+    def test_symlink_source_refused(self):
+        original = self.root / 'original'
+        original.mkdir()
+        link = self.root / 'link'
+        link.symlink_to(original, target_is_directory=True)
+        with self.assertRaisesRegex(harness.OracleError, 'Symlink'):
+            harness.lab_path(link)
+
+    def test_comparator_reports_extra_missing_and_changed_bytes(self):
+        left, right = self.root / 'left', self.root / 'right'
+        left.mkdir(); right.mkdir()
+        for name, data in [('same', b'x'), ('changed', b'a'), ('extra', b'e')]:
+            (left / name).write_bytes(data)
+        for name, data in [('same', b'x'), ('changed', b'b'), ('missing', b'm')]:
+            (right / name).write_bytes(data)
+        report = harness.comparison(harness.snapshot(left), harness.snapshot(right))
+        self.assertEqual([x['path'] for x in report['strict']['differing_rows']], ['changed', 'extra', 'missing'])
+        self.assertFalse(report['configuration_content']['equal'])
+
+    def test_command_failure_records_raw_streams_and_exit(self):
+        run = self.root / 'command'
+        run.mkdir(); (run / 'tmp').mkdir()
+        with self.assertRaises(harness.OracleError):
+            harness.command(run, 'bad', [sys.executable, '-c', 'import sys; print("raw"); sys.exit(7)'], 5)
+        self.assertEqual((run / 'bad.stdout').read_bytes(), b'raw\n')
+        self.assertEqual(json.loads((run / 'bad.command.json').read_text())['exit_code'], 7)
+
+
+if __name__ == '__main__':
+    unittest.main()

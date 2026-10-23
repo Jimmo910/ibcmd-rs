@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""EDT -> XML byte comparison against a fresh macOS native file database.
+
+Research only. No cleanup, original database access, or XML normalization.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import fcntl
+import json
+import os
+import re
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+from oracle import (OracleError, compare_tree_snapshots, digest, no_links,
+                    require_project, require_xml, snapshot, write_json)
+
+LAB = Path('/Volumes/Work/Dev/ibcmd-rs-lab')
+
+
+def lab_path(path: Path) -> Path:
+    path = path.absolute()
+    no_links(path)
+    if not path.is_relative_to(LAB) or '..' in path.parts:
+        raise OracleError(f'Only physical external laboratory paths are allowed: {path}')
+    return path
+
+
+def disjoint(paths):
+    for i, left in enumerate(paths):
+        for right in paths[i + 1:]:
+            if left.is_relative_to(right) or right.is_relative_to(left):
+                raise OracleError(f'Overlapping inputs/run refused: {left}, {right}')
+
+
+def inventory_equal(left, right):
+    return left['files'] == right['files']
+
+
+def comparison(ours, native):
+    # Preserve the strict comparison as well as the existing source-oracle
+    # contract: native storage generations cannot be invented by EDT.
+    strict = compare_tree_snapshots(ours, native)
+    content = compare_tree_snapshots(ours, native, excluded_paths=('ConfigDumpInfo.xml',))
+    return {'strict': strict, 'configuration_content': content,
+            'counts': {'ours': ours['file_count'], 'native': native['file_count'],
+                       'strict_differences': len(strict['differing_rows']),
+                       'content_differences': len(content['differing_rows'])}}
+
+
+def bind_installation(path, edt):
+    """Rebind #358's complete plugin inventory and immutable runtime files."""
+    lab_path(path)
+    data = json.loads(path.read_text(encoding='utf-8'))
+    if data.get('schema_version') != 1 or Path(data['edt_cli']) != edt or data['edt_cli_sha256'] != digest(edt):
+        raise OracleError('Installation manifest does not bind this EDT launcher')
+    plugins = data['plugins']
+    root = lab_path(Path(plugins['root']))
+    if root != edt.parent / 'plugins' or snapshot(root) != plugins:
+        raise OracleError('Installation plugin inventory differs from live EDT')
+    rows = data['runtime_files']
+    if not rows or len({row['path'] for row in rows}) != len(rows):
+        raise OracleError('Missing or duplicate runtime inventory rows')
+    required = {edt, edt.parent / '1cedt.ini', edt.parent / 'configuration/config.ini'}
+    if not required.issubset({Path(row['path']) for row in rows}):
+        raise OracleError('Runtime inventory omits launcher configuration')
+    for row in rows:
+        file = lab_path(Path(row['path']))
+        if file.stat().st_size != row['bytes'] or digest(file) != row['sha256']:
+            raise OracleError(f'Runtime inventory differs: {file}')
+    return data
+
+
+@contextlib.contextmanager
+def native_slot(run):
+    # A persistent advisory lock is released by the OS on termination. The
+    # planner still coordinates other harnesses that do not use this lock.
+    path = LAB / 'tmp/edt-native-macos.lock'
+    no_links(path)
+    with path.open('a+b') as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise OracleError('Another macOS EDT/native harness holds the lab slot') from error
+        write_json(run / 'slot.json', {'lock': str(path), 'pid': os.getpid(),
+                   'acquired_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())})
+        try:
+            yield
+        finally:
+            fcntl.flock(stream, fcntl.LOCK_UN)
+
+
+def command(run, label, argv, timeout):
+    env = os.environ.copy()
+    env.update({key: str(run / 'tmp') for key in ('TMPDIR', 'TEMP', 'TMP')})
+    for key, directory in [('HOME', 'home'), ('XDG_CACHE_HOME', 'cache'),
+                           ('XDG_CONFIG_HOME', 'config'), ('XDG_DATA_HOME', 'data'),
+                           ('XDG_STATE_HOME', 'state')]:
+        env[key] = str(run / directory)
+    record = {'argv': [str(x) for x in argv], 'cwd': str(run),
+              'environment_overrides': {k: env[k] for k in ('TMPDIR', 'TEMP', 'TMP',
+                  'HOME', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME')},
+              'started_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+              'timeout_seconds': timeout}
+    start = time.monotonic()
+    try:
+        with (run / f'{label}.stdout').open('xb') as out, (run / f'{label}.stderr').open('xb') as err:
+            proc = subprocess.Popen(record['argv'], cwd=run, env=env,
+                                    stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                    start_new_session=True)
+            try:
+                record['exit_code'] = proc.wait(timeout=timeout)
+            except BaseException as error:
+                record['timed_out' if isinstance(error, subprocess.TimeoutExpired) else 'interrupted'] = True
+                # Only the new process group created by this invocation.
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                record['exit_code'] = proc.wait(timeout=30)
+                if not isinstance(error, subprocess.TimeoutExpired):
+                    raise
+    except OSError as error:
+        record['launch_error'] = str(error)
+        raise
+    finally:
+        record['duration_seconds'] = round(time.monotonic() - start, 3)
+        write_json(run / f'{label}.command.json', record)
+    if record.get('timed_out') or record['exit_code']:
+        raise OracleError(f'{label} failed; preserved command/stdout/stderr in {run}')
+    return (run / f'{label}.stdout').read_bytes()
+
+
+def capture(args):
+    if sys.platform != 'darwin':
+        raise OracleError('Native capture requires macOS')
+    project, run = lab_path(args.project), lab_path(args.run)
+    args.edt, args.ours, args.native = (path.absolute() for path in (args.edt, args.ours, args.native))
+    lab_path(args.ours)
+    lab_path(args.edt)  # #358 supplies a copied external installation, never the internal app.
+    disjoint([project, run])
+    for exe in (args.edt, args.ours, args.native):
+        no_links(exe.absolute())
+        if not exe.is_file() or not os.access(exe, os.X_OK):
+            raise OracleError(f'Missing executable: {exe}')
+    require_project(project, args.runtime)
+    # Authentic EDT input must not contain our stored reverse-conversion data.
+    if any(path.name == '.ibcmd-provenance' for path in project.rglob('*')):
+        raise OracleError('Authentic project contains ibcmd-rs provenance')
+    if run.exists():
+        raise OracleError('Run must be fresh; existing evidence is never replaced')
+    run.mkdir(parents=True, exist_ok=False)
+    for directory in ('tmp', 'home', 'cache', 'config', 'data', 'state'):
+        (run / directory).mkdir()
+    source = Path(__file__).read_bytes()
+    (run / 'harness-source.py').write_bytes(source)
+    (run / 'oracle-source.py').write_bytes(Path(__file__).with_name('oracle.py').read_bytes())
+    write_json(run / 'invocation.json', {**{k: str(v) if isinstance(v, Path) else v
+               for k, v in vars(args).items()}, 'harness_sha256': digest(run / 'harness-source.py'),
+               'oracle_sha256': digest(run / 'oracle-source.py')})
+    before = snapshot(project)
+    installation = bind_installation(args.installation, args.edt)
+    write_json(run / 'installation-bound.json', installation)
+    installation_hash = digest(args.installation)
+    lab_path(args.schema_evidence)
+    schema_hash = digest(args.schema_evidence)
+    (run / 'schema-evidence.json').write_bytes(args.schema_evidence.read_bytes())
+    tools = {name: {'path': str(path), 'sha256': digest(path)}
+             for name, path in [('edt', args.edt), ('ours', args.ours), ('native', args.native)]}
+    write_json(run / 'project-before.json', before)
+    write_json(run / 'tools-before.json', tools)
+    try:
+        with native_slot(run):
+            native = ['/usr/bin/arch', '-x86_64', str(args.native)]
+            configuration = args.edt.parent / 'configuration'
+            if not configuration.is_dir():
+                raise OracleError('Copied EDT installation lacks Eclipse configuration')
+            snapshot(configuration)  # reject links/special files before copying
+            shutil.copytree(configuration, run / 'edt-configuration')
+            edt = [str(args.edt), '-configuration', str(run / 'edt-configuration'), '-data', str(run / 'workspace'), '-timeout', str(args.timeout),
+                   '-nl', 'en_US', '-vmargs', f'-Xmx{args.heap_gib}g',
+                   f'-Duser.home={run / "home"}', f'-Djava.io.tmpdir={run / "tmp"}', '-command']
+            versions = {
+                'native': command(run, 'native-version', native + ['--version'], 60).decode('utf-8').strip(),
+                'ours': command(run, 'ours-version', [args.ours, '--version'], 60).decode('utf-8').strip(),
+                'edt': command(run, 'edt-version', edt + ['version'], 120).decode('utf-8').strip()}
+            write_json(run / 'versions.json', versions)
+            if versions['native'] != args.native_build or versions['edt'] != args.edt_build:
+                raise OracleError('Exact installed tool version mismatch')
+            copied = run / 'project-copy'
+            shutil.copytree(project, copied)
+            if not inventory_equal(before, snapshot(copied)):
+                raise OracleError('Disposable project copy differs from authentic input')
+            baseline = run / 'edt-xml'
+            command(run, 'edt-export', edt + ['export', '--project', str(copied),
+                    '--configuration-files', str(baseline)], args.timeout)
+            require_xml(baseline, require_dump_info=False)
+            if not inventory_equal(before, snapshot(copied)):
+                raise OracleError('Installed EDT modified the project during export')
+            write_json(run / 'edt-xml-before.json', snapshot(baseline))
+            common = [f'--db-path={run / "database"}', f'--data={run / "native-data"}',
+                      f'--temp={run / "tmp"}']
+            command(run, 'native-create', native + ['infobase', 'create', *common,
+                    '--create-database', '--locale=ru_RU'], args.timeout)
+            command(run, 'native-import', native + ['infobase', 'config', 'import', *common,
+                    str(baseline)], args.timeout)
+            reference = run / 'native-xml'
+            command(run, 'native-export', native + ['infobase', 'config', 'export', *common,
+                    '--threads=2', str(reference)], args.timeout)
+            require_xml(reference)
+            native_inventory = snapshot(reference)
+            write_json(run / 'native-xml.json', native_inventory)
+            ours = run / 'ours-xml'
+            command(run, 'convert', [args.ours, 'convert', project, ours,
+                    '--source-format', 'edt', '--target-format', 'xml',
+                    '--source-profile', args.source_profile,
+                    '--target-profile', f'xml-{args.xml_version}',
+                    '--report', run / 'convert.report.json'], args.timeout)
+            require_xml(ours, require_dump_info=False)
+            ours_inventory = snapshot(ours)
+            write_json(run / 'ours-xml.json', ours_inventory)
+            report = comparison(ours_inventory, native_inventory)
+            write_json(run / 'comparison.json', report)
+            native_after = snapshot(reference)
+            write_json(run / 'native-xml-after.json', native_after)
+            if native_inventory != native_after:
+                raise OracleError('Native reference changed during conversion')
+            if json.loads((run / 'edt-xml-before.json').read_text()) != snapshot(baseline):
+                raise OracleError('EDT XML changed during native capture')
+            result = {'status': ('COMPATIBILITY_PROBE_MATCH' if report['configuration_content']['equal'] else 'COMPATIBILITY_PROBE_DIFFERENT')
+                        if getattr(args, 'compatibility_probe', False) else ('PASS' if report['configuration_content']['equal'] else 'FAIL'),
+                'strict_equal': report['strict']['equal'], 'configuration_content_equal': report['configuration_content']['equal'],
+                'storage_inventory_exclusion': 'ConfigDumpInfo.xml; full original rows retained in comparison.json',
+                'scope': 'Same authentic EDT project, installed EDT export, fresh native file DB create/import/export; no activation claim',
+                'versions': versions, 'source_profile': args.source_profile, 'runtime': args.runtime,
+                'xml_version': args.xml_version, 'schema_evidence_sha256': schema_hash,
+                'installation_manifest_sha256': installation_hash, 'counts': report['counts']}
+    except BaseException as error:
+        write_json(run / 'failure.json', {'status': 'FAIL', 'error': str(error), 'type': type(error).__name__})
+        raise
+    finally:
+        after = snapshot(project)
+        write_json(run / 'project-after.json', after)
+        changed = [name for name, path in [('edt', args.edt), ('ours', args.ours), ('native', args.native)]
+                   if digest(path) != tools[name]['sha256']]
+        installation_after = bind_installation(args.installation, args.edt)
+        installation_unchanged = installation_after == installation and digest(args.installation) == installation_hash
+        schema_unchanged = digest(args.schema_evidence) == schema_hash
+        unchanged = before == after and not changed and installation_unchanged and schema_unchanged
+        write_json(run / 'immutability.json', {'project_unchanged': before == after, 'changed_tools': changed,
+            'installation_unchanged': installation_unchanged, 'schema_evidence_unchanged': schema_unchanged})
+        if not unchanged:
+            # A comparison verdict alone is never acceptance; this terminal
+            # receipt is mandatory even after failed conversion/native commands.
+            raise OracleError('Source project or executable changed during capture')
+    write_json(run / 'result.json', result)
+    return 0 if report['configuration_content']['equal'] else 1
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ('project', 'run', 'edt', 'ours', 'native', 'installation', 'schema-evidence'):
+        parser.add_argument(f'--{name}', type=Path, required=True)
+    parser.add_argument('--edt-build', required=True, help='Exact CLI build; never inferred from a profile')
+    parser.add_argument('--source-profile', required=True, help='Explicit supported EDT release/XML profile')
+    parser.add_argument('--compatibility-probe', action='store_true',
+                        help='Explicitly compare a different tool/model release; never emit PASS')
+    parser.add_argument('--native-build', required=True)
+    parser.add_argument('--runtime', required=True)
+    parser.add_argument('--xml-version', choices=('2.20', '2.21'), required=True)
+    parser.add_argument('--timeout', type=int, default=21600)
+    parser.add_argument('--heap-gib', type=int, default=8)
+    args = parser.parse_args()
+    if not re.fullmatch(r'\d+\.\d+\.\d+\.\d+', args.edt_build) or args.timeout < 1 or args.heap_gib < 1:
+        parser.error('Exact numeric CLI build and positive resource settings required')
+    release = '.'.join(args.edt_build.split('.')[:3])
+    if not re.fullmatch(r'edt-\d+\.\d+\.\d+-xml-' + re.escape(args.xml_version), args.source_profile):
+        parser.error('Explicit named source model/XML profile required')
+    if args.source_profile != f'edt-{release}-xml-{args.xml_version}' and not args.compatibility_probe:
+        parser.error('Source profile must explicitly match the named EDT release and XML version')
+    try:
+        return capture(args)
+    except (OracleError, OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f'FAIL: {error}', file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
