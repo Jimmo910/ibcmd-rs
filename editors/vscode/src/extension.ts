@@ -4,6 +4,7 @@ import { RpcClient, RpcError } from "./rpc";
 import { runImport, ImportValidationError, importErrorMessage } from "./import";
 import { Database, editConfig, idOf, snapshot, saveConfig } from "./config";
 import { Base, Metadata, Generation, pendingText } from "./status";
+import { ConfigurationView } from "./configuration-view";
 
 import { ObjectView } from "./object-view";
 
@@ -12,6 +13,7 @@ export function secretKey(folder: string, id: string, user: string): string {
 }
 export async function activate(context: vscode.ExtensionContext) {
   if (!vscode.workspace.isTrusted) return;
+  const configuration = new ConfigurationView(context);
   const status = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     40,
@@ -100,6 +102,7 @@ export async function activate(context: vscode.ExtensionContext) {
   }
   async function switchTo(f: vscode.WorkspaceFolder, b: Base) {
     objects.clear();
+    configuration.disconnect();
     const stamp = generation.next();
     const previous = client;
     client = undefined;
@@ -153,6 +156,7 @@ export async function activate(context: vscode.ExtensionContext) {
           );
           generation.next();
           objects.clear();
+          configuration.disconnect();
           status.text = `$(warning) ${label(f, b)} · ${b.platform} · disconnected · pending unknown`;
         }
       });
@@ -207,6 +211,14 @@ export async function activate(context: vscode.ExtensionContext) {
               if (abort.signal.aborted) throw new Error("Cancelled");
             }
             if (generation.current(stamp)) {
+              configuration.connect(
+                rpc!,
+                path.resolve(
+                  f.uri.fsPath,
+                  config(f).get<string>("sourceDirectory", "."),
+                ),
+                b.id,
+              );
               status.text = `$(database) ${label(f, b)} · ${b.platform} · ${pending}`;
               status.tooltip = `${f.name}: ${b.id}. Click to switch; Reload Connections refreshes pending state.`;
               await context.workspaceState.update(
@@ -477,6 +489,7 @@ export async function activate(context: vscode.ExtensionContext) {
   };
   async function invalidate() {
     objects.clear();
+    configuration.disconnect();
     const stamp = generation.next();
     const old = client;
     client = undefined;
@@ -708,6 +721,7 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   return {
     status: () => status.text,
+    configuration,
     objects: () => objects.snapshot(),
     visibleObjects: () => objects.getChildren(),
     objectDecoration: (uri: vscode.Uri) => objects.provideFileDecoration(uri),

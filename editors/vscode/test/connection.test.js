@@ -161,6 +161,13 @@ async function harness({
         };
       if (id === "./status") return require("../out/status");
       if (id === "./import") return require("../out/import");
+      if (id === "./configuration-view")
+        return {
+          ConfigurationView: class {
+            connect() {}
+            disconnect() {}
+          },
+        };
       return require(id);
     },
   });

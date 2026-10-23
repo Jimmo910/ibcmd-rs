@@ -24,10 +24,11 @@
   },
   "scripts": {
     "compile": "tsc -p .",
-    "test": "npm run compile && node --test test/object-status.test.js test/core.test.js test/real.test.js test/import.test.js test/connection.test.js test/object-view.test.js",
+    "test": "npm run compile && node --test test/object-status.test.js test/core.test.js test/real.test.js test/import.test.js test/connection.test.js test/object-view.test.js test/configuration-tree.test.js",
     "test:host": "npm run compile && node test/host.js",
     "format": "prettier --write src test package.json tsconfig.json",
-    "format:check": "prettier --check src test package.json tsconfig.json"
+    "format:check": "prettier --check src test package.json tsconfig.json",
+    "test:tree-host": "npm run compile && node test/tree-host.js"
   },
   "contributes": {
     "commands": [
@@ -57,11 +58,11 @@
       },
       {
         "command": "ibcmd.importSelected",
-        "title": "ibcmd-rs: \u0417\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0432 \u0431\u0430\u0437\u0443"
+        "title": "ibcmd-rs: Загрузить в базу"
       },
       {
         "command": "ibcmd.importChanged",
-        "title": "ibcmd-rs: \u0417\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0438\u0437\u043c\u0435\u043d\u0451\u043d\u043d\u044b\u0435"
+        "title": "ibcmd-rs: Загрузить изменённые"
       },
       {
         "command": "ibcmd.objects.refresh",
@@ -70,6 +71,24 @@
       {
         "command": "ibcmd.objects.changedOnly",
         "title": "ibcmd-rs: Toggle Changed Objects Only"
+      },
+      {
+        "command": "ibcmd.tree.xml",
+        "title": "ibcmd-rs: Открыть каталог XML"
+      },
+      {
+        "title": "ibcmd-rs: Обновить дерево",
+        "command": "ibcmd.tree.refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "title": "ibcmd-rs: Найти объект",
+        "command": "ibcmd.tree.search",
+        "icon": "$(search)"
+      },
+      {
+        "command": "ibcmd.tree.openLocal",
+        "title": "ibcmd-rs: Открыть местный файл"
       }
     ],
     "configuration": {
@@ -155,7 +174,7 @@
           "minimum": 30,
           "maximum": 3600,
           "scope": "resource",
-          "description": "Deadline per object-status read in seconds (30\u20133600). User cancellation remains available; other RPC timeouts are unchanged."
+          "description": "Deadline per object-status read in seconds (30–3600). User cancellation remains available; other RPC timeouts are unchanged."
         }
       }
     },
@@ -184,6 +203,10 @@
           "command": "ibcmd.importSelected",
           "when": "view == ibcmd.objects && resourceScheme == file",
           "group": "ibcmd@1"
+        },
+        {
+          "command": "ibcmd.tree.openLocal",
+          "when": "view == ibcmd.configuration && viewItem == ibcmd.source"
         }
       ],
       "view/title": [
@@ -201,6 +224,16 @@
           "command": "ibcmd.objects.changedOnly",
           "when": "view == ibcmd.objects",
           "group": "navigation"
+        },
+        {
+          "group": "navigation",
+          "command": "ibcmd.tree.refresh",
+          "when": "view == ibcmd.configuration"
+        },
+        {
+          "group": "navigation",
+          "command": "ibcmd.tree.search",
+          "when": "view == ibcmd.configuration"
         }
       ]
     },
@@ -209,12 +242,17 @@
         {
           "id": "ibcmd.objects",
           "name": "ibcmd-rs Objects"
+        },
+        {
+          "id": "ibcmd.configuration",
+          "name": "Конфигурация 1С"
         }
       ]
     }
   },
   "dependencies": {
-    "toml-eslint-parser": "^0.10.0"
+    "toml-eslint-parser": "^0.10.0",
+    "@xmldom/xmldom": "0.9.12"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
