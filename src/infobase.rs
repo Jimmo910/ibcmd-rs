@@ -1124,6 +1124,8 @@ fn settle_platform(
                 };
                 if let Some(platform) = platform {
                     crate::platform::note_export_platform(platform);
+                } else {
+                    crate::platform::clear_export_platform();
                 }
                 return Ok(());
             }
@@ -1878,6 +1880,92 @@ mod tests {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn dialect_only_export_clears_previous_exact_build_defaults() {
+        const CHILD: &str = "IBCMD_DIALECT_AFTER_BUILD_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "infobase::tests::dialect_only_export_clears_previous_exact_build_defaults",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("test result: ok. 1 passed; 0 failed;"),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        use std::io::Read;
+        let scratch = Scratch::new("dialect-after-build");
+        let db = scratch.0.join("db");
+        fs::create_dir(&db).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/file-infobase/default-button.1CD.gz");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(fixture).unwrap())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+        let settings = scratch.0.join("dialect.json");
+        fs::write(&settings, r#"{"ibcmd-rs":{"source-version":"8.5.1"}}"#).unwrap();
+        let load = settings_in(&scratch.0, &[]);
+        let export = |platform, source_version, settings, output_dir| {
+            let mut args = export_args("unused");
+            args.db_path = Some(db.clone());
+            args.dbms = None;
+            args.db_server = None;
+            args.db_name = None;
+            args.platform = platform;
+            args.source_version = source_version;
+            args.settings = settings;
+            args.output_dir = output_dir;
+            let config = resolve_connection_with(args.connection(), &load).unwrap();
+            export_config_report(
+                &config,
+                None,
+                &args.db_pwd_env,
+                &args.output_dir,
+                false,
+                false,
+                Vec::new(),
+                None,
+                false,
+            )
+            .unwrap();
+            fs::read_to_string(
+                args.output_dir
+                    .join("CommonForms/ДополнительноеОписание/Ext/Form.xml"),
+            )
+            .unwrap()
+        };
+        for mode in 0..2 {
+            let exact = export(
+                Some(crate::platform::parse("8.5.1.1529").unwrap()),
+                None,
+                None,
+                scratch.0.join(format!("exact-{mode}")),
+            );
+            assert!(exact.contains("<ButtonImportance>Main</ButtonImportance>"));
+            let dialect = export(
+                None,
+                (mode == 0).then_some(InfobaseConfigSourceVersion::V2_21),
+                (mode == 1).then(|| settings.clone()),
+                scratch.0.join(format!("dialect-{mode}")),
+            );
+            assert!(
+                !dialect.contains("<ButtonImportance>Main</ButtonImportance>"),
+                "dialect-only export inherited a previous exact build (mode {mode})",
+            );
+            assert!(dialect.contains("<DefaultButton>true</DefaultButton>"));
+        }
     }
 
     #[test]
