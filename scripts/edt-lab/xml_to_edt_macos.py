@@ -8,6 +8,7 @@ No cleanup runs: move an entire completed run to Trash when no longer needed.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import os
@@ -60,6 +61,8 @@ def preflight(args) -> None:
     contained(args.edt_exe, args.lab_root)  # Use #358’s complete external installation, including p2/configuration.
     if args.run.exists() or not args.run.parent.is_dir():
         raise Error("Run must be new with an existing parent; resuming evidence is refused")
+    if args.run.is_relative_to(args.edt_exe.parent.parent):
+        raise Error("Run must not be inside the EDT installation")
     if args.run.is_relative_to(args.native) or args.native.is_relative_to(args.run):
         raise Error("Run and immutable native input must not overlap")
     require_exact_build(args.edt_build)
@@ -73,23 +76,52 @@ def preflight(args) -> None:
     oracle.snapshot(args.native)  # Reject links, special files and collisions before any launch.
 
 
+def write_launcher_ini(args) -> Path:
+    original = (args.edt_exe.parent / "1cedt.ini").read_text(encoding="utf-8")
+    lines = original.splitlines()
+    if lines.count("-vmargs") != 1:
+        raise Error("Installed launcher INI must have exactly one JVM section")
+    split = lines.index("-vmargs")
+    launcher, vmargs = lines[:split], lines[split + 1:]
+    # The custom CLI accepts -ini-file, not generic Eclipse launcher flags.
+    for option in ("-vm", "-configuration", "-user", "-nl"):
+        while option in launcher:
+            index = launcher.index(option)
+            if index + 1 >= len(launcher):
+                raise Error("Malformed installed launcher INI")
+            del launcher[index:index + 2]
+    launcher += ["-vm", str(args.edt_vm), "-configuration", str(args.edt_exe.parent / "configuration"),
+                 "-user", str(args.run / "user"), "-nl", "en_US"]
+    path = args.run / "1cedt.ini"
+    with path.open("x", encoding="utf-8", newline="\n") as stream:
+        stream.write("\n".join([*launcher, "-vmargs", *vmargs]) + "\n")
+    return path
+
+
 class Capture:
     def __init__(self, args):
         self.args, self.run = args, args.run
         self.env = dict(os.environ)
+        for key in ("JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS"):
+            self.env.pop(key, None)
         for name, directory in (("HOME", "home"), ("TMPDIR", "tmp"),
                                 ("XDG_CACHE_HOME", "cache"), ("XDG_CONFIG_HOME", "config"),
                                 ("XDG_DATA_HOME", "data"), ("XDG_STATE_HOME", "state")):
             path = self.run / directory
             path.mkdir()
             self.env[name] = str(path)
+        self.env["TEMP"] = self.env["TMP"] = self.env["TMPDIR"]
+        self.env["JAVA_HOME"] = str(args.edt_vm.parent.parent)
         self.env["IBCMD_TEST_KEEP_FIXTURES"] = "1"
         self.labels = []
+        self.ini = write_launcher_ini(args)
+        self.ini_sha256 = oracle.digest(self.ini)
 
     def command(self, label, argv, workspace=None):
         record = {"argv": [str(x) for x in argv], "cwd": str(self.run),
                   "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                  "timeout_seconds": self.args.timeout, "isolated_home": self.env["HOME"]}
+                  "timeout_seconds": self.args.timeout, "isolated_home": self.env["HOME"],
+                  "launcher_ini": str(self.ini), "launcher_ini_sha256": self.ini_sha256}
         started = time.monotonic()
         try:
             with (self.run / f"{label}.stdout").open("xb") as out, \
@@ -129,8 +161,10 @@ class Capture:
         workspace = self.run / (workspace_name or f"{label}-workspace")
         if workspace_name is None and workspace.exists():
             raise Error("EDT workspace must be fresh")
-        return self.command(label, [self.args.edt_exe, "-vm", self.args.edt_vm, "-data", workspace,
-            "-timeout", str(self.args.timeout), "-nl", "en_US", "-vmargs",
+        if oracle.digest(self.ini) != self.ini_sha256:
+            raise Error("Captured launcher INI changed")
+        return self.command(label, [self.args.edt_exe, "-ini-file", self.ini, "-data", workspace,
+            "-timeout", str(self.args.timeout), "-vmargs",
             f"-Xmx{self.args.heap_gib}g", f"-Duser.home={self.run / 'home'}",
             f"-Djava.io.tmpdir={self.run / 'tmp'}", "-command", *operation], workspace)
 
@@ -187,11 +221,20 @@ def bind_installation(args) -> dict:
     plugins = manifest["plugins"]
     plugin_root = Path(plugins["root"])
     contained(plugin_root, args.lab_root)
+    if plugin_root != args.edt_exe.parent / "plugins":
+        raise Error("Plugin snapshot must belong to the CLI installation")
     if oracle.snapshot(plugin_root) != plugins:
         raise Error("Installed plugin tree differs from installation manifest")
     runtime_files = manifest["runtime_files"]
-    if not runtime_files or not {str(args.edt_exe), str(args.edt_vm)}.issubset({row["path"] for row in runtime_files}):
-        raise Error("Installation runtime manifest must bind both CLI and Java executable")
+    eclipse = args.edt_exe.parent
+    required = {str(path) for path in (args.edt_exe, args.edt_vm,
+        eclipse / "1cedt.ini", eclipse / "configuration/config.ini", eclipse / "1cedtcli-startup.txt",
+        eclipse / "configuration/org.eclipse.equinox.simpleconfigurator/bundles.info",
+        eclipse.parent / "MacOS/1cedt",
+        eclipse.parent / "Info.plist", args.edt_vm.parent.parent / "release")}
+    listed = [row["path"] for row in runtime_files]
+    if len(listed) != len(set(listed)) or not required.issubset(listed):
+        raise Error("Installation runtime manifest omits required launcher/configuration/Java payloads")
     for row in runtime_files:
         runtime = Path(row["path"])
         oracle.no_links(runtime)
@@ -273,6 +316,7 @@ def execute(args) -> dict:
     installation_after = bind_installation(args)
     oracle.write_json(args.run / "installation-binding-after.json", installation_after)
     gates = {"installation_unchanged_and_bound": installation_before == installation_after,
+             "launcher_ini_unchanged": oracle.digest(cap.ini) == cap.ini_sha256,
              "exact_original_xml_tree_including_dump_info": exact["equal"],
              "same_installed_serializer_exact_tree": serialized["equal"],
              "no_source_errors_or_unknown_validation_rows": not validation["unresolved_source_diagnostics"],
@@ -300,8 +344,24 @@ def parser():
     return result
 
 
+@contextlib.contextmanager
+def exclusive_native_slot(args):
+    import fcntl  # macOS runtime only; synthetic controls remain host portable.
+    lock = args.lab_root / "tmp/edt-native-macos.lock"
+    contained(lock, args.lab_root)
+    with lock.open("a+b") as slot:
+        try:
+            fcntl.flock(slot, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise Error("Another EDT/native capture owns the shared slot") from error
+        yield
+
+
 def main():
     args = parser().parse_args()
+    def cancelled(signum, frame):
+        raise KeyboardInterrupt(f"Capture cancelled by signal {signum}")
+    signal.signal(signal.SIGTERM, cancelled)
     created = False
     try:
         preflight(args)
@@ -312,11 +372,12 @@ def main():
         oracle.write_json(args.run / "invocation.json", {
             **{key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()},
             "harness_sha256": oracle.digest(Path(__file__)), "oracle_sha256": oracle.digest(Path(oracle.__file__))})
-        result = execute(args)
+        with exclusive_native_slot(args):
+            result = execute(args)
         oracle.write_json(args.run / "acceptance.json", result)
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result["status"] == "PASS" else 1
-    except (Error, OSError, ValueError, KeyError, TypeError) as error:
+    except (Error, OSError, ValueError, KeyError, TypeError, KeyboardInterrupt) as error:
         result = {"status": "FAIL", "error": str(error), "installed_acceptance": False}
         if created:
             oracle.write_json(args.run / "failure.json", result)

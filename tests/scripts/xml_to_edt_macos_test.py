@@ -38,23 +38,35 @@ class Controls(unittest.TestCase):
         write(native / "Configuration.xml", b"original XML bytes")
         write(native / "ConfigDumpInfo.xml", b"original dump bytes")
         run.mkdir()
-        for name in ("ours", "edt", "java"):
-            write(root / name)
-        plugins = root / "plugins"
+        edt = root / "Contents/Eclipse/1cedtcli"
+        java = root / "jdk/bin/java"
+        runtime = [edt, java, edt.parent / "1cedt.ini", edt.parent / "configuration/config.ini",
+                   edt.parent / "1cedtcli-startup.txt", edt.parent.parent / "Info.plist",
+                   edt.parent / "configuration/org.eclipse.equinox.simpleconfigurator/bundles.info",
+                   edt.parent.parent / "MacOS/1cedt",
+                   java.parent.parent / "release"]
+        for path in [root / "ours", *runtime]:
+            write(path)
+        write(edt.parent / "1cedt.ini", b"-startup\nsynthetic.jar\n-vmargs\n-Xmx16g\n")
+        plugins = edt.parent / "plugins"
         write(plugins / "model.jar", b"synthetic; never loaded")
         manifest = {"schema_version": 1, "status": "INVENTORIED_NOT_RUNTIME_VERIFIED",
-                    "edt_cli": str(root / "edt"), "edt_cli_sha256": lab.oracle.digest(root / "edt"),
+                    "edt_cli": str(edt), "edt_cli_sha256": lab.oracle.digest(edt),
                     "plugins": lab.oracle.snapshot(plugins),
-                    "runtime_files": [{"path": str(root / name), "bytes": (root / name).stat().st_size,
-                                       "sha256": lab.oracle.digest(root / name)} for name in ("edt", "java")]}
+                    "runtime_files": [{"path": str(path), "bytes": path.stat().st_size,
+                                       "sha256": lab.oracle.digest(path)} for path in runtime]}
         lab.oracle.write_json(root / "installation.json", manifest)
-        return SimpleNamespace(lab_root=root, edt_installation_manifest=root / "installation.json", run=run, native=native, ours_exe=root / "ours", edt_exe=root / "edt", edt_vm=root / "java",
+        return SimpleNamespace(lab_root=root, edt_installation_manifest=root / "installation.json", run=run,
+            native=native, ours_exe=root / "ours", edt_exe=edt, edt_vm=java,
             source_version="2.21", edt_build="2025.2.3.30", timeout=1, heap_gib=4)
 
     def capture(self, args, *, version=None, diagnostics=b"", mutation=None, missing_tsv=False):
         class SyntheticCapture:
             def __init__(self, _):
                 self.labels = []
+                self.ini = args.run / "1cedt.ini"
+                write(self.ini, b"synthetic INI; never executed")
+                self.ini_sha256 = lab.oracle.digest(self.ini)
             def command(self, label, argv, workspace=None):
                 self.labels.append(label)
                 for suffix in ("stdout", "stderr"):
@@ -172,6 +184,7 @@ class Controls(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             lab.Capture(args)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group runtime")
     def test_timeout_and_cancellation_kill_only_owned_process_group(self):
         for error in (subprocess.TimeoutExpired("synthetic", 1), KeyboardInterrupt()):
             args = self.fixture()
@@ -231,30 +244,72 @@ class Controls(unittest.TestCase):
             with self.assertRaisesRegex(lab.Error, "Run must be new"):
                 lab.preflight(args)
 
+    def test_environment_cannot_inject_jvm_options_or_internal_temp(self):
+        args = self.fixture()
+        with patch.dict(lab.os.environ, {"JAVA_TOOL_OPTIONS": "-Duser.home=/internal", "JDK_JAVA_OPTIONS": "injected", "_JAVA_OPTIONS": "injected"}):
+            cap = lab.Capture(args)
+        self.assertTrue(all(key not in cap.env for key in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")))
+        self.assertEqual(cap.env["TMPDIR"], str(args.run / "tmp"))
+        self.assertEqual(cap.env["TEMP"], cap.env["TMPDIR"])
+        self.assertEqual(cap.env["TMP"], cap.env["TMPDIR"])
+        self.assertEqual(cap.env["JAVA_HOME"], str(args.edt_vm.parent.parent))
+
     def test_jvm_home_tmp_and_vm_are_explicit_external_arguments(self):
         args = self.fixture()
         cap = lab.Capture(args)
         with patch.object(cap, "command", return_value=b"") as command:
             cap.edt("version", ["version"])
         argv = command.call_args.args[1]
-        self.assertEqual(argv[argv.index("-vm") + 1], args.edt_vm)
+        self.assertEqual(argv[argv.index("-ini-file") + 1], cap.ini)
+        self.assertNotIn("-vm", argv)
+        ini = cap.ini.read_text().splitlines()
+        self.assertEqual(ini[ini.index("-vm") + 1], str(args.edt_vm))
+        self.assertEqual(ini[ini.index("-user") + 1], str(args.run / "user"))
         self.assertIn(f"-Duser.home={args.run / 'home'}", argv)
         self.assertIn(f"-Djava.io.tmpdir={args.run / 'tmp'}", argv)
 
     def test_installation_binding_refuses_changed_plugins_and_runtime(self):
-        for mutation in ("plugin", "java", "manifest-cli"):
+        for mutation in ("plugin", "java", "manifest-cli", "wrong-plugins-root", "omit-config"):
             args = self.fixture()
             lab.bind_installation(args)
             if mutation == "plugin":
-                write(args.lab_root / "plugins/model.jar", b"modified plugin")
+                write(args.edt_exe.parent / "plugins/model.jar", b"modified plugin")
             elif mutation == "java":
                 write(args.edt_vm, b"modified java")
             else:
                 manifest = json.loads(args.edt_installation_manifest.read_text())
-                manifest["edt_cli"] = str(args.edt_vm)
+                if mutation == "manifest-cli":
+                    manifest["edt_cli"] = str(args.edt_vm)
+                elif mutation == "wrong-plugins-root":
+                    write(args.lab_root / "unrelated-plugins/model.jar")
+                    manifest["plugins"] = lab.oracle.snapshot(args.lab_root / "unrelated-plugins")
+                else:
+                    manifest["runtime_files"] = [row for row in manifest["runtime_files"] if not row["path"].endswith("config.ini")]
                 args.edt_installation_manifest.write_text(json.dumps(manifest))
             with self.subTest(mutation=mutation), self.assertRaises(lab.Error):
                 lab.bind_installation(args)
+
+    def test_launcher_ini_mutation_and_missing_vm_section_fail(self):
+        args = self.fixture()
+        cap = lab.Capture(args)
+        cap.ini.write_text("tampered")
+        with self.assertRaisesRegex(lab.Error, "INI changed"):
+            cap.edt("version", ["version"])
+        other = self.fixture()
+        write(other.edt_exe.parent / "1cedt.ini", b"no JVM section")
+        with self.assertRaisesRegex(lab.Error, "JVM section"):
+            lab.Capture(other)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX lock runtime")
+    def test_native_slot_refuses_concurrent_capture(self):
+        args = self.fixture()
+        (args.lab_root / "tmp").mkdir()
+        with lab.exclusive_native_slot(args):
+            with self.assertRaisesRegex(lab.Error, "shared slot"):
+                with lab.exclusive_native_slot(args):
+                    self.fail("Concurrent native capture must not run")
+        with lab.exclusive_native_slot(args):
+            pass
 
     def test_parent_traversal_cannot_escape_external_root(self):
         root = Path("/Volumes/lab")

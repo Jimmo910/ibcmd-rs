@@ -11,14 +11,20 @@ profile. The converter currently exposes `edt-2025.2.3-xml-2.20` and
 compatibility observation for that build/corpus. It does not rename the model,
 prove a 2026 schema, or establish acceptance against EDT 2025.2.3. The installed
 2026.2.1+3 selected by #358 must not be described as the latest release.
-A new model profile needs separate schema evidence through #355.
+A new model profile needs separate schema evidence through #355. Its
+[model-inventory PR #507](https://github.com/Untru/ibcmd-rs/pull/507) records the
+current installed class/resource delta; inventory similarity is not semantic
+schema equivalence.
 
 ## Preconditions and storage
 
 Use #358's complete external installation copy, including its p2/configuration
 and plugins. A symlink to the internal app is refused. Supply the verified Java
-executable explicitly. The harness passes `-vm`, a fresh explicit `-data` for
-every independent installed route, JVM `user.home` and `java.io.tmpdir`, and
+executable explicitly. The custom CLI takes `-ini-file`, not generic Eclipse `-vm` arguments. The
+harness copies the installed INI into the new run and binds the verified Java
+executable, external configuration/user paths and locale there. It passes a
+fresh explicit `-data` for every independent installed route, JVM `user.home`
+and `java.io.tmpdir`, and
 external HOME/TMPDIR/XDG directories. Eclipse installation/configuration caches
 remain in the external copy. No user's existing workspace is opened.
 [Equinox documents configuration and workspace locations separately](https://help.eclipse.org/latest/topic/org.eclipse.platform.doc.isv/reference/misc/runtime-options.html).
@@ -36,7 +42,8 @@ ERP artifacts. Production converter semantics are unchanged.
 ## Running
 
 After verifying the installed version and a storage-safe launch through #358,
-coordinate the installed JVM run with the planner. Set the external environment:
+coordinate the installed JVM run with the planner. The harness also acquires
+the shared `tmp/edt-native-macos.lock` and fails if another capture owns it. Set the external environment:
 
 ```sh
 source /Volumes/Work/Dev/ibcmd-rs-lab/lab-env.sh
