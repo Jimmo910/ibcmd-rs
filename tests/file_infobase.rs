@@ -420,3 +420,148 @@ fn empty_configuration_has_complete_zero_inventories() {
     assert_eq!(assets["expected"], 0);
     assert!(out.join("Configuration.xml").is_file());
 }
+
+fn save(db: &Path, cf: &Path, database_configuration: bool) -> Output {
+    let mut args: Vec<&std::ffi::OsStr> =
+        vec!["infobase".as_ref(), "config".as_ref(), "save".as_ref()];
+    let path = db_path(db);
+    args.push(&path);
+    if database_configuration {
+        args.push("--db".as_ref());
+    }
+    args.push(cf.as_os_str());
+    run(&args)
+}
+
+#[test]
+fn a_file_infobase_is_saved_as_a_cf_of_its_configuration() {
+    // #352: the .cf holds the rows the file stores; its export is the
+    // platform's export of the file (`tiny-xml`).
+    let dir = scratch("save");
+    let db = infobase(&dir, "tiny");
+    for database_configuration in [false, true] {
+        let cf = dir.join(format!("saved-{database_configuration}.cf"));
+        fs::write(&cf, b"previous saved output").unwrap();
+        ok(&save(&db, &cf, database_configuration));
+        let out = dir.join(format!("xml-{database_configuration}"));
+        ok(&run(&[
+            "cf".as_ref(),
+            "export".as_ref(),
+            cf.as_os_str(),
+            out.as_os_str(),
+            "--platform".as_ref(),
+            "8.5.1".as_ref(),
+        ]));
+        assert_same_tree(&fixtures().join("tiny-xml"), &out, &[]);
+    }
+    assert!(!ibcmd_filedb::backup_file(&db).exists());
+}
+
+#[test]
+fn a_completed_file_stage_is_saved_with_its_deleted_row() {
+    let dir = scratch("save-completed-stage");
+    for name in ["empty", "tiny"] {
+        let db = infobase(&dir, name);
+        ok(&import(&db, &fixtures().join("tiny-xml")));
+        let before = fs::read(db.join("1Cv8.1CD")).unwrap();
+        let cf = dir.join(format!("staged-{name}.cf"));
+        ok(&save(&db, &cf, false));
+        let archive = ibcmd_cf::archive::decode_packed_archive(
+            fs::File::open(&cf).unwrap(),
+            ibcmd_core::limits::ResourceLimits::for_input_bytes(fs::metadata(&cf).unwrap().len()),
+            ibcmd_core::artifact::StorageProfileId::parse("storage:test").unwrap(),
+        )
+        .unwrap();
+        let (_, _, entries) = archive.into_parts();
+        let entries: BTreeMap<_, _> = entries
+            .into_iter()
+            .map(|entry| entry.into_parts())
+            .collect();
+        let mut source = ibcmd_filedb::FileDb::open(&db).unwrap();
+        for row in source.config_rows("CONFIGSAVE").unwrap() {
+            assert_eq!(
+                entries.get(&row.file_name),
+                Some(&row.binary),
+                "{}",
+                row.file_name
+            );
+        }
+        drop(source);
+        let out = dir.join(format!("xml-staged-{name}"));
+        ok(&run(&[
+            "cf".as_ref(),
+            "export".as_ref(),
+            cf.as_os_str(),
+            out.as_os_str(),
+            "--platform".as_ref(),
+            "8.5.1".as_ref(),
+        ]));
+        assert_same_tree(&fixtures().join("tiny-xml"), &out, &["ConfigDumpInfo.xml"]);
+        assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+    }
+}
+
+#[test]
+fn saving_a_file_infobase_refuses_unfinished_stored_config() {
+    let dir = scratch("save-unfinished-config");
+    for completed_stage in [false, true] {
+        let db = infobase(&dir.join(format!("stage-{completed_stage}")), "tiny");
+        if completed_stage {
+            ok(&import(&db, &fixtures().join("tiny-xml")));
+            // This disposable fixture is deliberately rewritten below.
+            fs::remove_file(ibcmd_filedb::backup_file(&db)).unwrap();
+        }
+        let mut source = ibcmd_filedb::FileDb::open(&db).unwrap();
+        let mut rows = source.config_rows("CONFIG").unwrap();
+        drop(source);
+        let mut unfinished = rows[0].clone();
+        unfinished.file_name = "deleted".to_string();
+        rows.push(unfinished);
+        ibcmd_filedb::replace_config_table(&db, "CONFIG", &rows).unwrap();
+        let before = fs::read(db.join("1Cv8.1CD")).unwrap();
+        for database_configuration in [false, true] {
+            let cf = dir.join(format!(
+                "unfinished-{completed_stage}-{database_configuration}.cf"
+            ));
+            let output = save(&db, &cf, database_configuration);
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("deleted"));
+            assert!(!cf.exists());
+            assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn saving_a_file_infobase_refuses_the_source_file_and_its_aliases() {
+    let dir = scratch("save-source-identity");
+    let db = infobase(&dir, "tiny");
+    let data = db.join("1Cv8.1CD");
+    let before = fs::read(&data).unwrap();
+    let alias = dir.join("hard-link.cf");
+    fs::hard_link(&data, &alias).unwrap();
+    let destinations = vec![data.clone(), alias.clone()];
+    #[cfg(unix)]
+    let destinations = {
+        let mut destinations = destinations;
+        let symlink = dir.join("symlink.cf");
+        std::os::unix::fs::symlink(&data, &symlink).unwrap();
+        destinations.push(symlink);
+        destinations
+    };
+    for source in [&db, &data] {
+        for destination in &destinations {
+            for database_configuration in [false, true] {
+                let output = save(source, destination, database_configuration);
+                assert!(
+                    !output.status.success(),
+                    "source was accepted as output: {destination:?}"
+                );
+                assert!(String::from_utf8_lossy(&output.stderr).contains("source infobase"));
+                assert_eq!(fs::read(&data).unwrap(), before);
+                assert_eq!(fs::read(&alias).unwrap(), before);
+            }
+        }
+    }
+    assert!(!ibcmd_filedb::backup_file(&db).exists());
+}

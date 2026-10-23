@@ -856,6 +856,9 @@ pub struct InfobaseConfigSaveArgs {
     /// The platform ibcmd's configuration file (`--config`/`-c`), kept for
     /// the settings layer.
     pub native_config: Option<PathBuf>,
+    /// `--db-path`: a file infobase (the directory holding 1Cv8.1CD) in place
+    /// of a DBMS connection.
+    pub db_path: Option<PathBuf>,
     /// DBMS type. Only MSSQLServer is served.
     pub dbms: Option<String>,
     pub db_server: Option<String>,
