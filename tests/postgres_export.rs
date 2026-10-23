@@ -51,8 +51,9 @@ fn the_export_of_a_postgresql_infobase_is_the_platforms() {
         .arg(format!("--db-server={server}"))
         .arg(format!("--db-name={database}"))
         .arg(format!("--db-user={user}"));
+    // The password goes through the environment, not the command line.
     if let Ok(password) = std::env::var("IBCMD_RS_PG_PASSWORD") {
-        command.arg(format!("--db-pwd={password}"));
+        command.env("IBCMD_DB_PSW", password);
     }
     let output = command.arg(&out).output().unwrap();
     assert!(

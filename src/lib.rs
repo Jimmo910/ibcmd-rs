@@ -48,6 +48,7 @@ pub mod mxl_line_provenance;
 pub mod parallel;
 pub mod plan;
 pub mod platform;
+mod postgres_infobase;
 #[cfg(feature = "platform-oracle")]
 pub mod probe;
 #[cfg(feature = "platform-oracle")]

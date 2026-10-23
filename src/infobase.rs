@@ -333,10 +333,8 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
 pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigExportReport> {
     let config = resolve_connection(args.connection())?;
     if config.postgres()?.is_some() {
-        if args.extension.is_some() || args.base.is_some() || args.sync {
-            bail!(
-                "a PostgreSQL infobase is exported whole: --extension, --base and --sync are not supported yet"
-            );
+        if args.extension.is_some() {
+            bail!("the export of extensions from PostgreSQL is not supported yet");
         }
     } else if config.file_infobase.is_none() {
         ensure_mssql(&config.dbms)?;
@@ -592,6 +590,10 @@ pub fn import_config(args: &InfobaseConfigImportArgs) -> Result<InfobaseConfigIm
     let config = resolve_connection(args.connection())?;
     if config.file_infobase.is_some() {
         return crate::file_infobase::import(&config, args);
+    }
+    if config.postgres()?.is_some() {
+        refuse_postgres_files(args)?;
+        return crate::postgres_infobase::import(&config, args);
     }
     ensure_mssql(&config.dbms)?;
 
@@ -1178,6 +1180,20 @@ pub(crate) fn is_postgres(dbms: &str) -> bool {
     dbms.eq_ignore_ascii_case("PostgreSQL")
 }
 
+/// `import files` on PostgreSQL, the DBMS named by the settings too: the
+/// PostgreSQL import replaces the whole stage, so a file list is refused
+/// rather than ignored.
+fn refuse_postgres_files(args: &InfobaseConfigImportArgs) -> Result<()> {
+    if args.files.is_empty() {
+        return Ok(());
+    }
+    Err(crate::mssql::files_stage::FilesRefused {
+        message: crate::dropin::postgres_refusal("infobase config import files"),
+        unsupported: true,
+    }
+    .into())
+}
+
 pub(crate) fn ensure_mssql(dbms: &str) -> Result<()> {
     if dbms.eq_ignore_ascii_case("MSSQLServer") || dbms.eq_ignore_ascii_case("MSSQL") {
         return Ok(());
@@ -1406,6 +1422,19 @@ mod tests {
             "Constants/UseFeature.xml"
         )));
         assert!(!is_internal_dump_path(Path::new("ConfigDumpInfo.xml")));
+    }
+
+    #[test]
+    fn import_files_on_postgres_is_refused_not_widened() {
+        let mut args = import_args();
+        assert!(refuse_postgres_files(&args).is_ok());
+        args.files = vec!["Catalogs/Валюты.xml".to_string()];
+        let error = refuse_postgres_files(&args).unwrap_err();
+        let refused = error
+            .downcast_ref::<crate::mssql::files_stage::FilesRefused>()
+            .unwrap();
+        assert!(refused.unsupported);
+        assert!(refused.message.contains("для PostgreSQL не поддерживается"));
     }
 
     fn import_args() -> InfobaseConfigImportArgs {
