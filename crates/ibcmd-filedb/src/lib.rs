@@ -816,8 +816,12 @@ mod publication_tests {
     fn failed_backup_copy_cleans_only_owned_file_and_allows_retry() {
         for cancelled in [false, true] {
             let dir = std::env::temp_dir().join(format!(
-                "filedb-backup-copy-{}-{cancelled}",
-                std::process::id()
+                "filedb-backup-copy-{}-{cancelled}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
             ));
             fs::create_dir(&dir).unwrap();
             let data = dir.join("data");
@@ -862,14 +866,22 @@ mod publication_tests {
             assert_eq!(fs::read(&data).unwrap(), b"new database C");
             assert_eq!(fs::read(&backup).unwrap(), b"original database A");
             assert!(!pending.exists());
-            fs::remove_dir_all(dir).unwrap();
+            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                fs::remove_dir_all(dir).unwrap();
+            }
         }
     }
     #[test]
     fn each_publication_failure_preserves_both_backup_generations() {
         for fail_at in 1..=2 {
-            let dir = std::env::temp_dir()
-                .join(format!("filedb-publish-{}-{fail_at}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!(
+                "filedb-publish-{}-{fail_at}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
             fs::create_dir(&dir).unwrap();
             let data = dir.join("data");
             let work = dir.join("work");
@@ -904,7 +916,9 @@ mod publication_tests {
                 // No rollback is attempted: even an unavailable filesystem
                 // cannot erase recovery A or the previous generation B.
             }
-            fs::remove_dir_all(dir).unwrap();
+            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                fs::remove_dir_all(dir).unwrap();
+            }
         }
     }
 }

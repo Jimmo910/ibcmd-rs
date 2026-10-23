@@ -1676,7 +1676,9 @@ mod tests {
         struct Scratch(PathBuf);
         impl Drop for Scratch {
             fn drop(&mut self) {
-                let _ = fs::remove_dir_all(&self.0);
+                if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                    let _ = fs::remove_dir_all(&self.0);
+                }
             }
         }
         let root = std::env::temp_dir().join(format!("source-cancel-{}", uuid::Uuid::new_v4()));
@@ -2755,7 +2757,9 @@ mod traversal_budget_tests {
     }
     impl Drop for Scratch {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                let _ = fs::remove_dir_all(&self.0);
+            }
         }
     }
     fn root() -> Scratch {

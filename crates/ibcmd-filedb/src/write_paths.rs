@@ -259,8 +259,14 @@ mod tests {
     use super::*;
     #[test]
     fn ancestor_rebind_after_final_check_cannot_redirect_publication() {
-        let root =
-            std::env::temp_dir().join(format!("filedb-dirfd-publish-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "filedb-dirfd-publish-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let parent = root.join("outer/db");
         fs::create_dir_all(&parent).unwrap();
         let data = parent.join("data");
@@ -300,11 +306,20 @@ mod tests {
         assert!(paths.require_binding(&data, &original).is_err());
         drop(original);
         drop(paths);
-        fs::remove_dir_all(root).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
     }
     #[test]
     fn ancestor_rebind_cannot_redirect_copy_creation_or_error_cleanup() {
-        let root = std::env::temp_dir().join(format!("filedb-dirfd-copy-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "filedb-dirfd-copy-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let parent = root.join("db");
         fs::create_dir_all(&parent).unwrap();
         let data = parent.join("data");
@@ -336,13 +351,21 @@ mod tests {
         assert!(root.join("retained/work").exists());
         drop(original);
         drop(paths);
-        fs::remove_dir_all(root).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
     }
     #[test]
     fn leaf_symlinks_are_never_followed() {
         use std::os::unix::fs::symlink;
-        let root =
-            std::env::temp_dir().join(format!("filedb-dirfd-nofollow-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "filedb-dirfd-nofollow-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         fs::create_dir(&root).unwrap();
         let outside = root.join("outside");
         fs::write(&outside, b"untouched").unwrap();
@@ -353,6 +376,8 @@ mod tests {
         assert!(paths.create_new(&target, true).is_err());
         assert_eq!(fs::read(&outside).unwrap(), b"untouched");
         drop(paths);
-        fs::remove_dir_all(root).unwrap();
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 }

@@ -284,6 +284,10 @@ mod budget_tests {
     }
     impl Drop for Scratch {
         fn drop(&mut self) {
+            // Local lab evidence is retained explicitly; CI cleans only owned names.
+            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some() {
+                return;
+            }
             // Only the two names created by this fixture; file handles drop first.
             let _ = fs::remove_file(self.0.join("fixture"));
             let _ = fs::remove_dir(&self.0);
@@ -354,6 +358,9 @@ mod budget_tests {
             }))
             .is_err()
         );
-        assert!(!path.unwrap().exists());
+        assert_eq!(
+            path.unwrap().exists(),
+            std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some()
+        );
     }
 }

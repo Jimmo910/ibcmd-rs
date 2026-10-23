@@ -126,3 +126,9 @@ code --extensionDevelopmentPath="$PWD" \
 
 Object trees, export/import/apply UI, VSIX/Marketplace delivery and live SQL
 verification are outside this connection-only candidate.
+
+For local evidence collection, set `IBCMD_TEST_KEEP_FIXTURES=1` before the Rust
+file-db, partial-import and source-traversal tests. Their newly owned fixture
+directories are then retained, including after assertion failure. Without this
+flag, disposable CI fixtures are cleaned on scope exit. This test-only switch
+does not change production temporary-file cleanup or recovery artifacts.
