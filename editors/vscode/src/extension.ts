@@ -143,6 +143,10 @@ export async function activate(context: vscode.ExtensionContext) {
       if (!generation.current(stamp)) return;
       rpc = await start(f, () => {
         if (generation.current(stamp)) {
+          // Report while this selection owns the failure, before invalidating pending work.
+          void vscode.window.showErrorMessage(
+            safeError(new Error("Connection stopped")),
+          );
           generation.next();
           status.text = `$(warning) ${label(f, b)} · ${b.platform} · disconnected · pending unknown`;
         }
