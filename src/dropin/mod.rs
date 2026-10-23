@@ -41,13 +41,13 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::cli::{
-    InfobaseConfigExportArgs, InfobaseConfigImportArgs, InfobaseConfigSaveArgs,
-    InfobaseImportStageMode, InfobaseImportVerify,
+    InfobaseConfigExportArgs, InfobaseConfigImportArgs, InfobaseConfigLoadArgs,
+    InfobaseConfigSaveArgs, InfobaseImportStageMode, InfobaseImportVerify,
 };
 use crate::infobase::OutputDirectoryNotEmpty;
 pub use parse::{
-    ApplyRequest, Common, ExportRequest, ImportFilesRequest, ImportRequest, Invocation, Refusal,
-    SaveRequest,
+    ApplyRequest, Common, ExportRequest, ImportFilesRequest, ImportRequest, Invocation,
+    LoadRequest, Refusal, SaveRequest,
 };
 
 const PLANNED: &str = "не поддерживается в этой версии ibcmd-rs (планируется в следующих)";
@@ -135,6 +135,7 @@ pub fn run_infobase(args: &[OsString]) -> i32 {
         Ok(Invocation::ImportFiles(request)) => run_import_files(request),
         Ok(Invocation::Apply(request)) => apply::run(request),
         Ok(Invocation::Save(request)) => run_save(request),
+        Ok(Invocation::Load(request)) => run_load(request),
         Err(refusal) => {
             print_refusal(&refusal, &program_name());
             refusal_exit_code(&refusal)
@@ -160,7 +161,7 @@ fn refuse_postgres(command: &str) -> i32 {
 /// flag here or from the settings in the library (`infobase::import_config`).
 pub(crate) fn postgres_refusal(command: &str) -> String {
     format!(
-        "Команда `{command}` для PostgreSQL не поддерживается в этой версии ibcmd-rs: на PostgreSQL выполняются config export и config import"
+        "Команда `{command}` для PostgreSQL не поддерживается в этой версии ibcmd-rs: на PostgreSQL выполняются config export, config import и config load"
     )
 }
 
@@ -670,6 +671,50 @@ fn run_import_files(mut request: ImportFilesRequest) -> i32 {
     }
 }
 
+/// The title is the platform's own name of the command and the lines it
+/// prints (8.5.1.1529: `Загрузка конфигурации...`, `Загрузка конфигурации
+/// успешно завершена`).
+const LOAD: Operation = Operation {
+    command: "infobase config load",
+    title: "Загрузка конфигурации",
+    ended: "завершена",
+};
+
+pub fn load_args(request: &LoadRequest) -> InfobaseConfigLoadArgs {
+    let common = &request.common;
+    InfobaseConfigLoadArgs {
+        settings: common.settings.clone(),
+        native_config: common.native_config.clone(),
+        db_path: common.db_path.clone(),
+        dbms: common.dbms.clone(),
+        db_server: common.db_server.as_deref().map(sql_server_name),
+        db_name: common.db_name.clone(),
+        db_user: common.db_user.clone(),
+        db_pwd: common.db_pwd.clone(),
+        db_pwd_env: common
+            .db_pwd_env
+            .clone()
+            .unwrap_or_else(|| "IBCMD_DB_PSW".to_string()),
+        // the built-in SQL Server client, unless `--sqlcmd` asks for sqlcmd.exe
+        sqlcmd: common.sqlcmd.clone(),
+        input: PathBuf::from(&request.path),
+    }
+}
+
+fn run_load(mut request: LoadRequest) -> i32 {
+    let report = request.common.report.clone();
+    if let Err(message) = read_requested_password(&mut request.common) {
+        LOAD.start();
+        return LOAD.fail_with(&message, report.as_deref());
+    }
+    let args = load_args(&request);
+    LOAD.start();
+    match crate::infobase::load_config(&args) {
+        Ok(value) => LOAD.succeed(report.as_deref(), &value),
+        Err(error) => LOAD.fail_with(&format!("{error:#}"), report.as_deref()),
+    }
+}
+
 fn run_save(mut request: SaveRequest) -> i32 {
     let report = request.common.report.clone();
     if let Err(message) = read_requested_password(&mut request.common) {
@@ -764,6 +809,17 @@ mod tests {
         let absolute = std::env::temp_dir().join("elsewhere");
         common.temp = Some(absolute.clone());
         assert_eq!(scratch_dir(&common), absolute.join("ibcmd-rs"));
+    }
+
+    #[test]
+    fn a_load_keeps_the_sqlcmd_it_was_given() {
+        let mut common = common();
+        common.sqlcmd = Some(PathBuf::from(r"sqlcmd-dir/sqlcmd.exe"));
+        let args = load_args(&LoadRequest {
+            common,
+            path: OsString::from("a.cf"),
+        });
+        assert_eq!(args.sqlcmd, Some(PathBuf::from(r"sqlcmd-dir/sqlcmd.exe")));
     }
 
     #[test]

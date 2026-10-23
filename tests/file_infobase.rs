@@ -274,3 +274,85 @@ fn broken_files_fail_closed() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("1Cv8.1CD"));
 }
+
+#[test]
+fn a_cf_loaded_into_a_file_infobase_is_staged_whole() {
+    // #353: the .cf's elements staged in CONFIGSAVE as they are; the export
+    // publishes the stage, which is `tiny-source` (the versions of
+    // `ConfigDumpInfo.xml` are those of the infobase the file was saved of).
+    let dir = scratch("load-cf");
+    let db = infobase(&dir, "empty");
+    let report = dir.join("report.json");
+    let mut report_arg = std::ffi::OsString::from("--report=");
+    report_arg.push(&report);
+    ok(&run(&[
+        "infobase".as_ref(),
+        "config".as_ref(),
+        "load".as_ref(),
+        &db_path(&db),
+        &report_arg,
+        fixtures().join("tiny.cf").as_os_str(),
+    ]));
+    assert!(ibcmd_filedb::backup_file(&db).is_file());
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(&report).unwrap()).unwrap();
+    let text = report.to_string();
+    assert!(text.contains("\"format\":\"cf\""), "{text}");
+    assert!(
+        text.contains("\"operation\":\"infobase config load\""),
+        "{text}"
+    );
+    let out = dir.join("xml");
+    ok(&export(&db, &out));
+    assert_same_tree(&fixtures().join("tiny-xml"), &out, &["ConfigDumpInfo.xml"]);
+}
+
+#[test]
+fn a_cf_with_an_archived_deleted_row_loads_with_its_own_list() {
+    // A platform's `config save` of an unapplied import writes the stage's
+    // `deleted` into the file; the load replaces it by the list for this
+    // infobase instead of staging two `deleted` rows (review of #494).
+    use ibcmd_cf::archive::decode_packed_archive;
+    use ibcmd_core::{artifact::StorageProfileId, limits::ResourceLimits};
+    use ibcmd_v8::writer::{Format15Document, Format15Element, write_format15_to_vec};
+    use std::io::Write;
+    let dir = scratch("load-cf-deleted");
+    let source = fixtures().join("tiny.cf");
+    let file = fs::File::open(&source).unwrap();
+    let limits = ResourceLimits::for_input_bytes(file.metadata().unwrap().len());
+    let archive = decode_packed_archive(
+        file,
+        limits,
+        StorageProfileId::parse("storage:test").unwrap(),
+    )
+    .unwrap();
+    let (_, _, entries) = archive.into_parts();
+    let mut entries = entries
+        .into_iter()
+        .map(|entry| entry.into_parts())
+        .collect::<Vec<_>>();
+    let mut encoder =
+        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all("\u{feff}0".as_bytes()).unwrap();
+    entries.push(("deleted".to_string(), encoder.finish().unwrap()));
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    let document = Format15Document::new(
+        entries.len() as u32,
+        entries
+            .iter()
+            .map(|(name, bytes)| Format15Element::named(name, Some(bytes.clone())))
+            .collect(),
+    );
+    let input = dir.join("archived.cf");
+    fs::write(&input, write_format15_to_vec(&document).unwrap()).unwrap();
+    let db = infobase(&dir, "empty");
+    ok(&run(&[
+        "infobase".as_ref(),
+        "config".as_ref(),
+        "load".as_ref(),
+        &db_path(&db),
+        input.as_os_str(),
+    ]));
+    let out = dir.join("xml");
+    ok(&export(&db, &out));
+    assert_same_tree(&fixtures().join("tiny-xml"), &out, &["ConfigDumpInfo.xml"]);
+}

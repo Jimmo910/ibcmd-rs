@@ -38,7 +38,30 @@ pub(crate) fn import(
     Ok(stage.report(
         config,
         source_root,
-        source_version,
+        Some(source_version),
+        "postgres-configsave-stage",
+        (before, after),
+        None,
+    ))
+}
+
+/// `infobase config load <file.cf>` into a PostgreSQL infobase (#353).
+pub(crate) fn load_cf(
+    config: &ConnectionConfig,
+    input: &std::path::Path,
+) -> Result<InfobaseConfigImportReport> {
+    let target = config
+        .postgres()?
+        .ok_or_else(|| anyhow!("no PostgreSQL database"))?;
+    let mut connection = PgConnection::connect(&target)?;
+    begin_stage(&mut connection)?;
+    let stage = crate::file_infobase::plan_cf_stage(read_rows(&mut connection, "config")?, input)?;
+    let before = write_stage(&mut connection, &stage.rows)
+        .with_context(|| format!("не удалось записать configsave базы {}", target.database))?;
+    let after = stage.rows.len();
+    Ok(stage.load_report(
+        config,
+        input,
         "postgres-configsave-stage",
         (before, after),
         None,
@@ -138,12 +161,9 @@ fn insert_statement(row: &ConfigRow) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn an_import_locks_both_tables_before_reading_its_base() {
-        use crate::cli::{
-            InfobaseConfigFormat, InfobaseConfigSourceVersion, InfobaseImportStageMode,
-            InfobaseImportVerify,
-        };
+    fn wire_queries(
+        run: impl FnOnce(&ConnectionConfig) -> Result<InfobaseConfigImportReport>,
+    ) -> Vec<String> {
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
         fn send(stream: &mut TcpStream, tag: u8, body: &[u8]) {
@@ -183,7 +203,7 @@ mod tests {
             }
             queries
         });
-        let version = InfobaseConfigSourceVersion::V2_21;
+        let version = crate::cli::InfobaseConfigSourceVersion::V2_21;
         let config = ConnectionConfig {
             dbms: "PostgreSQL".into(),
             db_server: address,
@@ -192,7 +212,7 @@ mod tests {
             db_pwd: None,
             password_source: None,
             native_config: None,
-            format: InfobaseConfigFormat::Xml,
+            format: crate::cli::InfobaseConfigFormat::Xml,
             legacy_adapter: crate::adapters::mssql_legacy::MssqlLegacyAdapter::from_legacy_selector(
                 version,
             ),
@@ -200,6 +220,29 @@ mod tests {
             file_infobase: None,
             postgres_snapshot: None,
         };
+        let result = run(&config);
+        let queries = worker.join().unwrap();
+        assert!(result.is_ok(), "{result:?}");
+        queries
+    }
+
+    fn assert_locked_stage(queries: &[String]) {
+        assert_eq!(queries.first().map(String::as_str), Some("BEGIN"));
+        assert_eq!(
+            queries.get(1).map(String::as_str),
+            Some("LOCK TABLE config, configsave IN SHARE ROW EXCLUSIVE MODE")
+        );
+        assert!(queries[2].ends_with("FROM config"));
+        assert_eq!(queries.last().map(String::as_str), Some("COMMIT"));
+    }
+
+    #[test]
+    fn an_import_locks_both_tables_before_reading_its_base() {
+        use crate::cli::{
+            InfobaseConfigFormat, InfobaseConfigSourceVersion, InfobaseImportStageMode,
+            InfobaseImportVerify,
+        };
+        let version = InfobaseConfigSourceVersion::V2_21;
         let args = InfobaseConfigImportArgs {
             settings: None,
             native_config: None,
@@ -228,16 +271,20 @@ mod tests {
             source_dir: std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/file-infobase/tiny-source"),
         };
-        let result = import(&config, &args);
-        let queries = worker.join().unwrap();
-        assert!(result.is_ok(), "{result:?}");
-        assert_eq!(queries.first().map(String::as_str), Some("BEGIN"));
-        assert_eq!(
-            queries.get(1).map(String::as_str),
-            Some("LOCK TABLE config, configsave IN SHARE ROW EXCLUSIVE MODE")
-        );
-        assert!(queries[2].ends_with("FROM config"));
-        assert_eq!(queries.last().map(String::as_str), Some("COMMIT"));
+        assert_locked_stage(&wire_queries(|config| import(config, &args)));
+    }
+
+    #[test]
+    fn a_cf_load_locks_both_tables_before_reading_its_base() {
+        let input = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/file-infobase/tiny.cf");
+        let queries = wire_queries(|config| {
+            let report = load_cf(config, &input)?;
+            assert_eq!(report.operation, "infobase config load");
+            assert_eq!(report.format, "cf");
+            Ok(report)
+        });
+        assert_locked_stage(&queries);
     }
 
     #[test]

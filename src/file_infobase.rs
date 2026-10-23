@@ -61,7 +61,7 @@ pub(crate) fn import(
     Ok(stage.report(
         config,
         source_root,
-        source_version,
+        Some(source_version),
         "file-infobase-configsave-stage",
         (written.rows_before, written.rows_after),
         Some(written.backup),
@@ -212,6 +212,81 @@ pub(crate) fn plan_stage(
     })
 }
 
+/// `infobase config load <file.cf>` into a file infobase (#353).
+pub(crate) fn load_cf(
+    config: &ConnectionConfig,
+    input: &Path,
+) -> Result<InfobaseConfigImportReport> {
+    let data_file = config
+        .file_infobase
+        .as_deref()
+        .ok_or_else(|| anyhow!("no file infobase"))?;
+    let mut session = ibcmd_filedb::open_for_write(data_file).map_err(|err| anyhow!("{err}"))?;
+    let stage = plan_cf_stage(
+        session
+            .config_rows("CONFIG")
+            .map_err(|err| anyhow!("{err}"))?,
+        input,
+    )?;
+    let written = session
+        .replace("CONFIGSAVE", &stage.rows)
+        .map_err(|err| anyhow!("{err}"))
+        .with_context(|| format!("не удалось записать CONFIGSAVE в {}", data_file.display()))?;
+    Ok(stage.load_report(
+        config,
+        input,
+        "file-infobase-configsave-stage",
+        (written.rows_before, written.rows_after),
+        Some(written.backup),
+    ))
+}
+
+/// The stage of a `.cf` over the target's `CONFIG` rows: every element of
+/// the file as it is (the platform's own load keeps them byte for byte:
+/// 8.5.1.1529 into an empty PostgreSQL infobase staged `tiny`'s elements
+/// unchanged), then `deleted` naming what the target stores and the file
+/// does not. The file replaces the whole main configuration.
+pub(crate) fn plan_cf_stage(config_rows: Vec<ConfigRow>, input: &Path) -> Result<Stage> {
+    let target = crate::mssql_dump::file_infobase_config(config_rows)?;
+    let entries = crate::mssql::cf_load_stage::cf_load_rows(input)?
+        .into_iter()
+        .map(|row| (row.file_name, row.blob))
+        .collect::<BTreeMap<_, _>>();
+    let deleted = target
+        .stored_names
+        .iter()
+        .filter(|name| !entries.contains_key(*name))
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(Stage {
+        rows: stage_rows(&entries, &deleted)?,
+        base_free: true,
+        reason: format!(
+            "the .cf replaces the main configuration ({} elements)",
+            entries.len()
+        ),
+        target_rows: target.stored_names.len(),
+        verification: None,
+    })
+}
+
+impl Stage {
+    /// What `config load` did once the stage is written.
+    pub(crate) fn load_report(
+        self,
+        config: &ConnectionConfig,
+        input: &Path,
+        backend: &'static str,
+        rows: (usize, usize),
+        backup: Option<PathBuf>,
+    ) -> InfobaseConfigImportReport {
+        let mut report = self.report(config, input.to_path_buf(), None, backend, rows, backup);
+        report.operation = "infobase config load";
+        report.format = "cf";
+        report
+    }
+}
+
 impl Stage {
     /// What the import did once the stage is written: `rows` is the stage
     /// table's row count before and after.
@@ -219,7 +294,7 @@ impl Stage {
         self,
         config: &ConnectionConfig,
         source_root: PathBuf,
-        source_version: InfobaseConfigSourceVersion,
+        source_version: Option<InfobaseConfigSourceVersion>,
         backend: &'static str,
         rows: (usize, usize),
         backup: Option<PathBuf>,
@@ -228,7 +303,7 @@ impl Stage {
             operation: "infobase config import",
             backend,
             format: "xml",
-            source_version: Some(source_version.as_str().to_string()),
+            source_version: source_version.map(|version| version.as_str().to_string()),
             dbms: config.dbms.clone(),
             db_server: config.db_server.clone(),
             db_name: config.db_name.clone(),

@@ -147,7 +147,7 @@ fn every_native_infobase_command_is_served_or_refused_by_name() {
                 assert_malformed(&args, "Указана неполная команда");
             }
             // served: without its path it asks for one
-            NodeKind::Export | NodeKind::Import | NodeKind::Save => {
+            NodeKind::Export | NodeKind::Import | NodeKind::Save | NodeKind::Load => {
                 assert_malformed(&args, "Не указано значение параметра");
             }
             // served: without its directory it asks for one
@@ -469,10 +469,9 @@ fn save_starts_in_the_platforms_words_and_stops_at_the_connection() {
         &["infobase", "config", "save", "--db-name=b"],
         "Не указано значение параметра: путь к файлу конфигурации",
     );
-    // load is still refused by name
-    assert_refused(
-        &["infobase", "config", "load", "--db-name=b", "x.cf"],
-        "Команда `infobase config load` не поддерживается",
+    assert_malformed(
+        &["infobase", "config", "load", "--db-name=b"],
+        "Не указано значение параметра: путь к файлу конфигурации",
     );
 }
 

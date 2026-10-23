@@ -22,9 +22,9 @@ use walkdir::WalkDir;
 use crate::adapters::mssql_legacy::MssqlLegacyAdapter;
 use crate::cli::{
     InfobaseConfigExportArgs, InfobaseConfigFormat, InfobaseConfigImportArgs,
-    InfobaseConfigSaveArgs, InfobaseConfigSourceVersion, InfobaseImportStageMode,
-    InfobaseImportVerify, MssqlDumpConfigArgs, MssqlDumpExtensionArgs, MssqlExtensionImage,
-    MssqlStageSourceObjectsArgs,
+    InfobaseConfigLoadArgs, InfobaseConfigSaveArgs, InfobaseConfigSourceVersion,
+    InfobaseImportStageMode, InfobaseImportVerify, MssqlDumpConfigArgs, MssqlDumpExtensionArgs,
+    MssqlExtensionImage, MssqlStageSourceObjectsArgs,
 };
 use crate::legacy_version::LegacyVersionAxes;
 use crate::platform::PlatformSpec;
@@ -584,6 +584,77 @@ fn dump_args(
         base: None,
         sync: false,
     }
+}
+
+impl InfobaseConfigLoadArgs {
+    fn connection(&self) -> ConnectionRequest<'_> {
+        ConnectionRequest {
+            settings: self.settings.as_deref(),
+            native_config: self.native_config.as_deref(),
+            format: None,
+            platform: None,
+            source_version: None,
+            db_path: self.db_path.as_deref(),
+            dbms: self.dbms.as_deref(),
+            db_server: self.db_server.as_deref(),
+            db_name: self.db_name.as_deref(),
+            db_user: self.db_user.as_deref(),
+            db_pwd: self.db_pwd.as_deref(),
+            db_pwd_env: &self.db_pwd_env,
+            // A .cf holds the stored rows: no XML format is read.
+            need: PlatformNeed::Given,
+        }
+    }
+}
+
+/// `infobase config load <file.cf>` (#353): the file's elements staged in
+/// `ConfigSave` for `config apply`, in a file infobase or on PostgreSQL. On
+/// SQL Server `mssql-load-config --script-only` writes the stage's scripts.
+pub fn load_config(args: &InfobaseConfigLoadArgs) -> Result<InfobaseConfigImportReport> {
+    let config = resolve_connection(args.connection())?;
+    let input = absolute_path(&args.input)?;
+    if config.file_infobase.is_some() {
+        return crate::file_infobase::load_cf(&config, &input);
+    }
+    if config.postgres()?.is_some() {
+        return crate::postgres_infobase::load_cf(&config, &input);
+    }
+    ensure_mssql(&config.dbms)?;
+    let sql = crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
+        sqlcmd: args.sqlcmd.as_deref(),
+        bcp: None,
+        server: &config.db_server,
+        user: config.db_user.as_deref(),
+        password: config.db_pwd.as_deref(),
+        password_env: &args.db_pwd_env,
+        trust_server_certificate: true,
+    })?;
+    let loaded = crate::mssql::cf_load_stage::load_into_database(&sql, &config.db_name, &input)?;
+    Ok(InfobaseConfigImportReport {
+        operation: "infobase config load",
+        backend: "mssql-configsave-stage",
+        format: "cf",
+        source_version: None,
+        dbms: config.dbms.clone(),
+        db_server: config.db_server.clone(),
+        db_name: config.db_name.clone(),
+        db_user: config.db_user.clone(),
+        native_config: config.native_config.clone(),
+        source_dir: input,
+        stage_mode: "base-free",
+        stage_mode_reason: format!(
+            "the .cf replaces the main configuration ({} elements, {} rows of Config deleted)",
+            loaded.rows, loaded.deleted
+        ),
+        files: Vec::new(),
+        target_config_rows: -1,
+        staged_rows_before: loaded.config_save_rows_before,
+        staged_rows_after: loaded.config_save_rows_after,
+        scripts: Vec::new(),
+        verification: None,
+        overrides: None,
+        backup: None,
+    })
 }
 
 pub fn import_config(args: &InfobaseConfigImportArgs) -> Result<InfobaseConfigImportReport> {
