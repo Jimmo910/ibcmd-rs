@@ -8,13 +8,8 @@ exports.run = async () => {
   );
   assert.ok(extension);
   const api = await extension.activate();
-  const fixture = path.resolve(
-    __dirname,
-    "../../../tests/fixtures/file-infobase/tiny-xml",
-  );
   const workspace = vscode.workspace.workspaceFolders[0].uri.fsPath;
   const rootDir = path.join(workspace, "исходники");
-  await fs.cp(fixture, rootDir, { recursive: true });
   const open = vscode.window.showOpenDialog;
   try {
     vscode.window.showOpenDialog = async () => [vscode.Uri.file(rootDir)];
