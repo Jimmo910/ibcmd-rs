@@ -10,11 +10,44 @@
 //! same raw-deflate rows.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 
 use super::offline_rows::OfflineRows;
 use crate::sql::postgres::{PgConnection, PgTarget, decode_bytea};
+
+/// The rows the platform probe of an export read (database, rows): the
+/// export of the same command publishes them instead of reading the
+/// database a second time.
+static PROBED: Mutex<Option<(String, Arc<OfflineRows>)>> = Mutex::new(None);
+
+fn probe_key(target: &PgTarget) -> String {
+    format!(
+        "{}:{}/{}@{}",
+        target.host, target.port, target.database, target.user
+    )
+}
+
+/// The published rows for the platform probe (`settle_platform`), kept for
+/// the export that follows it.
+pub(crate) fn load_for_probe(target: &PgTarget) -> Result<Arc<OfflineRows>> {
+    let rows = Arc::new(load(target, false)?);
+    if let Ok(mut probed) = PROBED.lock() {
+        *probed = Some((probe_key(target), Arc::clone(&rows)));
+    }
+    Ok(rows)
+}
+
+/// The published rows for an export: those its probe read, else the
+/// database's.
+pub(crate) fn load_published(target: &PgTarget) -> Result<Arc<OfflineRows>> {
+    let probed = PROBED.lock().ok().and_then(|mut probed| probed.take());
+    match probed {
+        Some((key, rows)) if key == probe_key(target) => Ok(rows),
+        _ => Ok(Arc::new(load(target, false)?)),
+    }
+}
 
 /// The configuration the database publishes, as offline rows; with
 /// `stored_only` its `config` table alone (`config save --db`).
@@ -90,6 +123,21 @@ fn text(row: &[Option<Vec<u8>>], column: usize) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_export_publishes_the_rows_its_platform_probe_read() {
+        let target = PgTarget::new("127.0.0.1:1", "probed", None, None).unwrap();
+        let rows = Arc::new(OfflineRows::from_memory([(
+            "root".to_owned(),
+            Arc::new(b"probe".to_vec()),
+        )]));
+        *PROBED.lock().unwrap() = Some((probe_key(&target), Arc::clone(&rows)));
+        // Port 1 refuses a connection: the rows can only be the probe's.
+        let published = load_published(&target).unwrap();
+        assert!(Arc::ptr_eq(&published, &rows));
+        assert!(PROBED.lock().unwrap().is_none());
+        assert!(load_published(&target).is_err());
+    }
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
 
