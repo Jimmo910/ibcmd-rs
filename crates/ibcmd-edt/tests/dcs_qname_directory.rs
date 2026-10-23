@@ -119,6 +119,7 @@ fn explicit_noop_view_keeps_every_wire_field_and_wrong_type_body_exact() {
             slot: "ParentConfigurations".into(),
             bytes: b"parent".to_vec(),
             mobile_signature_lexical: None,
+            edt_distribution: false,
         });
         obj.help.push(HelpPage {
             lang: "ru".into(),
