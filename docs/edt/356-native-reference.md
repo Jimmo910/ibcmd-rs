@@ -326,3 +326,82 @@ the strict view retains it. All inputs, candidate and selected evidence remain
 unchanged. The slot was released immediately; no SDK/JVM/native/build was run.
 This public smoke does not satisfy BSP/UH coverage, current-model semantic
 support or clean SDK/style diagnostics. Earlier failures remain preserved.
+
+
+## Remaining CDI contract and SDK diagnostics investigation
+
+The issue's original criterion says the result matches a native export of the
+loaded BSP project. It does not explicitly waive any file. The existing
+[oracle contract](oracle.md) documents a CDI-only exclusion for authentic
+source-only EDT conversion, while unchanged provenance return includes CDI.
+Those are different claims: this PR retains strict failure alongside the
+successful configuration-content comparison and does not amend issue acceptance.
+
+[Retained public evidence](evidence/356-cdi-diagnostics-investigation-20261023.json)
+compares the original public native source CDI with the fresh database CDI.
+All 18 metadata name/ID rows agree; 16 versioned rows have different
+`configVersion` values. The authentic project contains 19 files, no storage
+`versions` record, and no literal fresh-reference version tokens. This absence
+alone is not proof that no algorithm could exist, but there is no evidenced
+source-only derivation of those exact database generations.
+
+The ordinary exporter reads `Config`/CF `versions` UUIDs in
+`src/mssql_dump/config_dump_info.rs` (`parse_versions_blob`) and writes each UUID
+as 16 little-endian bytes plus four zero bytes (`config_version`), not a source
+XML content hash. Extensions have a distinct `configinfo` SHA-1 route and cannot
+be used as an ordinary-configuration substitute. `src/compiler/versions.rs`
+creates deterministic bootstrap generation UUIDs under its own domain/profile;
+that is an independent storage image, not proof of matching an already loaded
+native database. `docs/COMMANDS.md` also uses CDI versions for incremental export
+and stale-base checks. Inventing or copying these tokens could give false
+incremental identities. The adapter boundary in `morph1c-adoption.md` explicitly
+states it does not manufacture native storage generations from EDT.
+
+The concrete external input missing for exact whole-export equality is the
+reference database's version-generation state (or a verified native algorithm
+that reproduces it from fully specified inputs). No CDI implementation is
+justified from current source-only evidence. #356 owns this investigation;
+#357/#358 were asked not to duplicate or fabricate storage values. If a product
+route is later specified to accept an authoritative storage image, CDI should
+be generated from its validated CURRENT inventory and versions using the
+existing exporter, with source/storage binding and version-specific controls.
+That would be a separately declared input contract; the source-only converter
+and this acceptance gate must remain truthful in the meantime. No further JVM
+run is needed to establish this retained-data boundary.
+
+SDK diagnostics are classified by evidence, without suppressing them:
+
+- `Skipping the lifecycle event because workbench is not running` is emitted by
+  vendor bundle `com.e1c.g5.dt.applications.infobases.ui` on the genuine native
+  import/export/validate routes before our generated route. It is consistent
+  with the headless environment; exact root cause is not independently proven.
+- `[Fatal Error] :1:1: Premature end of file.` appears in genuine explicit-project
+  export/validate stdout and in the same generated routes. The matched same-phase
+  error multisets are equal, with nothing added or removed. It is demonstrably
+  pre-existing on the genuine route; stdout supplies no failing XML path or
+  stack, so a vendor-parser root cause is still unproven.
+- The genuine and generated validation TSVs each contain the same 24 Minor rows
+  (14 Code style, 10 UI style), zero configuration-error rows and no added or
+  removed diagnostics. These are source/control diagnostics, not evidence of a
+  converter regression. UI style remains unclassified by the strict gate and
+  is not waived.
+
+These matched diagnostics come from the earlier `6da274e4` installed capture,
+not a new installed run of candidate `ba118d90`. They cannot establish clean SDK
+acceptance for the latest candidate. A future justified vendor investigation
+should isolate the genuine explicit-project route under the same external
+installation/INI with vendor-supported diagnostics to identify the parser
+input; it must retain the current errors and use a separately granted native
+slot. No SDK/JVM/build/converter rerun was made for this investigation.
+
+
+The existing explicit-project export stdout contains only the fatal line;
+stderr is empty, and neither retained workspace/CLI/shutdown log identifies
+its input or stack. The CLI log reports SLF4J falling back to a no-operation
+logger, plus JDK warnings; these do not prove the parser error's cause. The
+minimal next diagnostic step is offline inspection of the installed vendor
+logging/trace options and the already bound startup configuration to identify
+an option capable of naming the failing parser input. Only if that yields a
+concrete supported trace should one fresh genuine-control run be proposed,
+with identical version/configuration bindings and a separately granted slot.
+No speculative JVM option changes or repeated conversions are needed now.
