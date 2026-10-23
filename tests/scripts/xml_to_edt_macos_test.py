@@ -32,6 +32,14 @@ def project(root, runtime="8.5.1"):
 
 
 class Controls(unittest.TestCase):
+    def symlink_directory_or_skip(self, link, target):
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except OSError as error:
+            if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                self.skipTest("Windows symlink privilege is unavailable (WinError 1314)")
+            raise
+
     def fixture(self):
         root = Path(tempfile.mkdtemp(prefix="issue357-control-"))
         native, run = root / "native", root / "run"
@@ -248,7 +256,7 @@ class Controls(unittest.TestCase):
         original = args.run / "project"
         project(original)
         write(original / ".ibcmd-provenance/manifest.json")
-        (original / "linked").symlink_to(args.native, target_is_directory=True)
+        self.symlink_directory_or_skip(original / "linked", args.native)
         with self.assertRaisesRegex(lab.Error, "Symlink"):
             lab.copy_without_provenance(original, args.run / "copy")
         self.assertFalse((args.run / "copy").exists())
@@ -287,10 +295,11 @@ class Controls(unittest.TestCase):
             lab.contained(args.native, args.run)
         with self.assertRaises(lab.Error):
             lab.contained(args.run, args.run)
-        linked = args.run / "link"
-        linked.symlink_to(args.native, target_is_directory=True)
-        with self.assertRaises(lab.Error):
-            lab.contained(linked, args.run)
+        with self.subTest("symlink boundary"):
+            linked = args.run / "link"
+            self.symlink_directory_or_skip(linked, args.native)
+            with self.assertRaises(lab.Error):
+                lab.contained(linked, args.run)
 
     def test_declared_wrong_build_is_refused(self):
         for build in ("2025.2.3", "2026.2.1+3", "not-a-build", "2025.2.3.30 extra"):

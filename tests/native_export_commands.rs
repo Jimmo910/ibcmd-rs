@@ -778,3 +778,125 @@ fn native_empty_base_and_sync_noops_preserve_their_output_contracts() {
         "native unchanged sync must not publish or prune"
     );
 }
+
+#[test]
+fn postgres_query_routes_refuse_before_connecting_or_publishing() {
+    use std::{
+        io::ErrorKind,
+        net::TcpListener,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        thread,
+        time::Duration,
+    };
+
+    let root = std::env::temp_dir().join(format!("native-pg-query-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&root).unwrap();
+    let reference_bytes = fs::read(fixture().join("tiny-xml/ConfigDumpInfo.xml")).unwrap();
+    let mut failures = Vec::new();
+    for from_settings in [false, true] {
+        for query in ["info", "status", "objects"] {
+            let origin = if from_settings { "settings" } else { "flags" };
+            let case = root.join(format!("{origin}-{query}"));
+            fs::create_dir(&case).unwrap();
+            let reference = case.join("reference.xml");
+            fs::write(&reference, &reference_bytes).unwrap();
+            let defaults = case.join("empty.toml");
+            fs::write(&defaults, b"").unwrap();
+            let destination = case.join("output");
+            if query == "info" {
+                fs::create_dir(&destination).unwrap();
+                fs::write(destination.join("keep.txt"), b"keep existing output").unwrap();
+            }
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let server = listener.local_addr().unwrap().to_string();
+            let connections = Arc::new(AtomicUsize::new(0));
+            let done = Arc::new(AtomicBool::new(false));
+            let counted = Arc::clone(&connections);
+            let finished = Arc::clone(&done);
+            let trap = thread::spawn(move || {
+                loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => {
+                            counted.fetch_add(1, Ordering::SeqCst);
+                            drop(stream); // A bad probe must fail promptly instead of waiting for a reply.
+                        }
+                        Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                            if finished.load(Ordering::SeqCst) {
+                                break;
+                            }
+                            thread::sleep(Duration::from_millis(2));
+                        }
+                        Err(error) => panic!("synthetic PostgreSQL listener: {error}"),
+                    }
+                }
+            });
+            let mut command = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
+            command
+                .current_dir(&case)
+                .env("IBCMD_RS_CONFIG", &defaults)
+                .env_remove("IBCMD_RS_PLATFORM")
+                .env_remove("IBCMD_RS_DB_SERVER")
+                .env_remove("IBCMD_RS_DB_USER")
+                .env_remove("IBCMD_DB_PSW")
+                .args(["infobase", "config", "export", query])
+                .arg(opt("out", &destination));
+            if query == "status" {
+                command.arg(opt("base", &reference));
+            } else if query == "objects" {
+                command.arg("CommonModule.ФайловаяБазаПроверка");
+            }
+            if from_settings {
+                let settings = case.join("connection.json");
+                fs::write(
+                    &settings,
+                    serde_json::to_vec(&serde_json::json!({
+                        "vrunner": {
+                            "dbms-type": "PostgreSQL",
+                            "dbms-server": server,
+                            "dbms-base": "synthetic_query",
+                            "dbms-user": "synthetic"
+                        }
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+                command.arg(opt("settings", &settings));
+            } else {
+                command.args([
+                    "--dbms=PostgreSQL".to_owned(),
+                    format!("--db-server={server}"),
+                    "--db-name=synthetic_query".to_owned(),
+                    "--db-user=synthetic".to_owned(),
+                ]);
+            }
+            let before = tree(&case);
+            let output = command.output().unwrap();
+            done.store(true, Ordering::SeqCst);
+            trap.join().unwrap();
+            let connections = connections.load(Ordering::SeqCst);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let unchanged = tree(&case) == before && destination.exists() == (query == "info");
+            eprintln!(
+                "{origin}/{query}: code={:?}, connections={connections}, unchanged={unchanged}",
+                output.status.code()
+            );
+            if output.status.code() != Some(1)
+                || !stderr.contains("для PostgreSQL не поддерживается")
+                || !stderr.contains("config export, config import и config load")
+                || connections != 0
+                || !unchanged
+            {
+                failures.push(format!("{origin}/{query}: code={:?}, connections={connections}, unchanged={unchanged}, stderr={stderr}", output.status.code()));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "unsupported query regressions:\n{}",
+        failures.join("\n")
+    );
+}

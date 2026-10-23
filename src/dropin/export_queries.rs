@@ -1,9 +1,9 @@
 //! Native query stdout/file protocols, measured on 8.5.1.1592.
 use super::{
-    EXIT_FAILED, export_args,
+    EXIT_FAILED, EXIT_UNSUPPORTED, export_args,
     parse::{ExportQueryKind, ExportQueryRequest},
 };
-use crate::infobase::export_commands;
+use crate::infobase::{UnsupportedExportQuery, export_commands};
 use anyhow::Result;
 use std::{
     fs,
@@ -107,6 +107,11 @@ pub(super) fn run(mut request: ExportQueryRequest) -> i32 {
             0
         }
         Err(error) => {
+            let exit_code = if error.downcast_ref::<UnsupportedExportQuery>().is_some() {
+                EXIT_UNSUPPORTED
+            } else {
+                EXIT_FAILED
+            };
             let message = if let Some(unknown) =
                 error.downcast_ref::<crate::stored_objects::UnknownObject>()
             {
@@ -128,7 +133,7 @@ pub(super) fn run(mut request: ExportQueryRequest) -> i32 {
                     eprintln!("[ERROR] {report_error:#}");
                 }
             }
-            EXIT_FAILED
+            exit_code
         }
     }
 }

@@ -18,12 +18,14 @@ pub fn info(args: &InfobaseConfigExportArgs) -> Result<Vec<u8>> {
         overwrite: false,
         incremental: true,
     };
-    let config = super::resolve_connection(request)?;
+    let config =
+        super::resolve_export_query_connection(request, "infobase config export info/status")?;
     if args.extension.is_some() {
         anyhow::bail!("export info/status of extensions is not supported yet");
     }
     let dump = super::dump_args(
         &config,
+        None,
         args.sqlcmd.as_deref(),
         &args.db_pwd_env,
         PathBuf::from("ibcmd-rs-inventory"),
@@ -141,7 +143,7 @@ pub fn objects(args: &InfobaseConfigExportArgs, names: &[String], recursive: boo
         overwrite: false,
         incremental: true,
     };
-    let config = super::resolve_connection(request)?;
+    let config = super::resolve_export_query_connection(request, "infobase config export objects")?;
     if args.extension.is_some() {
         anyhow::bail!("export objects of extensions is not supported yet");
     }
@@ -150,6 +152,7 @@ pub fn objects(args: &InfobaseConfigExportArgs, names: &[String], recursive: boo
     }
     let mut dump = super::dump_args(
         &config,
+        None,
         args.sqlcmd.as_deref(),
         &args.db_pwd_env,
         root.clone(),

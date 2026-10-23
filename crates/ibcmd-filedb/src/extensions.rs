@@ -131,10 +131,16 @@ fn read_table(pager: &mut Pager<'_>, table: &Table) -> Result<Vec<ExtensionRegis
         ));
     }
     let blobs = blobs.read_all(pager)?;
-    decode_records(&layout, &records, &blobs)
+    decode_records_checked(&layout, &records, &blobs, &|| pager.check_read())
 }
 
-fn binary_value(layout: &Layout, record: &[u8], blobs: &[u8], name: &str) -> Result<Vec<u8>> {
+fn binary_value(
+    layout: &Layout,
+    record: &[u8],
+    blobs: &[u8],
+    name: &str,
+    check: &dyn Fn() -> Result<()>,
+) -> Result<Vec<u8>> {
     let value = layout.field(record, name)?;
     let (head, len) = value.split_at(4);
     let head = u32::from_le_bytes(
@@ -150,17 +156,29 @@ fn binary_value(layout: &Layout, record: &[u8], blobs: &[u8], name: &str) -> Res
             "extension registry value exceeds its budget".into(),
         ));
     }
-    blob::read_chain(blobs, head, Some(u64::from(len)))
+    blob::read_chain_checked(blobs, head, Some(u64::from(len)), check)
 }
 
+#[cfg(test)]
 fn decode_records(
     layout: &Layout,
     records: &[u8],
     blobs: &[u8],
 ) -> Result<Vec<ExtensionRegistryRow>> {
+    decode_records_checked(layout, records, blobs, &|| Ok(()))
+}
+
+fn decode_records_checked(
+    layout: &Layout,
+    records: &[u8],
+    blobs: &[u8],
+    check: &dyn Fn() -> Result<()>,
+) -> Result<Vec<ExtensionRegistryRow>> {
+    check()?;
     let mut rows = Vec::new();
     let mut retained_bytes = 0u64;
     for record in records.chunks_exact(layout.record_bytes).skip(1) {
+        check()?;
         match record.first() {
             Some(1) => continue,
             Some(0) => {}
@@ -203,12 +221,12 @@ fn decode_records(
             .encode_utf16()
             .flat_map(u16::to_le_bytes)
             .collect();
-        if binary_value(layout, record, blobs, "_MASTERNODE")? != expected_master {
+        if binary_value(layout, record, blobs, "_MASTERNODE", check)? != expected_master {
             return Err(Error::Unsupported(
                 "distributed file extensions are not supported".into(),
             ));
         }
-        let zipped_info = binary_value(layout, record, blobs, "_EXTENSIONZIPPEDINFO")?;
+        let zipped_info = binary_value(layout, record, blobs, "_EXTENSIONZIPPEDINFO", check)?;
         retained_bytes = retained_bytes
             .checked_add(zipped_info.len() as u64)
             .filter(|n| *n <= MAX_REGISTRY_BYTES)
@@ -324,6 +342,25 @@ mod tests {
                 zipped_info: b"payload".to_vec()
             }]
         );
+        let refusal = decode_records_checked(&layout, &records, &blobs, &|| {
+            Err(Error::Refused("registry read cancelled".into()))
+        });
+        assert!(
+            matches!(refusal, Err(Error::Refused(message)) if message == "registry read cancelled")
+        );
+        let checks = std::cell::Cell::new(0);
+        let refusal = decode_records_checked(&layout, &records, &blobs, &|| {
+            checks.set(checks.get() + 1);
+            if checks.get() == 4 {
+                Err(Error::Refused("registry block cancelled".into()))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(
+            matches!(refusal, Err(Error::Refused(message)) if message == "registry block cancelled")
+        );
+        assert_eq!(checks.get(), 4);
         records[layout.record_bytes + layout.fields["_EXTNAME"].start..][..2]
             .copy_from_slice(&256u16.to_le_bytes());
         assert!(decode_records(&layout, &records, &blobs).is_err());
