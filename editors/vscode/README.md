@@ -252,3 +252,38 @@ a safe reusable cache needs completed-only publication, tree+repository+prefix
 identity, and an integrity/partial-cancellation policy. The current pinned-tree,
 path/link guards and Trash-controlled retention remain; this PR does not claim
 ERP-scale Git baseline performance.
+
+## Selective export (#381)
+
+Set `ibcmd.exportCacheDirectory` to an absolute staging folder outside
+`ibcmd.sourceDirectory` (use the external laboratory disk). Select object rows
+with Ctrl/Cmd or Shift, then **Выгрузить из базы** in the context menu.
+**Выгрузить группу из базы** opens a group picker; **Выгрузить изменённые из базы**
+uses the source's `ConfigDumpInfo.xml` as its native version reference. Local byte
+changes alone do not select a database object for changed export. A database
+removal/rename uses the native full-conversion fallback.
+
+The new `objects/exportPlan` RPC writes only an empty, separate staging folder;
+its response lists `objects`, `files`, `removed`, and original SHA-256 fingerprints
+(`expected`, null for missing targets). The client checks affected editor buffers
+and Git staged/modified/untracked/ignored paths before publication. Dirty buffers
+must be saved or reverted first; Git changes require an explicit modal decision
+listing every affected path. Existing files outside Git are treated as unversioned
+conflicts. Git execution failures fail closed. Disk changes, connection changes
+and cancellation invalidate the plan. Equal bytes are left untouched.
+
+Partial export updates selected version entries and keeps unsynchronized entries,
+including nested parts, at their previous versions. It does not advertise the
+whole database as synchronized. Inventory is published last. Deletions use VS Code
+Trash; original bytes are retained under the staging directory's `originals/`.
+Interrupted publication can leave some files updated; use those retained originals
+to recover, then repeat export. This is a trusted local workspace operation, not a
+transaction against hostile concurrent filesystem replacement. Linked target
+components are refused. No source tree scan is required for one-object export.
+
+`IBCMD_TEST_SUITE=export-host-suite.js npm run test:host` runs actual VS Code dirty
+buffer protection and real RPC group export on the repository's own disposable
+tiny database. The standard host runner gives it a fresh profile/workspace below
+`IBCMD_TEST_ROOT`; all fixtures and staging evidence are retained for Trash cleanup.
+ERP UH document latency and SQL acceptance require separate representative lab
+fixtures; the tiny public test does not establish those results.

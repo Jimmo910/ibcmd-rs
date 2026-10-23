@@ -25,7 +25,7 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
-      - run: cargo test --locked --test editor_server --no-default-features
+      - run: cargo test --locked --test editor_server --test editor_export_plan --no-default-features
       - run: npm ci
         working-directory: editors/vscode
       - run: npm run format:check
@@ -44,5 +44,15 @@ jobs:
           export IBCMD_TEST_BINARY="$GITHUB_WORKSPACE/target/debug/ibcmd-rs"
           export IBCMD_TEST_ROOT="$RUNNER_TEMP/ibcmd-vscode-host"
           export IBCMD_TEST_ROWS="${TMPDIR:-/tmp}/ibcmd-external-editor-server-protocol/rows/demo"
+          xvfb-run -a npm run test:host
+        working-directory: editors/vscode
+      - name: Export commands in a real isolated editor host
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          export IBCMD_TEST_BINARY="$GITHUB_WORKSPACE/target/debug/ibcmd-rs"
+          export IBCMD_TEST_ROOT="$RUNNER_TEMP/ibcmd-export-host"
+          export IBCMD_TEST_ROWS="${TMPDIR:-/tmp}/ibcmd-external-editor-server-protocol/rows/demo"
+          export IBCMD_TEST_SUITE="export-host-suite.js"
           xvfb-run -a npm run test:host
         working-directory: editors/vscode

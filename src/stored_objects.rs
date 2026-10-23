@@ -31,6 +31,7 @@
 //! views, the platform it noted, `crate::cancel`), so the operations of a
 //! [`StoredConfiguration`] take one lock and run one at a time.
 
+mod editor_export;
 mod version_status;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};

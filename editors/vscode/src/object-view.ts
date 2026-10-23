@@ -61,6 +61,7 @@ export class ObjectView
   constructor(private context: vscode.ExtensionContext) {
     const view = (this.view = vscode.window.createTreeView("ibcmd.objects", {
       treeDataProvider: this,
+      canSelectMany: true,
     }));
     view.description = "Версии БД и локальные файлы";
     context.subscriptions.push(
@@ -86,8 +87,32 @@ export class ObjectView
   snapshot() {
     return this.rows.map(({ object, state }) => ({ object, state }));
   }
+  exportSelection(
+    node?: { object?: string },
+    selection?: { object?: string }[],
+  ): string[] {
+    const values = selection?.length
+      ? selection
+      : node
+        ? [node]
+        : this.view.selection;
+    const available = new Set(this.rows.map((r) => r.object));
+    return [
+      ...new Set(
+        values
+          .map((r) => r.object)
+          .filter(
+            (name): name is string =>
+              typeof name === "string" && available.has(name),
+          ),
+      ),
+    ];
+  }
   getTreeItem(row: Row) {
     const item = new vscode.TreeItem(row.object);
+    item.contextValue = this.rows.includes(row)
+      ? "ibcmd.object"
+      : "ibcmd.message";
     item.description = labels[row.state];
     item.tooltip = `${row.object}: ${labels[row.state]}. ${this.nativeMode ? "Версии БД и локальные файлы относительно baseline." : "Сравнение байтов экспорта; native-версии не проверены."}`;
     item.resourceUri = row.uri;

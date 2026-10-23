@@ -24,7 +24,10 @@ const { runTests } = require("@vscode/test-electron");
   const executable = process.env.VSCODE_EXECUTABLE_PATH;
   await runTests({
     extensionDevelopmentPath: path.resolve(__dirname, ".."),
-    extensionTestsPath: path.join(__dirname, "host-suite.js"),
+    extensionTestsPath: path.join(
+      __dirname,
+      process.env.IBCMD_TEST_SUITE || "host-suite.js",
+    ),
     ...(executable
       ? { vscodeExecutablePath: executable }
       : { cachePath: path.join(root, "vscode-download") }),
