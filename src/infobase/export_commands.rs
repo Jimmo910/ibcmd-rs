@@ -55,24 +55,7 @@ fn guarded_write_with(
 ) -> Result<()> {
     use std::fs;
     let parent = path.parent().context("output file has no parent")?;
-    for component in path.ancestors() {
-        match fs::symlink_metadata(component) {
-            Ok(metadata) => {
-                #[cfg(windows)]
-                let linked = {
-                    use std::os::windows::fs::MetadataExt;
-                    metadata.file_attributes() & 0x400 != 0
-                };
-                #[cfg(not(windows))]
-                let linked = false;
-                if linked || metadata.file_type().is_symlink() {
-                    anyhow::bail!("linked output path is not allowed: {}", component.display());
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
+    validate_unlinked_path(path)?;
     fs::create_dir_all(parent)?;
     let staging = parent.join(format!(".ibcmd-export-{}.tmp", uuid::Uuid::new_v4()));
     let mut file = fs::OpenOptions::new()
@@ -97,6 +80,29 @@ fn guarded_write_with(
     result
 }
 
+fn validate_unlinked_path(path: &Path) -> Result<()> {
+    use std::fs;
+    for component in path.ancestors() {
+        match fs::symlink_metadata(component) {
+            Ok(metadata) => {
+                #[cfg(windows)]
+                let linked = {
+                    use std::os::windows::fs::MetadataExt;
+                    metadata.file_attributes() & 0x400 != 0
+                };
+                #[cfg(not(windows))]
+                let linked = false;
+                if linked || metadata.file_type().is_symlink() {
+                    anyhow::bail!("linked output path is not allowed: {}", component.display());
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
 struct ObjectSink {
     root: PathBuf,
 }
@@ -116,6 +122,18 @@ impl FileSink for ObjectSink {
 }
 
 pub fn objects(args: &InfobaseConfigExportArgs, names: &[String], recursive: bool) -> Result<()> {
+    anyhow::ensure!(
+        !args.output_dir.as_os_str().is_empty(),
+        "object output directory must not be empty"
+    );
+    // Retain links in the caller's spelling so the strict object-output
+    // contract can reject them before reading the database or publishing.
+    let root = if args.output_dir.is_absolute() {
+        args.output_dir.clone()
+    } else {
+        std::env::current_dir()?.join(&args.output_dir)
+    };
+    validate_unlinked_path(&root)?;
     let mut request = args.connection();
     request.need = super::PlatformNeed::Export {
         sqlcmd: args.sqlcmd.as_deref(),
@@ -130,7 +148,6 @@ pub fn objects(args: &InfobaseConfigExportArgs, names: &[String], recursive: boo
     if names.is_empty() {
         anyhow::bail!("no metadata objects selected");
     }
-    let root = super::absolute_path(&args.output_dir)?;
     let mut dump = super::dump_args(
         &config,
         args.sqlcmd.as_deref(),
@@ -164,6 +181,34 @@ mod publication_tests {
         let root = std::env::temp_dir().join(format!("export-write-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         fs::canonicalize(root).unwrap()
+    }
+
+    #[test]
+    fn empty_object_output_is_refused_before_connection_resolution() {
+        use std::ffi::OsString;
+        let db = std::env::temp_dir().join(format!("missing-db-{}", uuid::Uuid::new_v4()));
+        let words = vec![
+            "config".into(),
+            "export".into(),
+            "objects".into(),
+            "--out=unused".into(),
+            OsString::from(format!("--db-path={}", db.display())),
+            "--platform=8.5.1".into(),
+            "CommonModule.NoSuchObject".into(),
+        ];
+        let crate::dropin::Invocation::ExportQuery(request) =
+            crate::dropin::parse::parse_infobase(&words).unwrap()
+        else {
+            panic!("expected query")
+        };
+        let mut args = crate::dropin::export_args(&request.export);
+        args.output_dir.clear();
+        let error = objects(&args, &request.objects, false).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "object output directory must not be empty"
+        );
+        assert!(!db.exists());
     }
 
     #[test]

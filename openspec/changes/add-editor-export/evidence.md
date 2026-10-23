@@ -87,3 +87,16 @@ Private evidence stays under external lab fixtures/logs. No document names,
 configuration XML/CF, or business data are included in this repository.
 The patched release measurement is recorded in the Draft PR after its quiet run;
 ERP UH latency and live SQL acceptance remain open.
+
+
+## Shared native-export fixes integrated after the measured candidate
+
+The stack merges donor #485 head `53c35614` (functional commit `1b3bc824`)
+by ancestry, retaining its commits and evidence. Its actual incremental-selection
+refusal, strict object output guards and query failure reports supplement the
+older dependency. Editor changed-object fallback still explicitly requests a
+full conversion for rename/removal. The operation-local FileDb rows and drop
+before independent final inventory remain unchanged. The ERP measurements above
+belong to `aeba3d16` and its preserved binary; they are not rerun or relabeled as
+measurements of this later merge. Post-integration local gates and exact-head
+CI must be reported separately before claiming this merge validated.

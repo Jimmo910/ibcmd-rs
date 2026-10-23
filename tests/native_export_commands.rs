@@ -614,3 +614,128 @@ fn empty_published_inventory_matches_native_and_malformed_nonempty_stays_closed(
     assert_eq!(output.status.code(), Some(FAILED));
     assert!(output.stdout.is_empty());
 }
+
+#[test]
+fn empty_query_outputs_fail_before_database_read_or_cwd_publication() {
+    let (root, db) = lab("empty-object-output");
+    let cwd = root.join("selected-cwd");
+    fs::create_dir_all(cwd.join("CommonModules")).unwrap();
+    let sentinel = cwd.join("CommonModules/ФайловаяБазаПроверка.xml");
+    fs::write(&sentinel, b"keep this source").unwrap();
+    for database in [&db, &root.join("missing-db")] {
+        for out in [
+            vec![OsString::from("--out=")],
+            vec!["--out".into(), "".into()],
+        ] {
+            let output = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+                .current_dir(&cwd)
+                .args(["infobase", "config", "export", "objects"])
+                .arg(opt("db-path", database))
+                .arg("--platform=8.5.1")
+                .args(out)
+                .arg("CommonModule.ФайловаяБазаПроверка")
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(2));
+            assert!(output.stdout.is_empty());
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains("Не указано значение параметра: out")
+            );
+            assert_eq!(fs::read(&sentinel).unwrap(), b"keep this source");
+            assert_eq!(tree(&cwd).len(), 1);
+        }
+    }
+}
+
+#[test]
+fn query_failure_reports_replace_stale_success_and_preserve_original_error() {
+    let (root, db) = lab("failure-reports");
+    let base = root.join("malformed-reference.xml");
+    fs::write(&base, b"not inventory XML").unwrap();
+    let report = root.join("report.json");
+    for (command, options) in [
+        (
+            "objects",
+            vec![
+                opt("out", &root.join("objects")),
+                "CommonModule.NoSuchObject".into(),
+            ],
+        ),
+        ("status", vec![opt("base", &base)]),
+        ("info", vec![opt("out", &root.join("missing-directory"))]),
+    ] {
+        fs::write(&report, br#"{"operation":"previous run","ok":true}"#).unwrap();
+        let mut options = options;
+        options.push(opt("report", &report));
+        let output = run(&db, &[command], &options);
+        assert_eq!(output.status.code(), Some(FAILED));
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(&report).unwrap()).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(
+            value["operation"],
+            format!("infobase config export {command}")
+        );
+        let message = value["error"].as_str().unwrap();
+        assert!(!message.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+    }
+    let invalid_report = root.join("report-directory");
+    fs::create_dir(&invalid_report).unwrap();
+    fs::write(invalid_report.join("keep"), b"unchanged").unwrap();
+    let output = run(
+        &db,
+        &["objects"],
+        &[
+            opt("out", &root.join("out")),
+            opt("report", &invalid_report),
+            "CommonModule.NoSuchObject".into(),
+        ],
+    );
+    assert_eq!(output.status.code(), Some(FAILED));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Объект метаданных CommonModule.NoSuchObject не существует"));
+    assert!(stderr.contains("failed to write the report"));
+    assert_eq!(fs::read(invalid_report.join("keep")).unwrap(), b"unchanged");
+}
+
+#[cfg(unix)]
+#[test]
+fn object_root_and_ancestor_links_are_rejected_before_any_target_file_changes() {
+    use std::os::unix::fs::symlink;
+    let (root, db) = lab("object-root-aliases");
+    for nested in [false, true] {
+        let tag = if nested { "ancestor" } else { "root" };
+        let target = root.join(format!("{tag}-target"));
+        fs::create_dir(&target).unwrap();
+        let alias = root.join(format!("{tag}-alias"));
+        symlink(&target, &alias).unwrap();
+        let (out, actual) = if nested {
+            fs::create_dir(target.join("nested")).unwrap();
+            (alias.join("nested"), target.join("nested"))
+        } else {
+            (alias, target.clone())
+        };
+        fs::create_dir(actual.join("CommonModules")).unwrap();
+        let sentinel = actual.join("CommonModules/ФайловаяБазаПроверка.xml");
+        fs::write(&sentinel, b"keep target bytes").unwrap();
+        let before = tree(&target);
+        let report = root.join(format!("{tag}-report.json"));
+        let output = run(
+            &db,
+            &["objects"],
+            &[
+                opt("out", &out),
+                opt("report", &report),
+                "CommonModule.ФайловаяБазаПроверка".into(),
+            ],
+        );
+        assert_eq!(output.status.code(), Some(FAILED));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("linked output path is not allowed")
+        );
+        assert_eq!(tree(&target), before);
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+        assert_eq!(value["ok"], false);
+    }
+}

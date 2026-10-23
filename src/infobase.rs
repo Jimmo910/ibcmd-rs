@@ -407,7 +407,9 @@ fn export_config_report_policy(
     let source_version = config.legacy_source_version()?;
     let output_dir = absolute_path(output_dir_arg)?;
     if base.is_some() || sync {
-        crate::mssql_dump::incremental::prepare_output_dir(&output_dir)?;
+        if !native_versions {
+            crate::mssql_dump::incremental::prepare_output_dir(&output_dir)?;
+        }
     } else {
         prepare_output_dir(&output_dir, overwrite)?;
     }
@@ -1488,6 +1490,139 @@ mod tests {
             base: None,
             sync: false,
         }
+    }
+
+    fn native_pipeline_refuses_stale_preflight_reference(case: &str, existing: bool) {
+        use std::io::Read;
+        let root = std::env::temp_dir().join(format!("native-selection-{}", uuid::Uuid::new_v4()));
+        let db = root.join("db");
+        fs::create_dir_all(&db).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(fixture.join("tiny.1CD.gz")).unwrap())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+        let mut args = export_args("unused");
+        args.db_path = Some(db);
+        args.dbms = None;
+        args.db_server = None;
+        args.db_name = None;
+        args.source_version = Some(InfobaseConfigSourceVersion::V2_21);
+        args.output_dir = root.join("must-not-be-created");
+        let current = crate::infobase::export_commands::info(&args).unwrap();
+        let mut base = ibcmd_xml::config_dump_info::ConfigDumpInfo::parse(&current).unwrap();
+        // This is the actual export boundary after any earlier preflight.
+        // A freshly loaded reference can now require full export.
+        match case {
+            "rename" => base.entries[0].name.push_str("PreviousLabName"),
+            "body-role" => {
+                let entry = base
+                    .entries
+                    .iter_mut()
+                    .find(|entry| entry.id.ends_with(".0"))
+                    .unwrap();
+                entry.name.push_str("PreviousLabRole");
+            }
+            "removed-part" => {
+                let name = format!("{}.Attribute.RemovedLabPart", base.entries[0].name);
+                base.entries[0]
+                    .children
+                    .push(ibcmd_xml::config_dump_info::Part {
+                        id: "ad2cd611-6109-431f-bf22-0b1a9d5069e5".into(),
+                        name,
+                    });
+            }
+            _ => {
+                let mut removed = base.entries[0].clone();
+                removed.id = "ad2cd611-6109-431f-bf22-0b1a9d5069e5".into();
+                removed.name = "CommonModule.RemovedLabObject".into();
+                removed.children.clear();
+                base.entries.push(removed);
+            }
+        }
+        let reference = root.join("changed-reference.xml");
+        fs::write(&reference, base.to_native_bytes().unwrap()).unwrap();
+        args.base = Some(reference);
+        let tree = |path: &Path| {
+            let mut files = std::collections::BTreeMap::new();
+            if path.exists() {
+                for entry in WalkDir::new(path).into_iter().map(|entry| entry.unwrap()) {
+                    if entry.file_type().is_file() {
+                        files.insert(
+                            entry.path().strip_prefix(path).unwrap().to_owned(),
+                            fs::read(entry.path()).unwrap(),
+                        );
+                    }
+                }
+            }
+            files
+        };
+        if existing {
+            fs::create_dir_all(&args.output_dir).unwrap();
+            for (path, bytes) in tree(&fixture.join("tiny-xml")) {
+                let target = args.output_dir.join(path);
+                fs::create_dir_all(target.parent().unwrap()).unwrap();
+                fs::write(target, bytes).unwrap();
+            }
+            let base_path = args
+                .output_dir
+                .join(crate::mssql_dump::incremental::CONFIG_DUMP_INFO);
+            fs::write(&base_path, base.to_native_bytes().unwrap()).unwrap();
+            args.base = Some(base_path);
+            args.sync = true;
+            fs::write(args.output_dir.join("README.md"), b"keep user bytes").unwrap();
+        }
+        let before = tree(&args.output_dir);
+        let result = super::export_config_native(&args);
+        let error = result.expect_err("native export must refuse a stale-preflight selection");
+        assert!(
+            error
+                .downcast_ref::<crate::mssql_dump::incremental::NativeFullExportRequired>()
+                .is_some(),
+            "unexpected failure: {error:#}"
+        );
+        if existing {
+            assert_eq!(
+                tree(&args.output_dir),
+                before,
+                "refusal must not publish or prune existing output"
+            );
+        } else {
+            assert!(
+                !args.output_dir.exists(),
+                "refusal must precede output creation"
+            );
+        }
+    }
+
+    #[test]
+    fn native_export_pipeline_refuses_stale_preflight_selections() {
+        // The physical offline adapter has process-wide active state. Run these
+        // real pipeline cases in a child isolated from other parallel unit tests.
+        const CHILD: &str = "IBCMD_RS_TEST_NATIVE_SELECTION_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            for case in ["remove", "rename", "removed-part", "body-role"] {
+                native_pipeline_refuses_stale_preflight_reference(case, false);
+            }
+            native_pipeline_refuses_stale_preflight_reference("remove", true);
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "infobase::tests::native_export_pipeline_refuses_stale_preflight_selections",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]

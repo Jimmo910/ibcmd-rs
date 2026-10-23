@@ -609,14 +609,7 @@ fn run_export(mut request: ExportRequest) -> i32 {
         })();
         match changes {
             Ok(changes) if changes == "modified: all\n" => {
-                let export = if request.sync {
-                    "экспорта конфигурации"
-                } else {
-                    "экспорта изменений конфигурации"
-                };
-                let message = format!(
-                    "Операция невозможна, при выполнении {export} в XML обнаружены ошибки: Требуется экспортировать конфигурацию полностью."
-                );
+                let message = full_export_required_message(request.sync);
                 eprintln!("[ERROR] {message}");
                 operation.record_failure(&message, report.as_deref());
                 return EXIT_FAILED;
@@ -631,6 +624,16 @@ fn run_export(mut request: ExportRequest) -> i32 {
     }
     match crate::infobase::export_config_native(&args) {
         Ok(value) => operation.succeed(report.as_deref(), &value),
+        Err(error)
+            if error
+                .downcast_ref::<crate::mssql_dump::incremental::NativeFullExportRequired>()
+                .is_some() =>
+        {
+            let message = full_export_required_message(request.sync);
+            eprintln!("[ERROR] {message}");
+            operation.record_failure(&message, report.as_deref());
+            EXIT_FAILED
+        }
         Err(error) if error.downcast_ref::<OutputDirectoryNotEmpty>().is_some() => {
             let message = format!(
                 "Операция невозможна, при выполнении экспорта конфигурации в XML обнаружены ошибки: Каталог {} не пуст.",
@@ -642,6 +645,17 @@ fn run_export(mut request: ExportRequest) -> i32 {
         }
         Err(error) => operation.fail_with(&format!("{error:#}"), report.as_deref()),
     }
+}
+
+fn full_export_required_message(sync: bool) -> String {
+    let export = if sync {
+        "экспорта конфигурации"
+    } else {
+        "экспорта изменений конфигурации"
+    };
+    format!(
+        "Операция невозможна, при выполнении {export} в XML обнаружены ошибки: Требуется экспортировать конфигурацию полностью."
+    )
 }
 
 fn run_import(mut request: ImportRequest) -> i32 {
