@@ -29,6 +29,17 @@ process.stdin.on("data", (chunk) => {
     if (m.method === "exit") process.exit(0);
     if (m.id === undefined) continue;
     if (m.method === "initialize") {
+      if (process.env.IBCMD_FAKE_MODE === "connect-initialize-error") {
+        const marker = process.env.IBCMD_FAKE_INITIALIZE_MARKER;
+        if (fs.existsSync(marker)) {
+          send(m.id, null, {
+            code: -32602,
+            message: "synthetic initialization rejected",
+          });
+          continue;
+        }
+        fs.writeFileSync(marker, "list initialized");
+      }
       send(m.id, { protocolVersion: "1.1" });
       continue;
     }
@@ -39,12 +50,16 @@ process.stdin.on("data", (chunk) => {
     if (m.method === "infobases/list") {
       const reply = () =>
         send(m.id, {
-          infobases: ["a", "b"].map((name) => ({
+          infobases: [
+            "a",
+            "b",
+            ...(process.env.IBCMD_FAKE_INCLUDE_FILEDB ? ["file"] : []),
+          ].map((name) => ({
             id: `fake/${name}`,
             name,
             server: "fake",
             platform: "8.3.27",
-            source: "mssql",
+            source: name === "file" ? "file-db" : "mssql",
             mask: false,
           })),
         });

@@ -287,3 +287,8 @@ tiny database. The standard host runner gives it a fresh profile/workspace below
 `IBCMD_TEST_ROOT`; all fixtures and staging evidence are retained for Trash cleanup.
 ERP UH document latency and SQL acceptance require separate representative lab
 fixtures; the tiny public test does not establish those results.
+Edit Connection supports SQL and read-only rows-directory entries. An omitted server
+stays omitted so normal `db-server`/environment resolution still applies. Copying an
+inherited rows-directory entry keeps its resolved source directory. File databases
+and unknown source types are excluded from this editor; edit their settings using
+the appropriate source-specific tooling instead.
