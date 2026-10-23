@@ -85,7 +85,8 @@
     "Chart numeric projection follows SDK EFloat/EDouble rounding and integral long conversion; closed CURRENT numeric records preserve genuinely lossy binary64 values alongside existing chart design/item records, and lexical fraction widths never replay old values",
     "DesignRecord validation binds the already-native current chart counterpart before restoring separate Enum/Value records; dotted literal payloads and unrelated projected values are never projected twice",
     "CURRENT DynamicList availability includes effective main-table CommonAttributes with content/autoUse/separation and family-specific SDK policies; calculated-field availability consumes CURRENT Configuration compatibility >8.3.18, with root mode and common definitions in dependency digests",
-    "CURRENT chart design projection retains validated Designer names-only factory presence while replacing values with freshly computed native defaults; EDT hidden source spelling is cleared"
+    "CURRENT chart design projection retains validated Designer names-only factory presence while replacing values with freshly computed native defaults; EDT hidden source spelling is cleared",
+    "Witnessed client-interface direct panel versus group shape and ordered declared panel subsets are typed; exact installed EDT LF framing is retained separately from semantic data, with full byte guards and legacy CRLF behavior preserved"
   ],
   "files": [
     {
@@ -158,7 +159,7 @@
     },
     {
       "path": "crates/core/src/ir/mod.rs",
-      "sha256": "62934d6f16cc8b742b17b1c1586e3b8e4024e672823a43ac52cf3c1c2e687e7f"
+      "sha256": "9ad215b576fe495fa948245c8139d2610b71814f5bc7bc6c4c9ad1a1f1464eed"
     },
     {
       "path": "crates/core/src/ir/semantic_view.rs",
@@ -2618,7 +2619,7 @@
     },
     {
       "path": "crates/pipeline/src/config_interface_read.rs",
-      "sha256": "257723dea43a2ec633c8f8520e8163b6121dbc62b48b7d3d4f78510448df5626"
+      "sha256": "2356c76be3aa27eecb65f7d3903c070924250f7f715ce824f92ef0584d1653a1"
     },
     {
       "path": "crates/pipeline/src/convert.rs",

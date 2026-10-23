@@ -21,34 +21,32 @@
 //! * **Одна сущность — один тип** — объект моделируется РОВНО [`MetadataObject`],
 //!   без subset+union (§1.1).
 
-pub mod form;
-pub mod value;
-pub mod source_extensions;
-pub mod semantic_view;
 pub mod additional_indexes;
+pub mod form;
+pub mod semantic_view;
+pub mod source_extensions;
+pub mod value;
 
 use serde::{Deserialize, Serialize};
 
 pub use form::{
-    AdditionalColumns, AutoCommandBar, ContextMenuBody, ControlKind, DcsAvailableValue,
-    DcsCalculatedField, DcsCorValue, DcsField, DcsItem, DcsListSettings, DcsOrderExpression,
-    DcsParamValue, DcsParameter, DcsPresentation,
-    DcsRightValue, DcsSelectionField, DcsSettingsGroup, DcsSettingsParameterValue, DcsUseRestriction,
-    DecoratorBody, DecoratorRef,
-    DocumentFormInfo, DynamicListAttrExt, DynamicListExt, FontRef, FormBody, FormCiItem,
-    FormCommand, FormControlKind, FormDataAttribute, FormEvent, FormItem, FormParameter,
-    FormRootExtInfo, NamedFormBody, ReportFormInfo, TooltipBody, DOCUMENT_AUTO_TIME_DEFAULT,
-    DOCUMENT_USE_POSTING_MODE_DEFAULT, FOLDERS_AND_ITEMS_DEFAULT, REPORT_FORM_AUTO,
+    AdditionalColumns, AutoCommandBar, ContextMenuBody, ControlKind, DOCUMENT_AUTO_TIME_DEFAULT,
+    DOCUMENT_USE_POSTING_MODE_DEFAULT, DcsAvailableValue, DcsCalculatedField, DcsCorValue,
+    DcsField, DcsItem, DcsListSettings, DcsOrderExpression, DcsParamValue, DcsParameter,
+    DcsPresentation, DcsRightValue, DcsSelectionField, DcsSettingsGroup, DcsSettingsParameterValue,
+    DcsUseRestriction, DecoratorBody, DecoratorRef, DocumentFormInfo, DynamicListAttrExt,
+    DynamicListExt, FOLDERS_AND_ITEMS_DEFAULT, FontRef, FormBody, FormCiItem, FormCommand,
+    FormControlKind, FormDataAttribute, FormEvent, FormItem, FormParameter, FormRootExtInfo,
+    NamedFormBody, REPORT_FORM_AUTO, ReportFormInfo, TooltipBody,
 };
 // Платформенный ПОРЯДОК/идентичность форм-событий (`ir/form/event_order.rs`): общий обоим
 // формат-слоям — cf-реестр событий И Designer-`<Events>` сортируются ОДНИМ guid-ключом.
 pub use form::{
-    form_event_guid, merge_form_events, merge_table_events, table_event_guid, TABLE_EVENT_GUIDS,
+    TABLE_EVENT_GUIDS, form_event_guid, merge_form_events, merge_table_events, table_event_guid,
 };
 pub use value::{
     BlobRef, ColorStyle, DateFractions, FontFace, FontFlags, FontStyle, Lang, PropertyValue,
-    StyleValueSpec,
-    Token, TypeQualifier, TypeRef, TypeSpec, ValueKind, ValueScalarKind, ValueSpec,
+    StyleValueSpec, Token, TypeQualifier, TypeRef, TypeSpec, ValueKind, ValueScalarKind, ValueSpec,
 };
 
 // Adapter-local semantic serialization: projection-specific property enumeration
@@ -679,9 +677,61 @@ pub struct HomePageItem {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientApplicationInterface {
     /// Верхняя группа панелей (`<top>`; cf-секция 1).
-    pub top: Option<CaiGroup>,
+    pub top: Option<CaiRegion>,
     /// Левая группа панелей (`<left>`; cf-секция 3).
-    pub left: Option<CaiGroup>,
+    pub left: Option<CaiRegion>,
+    /// Declared standard panel types, in platform order. Some native layouts omit ToolsPanel.
+    #[serde(
+        default = "standard_client_panel_names",
+        skip_serializing_if = "is_all_client_panels"
+    )]
+    pub available_panels: Vec<String>,
+    /// Observed EDT framing only; excluded from typed semantic fingerprints.
+    #[serde(skip)]
+    pub edt_lf: bool,
+}
+
+impl Default for ClientApplicationInterface {
+    fn default() -> Self {
+        Self {
+            top: None,
+            left: None,
+            available_panels: standard_client_panel_names(),
+            edt_lf: false,
+        }
+    }
+}
+
+pub fn standard_client_panel_names() -> Vec<String> {
+    STANDARD_CLIENT_PANELS
+        .iter()
+        .map(|(name, _)| (*name).to_owned())
+        .collect()
+}
+
+fn is_all_client_panels(panels: &[String]) -> bool {
+    panels
+        .iter()
+        .map(String::as_str)
+        .eq(STANDARD_CLIENT_PANELS.iter().map(|(name, _)| *name))
+}
+
+/// A region can contain a group or one direct panel; the shape is semantic.
+/// Untagged serialization retains the existing group IR representation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CaiRegion {
+    Group(CaiGroup),
+    Panel(CaiPanel),
+}
+
+impl CaiRegion {
+    pub fn panels(&self) -> &[CaiPanel] {
+        match self {
+            Self::Group(group) => &group.panels,
+            Self::Panel(panel) => std::slice::from_ref(panel),
+        }
+    }
 }
 
 /// Группа панелей интерфейса клиентского приложения (`<group id=…>` Designer /

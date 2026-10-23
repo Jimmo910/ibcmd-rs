@@ -162,11 +162,12 @@ fn explicit_noop_view_keeps_every_wire_field_and_wrong_type_body_exact() {
             right: vec![],
         });
         obj.client_application_interface = Some(ClientApplicationInterface {
-            top: Some(CaiGroup {
+            top: Some(CaiRegion::Group(CaiGroup {
                 id: "group".into(),
                 panels: vec![],
-            }),
+            })),
             left: None,
+            ..ClientApplicationInterface::default()
         });
         obj.schedule = Some(Schedule::platform_default());
         obj.modules.push(Module::text(
