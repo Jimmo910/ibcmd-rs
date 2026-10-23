@@ -5,6 +5,7 @@ PREPARED is evidence capture only. This tool never declares converter acceptance
 """
 from __future__ import annotations
 import argparse
+import contextlib
 import fcntl
 import json
 import os
@@ -76,7 +77,8 @@ def command(run, label, argv, timeout, env, overrides):
             try:
                 receipt['exit_code'] = proc.wait(timeout=timeout)
             except BaseException:
-                os.killpg(proc.pid, signal.SIGKILL)
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
                 receipt['exit_code'] = proc.wait(timeout=30)
                 raise
     except BaseException as error:
@@ -96,6 +98,12 @@ def capture(args):
     args.run, args.edt = external(args.run), external(args.edt)
     args.java = args.java.absolute()
     no_links(args.java)
+    jvm_library = getattr(args, 'jvm_library', None)
+    if jvm_library is not None:
+        args.jvm_library = jvm_library.absolute()
+        no_links(args.jvm_library)
+        if not args.jvm_library.is_file():
+            raise OracleError('Selected JVM library must be an existing physical file')
     if args.run.exists() or not args.run.parent.is_dir():
         raise OracleError('Run must be new with existing external parent')
     if args.run.is_relative_to(args.edt.parent) or args.edt.is_relative_to(args.run):
@@ -142,11 +150,13 @@ def capture(args):
             if not line.startswith('-Dosgi.debug='))
         # CLI accepts -ini-file; generic Eclipse options belong inside that INI.
         launcher, vmargs = original_ini.split('-vmargs', 1)
-        ini.write_text(launcher + '-vm\n' + str(args.java) + '\n-configuration\n' +
+        ini.write_text(launcher + '-vm\n' + str(args.jvm_library if jvm_library else args.java) + '\n-configuration\n' +
             str(args.edt.parent / 'configuration') + '\n-nl\nen_US\n-user\n' + str(args.run / 'user') +
             '\n-vmargs' + vmargs)
         installation_before = installation(args.edt, args.java)
         installation_before['runtime_files'].append(file_record(ini))
+        if jvm_library:
+            installation_before['runtime_files'].append(file_record(args.jvm_library))
         write_json(args.run / 'installation.json', installation_before)
         prefix = [str(args.edt), '-ini-file', str(ini), '-data', str(args.run / 'workspace'),
                   '-timeout', str(args.timeout), '-vmargs',
@@ -159,9 +169,10 @@ def capture(args):
         if actual != args.edt_build:
             raise OracleError('Installed build mismatch')
         if args.mode == 'discover':
-            edt('edt-help', ['help'])
-            for name in ('import', 'export', 'validate'):
-                edt(f'edt-help-{name}', ['help', name])
+            if not getattr(args, 'version_only', False):
+                edt('edt-help', ['help'])
+                for name in ('import', 'export', 'validate'):
+                    edt(f'edt-help-{name}', ['help', name])
             terminal = ('result.json', {'status': 'DISCOVERED', 'edt_build': actual,
                 'note': 'Tool discovery is not converter or corpus acceptance'})
         else:
@@ -197,6 +208,8 @@ def capture(args):
                 if installation_before is not None:
                     after = installation(args.edt, args.java)
                     after['runtime_files'].append(file_record(args.run / '1cedt.ini'))
+                    if jvm_library:
+                        after['runtime_files'].append(file_record(args.jvm_library))
                     write_json(args.run / 'installation-after.json', after)
                     if after != installation_before:
                         raise OracleError('Immutable installation payload changed')
@@ -218,6 +231,8 @@ def main():
     for name in ('run', 'edt', 'java'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--edt-build', required=True)
+    parser.add_argument('--jvm-library', type=Path, help='Explicit actual JVM library for Eclipse JNI selection; independently hash-bound')
+    parser.add_argument('--version-only', action='store_true', help='Bounded installed version capture without repeated command help')
     parser.add_argument('--native', type=Path)
     parser.add_argument('--corpus')
     parser.add_argument('--xml-version', choices=('2.20', '2.21'), default='2.21')

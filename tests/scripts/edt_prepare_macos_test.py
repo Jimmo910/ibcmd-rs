@@ -91,7 +91,7 @@ class Controls(unittest.TestCase):
         java.chmod(0o700)
         run = self.run / 'capture'
         args = SimpleNamespace(run=run, edt=edt, java=java, edt_build='2026.2.1.3',
-            mode='discover', timeout=1, heap_gib=1)
+            mode='discover', timeout=1, heap_gib=1, jvm_library=java)
         before = {'runtime_files': [], 'payload': 'before'}
         after = {'runtime_files': [], 'payload': 'changed'}
         with patch.object(lab.sys, 'platform', 'darwin'), \
@@ -100,6 +100,7 @@ class Controls(unittest.TestCase):
              patch.object(lab, 'command', return_value=b'2026.2.1.3'):
             with self.assertRaises(lab.OracleError):
                 lab.capture(args)
+        self.assertIn('-vm\n' + str(java) + '\n', (run / '1cedt.ini').read_text())
         self.assertFalse((run / 'result.json').exists())
         self.assertFalse((run / 'prepared.json').exists())
         self.assertTrue((run / 'failure.json').is_file())
