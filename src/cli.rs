@@ -837,6 +837,10 @@ pub struct InfobaseConfigImportArgs {
     /// `import files`: only the rows these files compile to (paths relative
     /// to `source_dir`); empty for the whole tree.
     pub files: Vec<String>,
+    /// `import files` by the platform's rules (`files_stage::select_native`):
+    /// `Some(true)` with `--partial`, `Some(false)` without; `None` for any
+    /// other caller.
+    pub native_files: Option<bool>,
     /// Optional path for the generated SQL scripts (and the bulk rows file).
     pub script_output: Option<PathBuf>,
     /// Patch the target's rows, compile every row, or decide by the target.
@@ -3168,6 +3172,11 @@ pub struct MssqlStageSourceObjectsArgs {
         conflicts_with_all = ["path_prefix", "base_free"]
     )]
     pub files: Vec<String>,
+    /// `--file` by the rules of the platform's `import files`
+    /// (`files_stage::select_native`), set by the drop-in: `Some(true)` with
+    /// `--partial`, `Some(false)` without.
+    #[arg(skip)]
+    pub native_files: Option<bool>,
     /// Optional path for generated SQL script. Defaults to C:\temp\ibcmd-rs.
     #[arg(long)]
     pub script_output: Option<PathBuf>,

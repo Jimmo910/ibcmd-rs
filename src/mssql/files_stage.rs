@@ -12,10 +12,24 @@
 //! directory need not be a whole tree (`scripts/apply-trace/lab/
 //! validate_sparse_import.ps1`), and a listed `Configuration.xml` makes it
 //! re-import the whole tree (9 615 rows, `docs/apply/native-apply-trace.md`
-//! case 2c). Nothing in the repository records the platform's help for
-//! `--base-dir`, `--partial` or `--no-check`, nor what it does without
-//! `--partial`, with a listed file that is missing (a deletion) or with one
-//! outside the directory; this module takes the conservative reading of each.
+//! case 2c).
+//!
+//! What 8.5.1.1529 does with the flags and the edge cases, measured on a
+//! БСП file infobase (`docs/import/import-files.md`):
+//! - `--partial` "Разрешить частичный набор файлов объектов метаданных": a
+//!   listed metadata file loads its object from the directory -- the
+//!   descriptor, every body and every object nested in it whose files the
+//!   directory holds (`Catalogs/Валюты.xml` staged the catalog's modules and
+//!   help and its four forms, an edit of the unlisted object module
+//!   included). Without `--partial` the bodies of such an object that the
+//!   directory lacks are removed (listed in `deleted`).
+//! - a listed file the directory lacks is skipped with `--partial` (nothing
+//!   staged for it); without, its row is removed.
+//! - a listed body file stages its row and re-saves the owner's descriptor,
+//!   whether `--partial` is given or not, in a sparse directory too.
+//! - an existing stage in `ConfigSave` is added to, not replaced: two
+//!   imports one after the other leave the rows of both.
+//! - `--no-check` changes nothing a valid edit stages.
 //!
 //! How the files become rows: each listed file belongs to the object whose
 //! metadata file is the file itself or is named as the nearest folder above it
@@ -33,10 +47,14 @@
 //! metadata file is not listed stays the target's here.
 //!
 //! Refused before anything is read from the database: a file outside the
-//! directory, a listed file the directory does not hold (a deletion), a file of
-//! no object, `Configuration.xml` (the platform's whole re-import). Refused
-//! after the objects are prepared: a listed file none of their rows comes from,
-//! and a new object (it needs `Configuration.xml` to be listed).
+//! directory, a listed file the directory does not hold without `--partial`
+//! (a deletion), a file of no object, `Configuration.xml` (the platform's
+//! whole re-import). Refused after the objects are prepared: a listed file
+//! none of their rows comes from, a new object (it needs `Configuration.xml`
+//! to be listed), an object loaded without `--partial` that the target holds
+//! a body of the directory lacks (the platform would remove it), and a
+//! `ConfigSave` that already holds a stage (the platform would add to it;
+//! this stage replaces `ConfigSave`).
 
 use std::fmt;
 use std::fs;
@@ -54,6 +72,15 @@ pub struct FilesSelection {
     files: Vec<String>,
     /// The metadata file of each object a listed file belongs to, sorted.
     owners: Vec<String>,
+    /// The metadata files of the objects loaded whole: listed, or nested in
+    /// a listed one (lower case).
+    loaded: Vec<String>,
+    /// The platform's rules of `import files` (`select_native`), with
+    /// `--partial` (`Some(true)`) or without; `None` for the exact selection
+    /// of `select`.
+    native: Option<bool>,
+    /// Listed files the directory does not hold, skipped under `--partial`.
+    skipped: Vec<String>,
 }
 
 /// A partial import that cannot be carried out, with its reason in Russian.
@@ -72,6 +99,19 @@ impl fmt::Display for FilesRefused {
 }
 
 impl std::error::Error for FilesRefused {}
+
+impl FilesRefused {
+    /// `ConfigSave` already holds a stage, which the platform's `import
+    /// files` would add to.
+    pub(super) fn existing_stage(rows: i64) -> Self {
+        unsupported(format!(
+            "Загрузка невозможна: в ConfigSave уже есть подготовленная загрузка (строк: {rows}); \
+             платформа добавила бы к ней загружаемые файлы, а добавление к подготовленной \
+             загрузке {PLANNED}. Примените ее (infobase config apply) или загрузите каталог \
+             целиком (infobase config import). В ConfigSave ничего не записано."
+        ))
+    }
+}
 
 fn failed(message: String) -> FilesRefused {
     FilesRefused {
@@ -96,6 +136,62 @@ impl FilesSelection {
 
     pub fn owners(&self) -> &[String] {
         &self.owners
+    }
+
+    /// The listed files the directory does not hold, which `--partial` skips.
+    pub fn skipped(&self) -> &[String] {
+        &self.skipped
+    }
+
+    /// Without `--partial`, refuses an object loaded whole that the target
+    /// holds a body of and the directory does not: the platform removes such
+    /// a body (`deleted`), this stage would keep it. `target_has` tells the
+    /// target's rows by name (`None` when they were not read); the prepared
+    /// objects are the ones `trim` kept.
+    pub(super) fn refuse_removed_bodies(
+        &self,
+        root: &Path,
+        target_has: Option<&dyn Fn(&str) -> bool>,
+        metadata_objects: &[PreparedMetadataObjectStage],
+        common_modules: &[PreparedCommonModuleObjectStage],
+    ) -> Result<(), FilesRefused> {
+        if self.native != Some(false) || self.loaded.is_empty() {
+            return Ok(());
+        }
+        let Some(target_has) = target_has else {
+            return Err(unsupported(
+                "Загрузка невозможна: без --partial платформа удаляет тела загружаемых объектов, \
+                 которых нет в каталоге, а строки базы для этой проверки не прочитаны; укажите \
+                 --partial. В ConfigSave ничего не записано."
+                    .to_string(),
+            ));
+        };
+        let loaded =
+            |xml: &Path| relative_lower(root, xml).is_some_and(|xml| self.loaded.contains(&xml));
+        let mut removed = Vec::new();
+        for object in metadata_objects.iter().filter(|object| loaded(&object.xml)) {
+            let staged = object
+                .body_rows
+                .iter()
+                .map(|body| body.body_id.as_str())
+                .collect::<Vec<_>>();
+            removed.extend(removed_bodies(&object.object_id, &staged, target_has));
+        }
+        for module in common_modules.iter().filter(|module| loaded(&module.xml)) {
+            if !module.has_module_body && target_has(&module.module_body_id) {
+                removed.push(module.module_body_id.clone());
+            }
+        }
+        if removed.is_empty() {
+            return Ok(());
+        }
+        Err(unsupported(format!(
+            "Загрузка невозможна: без --partial платформа удалила бы строки {}: их файлов нет в \
+             каталоге {}; удаление {PLANNED}. С --partial эти строки остаются. В ConfigSave \
+             ничего не записано.",
+            removed.join(", "),
+            shown(root)
+        )))
     }
 
     /// An existing measured body-only selection can be compiled without
@@ -220,6 +316,15 @@ impl FilesSelection {
     }
 }
 
+/// A directory as the user would write it: without the `\\?\` of a
+/// canonical Windows path.
+fn shown(root: &Path) -> String {
+    let text = root.display().to_string();
+    text.strip_prefix(r"\\?\")
+        .map(str::to_string)
+        .unwrap_or(text)
+}
+
 /// The source path relative to the root, `/`-separated, lower case.
 fn relative_lower(root: &Path, path: &Path) -> Option<String> {
     let relative = path.strip_prefix(root).ok()?;
@@ -251,6 +356,56 @@ fn source_folder(source: &str) -> Option<String> {
 /// prepares (the configuration's own is refused before this is asked).
 fn is_owner_xml(relative: &str) -> bool {
     is_stage_metadata_xml(relative) || is_root_common_module_xml(relative)
+}
+
+/// The roles a body row of an object is stored under (`<object id>.<role>`),
+/// which a stage that loads an object whole could leave behind: hexadecimal
+/// numbers, none past `1d` in the БСП 8.5 corpus (`.1c`, `.1d` of a catalog
+/// are what the platform lists in `deleted`, `docs/import/import-files.md`).
+const ROLE_SUFFIXES: [&str; 30] = [
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "10", "11",
+    "12", "13", "14", "15", "16", "17", "18", "19", "1a", "1b", "1c", "1d",
+];
+
+/// The body rows of the object `object_id` the target holds and a whole
+/// load of it would not stage (`staged`): what the platform lists in
+/// `deleted` without `--partial`.
+fn removed_bodies(
+    object_id: &str,
+    staged: &[&str],
+    target_has: &dyn Fn(&str) -> bool,
+) -> Vec<String> {
+    ROLE_SUFFIXES
+        .iter()
+        .map(|role| format!("{object_id}.{role}"))
+        .filter(|row| target_has(row) && !staged.contains(&row.as_str()))
+        .collect()
+}
+
+/// The files of the object of the metadata file `relative` that the
+/// directory holds: the ones of its folder, nested objects' included
+/// (`Catalogs/X.xml` -> `Catalogs/X/**`), relative and `/`-separated, sorted.
+fn object_files(root: &Path, relative: &str) -> Vec<String> {
+    let Some(folder) = relative.strip_suffix(".xml") else {
+        return Vec::new();
+    };
+    let mut files = walkdir::WalkDir::new(root.join(folder))
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .filter_map(|entry| {
+            let inside = entry.path().strip_prefix(root).ok()?;
+            Some(
+                inside
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/"),
+            )
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    files
 }
 
 /// The metadata file of the object a listed file belongs to: the file itself,
@@ -331,9 +486,30 @@ fn relative_inside(root: &Path, canonical_root: &Path, given: &str) -> Option<St
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-/// Checks the listed files against the directory and finds their objects.
-/// Reads the directory only: nothing here reaches a database.
+/// Checks the listed files against the directory and finds their objects:
+/// the files exactly as listed, a missing one refused (what
+/// `mssql-apply-source-change` hands over). Reads the directory only:
+/// nothing here reaches a database.
 pub fn select(root: &Path, files: &[String]) -> Result<FilesSelection, FilesRefused> {
+    select_with(root, files, None)
+}
+
+/// [`select`] by the rules of the platform's `import files` (see the module
+/// documentation): a listed metadata file brings the files of its object,
+/// and with `--partial` (`partial`) a missing file is skipped.
+pub fn select_native(
+    root: &Path,
+    files: &[String],
+    partial: bool,
+) -> Result<FilesSelection, FilesRefused> {
+    select_with(root, files, Some(partial))
+}
+
+fn select_with(
+    root: &Path,
+    files: &[String],
+    native: Option<bool>,
+) -> Result<FilesSelection, FilesRefused> {
     if files.is_empty() {
         return Err(failed(
             "Не указаны файлы для загрузки (пути относительно --base-dir)".to_string(),
@@ -350,6 +526,8 @@ pub fn select(root: &Path, files: &[String]) -> Result<FilesSelection, FilesRefu
         })?;
     let mut selected = Vec::<String>::new();
     let mut owners = Vec::<String>::new();
+    let mut loaded = Vec::<String>::new();
+    let mut skipped = Vec::<String>::new();
     for given in files {
         let Some(relative) = relative_inside(root, &canonical_root, given) else {
             return Err(failed(format!(
@@ -359,9 +537,16 @@ pub fn select(root: &Path, files: &[String]) -> Result<FilesSelection, FilesRefu
         };
         let path = root.join(&relative);
         if !path.exists() {
+            // The platform skips it under `--partial` and removes its row
+            // without (8.5.1.1529).
+            if native == Some(true) {
+                skipped.push(relative);
+                continue;
+            }
             return Err(unsupported(format!(
-                "Загрузка невозможна: файла {relative} нет в каталоге {}; удаление файлов и объектов \
-                 частичной загрузкой {PLANNED}",
+                "Загрузка невозможна: файла {relative} нет в каталоге {}; без --partial платформа \
+                 удалила бы его строку, удаление файлов и объектов частичной загрузкой {PLANNED} \
+                 (с --partial такой файл пропускается)",
                 root.display()
             )));
         }
@@ -398,13 +583,40 @@ pub fn select(root: &Path, files: &[String]) -> Result<FilesSelection, FilesRefu
             continue;
         }
         owners.push(owner_of(root, &relative)?);
-        selected.push(relative);
+        // A metadata file loads its object whole: the files of its folder
+        // the directory holds, nested objects' too (8.5.1.1529).
+        let loads_object = native.is_some() && is_owner_xml(&relative);
+        if loads_object {
+            loaded.push(relative.to_lowercase());
+        }
+        selected.push(relative.clone());
+        if loads_object {
+            for file in object_files(root, &relative) {
+                if selected
+                    .iter()
+                    .any(|known| known.to_lowercase() == file.to_lowercase())
+                {
+                    continue;
+                }
+                let owner = owner_of(root, &file)?;
+                if owner != relative && is_owner_xml(&owner) {
+                    loaded.push(owner.to_lowercase());
+                }
+                owners.push(owner);
+                selected.push(file);
+            }
+        }
     }
     owners.sort();
     owners.dedup();
+    loaded.sort();
+    loaded.dedup();
     Ok(FilesSelection {
         files: selected,
         owners,
+        loaded,
+        native,
+        skipped,
     })
 }
 
@@ -613,6 +825,91 @@ mod tests {
 
         assert!(select(&tree.0, &[]).is_err());
         assert!(select(&tree.0.join("missing"), &list(&["Catalogs/X.xml"])).is_err());
+    }
+
+    #[test]
+    fn a_listed_metadata_file_loads_its_object_by_the_platforms_rules() {
+        // 8.5.1.1529 (`docs/import/import-files.md`): `Catalogs/Валюты.xml`
+        // staged the catalog's bodies and its forms from the directory
+        let tree = Scratch::new(
+            "native",
+            &[
+                "Catalogs/X.xml",
+                "Catalogs/X/Ext/ObjectModule.bsl",
+                "Catalogs/X/Ext/Help.xml",
+                "Catalogs/X/Ext/Help/ru.html",
+                "Catalogs/X/Forms/F.xml",
+                "Catalogs/X/Forms/F/Ext/Form.xml",
+                "Catalogs/X/Forms/F/Ext/Form/Module.bsl",
+                "Catalogs/XY.xml",
+                "Catalogs/XY/Ext/ObjectModule.bsl",
+            ],
+        );
+        let selection = select_native(&tree.0, &list(&["Catalogs/X.xml"]), true).unwrap();
+        assert_eq!(
+            selection.files(),
+            [
+                "Catalogs/X.xml",
+                "Catalogs/X/Ext/Help.xml",
+                "Catalogs/X/Ext/Help/ru.html",
+                "Catalogs/X/Ext/ObjectModule.bsl",
+                "Catalogs/X/Forms/F.xml",
+                "Catalogs/X/Forms/F/Ext/Form.xml",
+                "Catalogs/X/Forms/F/Ext/Form/Module.bsl",
+            ]
+        );
+        assert_eq!(
+            selection.owners(),
+            ["Catalogs/X.xml", "Catalogs/X/Forms/F.xml"]
+        );
+        assert_eq!(
+            selection.loaded,
+            ["catalogs/x.xml", "catalogs/x/forms/f.xml"]
+        );
+        // the exact selection of `select` keeps the file alone
+        assert_eq!(
+            select(&tree.0, &list(&["Catalogs/X.xml"])).unwrap().files(),
+            ["Catalogs/X.xml"]
+        );
+        // a body file loads no object
+        let body =
+            select_native(&tree.0, &list(&["Catalogs/X/Ext/ObjectModule.bsl"]), false).unwrap();
+        assert_eq!(body.files(), ["Catalogs/X/Ext/ObjectModule.bsl"]);
+        assert!(body.loaded.is_empty());
+    }
+
+    #[test]
+    fn a_missing_file_is_skipped_with_partial_and_refused_without() {
+        let tree = Scratch::new(
+            "skipped",
+            &["Catalogs/X.xml", "Catalogs/X/Ext/ObjectModule.bsl"],
+        );
+        let files = list(&[
+            "Catalogs/X/Ext/ManagerModule.bsl",
+            "Catalogs/X/Ext/ObjectModule.bsl",
+        ]);
+        let selection = select_native(&tree.0, &files, true).unwrap();
+        assert_eq!(selection.files(), ["Catalogs/X/Ext/ObjectModule.bsl"]);
+        assert_eq!(selection.skipped(), ["Catalogs/X/Ext/ManagerModule.bsl"]);
+        let refused = select_native(&tree.0, &files, false).unwrap_err();
+        assert!(refused.unsupported);
+        assert!(
+            refused
+                .message
+                .contains("с --partial такой файл пропускается"),
+            "{refused}"
+        );
+        assert!(select(&tree.0, &files).is_err());
+    }
+
+    #[test]
+    fn a_whole_load_without_partial_would_remove_the_bodies_the_directory_lacks() {
+        let target = ["o", "o.0", "o.3"];
+        let target_has = |name: &str| target.contains(&name);
+        assert_eq!(removed_bodies("o", &["o.0"], &target_has), ["o.3"]);
+        // the roles the platform lists for rows the target does not hold
+        // (`.1c`, `.1d`) remove nothing
+        assert!(removed_bodies("o", &["o.0", "o.3"], &target_has).is_empty());
     }
 
     #[test]

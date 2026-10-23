@@ -3910,7 +3910,13 @@ fn stage_source_files(
     if !args.path_prefix.is_empty() {
         bail!("--file selects the objects itself: it does not go with --path-prefix");
     }
-    let selection = files_stage::select(&args.source_root, &args.files)?;
+    let selection = match args.native_files {
+        Some(partial) => files_stage::select_native(&args.source_root, &args.files, partial)?,
+        None => files_stage::select(&args.source_root, &args.files)?,
+    };
+    if args.native_files.is_some() {
+        refuse_existing_stage(args, sql_override.as_ref())?;
+    }
     let mut scoped = args.clone();
     scoped.path_prefix = selection.owners().to_vec();
     scoped.files = selection.files().to_vec();
@@ -3925,6 +3931,40 @@ fn stage_source_files(
             <InfobaseConfigSourceVersion as clap::ValueEnum>::from_str(&version, true).ok();
     }
     stage_source_objects_patch(&scoped, Some(&selection), sql_override, original)
+}
+
+/// `import files` adds to a stage `ConfigSave` already holds (8.5.1.1529:
+/// two imports one after the other leave the rows of both), and this stage
+/// replaces `ConfigSave`: a stage there is refused, not lost.
+fn refuse_existing_stage(
+    args: &MssqlStageSourceObjectsArgs,
+    sql_override: Option<&SqlExec>,
+) -> Result<()> {
+    let owned;
+    let sql = match sql_override {
+        Some(sql) => sql,
+        None => {
+            let password = resolve_sqlcmd_password(
+                args.sql_user.as_deref(),
+                args.sql_pwd.as_deref(),
+                &args.sql_pwd_env,
+            );
+            owned = stage_sql(
+                args.sqlcmd.as_deref(),
+                args.bcp_executable.as_deref(),
+                &args.server,
+                args.sql_user.as_deref(),
+                password.as_deref(),
+                &args.sql_pwd_env,
+            )?;
+            &owned
+        }
+    };
+    let staged = storage_table_stats(sql, &args.database, "ConfigSave")?;
+    if staged.row_count != 0 {
+        return Err(files_stage::FilesRefused::existing_stage(staged.row_count).into());
+    }
+    Ok(())
 }
 
 fn stage_source_objects_patch(
@@ -4234,6 +4274,19 @@ fn stage_source_objects_patch(
                 &args.source_root,
                 &mut metadata_objects,
                 &mut common_modules,
+            )?;
+            let prefetched = PREFETCHED_BASE_ROWS
+                .get()
+                .filter(|(database, _)| database == &args.database)
+                .map(|(_, rows)| rows);
+            let target_has = |name: &str| prefetched.is_some_and(|rows| rows.contains_key(name));
+            selection.refuse_removed_bodies(
+                &args.source_root,
+                prefetched
+                    .is_some()
+                    .then_some(&target_has as &dyn Fn(&str) -> bool),
+                &metadata_objects,
+                &common_modules,
             )?;
         }
         let metadata_object_count = metadata_objects.len();
