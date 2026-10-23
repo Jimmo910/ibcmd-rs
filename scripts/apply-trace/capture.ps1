@@ -34,6 +34,8 @@ param(
     [switch]$AllDatabases,
     [string]$Predicate = '',
     [switch]$KeepXel,
+    # preserve raw XML as well as parsed TSV for independent completeness review
+    [switch]$KeepRaw,
     [int]$TimeoutMinutes = 0,
     # script blocks run right before / after the command under trace (e.g. take and release a lab lock)
     [scriptblock]$BeforeCommand,
@@ -76,6 +78,7 @@ if ($IncludeStatements) { $traceArgs['IncludeStatements'] = $true }
 if ($AllDatabases) { $traceArgs['AllDatabases'] = $true }
 if ($Predicate) { $traceArgs['Predicate'] = $Predicate }
 if ($KeepXel) { $traceArgs['KeepXel'] = $true }
+if ($KeepRaw) { $traceArgs['KeepRaw'] = $true }
 if ($BeforeCommand) { $traceArgs['BeforeCommand'] = $BeforeCommand }
 if ($AfterCommand) { $traceArgs['AfterCommand'] = $AfterCommand }
 $traceError = $null

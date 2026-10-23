@@ -9,7 +9,11 @@ configuration with its extensions (2 234 tables in the database) restored from t
 **measured** unless the text says **hypothesis**. Platform 8.5.1.1150 is measured for case 1 and for `infobase
 create` (section 11). Not measured: multi-part rows (> 10 MB), extensions being changed by the apply, `--dynamic=auto`.
 
-Scope of the acceptance of #336 (agreed with the coordinator on 2026-09-29): the БСП cases 1-3 of this document, the
+**Acceptance correction (2026-10-23):** #336 is open. The original criterion also requires complete ERP УХ
+attribute and new-database traces. Neither is measured here. End-to-end 0.3 parity proves the resulting
+configuration, not the native write set. See [the remaining capture runbook](uh-remaining-traces.md).
+
+Historical narrowed scope (agreed with the coordinator on 2026-09-29): the БСП cases 1-3 of this document, the
 ERP УХ case 1 (modules only; measured, section 12) and the ERP УХ end-to-end runs of ibcmd-rs 0.3 (native create, our
 import, native apply, native export identical) as the new-database evidence on УХ. The УХ cases 2 (attribute) and 3
 (new database) are not traced.
