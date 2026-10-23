@@ -428,11 +428,12 @@ fn upgrade_dynamic_list_table(items: Vec<Node>) -> Vec<Node> {
     else {
         return items;
     };
-    let bag_end = 55 + 2 * count;
-    if upgraded.len() < bag_end {
+    let bag_start = 55;
+    if count > (upgraded.len() - bag_start) / 2 {
         return items;
     }
-    let mut bag = upgraded[55..bag_end]
+    let bag_end = bag_start + 2 * count;
+    let mut bag = upgraded[bag_start..bag_end]
         .chunks_exact(2)
         .map(|pair| (pair[0].clone(), pair[1].clone()))
         .collect::<Vec<_>>();
@@ -729,6 +730,35 @@ mod tests {
             Node::List(upgraded).rendered(),
             format!("{{{}}}", expected.join(","))
         );
+    }
+
+    #[test]
+    fn oversized_dynamic_list_property_counts_keep_the_original_record() {
+        for tag in ["53", "51"] {
+            for count in [usize::MAX, usize::MAX / 2 + 1, usize::MAX / 2, 20] {
+                let mut members = vec![
+                    tag.to_owned(),
+                    "{1,02023637-7868-4a5f-8576-835a76e0c9ba}".to_owned(),
+                    "0".to_owned(),
+                    "0".to_owned(),
+                    "1".to_owned(),
+                    DEFAULT_VISIBLE.to_owned(),
+                ];
+                members.resize(55, "0".to_owned());
+                members.push(count.to_string());
+                members.resize(95, "0".to_owned());
+                let items = parse_str(&format!("{{{}}}", members.join(",")))
+                    .as_list()
+                    .unwrap()
+                    .to_vec();
+                let original = Node::List(items.clone()).rendered();
+                assert_eq!(
+                    Node::List(upgrade_dynamic_list_table(items)).rendered(),
+                    original,
+                    "tag {tag}, oversized count {count}"
+                );
+            }
+        }
     }
 
     #[test]
