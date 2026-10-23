@@ -32,6 +32,7 @@ exports.run = async () => {
   const quick = vscode.window.showQuickPick;
   const info = vscode.window.showInformationMessage;
   const error = vscode.window.showErrorMessage;
+  const progress = vscode.window.withProgress;
   const errors = [];
   let values = [
     "УХ разработка",
@@ -207,6 +208,150 @@ exports.run = async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     assert.equal(alive, false, "The stale list process was disposed");
+    // Synthetic login responses exercise actual commands and SecretStorage.
+    // Next-selection prompt counts prove whether a new password was persisted.
+    await cfg.update(
+      "connectionMetadata",
+      {
+        "fake/a": { label: "Fake A", auth: "sql", user: "synthetic-user" },
+        "fake/b": { label: "Fake B", auth: "windows" },
+      },
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+    let prompts = 0;
+    const passwordInput = async () => {
+      prompts++;
+      return "synthetic-password-only";
+    };
+    vscode.window.showInputBox = passwordInput;
+    const selectA = async (mode = "pending") => {
+      pick = "fake/a";
+      process.env.IBCMD_FAKE_MODE = mode;
+      await vscode.commands.executeCommand("ibcmd.select");
+    };
+    let scenario = 0;
+    const resetA = async () => {
+      pick = "fake/a";
+      process.env.IBCMD_FAKE_MODE = "pending";
+      // Isolate scenarios by secret key; avoid cross-scenario SecretStorage cache events.
+      await cfg.update(
+        "connectionMetadata",
+        {
+          "fake/a": {
+            label: "Fake A",
+            auth: "sql",
+            user: `synthetic-user-${++scenario}`,
+          },
+          "fake/b": { label: "Fake B", auth: "windows" },
+        },
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      );
+      prompts = 0;
+    };
+    await selectA("login-error");
+    await selectA();
+    assert.equal(
+      prompts,
+      2,
+      "Failed login must not cache the prompted password",
+    );
+    await vscode.commands.executeCommand("ibcmd.refresh");
+    assert.equal(
+      prompts,
+      2,
+      "Successful login persists for Select and Refresh",
+    );
+    await selectA("login-error");
+    await selectA();
+    assert.equal(
+      prompts,
+      2,
+      "An existing stored password retains its behavior",
+    );
+
+    await resetA();
+    vscode.window.showInputBox = async () => {
+      prompts++;
+      return undefined;
+    };
+    await selectA();
+    vscode.window.showInputBox = passwordInput;
+    await selectA();
+    assert.equal(
+      prompts,
+      2,
+      "Cancelled password prompt must not store a value",
+    );
+
+    await resetA();
+    let releasePrompt, promptStarted;
+    const prompting = new Promise((resolve) => {
+      promptStarted = resolve;
+    });
+    vscode.window.showInputBox = () => {
+      prompts++;
+      promptStarted();
+      return new Promise((resolve) => {
+        releasePrompt = resolve;
+      });
+    };
+    const stalePrompt = selectA();
+    await prompting;
+    pick = "fake/b";
+    await vscode.commands.executeCommand("ibcmd.select");
+    releasePrompt("synthetic-stale-password");
+    await stalePrompt;
+    assert.ok(api.status().includes("Fake B"), api.status());
+    vscode.window.showInputBox = passwordInput;
+    await selectA();
+    assert.equal(prompts, 2, "A stale prompt must not persist its password");
+
+    const waitForConnect = async (tag) => {
+      const gate = path.join(f.uri.fsPath, tag);
+      process.env.IBCMD_FAKE_CONNECT_GATE = gate;
+      const request = selectA("connect-gate");
+      let reached = false;
+      for (let i = 0; i < 200; i++) {
+        try {
+          await fs.access(gate + ".started");
+          reached = true;
+          break;
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.ok(reached, "Connect request reached the deterministic gate");
+      return { request, gate };
+    };
+    await resetA();
+    const staleConnect = await waitForConnect("stale-connect-gate");
+    pick = "fake/b";
+    process.env.IBCMD_FAKE_MODE = "pending";
+    await vscode.commands.executeCommand("ibcmd.select");
+    await fs.writeFile(staleConnect.gate, "release");
+    await staleConnect.request;
+    assert.ok(api.status().includes("Fake B"), api.status());
+    await selectA();
+    assert.equal(
+      prompts,
+      2,
+      "A superseded connect must not persist its password",
+    );
+
+    await resetA();
+    const cancellation = new vscode.CancellationTokenSource();
+    vscode.window.withProgress = (_, task) => task({}, cancellation.token);
+    const cancelled = await waitForConnect("cancelled-connect-gate");
+    cancellation.cancel();
+    await fs.writeFile(cancelled.gate, "release");
+    await cancelled.request;
+    cancellation.dispose();
+    vscode.window.withProgress = progress;
+    await selectA();
+    assert.equal(prompts, 2, "Cancelled connect must not persist its password");
+    delete process.env.IBCMD_FAKE_CONNECT_GATE;
+    console.log(
+      "SQL password persistence: failed/cancelled/stale operations, successful reuse and existing-password behavior passed (synthetic login only).",
+    );
     delete process.env.IBCMD_FAKE_LIST_GATE;
     delete process.env.IBCMD_FAKE_MODE;
     console.log(
@@ -217,5 +362,9 @@ exports.run = async () => {
     vscode.window.showQuickPick = quick;
     vscode.window.showInformationMessage = info;
     vscode.window.showErrorMessage = error;
+    vscode.window.withProgress = progress;
+    delete process.env.IBCMD_FAKE_CONNECT_GATE;
+    delete process.env.IBCMD_FAKE_LIST_GATE;
+    delete process.env.IBCMD_FAKE_MODE;
   }
 };

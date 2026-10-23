@@ -56,6 +56,20 @@ process.stdin.on("data", (chunk) => {
       continue;
     }
     if (m.method === "infobases/connect") {
+      if (process.env.IBCMD_FAKE_MODE === "login-error") {
+        send(m.id, null, { code: -32602, message: "synthetic login rejected" });
+        continue;
+      }
+      if (process.env.IBCMD_FAKE_MODE === "connect-gate") {
+        const gate = process.env.IBCMD_FAKE_CONNECT_GATE;
+        fs.writeFileSync(gate + ".started", String(process.pid));
+        const wait = () =>
+          fs.existsSync(gate)
+            ? send(m.id, { infobase: m.params.infobase, platform: "8.5.1" })
+            : setTimeout(wait, 10);
+        wait();
+        continue;
+      }
       const reply = () =>
         send(m.id, { infobase: m.params.infobase, platform: "8.5.1" });
       if (

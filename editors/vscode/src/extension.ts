@@ -111,6 +111,7 @@ export async function activate(context: vscode.ExtensionContext) {
       activeSettings = settings;
       const m = metadata(f)[b.id] ?? {};
       const params: Record<string, string> = { infobase: b.id };
+      let promptedSecret: { key: string; password: string } | undefined;
       if (b.mask) throw new Error("Bind a fixed database instead of a mask");
       if (b.source === "mssql") {
         if (!m.auth) {
@@ -123,9 +124,9 @@ export async function activate(context: vscode.ExtensionContext) {
         if (m.auth === "sql") {
           if (!m.user) throw new Error("SQL user is required");
           params.user = m.user;
-          let password = await context.secrets.get(
-            secretKey(f.uri.toString(), b.id, m.user),
-          );
+          const key = secretKey(f.uri.toString(), b.id, m.user);
+          let password = await context.secrets.get(key);
+          if (!generation.current(stamp)) return;
           if (password === undefined) {
             password = await vscode.window.showInputBox({
               prompt: `SQL password for ${label(f, b)} (stored in SecretStorage)`,
@@ -133,10 +134,7 @@ export async function activate(context: vscode.ExtensionContext) {
               ignoreFocusOut: true,
             });
             if (password === undefined) throw new Error("Cancelled");
-            await context.secrets.store(
-              secretKey(f.uri.toString(), b.id, m.user),
-              password,
-            );
+            promptedSecret = { key, password };
           }
           params.password = password;
         }
@@ -161,6 +159,7 @@ export async function activate(context: vscode.ExtensionContext) {
         },
         async (_, token) => {
           const abort = new AbortController();
+          if (token.isCancellationRequested) abort.abort();
           const subscription = token.onCancellationRequested(() =>
             abort.abort(),
           );
@@ -170,7 +169,18 @@ export async function activate(context: vscode.ExtensionContext) {
               params,
               abort.signal,
             );
+            if (abort.signal.aborted) throw new Error("Cancelled");
             if (!generation.current(stamp)) return;
+            // A new password is committed only after this selection connected successfully.
+            // Cached passwords keep their existing behavior, including on login failure.
+            if (promptedSecret) {
+              await context.secrets.store(
+                promptedSecret.key,
+                promptedSecret.password,
+              );
+              if (abort.signal.aborted) throw new Error("Cancelled");
+              if (!generation.current(stamp)) return;
+            }
             if (typeof connected?.platform === "string")
               b = { ...b, platform: connected.platform };
             selected = b;
