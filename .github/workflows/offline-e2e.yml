@@ -2,6 +2,8 @@ name: Offline E2E
 
 on:
   push:
+    branches:
+      - master
   pull_request:
   workflow_dispatch:
 
