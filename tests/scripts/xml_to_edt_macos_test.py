@@ -38,7 +38,7 @@ class Controls(unittest.TestCase):
         write(native / "Configuration.xml", b"original XML bytes")
         write(native / "ConfigDumpInfo.xml", b"original dump bytes")
         run.mkdir()
-        edt = root / "Contents/Eclipse/1cedtcli"
+        edt = root / "EDT.app/Contents/Eclipse/1cedtcli"
         java = root / "jdk/bin/java"
         runtime = [edt, java, edt.parent / "1cedt.ini", edt.parent / "configuration/config.ini",
                    edt.parent / "1cedtcli-startup.txt", edt.parent.parent / "Info.plist",
@@ -323,6 +323,42 @@ class Controls(unittest.TestCase):
             args.run.mkdir()
             with self.assertRaisesRegex(lab.Error, "Run must be new"):
                 lab.preflight(args)
+
+    def test_preflight_refuses_run_anywhere_inside_whole_app_bundle(self):
+        for relative in ("capture", "Contents/capture", "Contents/Resources/capture",
+                         "Contents/MacOS/capture", "Contents/Eclipse/configuration/capture"):
+            args = self.fixture()
+            bundle = args.edt_exe.parents[2]
+            args.run = bundle / relative
+            args.run.parent.mkdir(parents=True, exist_ok=True)
+            for tool in (args.ours_exe, args.edt_exe, args.edt_vm):
+                tool.chmod(0o700)
+            with self.subTest(relative=relative), \
+                 patch.object(lab.sys, "platform", "darwin"), \
+                 patch.object(lab, "is_external_lab_root", return_value=True), \
+                 patch.object(lab, "bind_installation") as bind, \
+                 self.assertRaisesRegex(lab.Error, "app bundle"):
+                lab.preflight(args)
+            bind.assert_not_called()
+            self.assertFalse(args.run.exists())
+
+    def test_installation_guard_refuses_alias_ancestors_and_requires_app_layout(self):
+        args = self.fixture()
+        bundle = args.edt_exe.parents[2]
+        lab.require_disjoint_installation(args.run, args.edt_exe)
+        for run in (bundle, bundle.parent):
+            with self.subTest(run=run), self.assertRaisesRegex(lab.Error, "app bundle"):
+                lab.require_disjoint_installation(run, args.edt_exe)
+        alias = args.lab_root / "bundle-alias"
+        alias.mkdir()
+        samefile = Path.samefile
+        def aliased_samefile(path, other):
+            return (path == alias and other == bundle) or samefile(path, other)
+        with patch.object(Path, "samefile", aliased_samefile), \
+             self.assertRaisesRegex(lab.Error, "app bundle"):
+            lab.require_disjoint_installation(alias / "capture", args.edt_exe)
+        with self.assertRaisesRegex(lab.Error, "physical .app"):
+            lab.require_disjoint_installation(args.run, args.lab_root / "Contents/Eclipse/1cedtcli")
 
     def test_environment_cannot_inject_jvm_options_or_internal_temp(self):
         args = self.fixture()

@@ -32,8 +32,10 @@ The complete external installation requirement matters in addition to `-data`.
 
 The lab root must already exist under `/Volumes/`; the native source and EDT
 executable must be below it. The run must be new, its parent must exist, and it
-must not overlap the source. Links, traversal, special files and case collisions
-are refused. Snapshot resource ceilings are harness safety bounds, not product
+must not overlap the source or any part of the complete EDT `.app` bundle.
+The CLI must use the physical `.app/Contents/Eclipse/1cedtcli` layout; existing
+ancestor identities are checked as well as path spelling. Links, traversal,
+special files and case collisions are refused. Snapshot resource ceilings are harness safety bounds, not product
 configuration-size support claims. No cleanup runs, even on failure. Inspect
 and move unneeded runs to Trash manually. Keep source XML, generated projects,
 private hashes/paths, caches and logs on the external disk; never publish private

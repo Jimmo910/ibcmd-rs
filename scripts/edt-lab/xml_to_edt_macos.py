@@ -45,6 +45,22 @@ def is_external_lab_root(path: Path) -> bool:
     return path.is_dir() and str(path).startswith("/Volumes/")
 
 
+def require_disjoint_installation(run: Path, edt: Path) -> None:
+    eclipse, contents, bundle = edt.parent, edt.parent.parent, edt.parents[2]
+    if edt.name != "1cedtcli" or eclipse.name != "Eclipse" or contents.name != "Contents" \
+            or bundle.suffix != ".app":
+        raise Error("EDT CLI must have the physical .app/Contents/Eclipse/1cedtcli layout")
+    # The immutable installation extends beyond Contents and Eclipse. Existing
+    # ancestors can also alias it through case-insensitive names or mount paths.
+    def contains(outer: Path, inner: Path) -> bool:
+        if inner.is_relative_to(outer):
+            return True
+        return outer.exists() and any(ancestor.exists() and ancestor.samefile(outer)
+            for ancestor in (inner, *inner.parents))
+    if contains(bundle, run) or contains(run, bundle):
+        raise Error("Whole EDT app bundle and run must not overlap")
+
+
 def preflight(args) -> None:
     if sys.platform != "darwin":
         raise Error("This capture requires macOS; control tests are not acceptance")
@@ -67,8 +83,7 @@ def preflight(args) -> None:
     contained(args.edt_exe, args.lab_root)  # Use #358’s complete external installation, including p2/configuration.
     if args.run.exists() or not args.run.parent.is_dir():
         raise Error("Run must be new with an existing parent; resuming evidence is refused")
-    if args.run.is_relative_to(args.edt_exe.parent.parent):
-        raise Error("Run must not be inside the EDT installation")
+    require_disjoint_installation(args.run, args.edt_exe)
     if args.run.is_relative_to(args.native) or args.native.is_relative_to(args.run):
         raise Error("Run and immutable native input must not overlap")
     require_exact_build(args.edt_build)
