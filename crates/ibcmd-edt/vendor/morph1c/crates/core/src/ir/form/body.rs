@@ -164,6 +164,10 @@ pub struct FormBody {
     /// emission, outside semantic serialization and provenance fingerprints.
     #[serde(skip)]
     pub ca_envelope_without_lf_pal: bool,
+    /// Declaration-bound LF framing of the EDT conditional-appearance sidecar.
+    /// Source-only spelling, never a semantic value or a sidecar-presence flag.
+    #[serde(skip)]
+    pub source_dcssca_lf: bool,
     /// Параметры формы (`<parameters>`/`<Parameters>`) в исходном порядке.
     pub parameters: Vec<FormParameter>,
     /// Пользовательские команды формы (`<formCommands>` EDT / `<Commands><Command>`
@@ -461,6 +465,7 @@ impl FormBody {
             availability_source_dependency: None,
             availability_source_form_dependency: None,
             ca_envelope_without_lf_pal: false,
+            source_dcssca_lf: false,
             title: None,
             attributes: Vec::new(),
             events: Vec::new(),
