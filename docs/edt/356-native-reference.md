@@ -255,3 +255,30 @@ The retained `fixed-direct-001` attempt stopped on a capture receipt assertion
 before invoking the converter; the checker was corrected to bind #357's actual
 explicit-project export route and run in a fresh directory. Neither attempt
 rewrote old failures. Full BSP acceptance and clean SDK validation remain open.
+
+
+## Post-DCSS candidate: the one granted authentic reverse conversion
+
+After all nine combined tests and a successful clean build, the parent granted
+exactly one direct reverse conversion using source `484372e1` (tree
+`7cc71ac761c3c1968dd31fc6eb4b3bda00796e3a`), candidate SHA-256
+`5542dce707bbd7629d5a344a1c5aa13e7a1b64d6d704f9744a336498b14d5113`.
+The [non-private result](evidence/356-post-dcss-direct-20261023.json) binds
+`fixtures/issue356-current-server-dcs-fixed-direct-003`.
+
+The capture renewed complete genuine project, current/old installed-export and
+native-reference inventories, actual original SDK command routes/exit codes,
+SDK executable identity, and the new source/test/build receipts and raw log
+hashes. All before/after inputs, selected evidence and candidate hashes remain
+unchanged. No SDK, JVM or compiler was started, and the converter was invoked
+once for this grant.
+
+The previous DCSS boundary is passed, but encode preflight now refuses the next
+actual sidecar: `ConditionalAppearance.dcssca: must be CRLF, found Lf` in
+`FilterProbe.ListForm`. Decode completes, exit code is 2, and output is not
+published. Native equality and the direct three-way branch therefore remain
+unavailable. Exact reports and minimal genuine public source bytes at
+`fixtures/issue356-dcssca-repro-001` were sent to #355 and #357. Shared codec
+ownership remains unchanged. Full release was reported immediately for #381's
+next integration phase. No retry occurs without another grant; all BSP/current
+schema/strict SDK acceptance limitations remain open.
