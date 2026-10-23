@@ -120,6 +120,7 @@ async function harness({
         return { RpcClient, RpcError: class extends Error {} };
       if (id === "./config") return { snapshot: async () => "" };
       if (id === "./status") return require("../out/status");
+      if (id === "./import") return require("../out/import");
       return require(id);
     },
   });
