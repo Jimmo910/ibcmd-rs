@@ -994,6 +994,7 @@ pub(crate) use form::load_8_5_1::{
 };
 pub(crate) use refs::constant_row_always_used;
 pub(crate) use source_assets::declare_palette_namespace_beside_style;
+mod eds_export;
 mod forms;
 pub mod help_audit;
 pub mod incremental;
@@ -3379,6 +3380,8 @@ struct DumpedRow {
 struct DumpRowContext<'a> {
     /// `--model-export`: descriptors of the modelled kinds go through it.
     model_export: Option<&'a model_export::ModelExport>,
+    /// ExternalDataSource root/child rows, which carry their own owner chain.
+    eds_export: Option<&'a eds_export::EdsExport>,
     output_dir: &'a Path,
     /// Every file of the row goes through it.
     output: &'a OutputWriter,
@@ -3618,6 +3621,9 @@ fn dump_table_rows_with_options_mode(
         .iter()
         .map(|row| (row.file_name.as_str(), row))
         .collect::<BTreeMap<_, _>>();
+    let eds_export = extract_metadata_xml
+        .then(|| eds_export::build(metadata_texts, source_version.as_str()))
+        .flatten();
     let refs_for_standalone =
         extract_metadata_xml || needs_standalone_refs || needs_source_layout_refs;
     let (
@@ -4105,6 +4111,7 @@ fn dump_table_rows_with_options_mode(
     let context = DumpRowContext {
         output: &output,
         model_export: None,
+        eds_export: eds_export.as_ref(),
         type_set_leaves: &type_set_leaves,
         output_dir,
         table,
@@ -4906,6 +4913,9 @@ fn dump_table_rows_streamed(
         .iter()
         .map(|row| (row.file_name.as_str(), row))
         .collect::<BTreeMap<_, _>>();
+    let eds_export = extract_metadata_xml
+        .then(|| eds_export::build(&index_metadata_texts, source_version.as_str()))
+        .flatten();
     let index_part_started = Instant::now();
     let index_part_cpu = process_cpu_ms();
     let recalculation_refs = if extract_metadata_xml && !skip_recalculation_refs {
@@ -5674,6 +5684,7 @@ fn dump_table_rows_streamed(
     let context = DumpRowContext {
         output: &output,
         model_export: model.as_ref(),
+        eds_export: eds_export.as_ref(),
         type_set_leaves: &type_set_leaves,
         output_dir,
         table,
@@ -6809,7 +6820,18 @@ fn dump_table_row_bytes(
                 context.type_set_leaves,
             )
         };
-        let extracted = if context
+        let extracted = if let Some(eds) = context.eds_export
+            && let Some(row) = context.metadata_texts_by_file_name.get(file_name)
+            && let Some(result) = eds.export_row(file_name, row)
+        {
+            result.map_err(|_message| {
+                MetadataSourceExtractionDiagnostic::legacy_option_none(
+                    MetadataSourceFailureClass::Unknown,
+                    "ExternalDataSource",
+                    "eds_export_failed",
+                )
+            })
+        } else if context
             .refused_output_paths
             .metadata_xml
             .contains_key(file_name)
@@ -10976,7 +10998,7 @@ struct MetadataStandardAttribute {
 
 struct TaskAddressingAttribute {
     child: MetadataChildObject,
-    addressing_dimension: String,
+    addressing_dimension: Option<String>,
 }
 
 struct SettingsStorageProperties {
@@ -11201,6 +11223,12 @@ struct ConstantProperties {
     choice_history_on_input: &'static str,
     data_lock_control_mode: &'static str,
     multi_line: bool,
+    /// Slots 5 and 17 of the constant's own code-27 detail record. The writer
+    /// spelled both as `false` for every constant; the matrix row
+    /// `КнстРеквизитОтрицательные` stores slot 5 `1` and
+    /// `КнстРеквизитРасшрПравка` slot 17 `1`, and the platform writes both.
+    mark_negatives: bool,
+    extended_edit: bool,
     choice_folders_and_items: &'static str,
     quick_choice: &'static str,
     data_history: &'static str,
@@ -14796,34 +14824,30 @@ fn parse_exchange_plan_child_objects(
         .collect::<Option<Vec<_>>>();
     let mut child_objects = child_objects?;
 
-    let generic_sections = parse_attribute_tabular_section_child_objects(
-        "ExchangePlan",
-        owner_name,
-        text,
-        uuid,
-        None,
-        type_index,
-        object_refs,
-        object_refs,
-        form_refs,
-    )
-    .into_iter()
-    .filter(|child| child.tag == "TabularSection")
-    .collect::<Vec<_>>();
-    let sections = parse_strict_tabular_sections(
+    // ExchangePlan tabular sections use the same code-11 envelope and nested
+    // attribute group as the other chart-like owners; the shared reader keeps
+    // the nested attributes on the same path as ChartOfAccounts.
+    let mut section_generated_ids = BTreeSet::new();
+    let mut section_child_ids = BTreeSet::new();
+    let sections = parse_cct_tabular_sections_indexed(
         &collections[2],
-        modern_layout,
         "ExchangePlan",
         owner_name,
-        CATALOG_TABULAR_ATTRIBUTE_GROUP_UUID,
-        generic_sections,
         type_index,
         object_refs,
+        object_refs,
         form_refs,
-        &mut child_uuids,
-        &mut root_names,
-    );
-    let sections = sections?;
+        &mut section_generated_ids,
+        &mut section_child_ids,
+    )
+    .ok()?;
+    if section_generated_ids
+        .iter()
+        .chain(section_child_ids.iter())
+        .any(|uuid| !child_uuids.insert(uuid.to_ascii_lowercase()))
+    {
+        return None;
+    }
     child_objects.extend(sections);
     Some((child_objects, emit_empty_child_objects))
 }
@@ -14969,7 +14993,7 @@ fn parse_strict_tabular_sections(
     }
 
     let mut sections = Vec::with_capacity(values.len());
-    for value in values {
+    for (section_index, value) in values.iter().enumerate() {
         let item = split_information_register_braced_fields(value)?;
         if item.len() != 3 || item.get(1)?.trim() != "1" {
             return None;
@@ -15009,9 +15033,10 @@ fn parse_strict_tabular_sections(
         let raw_header = parse_strict_code11_tabular_section_header(&section_fields)?;
         let key = raw_header.uuid.to_ascii_lowercase();
         let mut section = sections_by_uuid.remove(&key)?;
-        if !strict_metadata_headers_match(&section.header, &raw_header)
-            || !strict_metadata_child_identity_is_unique(&section, child_uuids, root_names)
-        {
+        if !strict_metadata_headers_match(&section.header, &raw_header) {
+            return None;
+        }
+        if !strict_metadata_child_identity_is_unique(&section, child_uuids, root_names) {
             return None;
         }
 
@@ -15048,13 +15073,17 @@ fn parse_strict_tabular_sections(
                     ),
                     _ => None,
                 }?;
-                strict_metadata_child_identity_is_unique(&child, child_uuids, &mut nested_names)
-                    .then_some(child)
+                if !strict_metadata_child_identity_is_unique(&child, child_uuids, &mut nested_names)
+                {
+                    return None;
+                }
+                Some(child)
             })
             .collect::<Option<Vec<_>>>()?;
         sections.push(section);
     }
-    sections_by_uuid.is_empty().then_some(sections)
+    let result = sections_by_uuid.is_empty().then_some(sections);
+    result
 }
 
 fn parse_strict_code11_tabular_section_header(fields: &[&str]) -> Option<MetadataHeader> {
@@ -19898,6 +19927,7 @@ fn parse_attribute_tabular_section_child_objects_with_declared_failure(
                 type_index,
                 object_refs,
                 metadata_object_refs,
+                form_refs,
             )
         } else if tag == "Attribute" {
             parse_metadata_child_properties(
@@ -20680,6 +20710,11 @@ fn parse_exact_tabular_section_standard_attributes_presence(
                 // writes the same single `<xr:StandardAttribute
                 // name="LineNumber">` the other families write.
                 "ChartOfCalculationTypes" => "-100",
+                // A chart of accounts writes the `LineNumber` standard
+                // attribute with `-16`; all seven sections of the matrix
+                // chart carry it and export the same single
+                // `<xr:StandardAttribute name="LineNumber">`.
+                "ChartOfAccounts" => "-16",
                 _ => return None,
             };
             let payload = split_information_register_braced_fields(payload)?;
@@ -20816,9 +20851,11 @@ fn tabular_section_envelope_spec(owner_kind: &str) -> Option<(u32, bool, bool)> 
         // ERP УХ 3.2.12.6 `ChartsOfCalculationTypes/Начисления` (7) and
         // `.../Удержания` (3) carry `{1,<nine-field payload>,5}` and their
         // native XML writes `<LineNumberLength>5` and no `<Use>`.
-        OWNER_KIND_BUSINESS_PROCESS | "ExchangePlan" | "Task" | "ChartOfCalculationTypes" => {
-            (1, false, true)
-        }
+        OWNER_KIND_BUSINESS_PROCESS
+        | "ExchangePlan"
+        | "Task"
+        | "ChartOfCalculationTypes"
+        | "ChartOfAccounts" => (1, false, true),
         "Report" | "DataProcessor" => (0, false, false),
         _ => return None,
     })
@@ -21285,13 +21322,8 @@ fn parse_calculation_register_dimension_reference(
     if information_register_uuid_is_zero(&uuid) {
         return Some(String::new());
     }
-    let schedule = calculation_schedule?;
     let reference = unique_case_insensitive_object_reference(&uuid, object_refs)?.to_string();
-    let schedule_parts = schedule.schedule.as_deref()?.split('.').collect::<Vec<_>>();
     let parts = reference.split('.').collect::<Vec<_>>();
-    let ["InformationRegister", schedule_owner] = schedule_parts.as_slice() else {
-        return None;
-    };
     let [
         "InformationRegister",
         candidate_owner,
@@ -21301,7 +21333,24 @@ fn parse_calculation_register_dimension_reference(
     else {
         return None;
     };
-    (!dimension.is_empty() && candidate_owner == schedule_owner).then_some(reference)
+    if dimension.is_empty() {
+        return None;
+    }
+    // The register's own `<Schedule>` may be empty while a child still names
+    // a schedule dimension (the matrix does exactly that); only a present
+    // schedule constrains the owner.
+    if let Some(schedule) = calculation_schedule
+        && let Some(schedule_reference) = schedule.schedule.as_deref()
+    {
+        let schedule_parts = schedule_reference.split('.').collect::<Vec<_>>();
+        let ["InformationRegister", schedule_owner] = schedule_parts.as_slice() else {
+            return None;
+        };
+        if candidate_owner != schedule_owner {
+            return None;
+        }
+    }
+    Some(reference)
 }
 
 fn parse_register_common_child_value_types(
@@ -22669,7 +22718,7 @@ fn parse_catalog_child_properties(
     let min_value = parse_information_register_bound(payload.get(8)?)?;
     let max_value = parse_information_register_bound(payload.get(9)?)?;
     let choice_folders_and_items = catalog_choice_folders_and_items_xml(payload.get(10)?.trim())?;
-    let choice_form = parse_catalog_child_choice_form(payload.get(11)?, value_types, form_refs)?;
+    let choice_form = parse_catalog_child_choice_form(payload.get(11)?, form_refs)?;
     let quick_choice = catalog_quick_choice_xml(payload.get(12)?.trim())?;
     let fill_checking = match payload.get(13)?.trim() {
         "0" => "DontCheck",
@@ -23031,7 +23080,7 @@ fn parse_document_child_properties(
     let min_value = parse_information_register_bound(payload.get(8)?)?;
     let max_value = parse_information_register_bound(payload.get(9)?)?;
     let choice_folders_and_items = catalog_choice_folders_and_items_xml(payload.get(10)?.trim())?;
-    let choice_form = parse_document_child_choice_form(payload.get(11)?, value_types, form_refs)?;
+    let choice_form = parse_document_child_choice_form(payload.get(11)?, form_refs)?;
     let quick_choice = catalog_quick_choice_xml(payload.get(12)?.trim())?;
     let fill_checking = match payload.get(13)?.trim() {
         "0" => "DontCheck",
@@ -23252,7 +23301,6 @@ fn document_attribute_collection_is_closed(
 
 fn parse_document_child_choice_form(
     value: &str,
-    value_types: &[ConstantValueType],
     form_refs: &BTreeMap<String, FormSourceReference>,
 ) -> Option<MetadataChoiceForm> {
     let uuid = parse_uuid_field(value.trim())?;
@@ -23260,27 +23308,9 @@ fn parse_document_child_choice_form(
         return Some(MetadataChoiceForm::Empty);
     }
     let reference = information_register_form_reference(&uuid, form_refs)?;
-    let (form_owner_reference, form_name) = reference.split_once(".Form.")?;
-    if form_name.is_empty() || form_name.contains('.') {
-        return None;
-    }
-    (value_types
-        .iter()
-        .filter(|value_type| {
-            matches!(
-                value_type,
-                ConstantValueType::Reference { reference }
-                    if parse_generated_metadata_reference_owner(reference).is_some_and(|owner| {
-                        matches!(
-                            owner.kind(),
-                            GeneratedMetadataReferenceOwnerKind::Catalog
-                                | GeneratedMetadataReferenceOwnerKind::Document
-                        ) && owner.owner_reference() == form_owner_reference
-                    })
-            )
-        })
-        .count()
-        == 1)
+    // Same platform rule as the catalog reader: a form of another object is a
+    // valid choice form (matrix: a string attribute names a document form).
+    information_register_form_reference_is_valid(&reference)
         .then_some(MetadataChoiceForm::Reference(reference))
 }
 
@@ -23526,43 +23556,18 @@ fn parse_metadata_child_localized_value(value: &str) -> Option<Vec<(String, Stri
 
 fn parse_catalog_child_choice_form(
     value: &str,
-    value_types: &[ConstantValueType],
     form_refs: &BTreeMap<String, FormSourceReference>,
 ) -> Option<MetadataChoiceForm> {
     let uuid = parse_uuid_field(value.trim())?;
-    let choice_form = if information_register_uuid_is_zero(&uuid) {
-        MetadataChoiceForm::Empty
-    } else {
-        MetadataChoiceForm::Reference(information_register_form_reference(&uuid, form_refs)?)
-    };
-    let MetadataChoiceForm::Reference(reference) = &choice_form else {
-        return Some(choice_form);
-    };
-    let owner_name = catalog_choice_form_owner_name(reference)?;
-    (value_types
-        .iter()
-        .filter(|value_type| {
-            matches!(
-                value_type,
-                ConstantValueType::Reference { reference }
-                    if parse_generated_metadata_reference_owner(reference).is_some_and(|owner| {
-                        owner.kind() == GeneratedMetadataReferenceOwnerKind::Catalog
-                            && owner.name() == owner_name
-                    })
-            )
-        })
-        .count()
-        == 1)
-        .then_some(choice_form)
-}
-
-fn catalog_choice_form_owner_name(reference: &str) -> Option<&str> {
-    let (owner_name, form_name) = reference.strip_prefix("Catalog.")?.split_once(".Form.")?;
-    (!owner_name.is_empty()
-        && !owner_name.contains('.')
-        && !form_name.is_empty()
-        && !form_name.contains('.'))
-    .then_some(owner_name)
+    if information_register_uuid_is_zero(&uuid) {
+        return Some(MetadataChoiceForm::Empty);
+    }
+    let reference = information_register_form_reference(&uuid, form_refs)?;
+    // The platform accepts a form of another metadata object here: the matrix
+    // stores `Document.Документ1.Form.ФормаВыбора` on a string attribute of a
+    // catalog and a document, and native 8.3.27.2214 writes it unchanged.
+    information_register_form_reference_is_valid(&reference)
+        .then_some(MetadataChoiceForm::Reference(reference))
 }
 
 fn parse_catalog_choice_parameter_links(
@@ -24826,15 +24831,8 @@ fn parse_chart_of_accounts_properties_from_text(
     };
     // Collection 0 is the owner's own command collection -- the same
     // `0df30176-…` marker `COMMAND_COLLECTION_LIST_MARKERS` already measures
-    // as "ChartOfAccounts" -- and collection 1 holds its templates. Both were
-    // required empty, which sent every chart of accounts that owns a command
-    // or a template to the default-list-form fallback, a file without
-    // `<InternalInfo>` and without almost every property. Collection 2 stays
-    // required-empty: it is empty on all four charts of the stand and no
-    // observation names it.
-    if !collections[2].is_empty() {
-        return StrictMetadataRoot::Invalid;
-    }
+    // as "ChartOfAccounts" -- collection 1 holds its templates, and collection
+    // 2 holds its tabular sections.
 
     // A known full record requires complete properties and child ownership.
     parse_chart_of_accounts_properties(
@@ -24950,6 +24948,30 @@ fn parse_chart_of_accounts_properties(
             )
         })
         .collect::<BTreeMap<_, _>>();
+    // The platform writes the chart's tabular sections after its attributes
+    // and before the accounting/ext-dimension flags.
+    let mut section_generated_ids = BTreeSet::new();
+    let mut section_child_ids = BTreeSet::new();
+    let tabular_sections = parse_cct_tabular_sections_indexed(
+        collections.get(2)?,
+        "ChartOfAccounts",
+        &header.name,
+        type_index,
+        object_refs,
+        metadata_object_refs,
+        form_refs,
+        &mut section_generated_ids,
+        &mut section_child_ids,
+    )
+    .ok()?;
+    if section_generated_ids
+        .iter()
+        .chain(section_child_ids.iter())
+        .any(|uuid| !all_uuids.insert(uuid.to_ascii_lowercase()))
+    {
+        return None;
+    }
+    child_objects.extend(tabular_sections);
     let mut accounting_flag_names = BTreeSet::new();
     child_objects.extend(parse_chart_of_accounts_child_collection(
         collections.get(5)?,
@@ -26272,6 +26294,7 @@ fn parse_chart_of_characteristic_types_properties_from_text(
         type_index,
         object_refs,
         metadata_object_refs,
+        form_refs,
         &mut child_ids,
     )
     .map_err(|failure| {
@@ -26289,6 +26312,7 @@ fn parse_chart_of_characteristic_types_properties_from_text(
         type_index,
         object_refs,
         metadata_object_refs,
+        form_refs,
         &mut generated_ids,
         &mut child_ids,
     )
@@ -26872,6 +26896,7 @@ fn parse_cct_direct_attributes_indexed(
     type_index: &BTreeMap<String, String>,
     object_refs: &BTreeMap<String, String>,
     metadata_object_refs: &BTreeMap<String, String>,
+    form_refs: &BTreeMap<String, FormSourceReference>,
     child_ids: &mut BTreeSet<String>,
 ) -> Result<Vec<MetadataChildObject>, OwnerCollectionItemFailure> {
     let mut names = BTreeSet::new();
@@ -26895,6 +26920,7 @@ fn parse_cct_direct_attributes_indexed(
             type_index,
             object_refs,
             metadata_object_refs,
+            form_refs,
             &mut parsed_child_ids,
         )
         .ok_or_else(|| failure(owner_graph::OwnerGraphOwnedChildReason::HeaderMismatch))?;
@@ -26928,6 +26954,7 @@ fn parse_cct_attribute(
     type_index: &BTreeMap<String, String>,
     object_refs: &BTreeMap<String, String>,
     metadata_object_refs: &BTreeMap<String, String>,
+    form_refs: &BTreeMap<String, FormSourceReference>,
     child_ids: &mut BTreeSet<String>,
 ) -> Option<MetadataChildObject> {
     let item = split_information_register_braced_fields(value)?;
@@ -26956,6 +26983,7 @@ fn parse_cct_attribute(
         Some((owner_kind, owner_name, object_refs)),
         type_index,
         metadata_object_refs,
+        form_refs,
     )?;
     Some(MetadataChildObject {
         tag: "Attribute",
@@ -26994,6 +27022,7 @@ fn parse_cct_attribute_properties(
     owner_scope: Option<(&str, &str, &BTreeMap<String, String>)>,
     type_index: &BTreeMap<String, String>,
     metadata_object_refs: &BTreeMap<String, String>,
+    form_refs: &BTreeMap<String, FormSourceReference>,
 ) -> Option<MetadataChildProperties> {
     if payload.len() != 23 || payload.first()?.trim() != "27" {
         return None;
@@ -27045,9 +27074,15 @@ fn parse_cct_attribute_properties(
         )?),
         (false, None) => return None,
     };
-    if !information_register_uuid_is_zero(&choice_form_uuid) {
-        return None;
-    }
+    let choice_form = if information_register_uuid_is_zero(&choice_form_uuid) {
+        MetadataChoiceForm::Empty
+    } else {
+        let reference = information_register_form_reference(&choice_form_uuid, form_refs)?;
+        if !information_register_form_reference_is_valid(&reference) {
+            return None;
+        }
+        MetadataChoiceForm::Reference(reference)
+    };
     let fill_value =
         parse_information_register_fill_value(payload.get(19)?, type_index, metadata_object_refs)?;
     let fill_from_filling_value = information_register_bool(payload.get(20)?)?;
@@ -27093,7 +27128,7 @@ fn parse_cct_attribute_properties(
         self_close_empty_choice_parameter_refs: false,
         quick_choice: Some(catalog_quick_choice_xml(payload.get(12)?.trim())?),
         create_on_input: Some(catalog_create_on_input_xml(payload.get(21)?.trim())?),
-        choice_form: Some(MetadataChoiceForm::Empty),
+        choice_form: Some(choice_form),
         link_by_type_empty,
         link_by_type: resolved_link_by_type,
         choice_history_on_input: Some(catalog_choice_history_on_input_xml(
@@ -27129,6 +27164,7 @@ fn parse_business_process_child_properties(
     type_index: &BTreeMap<String, String>,
     object_refs: &BTreeMap<String, String>,
     metadata_object_refs: &BTreeMap<String, String>,
+    form_refs: &BTreeMap<String, FormSourceReference>,
 ) -> Option<MetadataChildProperties> {
     let mut layouts =
         metadata_object_field_candidates_around_header(text, marker_start, child_uuid)
@@ -27158,6 +27194,7 @@ fn parse_business_process_child_properties(
         )),
         type_index,
         metadata_object_refs,
+        form_refs,
     )
 }
 
@@ -27168,6 +27205,7 @@ fn parse_cct_tabular_sections_indexed(
     type_index: &BTreeMap<String, String>,
     object_refs: &BTreeMap<String, String>,
     metadata_object_refs: &BTreeMap<String, String>,
+    form_refs: &BTreeMap<String, FormSourceReference>,
     generated_ids: &mut BTreeSet<String>,
     child_ids: &mut BTreeSet<String>,
 ) -> Result<Vec<MetadataChildObject>, OwnerCollectionItemFailure> {
@@ -27307,6 +27345,7 @@ fn parse_cct_tabular_sections_indexed(
                 type_index,
                 object_refs,
                 metadata_object_refs,
+                form_refs,
                 &mut parsed_ids,
             )
             .ok_or_else(|| {
@@ -31037,6 +31076,7 @@ fn parse_task_properties_from_text(
         type_index,
         object_refs,
         metadata_object_refs,
+        form_refs,
         &mut section_generated_ids,
         &mut section_child_ids,
     )
@@ -31073,7 +31113,10 @@ fn parse_task_properties_from_text(
     let main_addressing_attribute =
         parse_task_member_reference(fields.get(26)?, object_refs, &addressing_references)?;
     if addressing.is_none()
-        && (main_addressing_attribute.is_some() || !addressing_attributes.is_empty())
+        && (main_addressing_attribute.is_some()
+            || addressing_attributes
+                .iter()
+                .any(|attribute| attribute.addressing_dimension.is_some()))
     {
         return None;
     }
@@ -31476,10 +31519,11 @@ fn parse_task_addressing_attributes(
                 metadata_object_refs,
                 form_refs,
             )?;
-            let addressing_dimension = addressing_dimension?;
             if !seen_uuids.insert(child.header.uuid.to_ascii_lowercase())
                 || !seen_names.insert(child.header.name.to_lowercase())
-                || !seen_dimensions.insert(addressing_dimension.to_lowercase())
+                || addressing_dimension
+                    .as_ref()
+                    .is_some_and(|dimension| !seen_dimensions.insert(dimension.to_lowercase()))
             {
                 return None;
             }
@@ -31570,8 +31614,14 @@ fn parse_task_wrapped_child(
     )?);
 
     let addressing_dimension = if addressing {
-        let uuid = parse_information_register_non_zero_uuid(wrapper.get(3)?)?;
-        Some(resolve_exchange_plan_index_reference(&uuid, object_refs)?)
+        let uuid = parse_information_register_uuid(wrapper.get(3)?)?;
+        if information_register_uuid_is_zero(&uuid) {
+            // The platform writes an empty `<AddressingDimension/>` for a
+            // task addressing attribute whose root has no `Addressing`.
+            None
+        } else {
+            Some(resolve_exchange_plan_index_reference(&uuid, object_refs)?)
+        }
     } else {
         None
     };
@@ -31608,7 +31658,11 @@ fn validate_task_addressing_dimensions(
     attributes: &[TaskAddressingAttribute],
 ) -> bool {
     let Some(addressing) = addressing else {
-        return attributes.is_empty();
+        // A task without `<Addressing>` still lists its addressing attributes;
+        // the platform writes each with an empty `<AddressingDimension/>`.
+        return attributes
+            .iter()
+            .all(|attribute| attribute.addressing_dimension.is_none());
     };
     let Some(register_name) = addressing.strip_prefix("InformationRegister.") else {
         return false;
@@ -31620,8 +31674,12 @@ fn validate_task_addressing_dimensions(
     attributes.iter().all(|attribute| {
         attribute
             .addressing_dimension
-            .strip_prefix(&prefix)
-            .is_some_and(|name| !name.is_empty() && !name.contains('.'))
+            .as_deref()
+            .is_none_or(|dimension| {
+                dimension
+                    .strip_prefix(&prefix)
+                    .is_some_and(|name| !name.is_empty() && !name.contains('.'))
+            })
     })
 }
 
@@ -33488,6 +33546,8 @@ fn parse_constant_properties_from_text(
     // `ChoiceFoldersAndItems` in `uh` `ГруппаОтчетовКИК` (slot 10 `"1"`) and
     // `QuickChoice` in `uh` `ПериодичностьОтчетностиМСФО` (slot 12 `"0"`).
     let multi_line = parse_1c_bool_flag(constant_detail_fields.get(7)?.trim())?;
+    let mark_negatives = parse_1c_bool_flag(constant_detail_fields.get(5)?.trim())?;
+    let extended_edit = parse_1c_bool_flag(constant_detail_fields.get(17)?.trim())?;
     let choice_folders_and_items =
         catalog_choice_folders_and_items_xml(constant_detail_fields.get(10)?.trim())?;
     let quick_choice = catalog_quick_choice_xml(constant_detail_fields.get(12)?.trim())?;
@@ -33554,6 +33614,8 @@ fn parse_constant_properties_from_text(
     );
 
     Some(ConstantProperties {
+        mark_negatives,
+        extended_edit,
         generated_types,
         value_types,
         tooltip,
@@ -35368,26 +35430,51 @@ fn is_http_service_url_template_text(value: &str) -> bool {
 }
 
 fn http_service_method_from_code(value: &str) -> Option<&'static str> {
+    // The platform's closed HTTPMethod enum, in its own ordinal order: the
+    // matrix stores every member and native 8.3.27.2214 writes it back.
     match value {
+        "0" => Some("CONNECT"),
+        "1" => Some("COPY"),
         "2" => Some("DELETE"),
         "3" => Some("GET"),
-        // Measured on the БСП 8.5 extension ServiceDesk (`сд_МобильноеAPI`).
+        "4" => Some("HEAD"),
+        "5" => Some("LOCK"),
+        "6" => Some("MERGE"),
+        "7" => Some("MKCOL"),
+        "8" => Some("MOVE"),
+        "9" => Some("OPTIONS"),
         "10" => Some("PATCH"),
         "11" => Some("POST"),
+        "12" => Some("PROPFIND"),
+        "13" => Some("PROPPATCH"),
         "14" => Some("PUT"),
+        "15" => Some("TRACE"),
+        "16" => Some("UNLOCK"),
+        "1000" => Some("Any"),
         _ => None,
     }
 }
 
 fn canonical_http_service_method_name(value: &str) -> Option<&'static str> {
     match value {
+        "Any" => Some("Any"),
+        "CONNECT" => Some("CONNECT"),
+        "COPY" => Some("COPY"),
         "DELETE" => Some("DELETE"),
         "GET" => Some("GET"),
         "HEAD" => Some("HEAD"),
+        "LOCK" => Some("LOCK"),
+        "MERGE" => Some("MERGE"),
+        "MKCOL" => Some("MKCOL"),
+        "MOVE" => Some("MOVE"),
         "OPTIONS" => Some("OPTIONS"),
         "PATCH" => Some("PATCH"),
         "POST" => Some("POST"),
+        "PROPFIND" => Some("PROPFIND"),
+        "PROPPATCH" => Some("PROPPATCH"),
         "PUT" => Some("PUT"),
+        "TRACE" => Some("TRACE"),
+        "UNLOCK" => Some("UNLOCK"),
         _ => None,
     }
 }
@@ -41483,14 +41570,22 @@ fn push_task_addressing_attribute_xml(
         &child.value_types,
         type_set_leaves,
     );
+    let addressing_dimension = attribute.addressing_dimension.as_deref().unwrap_or("");
+    let addressing_dimension_xml = if addressing_dimension.is_empty() {
+        "<AddressingDimension/>".to_string()
+    } else {
+        format!(
+            "<AddressingDimension>{}</AddressingDimension>",
+            escape_xml_element_text(addressing_dimension)
+        )
+    };
     xml.push_str(&format!(
         "\t\t\t\t\t<Indexing>{indexing}</Indexing>\r\n\
-\t\t\t\t\t<AddressingDimension>{}</AddressingDimension>\r\n\
+\t\t\t\t\t{addressing_dimension_xml}\r\n\
 \t\t\t\t\t<FullTextSearch>{full_text_search}</FullTextSearch>\r\n\
 \t\t\t\t\t<DataHistory>{data_history}</DataHistory>\r\n\
 \t\t\t\t</Properties>\r\n\
 \t\t\t</AddressingAttribute>\r\n",
-        escape_xml_element_text(&attribute.addressing_dimension),
     ));
 }
 
@@ -43748,10 +43843,10 @@ fn format_constant_source_xml(
     push_localized_property(&mut insert, "\t\t\t", "EditFormat", &constant.edit_format);
     push_localized_property(&mut insert, "\t\t\t", "ToolTip", &constant.tooltip);
     insert.push_str(&format!(
-        "\t\t\t<MarkNegatives>false</MarkNegatives>\r\n\
+        "\t\t\t<MarkNegatives>{}</MarkNegatives>\r\n\
 \t\t\t{}\r\n\
 \t\t\t<MultiLine>{}</MultiLine>\r\n\
-\t\t\t<ExtendedEdit>false</ExtendedEdit>\r\n\
+\t\t\t<ExtendedEdit>{}</ExtendedEdit>\r\n\
 \t\t\t{}\r\n\
 \t\t\t{}\r\n\
 \t\t\t<FillChecking>{}</FillChecking>\r\n\
@@ -43766,8 +43861,10 @@ fn format_constant_source_xml(
 \t\t\t<DataHistory>{}</DataHistory>\r\n\
 \t\t\t<UpdateDataHistoryImmediatelyAfterWrite>false</UpdateDataHistoryImmediatelyAfterWrite>\r\n\
 \t\t\t<ExecuteAfterWriteDataHistoryVersionProcessing>false</ExecuteAfterWriteDataHistoryVersionProcessing>\r\n",
+        xml_bool(constant.mark_negatives),
         format_simple_property_xml("Mask", &constant.mask),
         xml_bool(constant.multi_line),
+        xml_bool(constant.extended_edit),
         format_constant_bound_xml("MinValue", constant.min_value.as_deref()),
         format_constant_bound_xml("MaxValue", constant.max_value.as_deref()),
         constant.fill_checking,
@@ -45409,7 +45506,9 @@ fn push_http_service_url_template_xml(
 \t\t\t\t</Properties>\r\n",
         escape_xml_element_text(&template.template)
     ));
-    if !template.methods.is_empty() {
+    if template.methods.is_empty() {
+        xml.push_str("\t\t\t\t<ChildObjects/>\r\n");
+    } else {
         xml.push_str("\t\t\t\t<ChildObjects>\r\n");
         for method in &template.methods {
             push_http_service_method_xml(xml, method);
@@ -45597,10 +45696,16 @@ fn push_integration_service_channel_xml(
             escape_xml_element_text(&channel.header.comment)
         ));
     }
+    if channel.external_name.is_empty() {
+        xml.push_str("\t\t\t\t\t<ExternalIntegrationServiceChannelName/>\r\n");
+    } else {
+        xml.push_str(&format!(
+            "\t\t\t\t\t<ExternalIntegrationServiceChannelName>{}</ExternalIntegrationServiceChannelName>\r\n",
+            escape_xml_element_text(&channel.external_name)
+        ));
+    }
     xml.push_str(&format!(
-        "\t\t\t\t\t<ExternalIntegrationServiceChannelName>{}</ExternalIntegrationServiceChannelName>\r\n\
-\t\t\t\t\t<MessageDirection>{}</MessageDirection>\r\n",
-        escape_xml_element_text(&channel.external_name),
+        "\t\t\t\t\t<MessageDirection>{}</MessageDirection>\r\n",
         channel.message_direction
     ));
     if channel.receive_message_processing.is_empty() {

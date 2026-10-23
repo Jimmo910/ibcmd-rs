@@ -3451,6 +3451,7 @@ fn cct_direct_item_failure_rolls_back_staged_identity_and_corrected_item_commits
         &BTreeMap::new(),
         &wrong_owner_refs,
         &BTreeMap::new(),
+        &BTreeMap::new(),
         &mut child_ids,
     ) {
         Err(failure) => failure,
@@ -3488,6 +3489,7 @@ fn cct_direct_item_failure_rolls_back_staged_identity_and_corrected_item_commits
         "Owner",
         &BTreeMap::new(),
         &corrected_refs,
+        &BTreeMap::new(),
         &BTreeMap::new(),
         &mut child_ids,
     )
@@ -3533,6 +3535,7 @@ fn cct_direct_uuid_collisions_are_exact_ambiguous_and_retryable() {
             "Owner",
             &BTreeMap::new(),
             &refs,
+            &BTreeMap::new(),
             &BTreeMap::new(),
             &mut child_ids,
         ) {
@@ -3580,6 +3583,7 @@ fn cct_direct_uuid_collisions_are_exact_ambiguous_and_retryable() {
             "Owner",
             &BTreeMap::new(),
             &corrected_refs,
+            &BTreeMap::new(),
             &BTreeMap::new(),
             &mut child_ids,
         )
@@ -3659,6 +3663,7 @@ fn cct_tabular_late_failure_rolls_back_all_staged_ids_and_corrected_item_commits
         &BTreeMap::new(),
         &refs,
         &BTreeMap::new(),
+        &BTreeMap::new(),
         &mut generated_ids,
         &mut child_ids,
     ) {
@@ -3699,6 +3704,7 @@ fn cct_tabular_late_failure_rolls_back_all_staged_ids_and_corrected_item_commits
         "Owner",
         &BTreeMap::new(),
         &refs,
+        &BTreeMap::new(),
         &BTreeMap::new(),
         &mut generated_ids,
         &mut child_ids,
@@ -29833,15 +29839,24 @@ fn detects_previously_unmapped_style_web_colors_from_real_objects() {
 /// `DataHistory` in the owner's slot 12 (`uh`
 /// `РежимАктуализацииГрафикаПриИзмененииПервичныхДокументов`). All four are
 /// single-object variations across the 3 378 constants of the stand.
-fn constant_record_for_test(multi_line: &str, folders: &str, quick: &str, history: &str) -> String {
+fn constant_record_for_test(
+    multi_line: &str,
+    folders: &str,
+    quick: &str,
+    history: &str,
+    negatives: &str,
+    extended: &str,
+) -> String {
     RECORD_LITERAL
         .replace("{MULTILINE}", multi_line)
         .replace("{FOLDERS}", folders)
         .replace("{QUICK}", quick)
         .replace("{HISTORY}", history)
+        .replace("{NEGATIVES}", negatives)
+        .replace("{EXTENDED}", extended)
 }
 
-const RECORD_LITERAL: &str = "{1,\r\n{16,\r\n{27,\r\n{2,\r\n{3,\r\n{1,0,1d3d0d77-e5da-484f-9bb6-f25b74778d2f},\"ИспользоватьСинхронизациюКалендарей\",\r\n{1,\"ru\",\"Использовать синхронизацию календарей\"},\"\",0,0,00000000-0000-0000-0000-000000000000,0},\r\n{\"Pattern\",\r\n{\"B\"}\r\n}\r\n},0,\r\n{0},\r\n{0},0,\"\",{MULTILINE},\r\n{\"U\"},\r\n{\"U\"},{FOLDERS},00000000-0000-0000-0000-000000000000,{QUICK},0,\r\n{5006,0},\r\n{3,0,0},\r\n{0,0},0,\r\n{0},\r\n{\"S\",\"\"},0,0,0},9b8809f9-4d93-4ce7-a22f-6260b4ee79e1,fdf4c338-647a-4b9f-a4e3-41ef1cdcac5f,32fc8242-6142-4b63-b1e0-6876cb459a27,353606e0-5425-4f65-9741-8798a050ffcf,1,1,\r\n{0},\r\n{0},00000000-0000-0000-0000-000000000000,0,{HISTORY},7f042bcc-a493-5225-957c-e053d66501be,6ffb2cde-5407-5bed-82ee-3d454b299d37,0,0},0}";
+const RECORD_LITERAL: &str = "{1,\r\n{16,\r\n{27,\r\n{2,\r\n{3,\r\n{1,0,1d3d0d77-e5da-484f-9bb6-f25b74778d2f},\"ИспользоватьСинхронизациюКалендарей\",\r\n{1,\"ru\",\"Использовать синхронизацию календарей\"},\"\",0,0,00000000-0000-0000-0000-000000000000,0},\r\n{\"Pattern\",\r\n{\"B\"}\r\n}\r\n},0,\r\n{0},\r\n{0},{NEGATIVES},\"\",{MULTILINE},\r\n{\"U\"},\r\n{\"U\"},{FOLDERS},00000000-0000-0000-0000-000000000000,{QUICK},0,\r\n{5006,0},\r\n{3,0,0},\r\n{0,0},{EXTENDED},\r\n{0},\r\n{\"S\",\"\"},0,0,0},9b8809f9-4d93-4ce7-a22f-6260b4ee79e1,fdf4c338-647a-4b9f-a4e3-41ef1cdcac5f,32fc8242-6142-4b63-b1e0-6876cb459a27,353606e0-5425-4f65-9741-8798a050ffcf,1,1,\r\n{0},\r\n{0},00000000-0000-0000-0000-000000000000,0,{HISTORY},7f042bcc-a493-5225-957c-e053d66501be,6ffb2cde-5407-5bed-82ee-3d454b299d37,0,0},0}";
 
 #[test]
 fn common_attribute_indexing_names_every_code_the_corpus_stores() {
@@ -29962,23 +29977,34 @@ fn constant_reads_the_four_properties_the_writer_used_to_pin() {
             &BTreeMap::new(),
         )
     };
-    let plain = parse(&constant_record_for_test("0", "0", "2", "0")).expect("plain constant");
+    let plain =
+        parse(&constant_record_for_test("0", "0", "2", "0", "0", "0")).expect("plain constant");
+    assert!(!plain.mark_negatives);
+    assert!(!plain.extended_edit);
     assert!(!plain.multi_line);
     assert_eq!(plain.choice_folders_and_items, "Items");
     assert_eq!(plain.quick_choice, "Auto");
     assert_eq!(plain.data_history, "DontUse");
 
-    let varied = parse(&constant_record_for_test("1", "1", "0", "1")).expect("varied constant");
+    let varied =
+        parse(&constant_record_for_test("1", "1", "0", "1", "1", "1")).expect("varied constant");
     assert!(varied.multi_line);
     assert_eq!(varied.choice_folders_and_items, "Folders");
     assert_eq!(varied.quick_choice, "DontUse");
     assert_eq!(varied.data_history, "Use");
+    // Slots 5 and 17: the matrix rows `КнстРеквизитОтрицательные` and
+    // `КнстРеквизитРасшрПравка` state one each, and the writer used to print
+    // `false` for both whatever the record said.
+    assert!(varied.mark_negatives);
+    assert!(varied.extended_edit);
 
     // Values outside the closed sets still refuse the whole object.
-    assert!(parse(&constant_record_for_test("2", "0", "2", "0")).is_none());
-    assert!(parse(&constant_record_for_test("0", "9", "2", "0")).is_none());
-    assert!(parse(&constant_record_for_test("0", "0", "9", "0")).is_none());
-    assert!(parse(&constant_record_for_test("0", "0", "2", "9")).is_none());
+    assert!(parse(&constant_record_for_test("2", "0", "2", "0", "0", "0")).is_none());
+    assert!(parse(&constant_record_for_test("0", "9", "2", "0", "0", "0")).is_none());
+    assert!(parse(&constant_record_for_test("0", "0", "9", "0", "0", "0")).is_none());
+    assert!(parse(&constant_record_for_test("0", "0", "2", "9", "0", "0")).is_none());
+    assert!(parse(&constant_record_for_test("0", "0", "2", "0", "2", "0")).is_none());
+    assert!(parse(&constant_record_for_test("0", "0", "2", "0", "0", "2")).is_none());
 }
 
 #[test]
@@ -49870,6 +49896,8 @@ fn constant_shadow_properties(value_type: ConstantValueType) -> ConstantProperti
         choice_history_on_input: "Auto",
         data_lock_control_mode: "Managed",
         multi_line: false,
+        mark_negatives: false,
+        extended_edit: false,
         choice_folders_and_items: "Items",
         quick_choice: "Auto",
         data_history: "DontUse",
@@ -62883,7 +62911,7 @@ fn document_tabular_sections_accept_legacy_and_extended_envelopes_only() {
 }
 
 #[test]
-fn document_choice_form_requires_one_matching_catalog_or_document_reference_type() {
+fn document_choice_form_accepts_any_resolved_form_reference() {
     let catalog_form_uuid = "11111111-1111-4111-8111-111111111111";
     let document_form_uuid = "22222222-2222-4222-8222-222222222222";
     let common_form_uuid = "33333333-3333-4333-8333-333333333333";
@@ -62918,56 +62946,41 @@ fn document_choice_form_requires_one_matching_catalog_or_document_reference_type
             },
         ),
     ]);
-    let catalog_type = ConstantValueType::Reference {
-        reference: "cfg:CatalogRef.Customers".to_string(),
-    };
-    let document_type = ConstantValueType::Reference {
-        reference: "cfg:DocumentRef.Order".to_string(),
-    };
     assert!(matches!(
-        parse_document_child_choice_form(
-            catalog_form_uuid,
-            std::slice::from_ref(&catalog_type),
-            &form_refs,
-        ),
+        parse_document_child_choice_form(catalog_form_uuid, &form_refs),
         Some(MetadataChoiceForm::Reference(ref value))
             if value == "Catalog.Customers.Form.Choice"
     ));
     assert!(matches!(
-        parse_document_child_choice_form(
-            document_form_uuid,
-            std::slice::from_ref(&document_type),
-            &form_refs,
-        ),
+        parse_document_child_choice_form(document_form_uuid, &form_refs),
         Some(MetadataChoiceForm::Reference(ref value))
             if value == "Document.Order.Form.Choice"
     ));
     assert!(matches!(
-        parse_document_child_choice_form("00000000-0000-0000-0000-000000000000", &[], &form_refs,),
+        parse_document_child_choice_form("00000000-0000-0000-0000-000000000000", &form_refs),
         Some(MetadataChoiceForm::Empty)
     ));
+    // The platform does not require the form's owner to be the attribute's
+    // type owner: the matrix writes a document form on a string attribute of
+    // a catalog and a document. Any resolved form reference is admitted.
+    for uuid in [
+        catalog_form_uuid,
+        document_form_uuid,
+        common_form_uuid,
+        foreign_form_uuid,
+    ] {
+        assert!(
+            parse_document_child_choice_form(uuid, &form_refs).is_some(),
+            "{uuid}"
+        );
+    }
     assert!(
-        parse_document_child_choice_form(
-            catalog_form_uuid,
-            &[catalog_type.clone(), catalog_type.clone()],
-            &form_refs,
-        )
-        .is_none()
-    );
-    assert!(
-        parse_document_child_choice_form(foreign_form_uuid, &[catalog_type], &form_refs).is_none()
-    );
-    assert!(
-        parse_document_child_choice_form(common_form_uuid, &[document_type], &form_refs).is_none()
-    );
-    assert!(
-        parse_document_child_choice_form("55555555-5555-4555-8555-555555555555", &[], &form_refs,)
+        parse_document_child_choice_form("55555555-5555-4555-8555-555555555555", &form_refs)
             .is_none()
     );
     assert!(
         parse_document_child_choice_form(
             &format!("{{\"#\",{DESIGN_TIME_REF_TYPE_UUID},{{0,0,{catalog_form_uuid}}}}}"),
-            &[],
             &form_refs,
         )
         .is_none()
@@ -63662,7 +63675,7 @@ fn catalog_nonempty_paths_and_typed_values_resolve_fail_closed() {
 }
 
 #[test]
-fn catalog_choice_form_requires_bare_uuid_and_pattern_owner() {
+fn catalog_choice_form_accepts_any_resolved_form_reference() {
     let form_uuid = "11111111-1111-4111-8111-111111111111";
     let owner_uuid = "22222222-2222-4222-8222-222222222222";
     let form_refs = BTreeMap::from([(
@@ -63672,20 +63685,15 @@ fn catalog_choice_form_requires_bare_uuid_and_pattern_owner() {
             kind: "Form",
         },
     )]);
-    let matching_types = [ConstantValueType::Reference {
-        reference: "cfg:CatalogRef.Statuses".to_string(),
-    }];
+    // The matrix proves the platform accepts a document form on a string
+    // catalog attribute, so no reference-type owner check is applied.
     assert!(matches!(
-        parse_catalog_child_choice_form(form_uuid, &matching_types, &form_refs),
+        parse_catalog_child_choice_form(form_uuid, &form_refs),
         Some(MetadataChoiceForm::Reference(reference))
             if reference == "Catalog.Statuses.Form.Choice"
     ));
-    let foreign_types = [ConstantValueType::Reference {
-        reference: "cfg:CatalogRef.Products".to_string(),
-    }];
-    assert!(parse_catalog_child_choice_form(form_uuid, &foreign_types, &form_refs).is_none());
     let typed = format!("{{\"#\",{DESIGN_TIME_REF_TYPE_UUID},{{0,{owner_uuid},{form_uuid}}}}}");
-    assert!(parse_catalog_child_choice_form(&typed, &matching_types, &form_refs).is_none());
+    assert!(parse_catalog_child_choice_form(&typed, &form_refs).is_none());
 }
 
 #[test]
@@ -74779,6 +74787,7 @@ fn task_tabular_sections_are_read_by_the_shared_owned_section_reader() {
         &BTreeMap::new(),
         &refs,
         &BTreeMap::new(),
+        &BTreeMap::new(),
         &mut generated_ids,
         &mut child_ids,
     )
@@ -74815,6 +74824,7 @@ fn task_tabular_sections_are_read_by_the_shared_owned_section_reader() {
             "БюджетнаяЗадача",
             &BTreeMap::new(),
             &refs,
+            &BTreeMap::new(),
             &BTreeMap::new(),
             &mut generated_ids,
             &mut child_ids,
@@ -80506,4 +80516,26 @@ fn form_root_read_only_uses_its_own_head_flag_and_native_xml_position() {
     let mut unsupported = vec!["1"; 18];
     unsupported[0] = "99";
     assert_eq!(extract_form_read_only(&unsupported), None);
+}
+
+/// Slots 5 and 17 of a constant's code-27 detail record are `MarkNegatives`
+/// and `ExtendedEdit`; the writer spelled both `false` for every constant.
+/// Evidence: `1Cv8.cf` of the attribute matrix, constants
+/// `КнстРеквизитОтрицательные` (slot 5 `1`) and `КнстРеквизитРасшрПравка`
+/// (slot 17 `1`), where the platform writes `true` and the export wrote
+/// `false`.
+#[test]
+fn a_constant_writes_the_two_flags_its_detail_record_states() {
+    let header = constant_shadow_header();
+    let plain = constant_shadow_properties(ConstantValueType::Boolean);
+    let xml = format_constant_source_xml(&header, &plain, InfobaseConfigSourceVersion::V2_20);
+    assert!(xml.contains("<MarkNegatives>false</MarkNegatives>"));
+    assert!(xml.contains("<ExtendedEdit>false</ExtendedEdit>"));
+
+    let mut flagged = constant_shadow_properties(ConstantValueType::Boolean);
+    flagged.mark_negatives = true;
+    flagged.extended_edit = true;
+    let xml = format_constant_source_xml(&header, &flagged, InfobaseConfigSourceVersion::V2_20);
+    assert!(xml.contains("<MarkNegatives>true</MarkNegatives>"));
+    assert!(xml.contains("<ExtendedEdit>true</ExtendedEdit>"));
 }

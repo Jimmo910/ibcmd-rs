@@ -177,7 +177,7 @@ impl ModelPlan {
                 }
                 owned_kinds.insert(uuid.clone(), kind);
                 owned.push((owner.clone(), kind, uuid.clone()));
-                if kind == "Subsystem" {
+                if matches!(kind, "Subsystem" | "Cube") {
                     let nested = owned_lists(&uuid);
                     if !nested.is_empty() {
                         pending.push((uuid, nested));

@@ -12,17 +12,23 @@ use ibcmd_xml::{XmlReader, decode_empty_external_data_source, metadata::Metadata
 
 use super::brace::{Brace, NIL_UUID, parse_row};
 use super::common::Header;
-use super::export::values::{header, header_elements};
-use super::export::{Build, GeneratedTypeName, ObjectNames, atom, el, leaf, list, write_document};
+use super::export::values::{attribute_header, header, header_elements, type_element};
+use super::export::{
+    Build, GeneratedTypeName, NameIndex, ObjectNames, atom, el, item, leaf, list, write_document,
+};
 use super::xml::Element;
 use super::{DescriptorContext, ObjectXml};
 use crate::brace_list;
+use ibcmd_schema::external_data_source_children as child_schema;
 
 #[derive(Debug)]
 struct Record {
     head: Header,
     generated: [(String, String); 3],
     lock_mode: i64,
+    cubes: Vec<String>,
+    tables: Vec<String>,
+    functions: Vec<Brace>,
 }
 
 /// Exact original source admission precedes the legacy local-name DOM.
@@ -89,10 +95,19 @@ pub(crate) fn compile_admitted(
             .unwrap_or_default(),
     )
     .ok_or_else(|| anyhow!("ExternalDataSource unknown DataLockControlMode"))?;
+    if object
+        .child_objects()
+        .is_some_and(|children| !children.children.is_empty())
+    {
+        bail!("ExternalDataSource children are exported but not compiled yet");
+    }
     Ok(Record {
         head,
         generated,
         lock_mode,
+        cubes: Vec::new(),
+        tables: Vec::new(),
+        functions: Vec::new(),
     }
     .to_brace())
 }
@@ -120,8 +135,7 @@ impl Record {
 
     fn from_brace(row: &Brace) -> Result<Self> {
         let outer = list(row)?;
-        if outer.len() != schema::OUTER_ARITY || atom(&outer[0])? != "1" || atom(&outer[2])? != "3"
-        {
+        if outer.len() < schema::OUTER_ARITY || atom(&outer[0])? != "1" || atom(&outer[2])? != "3" {
             bail!("ExternalDataSource invalid outer layout");
         }
         let body = list(&outer[1])?;
@@ -176,20 +190,44 @@ impl Record {
         let mode = schema::data_lock_name(atom(&body[9])?)
             .ok_or_else(|| anyhow!("ExternalDataSource unknown lock mode"))?;
         let lock_mode = schema::data_lock_code(mode).expect("schema inverse");
-        for (collection, expected) in outer[3..].iter().zip(schema::EMPTY_COLLECTIONS) {
+        let mut cubes = Vec::new();
+        let mut tables = Vec::new();
+        let mut functions = Vec::new();
+        for collection in &outer[3..] {
             let fields = list(collection)?;
-            if fields.len() != 2 || atom(&fields[0])? != expected || atom(&fields[1])? != "0" {
-                bail!("ExternalDataSource requires the exact empty child collections");
+            if fields.len() < 2 {
+                bail!("ExternalDataSource short child collection");
+            }
+            let count = atom(&fields[1])?
+                .parse::<usize>()
+                .map_err(|_| anyhow!("ExternalDataSource child count"))?;
+            let members = fields
+                .get(2..2 + count)
+                .ok_or_else(|| anyhow!("ExternalDataSource short child collection"))?;
+            match atom(&fields[0])? {
+                id if id == child_schema::ROOT_CUBES_COLLECTION => {
+                    cubes = uuid_members(members)?;
+                }
+                id if id == child_schema::ROOT_TABLES_COLLECTION => {
+                    tables = uuid_members(members)?;
+                }
+                id if id == child_schema::ROOT_FORMULAS_COLLECTION => {
+                    functions = members.to_vec();
+                }
+                other => bail!("ExternalDataSource unknown child collection {other}"),
             }
         }
         Ok(Self {
             head,
             generated,
             lock_mode,
+            cubes,
+            tables,
+            functions,
         })
     }
 
-    fn element(&self) -> Element {
+    fn element(&self, names: &NameIndex) -> Result<Element> {
         let mut internal = el("InternalInfo");
         for (category, (type_id, value_id)) in
             schema::GENERATED_CATEGORIES.iter().zip(&self.generated)
@@ -205,19 +243,95 @@ impl Record {
         let header_tree = self.head.to_brace();
         let head = header(&header_tree).expect("validated header");
         let fields = header_elements(&head).expect("validated localized string");
-        el(schema::KIND)
+        Ok(el(schema::KIND)
             .attr("uuid", &self.head.uuid)
             .child(internal)
             .child(el("Properties").children(fields).child(leaf(
                 "DataLockControlMode",
                 schema::data_lock_name(&self.lock_mode.to_string()).expect("validated mode"),
             )))
-            .child(el("ChildObjects"))
+            .child(self.child_objects(names)?))
+    }
+
+    fn child_objects(&self, names: &NameIndex) -> Result<Element> {
+        let mut objects = el("ChildObjects");
+        for uuid in &self.tables {
+            objects
+                .children
+                .push(leaf("Table", short_name(names, uuid)?));
+        }
+        for uuid in &self.cubes {
+            objects
+                .children
+                .push(leaf("Cube", short_name(names, uuid)?));
+        }
+        for function in &self.functions {
+            objects.children.push(function_element(function, names)?);
+        }
+        Ok(objects)
     }
 }
 
-pub(crate) fn decode(row: &Brace) -> Result<Element> {
-    Ok(Record::from_brace(row)?.element())
+fn uuid_members(members: &[Brace]) -> Result<Vec<String>> {
+    members
+        .iter()
+        .map(|member| Ok(atom(member)?.to_string()))
+        .collect()
+}
+
+fn short_name(names: &NameIndex, uuid: &str) -> Result<String> {
+    let full = names
+        .name(uuid)
+        .ok_or_else(|| anyhow!("ExternalDataSource has no name for child {uuid}"))?;
+    full.rsplit('.')
+        .next()
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("empty child name"))
+}
+
+/// Inline `{0,{27,...},<ReturnValue>,<tail>}` function of the root.
+fn function_element(node: &Brace, names: &NameIndex) -> Result<Element> {
+    let wrapper = list(node)?;
+    if wrapper.len() != 2 || atom(item(wrapper, 1)?)? != "0" {
+        bail!("ExternalDataSource invalid Function collection item");
+    }
+    let record = list(item(wrapper, 0)?)?;
+    if record.len() != 4 || atom(item(record, 0)?)? != "0" {
+        bail!("ExternalDataSource invalid Function wrapper");
+    }
+    let body = item(record, 1)?;
+    let head = attribute_header(body)?;
+    let typed = list(item(list(body)?, 1)?)?;
+    let [name, synonym, comment] = header_elements(&head)?;
+    let tail = list(item(record, 3)?)?;
+    if tail.first().and_then(Brace::as_atom) != Some("0")
+        || tail
+            .get(1)
+            .and_then(Brace::as_str)
+            .is_some_and(|text| !text.is_empty())
+        || tail
+            .get(2)
+            .and_then(Brace::as_str)
+            .is_some_and(|text| !text.is_empty())
+    {
+        bail!("ExternalDataSource non-empty ExpressionInDataSource is not supported yet");
+    }
+    Ok(el("Function").attr("uuid", &head.uuid).child(
+        el("Properties")
+            .child(name)
+            .child(synonym)
+            .child(comment)
+            .child(leaf(
+                "ReturnValue",
+                super::export::values::bool_text(item(record, 2)?)?,
+            ))
+            .child(type_element("Type", item(typed, 2)?, names)?)
+            .child(el("ExpressionInDataSource")),
+    ))
+}
+
+pub(crate) fn decode(row: &Brace, names: &NameIndex) -> Result<Element> {
+    Record::from_brace(row)?.element(names)
 }
 
 pub(crate) fn names(row: &Brace) -> Result<ObjectNames> {
@@ -255,7 +369,9 @@ pub(crate) fn source_family(
     text: &str,
     expected_uuid: &str,
 ) -> Option<(&'static str, &'static str)> {
-    let row = parse(text).ok()?;
+    // A non-empty root carries an inline function body deeper than the empty
+    // family's `MAX_VALUE_DEPTH`; `from_brace` is the admission here.
+    let row = parse_row(text.as_bytes()).ok()?;
     let found = names(&row).ok()?;
     (found.uuid == expected_uuid).then_some((schema::KIND, schema::COLLECTION))
 }
@@ -271,7 +387,10 @@ pub(crate) fn export_source(
     if record.head.uuid != expected_uuid {
         bail!("ExternalDataSource row identity differs");
     }
-    let result = write_document(&record.element(), version);
+    if !record.cubes.is_empty() || !record.tables.is_empty() || !record.functions.is_empty() {
+        bail!("ExternalDataSource children require the model exporter");
+    }
+    let result = write_document(&record.element(&NameIndex::default())?, version);
     validate_source(result.as_bytes(), version)?;
     Ok((record.head.name, result))
 }
@@ -546,14 +665,17 @@ mod tests {
         ] {
             let mut row = valid.clone();
             set(&mut row, &path, value);
-            assert!(decode(&row).is_err(), "bad slot {path:?}");
+            assert!(
+                decode(&row, &NameIndex::default()).is_err(),
+                "bad slot {path:?}"
+            );
             let text = serialize(&row);
             assert_eq!(source_family(&text, fixture::OBJECT_UUID), None);
             assert!(export_source(&text, fixture::OBJECT_UUID, "2.20").is_err());
         }
         let mut row = valid.clone();
         row.as_list_mut().unwrap().push(Brace::num(0));
-        assert!(decode(&row).is_err());
+        assert!(decode(&row, &NameIndex::default()).is_err());
         let mut trailing = serialize_row(&valid);
         trailing.extend_from_slice(b"{0}");
         assert!(parse(std::str::from_utf8(&trailing).unwrap()).is_err());
@@ -576,7 +698,7 @@ mod tests {
         assert_eq!(row.as_list().unwrap().len(), 3);
         assert_eq!(row.at(&[1, 0]).unwrap().as_atom(), Some("2"));
         assert_eq!(row.at(&[1]).unwrap().as_list().unwrap().len(), 10);
-        assert!(decode(&row).is_err());
+        assert!(decode(&row, &NameIndex::default()).is_err());
         assert_eq!(source_family(&serialize(&row), fixture::JOB_UUID), None);
     }
 
@@ -595,7 +717,10 @@ mod tests {
         ] {
             let mut row = valid.clone();
             set(&mut row, &[1, 1, 1, 3], brace_list![Brace::atom(count)]);
-            assert!(decode(&row).is_err(), "bad localized count {count}");
+            assert!(
+                decode(&row, &NameIndex::default()).is_err(),
+                "bad localized count {count}"
+            );
             assert!(names(&row).is_err(), "bad localized count {count}");
             let text = serialize(&row);
             assert_eq!(
