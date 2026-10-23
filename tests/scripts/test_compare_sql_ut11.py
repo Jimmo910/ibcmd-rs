@@ -1,6 +1,8 @@
 """Synthetic collector tests; all fixtures remain under the supplied external root."""
 import importlib.util
 import json
+import io
+from contextlib import redirect_stderr
 import os
 from pathlib import Path
 import subprocess
@@ -60,6 +62,104 @@ class CollectorTests(unittest.TestCase):
         nested.mkdir()
         with self.assertRaises(ValueError):
             collector.collect([self.trees[0], nested, self.trees[2]])
+
+    def test_physical_root_alias_refusal(self):
+        original = collector.directory_identity
+        first = original(self.trees[0])
+        def identity(path):
+            return first if Path(path) == self.trees[1] else original(path)
+        with mock.patch.object(collector, "directory_identity", identity):
+            with self.assertRaises(ValueError):
+                collector.collect(self.trees)
+
+    def test_physical_ancestor_alias_refusal(self):
+        # Models a differently named mount exposing an ancestor of root 0.
+        original = collector.directory_identity
+        ancestor = original(self.work)
+        def identity(path):
+            return ancestor if Path(path) == self.trees[1] else original(path)
+        with mock.patch.object(collector, "directory_identity", identity):
+            with self.assertRaises(ValueError):
+                collector.collect(self.trees)
+
+    def test_shared_mounted_subtree_refusal(self):
+        children = [tree / "child" for tree in self.trees[:2]]
+        for child in children:
+            child.mkdir()
+        original = collector.directory_identity
+        first = original(children[0])
+        def identity(path):
+            return first if Path(path) == children[1] else original(path)
+        with mock.patch.object(collector, "directory_identity", identity):
+            with self.assertRaises(ValueError):
+                collector.collect(self.trees)
+
+    def test_repeated_mounted_directory_refusal(self):
+        child = self.trees[0] / "child"
+        child.mkdir()
+        original = collector.directory_identity
+        first = original(self.trees[0])
+        def identity(path):
+            return first if Path(path) == child else original(path)
+        with mock.patch.object(collector, "directory_identity", identity):
+            with self.assertRaises(ValueError):
+                collector.collect(self.trees)
+
+    def test_physical_output_alias_refusal(self):
+        # A mount of an input child outside the input's lexical parent chain.
+        child = self.trees[0] / "child"
+        child.mkdir()
+        alias = self.work / "output-alias"
+        alias.mkdir()
+        original = collector.directory_identity
+        first = original(child)
+        def identity(path):
+            return first if Path(path) == alias else original(path)
+        with mock.patch.object(collector, "directory_identity", identity):
+            with self.assertRaises(ValueError):
+                collector.collect(self.trees, output=alias / "report.json")
+        self.assertFalse((alias / "report.json").exists())
+
+    def test_real_case_alias_and_nested_refusals(self):
+        alias = self.work / "NATIVE"
+        if not alias.exists() or not alias.samefile(self.trees[0]):
+            self.skipTest("requires case-insensitive volume; physical aliases also tested portably")
+        with self.assertRaises(ValueError):
+            collector.collect([self.trees[0], alias, self.trees[2]])
+        child = self.trees[0] / "child"
+        child.mkdir()
+        with self.assertRaises(ValueError):
+            collector.collect([self.trees[0], alias / "child", self.trees[2]])
+        output = alias / "report.json"
+        result = subprocess.run([sys.executable, str(SCRIPT), *map(str, self.trees),
+                                 "--output", str(output)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(output.exists())
+
+    def test_real_symlink_loop_cli_redaction(self):
+        loop = self.work / "private-loop"
+        loop.symlink_to("private-loop")
+        for inputs, output in (([loop, *self.trees[1:]], self.work / "loop.json"),
+                               (self.trees, loop / "report.json")):
+            result = subprocess.run([sys.executable, str(SCRIPT), *map(str, inputs),
+                                     "--output", str(output)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertNotIn(str(self.work), result.stderr)
+            self.assertEqual(result.stdout, "")
+        self.assertFalse((self.work / "loop.json").exists())
+
+    def test_older_python_runtimeerror_resolution_is_redacted(self):
+        argv = [str(SCRIPT), *map(str, self.trees), "--output", str(self.work / "error.json")]
+        error = RuntimeError("Symlink loop from " + str(self.work))
+        captured = io.StringIO()
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(collector.Path, "resolve", side_effect=error), \
+                redirect_stderr(captured):
+            self.assertEqual(collector.main(), 2)
+        self.assertNotIn(str(self.work), captured.getvalue())
+        self.assertNotIn("Traceback", captured.getvalue())
+        self.assertFalse((self.work / "error.json").exists())
 
     def test_symlink_refusal(self):
         (self.trees[1] / "alias").symlink_to(self.trees[0], target_is_directory=True)

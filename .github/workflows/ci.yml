@@ -10,11 +10,20 @@ env:
 
 jobs:
   sql-ut11-collector:
-    name: SQL UT11 offline collector
+    name: SQL UT11 offline collector (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.14']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
 
       - name: Test full-tree evidence collector (synthetic only)
         env:

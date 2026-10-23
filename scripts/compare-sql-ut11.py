@@ -9,14 +9,59 @@ import stat
 import sys
 
 
-def inventory(root, budget):
+def resolve_path(path, *, strict=False):
+    try:
+        return Path(path).resolve(strict=strict)
+    except RuntimeError as error:
+        # Python <= 3.12 raises RuntimeError rather than OSError for a loop.
+        raise ValueError("path resolution failed") from error
+
+
+def directory_identity(path):
+    info = Path(path).stat()
+    if not stat.S_ISDIR(info.st_mode):
+        raise ValueError("directory required")
+    return info.st_dev, info.st_ino
+
+
+def directory_lineage(path):
+    path = resolve_path(path, strict=True)
+    return tuple(directory_identity(p) for p in (path, *path.parents))
+
+
+def bind_roots(roots):
+    if len(roots) != 3:
+        raise ValueError("exactly three trees required")
+    lineages = [directory_lineage(p) for p in roots]
+    for i, first in enumerate(lineages):
+        for second in lineages[i + 1:]:
+            if first[0] in second or second[0] in first:
+                raise ValueError("three physically distinct, non-overlapping trees required")
+    return lineages
+
+
+def assert_output_outside(output, lineages, seen_directories=None):
+    output = resolve_path(output)
+    ancestors = directory_lineage(output.parent)
+    if (any(root[0] in ancestors for root in lineages) or
+            (seen_directories is not None and seen_directories.intersection(ancestors))):
+        raise ValueError("output must be physically outside input trees")
+
+
+def inventory(root, budget, seen_directories=None):
     root = Path(root)
     if root.is_symlink() or not root.is_dir():
         raise ValueError("tree must be a real directory")
     files = {}
+    if seen_directories is None:
+        seen_directories = set()
     def traversal_error(error):
         raise error
     for directory, dirs, names in os.walk(root, followlinks=False, onerror=traversal_error):
+        identity = directory_identity(directory)
+        if identity in seen_directories:
+            raise ValueError("trees contain repeated physical directories")
+        seen_directories.add(identity)
         for name in dirs + names:
             path = Path(directory) / name
             mode = path.lstat().st_mode
@@ -62,15 +107,18 @@ def compare(left, right):
     return {"summary": counts, "differences": differences}
 
 
-def collect(roots, max_files=600000, max_bytes=32 * 1024**3):
-    resolved = [Path(p).resolve(strict=True) for p in roots]
-    for i, first in enumerate(resolved):
-        for second in resolved[i + 1:]:
-            if first == second or first in second.parents or second in first.parents:
-                raise ValueError("three distinct, non-overlapping trees required")
+def collect(roots, max_files=600000, max_bytes=32 * 1024**3, *, output=None):
+    lineages = bind_roots(roots)
     budget = [max_files, max_bytes]
-    trees = {name: inventory(path, budget) for name, path in zip(
+    # Also detect mounted/shared subtrees whose backing ancestors are not
+    # visible in the input path's parent chain. Never compare a tree to itself.
+    seen_directories = set()
+    trees = {name: inventory(path, budget, seen_directories) for name, path in zip(
         ("native_source", "ours_source", "native_after_import"), roots)}
+    if bind_roots(roots) != lineages:
+        raise ValueError("root or ancestor identity changed while hashing")
+    if output is not None:
+        assert_output_outside(output, lineages, seen_directories)
     comparisons = {"export": compare(trees["native_source"], trees["ours_source"]),
                    "roundtrip": compare(trees["native_source"], trees["native_after_import"])}
     equal = all(not value["differences"] for value in comparisons.values())
@@ -93,12 +141,11 @@ def main():
         if args.max_files < 1 or args.max_bytes < 1:
             raise ValueError("limits must be positive")
         roots = [args.native_source, args.ours_source, args.native_after_import]
-        output = args.output.resolve()
-        if any(output == p.resolve() or p.resolve() in output.parents for p in roots):
-            raise ValueError("output must be outside input trees")
+        lineages = bind_roots(roots)
+        assert_output_outside(args.output, lineages)
         if args.output.exists() or args.output.is_symlink():
             raise ValueError("output already exists")
-        report = collect(roots, args.max_files, args.max_bytes)
+        report = collect(roots, args.max_files, args.max_bytes, output=args.output)
         with args.output.open("x", encoding="utf-8") as stream:
             json.dump(report, stream, ensure_ascii=False, indent=2)
             stream.write("\n")

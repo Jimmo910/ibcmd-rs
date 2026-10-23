@@ -128,6 +128,15 @@ Collector exit: `0` both byte-exact comparisons match, `1` differences found,
 at 600,000 files / 32 GiB; raise explicitly only after assessing corpus size.
 No shell/SQL execution, network access, normalization or baseline update.
 No overwrite or cleanup; symlinks/special files and overlapping roots fail.
+Root and ancestor comparisons use physical directory identities (device and
+inode), including aliases on case-insensitive filesystems. Inventories also
+reject repeated physical directories within/across trees, covering mounted
+subtree aliases whose backing ancestry is not visible in the input path.
+Output containment uses physical parent/ancestor identities and the visited
+directory identities, rather than pathname spelling alone. These checks
+assume stable filesystem topology; they are not a sandbox against concurrent
+mount/path replacement. Resolution failures, including older Python's
+symlink-loop RuntimeError, use the same redacted exit-2 error path.
 Input trees must remain immutable throughout hashing (the collector checks
 file metadata during each read; it is not a SQL snapshot verifier).
 
@@ -158,5 +167,9 @@ python3 tests/scripts/test_compare_sql_ut11.py
 
 These synthetic tests retain fixtures and exercise equality, both diff legs,
 missing/extra paths, version-file differences, budgets, aliases, symlinks,
-partial trees, output containment and no overwrite. They are collector
+partial trees, physical root/ancestor/mounted-subtree aliases, case aliases
+where supported, output containment, symlink loops and no overwrite.
+The collector CI runs Python 3.12 and 3.14 to cover both resolution-error
+behaviors. Local tests also run the existing Python 3.9 and 3.14 runtimes.
+All fixture directories are retained. They are collector
 verification only and do not constitute SQL acceptance or native testing.
