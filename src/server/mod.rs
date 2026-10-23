@@ -585,7 +585,7 @@ impl State {
         let nodes = if params.main_configuration {
             session
                 .configuration
-                .main_view()
+                .main_view_mut()
                 .children(params.node.as_deref())
         } else {
             session.configuration.children(params.node.as_deref())

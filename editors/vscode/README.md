@@ -175,6 +175,14 @@ cannot become clean. Connection/configuration/workspace changes invalidate old
 refreshes. A native `fullRequired` response stays explicit and common-object
 change direction becomes unknown rather than unchanged.
 
+Status reads use `ibcmd.statusTimeoutSeconds` (default 600 seconds, integer range
+30–3600) for each source/reference request. Invalid runtime values use the default.
+The progress notification remains cancellable; cancellation clears badges and
+late responses cannot republish them. Other RPC methods retain their existing
+30-second default. Windows dirty-editor and decoration paths are URI-normalized
+and compared without casing, with directory/drive boundaries preserved; POSIX
+path casing stays significant.
+
 ### Supported scope and remaining gates
 
 The shared filedb READ backend is integrated from #382 `644684f2`; native helper
@@ -184,7 +192,9 @@ owners, including ordinary object modules and form bodies. Supported nested file
 roll up explicitly to the intended UI objects. Unmapped coverage is inconclusive.
 
 Native SQL status uses the same main configuration view for version, tree and byte
-reads, through the existing read-only CONFIGSAVE overlay and separate cache. Legacy
+reads, through the existing read-only CONFIGSAVE overlay and session-owned main cache.
+Main and active exports remain separate and each checks its versions digest before
+reuse; native before/after snapshots remain required freshness checks. Legacy
 byte/tree requests retain their active view. SQL adapter tests use a recording
 client that rejects writes; a live SQL server was not tested. For explicit byte-only
 inspection, set `ibcmd.statusComparison` to `bytes`; that mode remains a labelled
@@ -233,3 +243,12 @@ python3 editors/vscode/test/prepare-native-owners.py
 
 This public fixture test checks identical and platform-modified inventories, an
 unrelated common module and DB byte immutability. Artifacts are retained.
+
+### Deferred Git baseline performance work
+
+Each refresh currently creates a retained snapshot and reads blobs in individual
+Git processes. Cross-refresh reuse and batched extraction are deferred to #379:
+a safe reusable cache needs completed-only publication, tree+repository+prefix
+identity, and an integrity/partial-cancellation policy. The current pinned-tree,
+path/link guards and Trash-controlled retention remain; this PR does not claim
+ERP-scale Git baseline performance.

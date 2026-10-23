@@ -879,6 +879,7 @@ pub struct StoredConfiguration {
     exports: HashMap<String, Arc<ObjectFiles>>,
     cached_bytes: usize,
     main_configuration: bool,
+    main_view_cache: Option<Box<StoredConfiguration>>,
 }
 
 impl StoredConfiguration {
@@ -890,6 +891,7 @@ impl StoredConfiguration {
             exports: HashMap::new(),
             cached_bytes: 0,
             main_configuration: false,
+            main_view_cache: None,
         }
     }
 
@@ -898,6 +900,20 @@ impl StoredConfiguration {
         let mut view = Self::new(self.source.clone(), self.platform);
         view.main_configuration = true;
         view
+    }
+
+    /// One session-owned main cache, separate from the legacy active-state cache.
+    /// Each operation still checks the main versions digest before using cached exports.
+    pub fn main_view_mut(&mut self) -> &mut Self {
+        if self.main_configuration {
+            return self;
+        }
+        if self.main_view_cache.is_none() {
+            self.main_view_cache = Some(Box::new(self.main_view()));
+        }
+        self.main_view_cache
+            .as_deref_mut()
+            .expect("initialized above")
     }
 
     pub fn source(&self) -> &ConfigSource {
@@ -1128,7 +1144,7 @@ impl StoredConfiguration {
     ) -> Result<VersionedObjectStatus> {
         use crate::native_export_status::ConfigDumpInfoSnapshot;
         if !self.main_configuration {
-            return self.main_view().status_with_versions(
+            return self.main_view_mut().status_with_versions(
                 names,
                 source_dir,
                 baseline_dir,
@@ -1523,6 +1539,94 @@ pub fn require_database(source: &ConfigSource, what: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_view_reuses_exports_separately_and_invalidates_on_versions_change() {
+        const CHILD: &str = "IBCMD_MAIN_VIEW_CACHE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "stored_objects::tests::main_view_reuses_exports_separately_and_invalidates_on_versions_change", "--nocapture"])
+                .env(CHILD, "1").output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("test result: ok. 1 passed; 0 failed;"),
+                "{stdout}"
+            );
+            return;
+        }
+        use std::io::{Read, Write};
+        let root = std::env::temp_dir().join(format!("main-view-cache-{}", uuid::Uuid::new_v4()));
+        let db = root.join("db");
+        let rows_dir = root.join("rows");
+        fs::create_dir_all(&db).unwrap();
+        fs::create_dir(&rows_dir).unwrap();
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase/tiny.1CD.gz");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(fixture).unwrap())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+        let rows = exclusive(|| {
+            crate::mssql_dump::with_file_db_table(&db, |table| table.rows(&table.names()?))
+        })
+        .unwrap();
+        for (name, bytes) in rows {
+            fs::write(rows_dir.join(format!("{name}__part0.bin")), bytes).unwrap();
+        }
+        let mut config = StoredConfiguration::new(
+            ConfigSource::RowsDir(rows_dir.clone()),
+            crate::platform::parse("8.5.1").unwrap(),
+        );
+        let names = vec!["CommonModule.ФайловаяБазаПроверка".into()];
+        let progress = |_, _, _: &str| {};
+        let first = config
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        // A different native tree request must keep the same owned export cache.
+        config.main_view_mut().children(None).unwrap();
+        let second = config
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "main exports survive between requests"
+        );
+        let active = config.export(&names, &progress).unwrap().remove(0);
+        assert!(
+            !Arc::ptr_eq(&first, &active),
+            "active and main exports cannot share their cache"
+        );
+        let versions_path = rows_dir.join("versions__part0.bin");
+        let stored = fs::read(&versions_path).unwrap();
+        let mut decoded = inflate_raw(&stored).unwrap_or(stored);
+        decoded.push(b' ');
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&decoded).unwrap();
+        fs::write(versions_path, encoder.finish().unwrap()).unwrap();
+        let refreshed = config
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        assert!(
+            !Arc::ptr_eq(&first, &refreshed),
+            "changed versions invalidates the retained main cache"
+        );
+        assert_eq!(first.files, refreshed.files);
+        assert!(!config.main_configuration);
+        eprintln!("retained fixture: {}", root.display());
+    }
 
     #[test]
     fn a_path_names_its_top_level_object() {

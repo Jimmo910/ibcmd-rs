@@ -24,7 +24,7 @@
   },
   "scripts": {
     "compile": "tsc -p .",
-    "test": "npm run compile && node --test test/object-status.test.js test/core.test.js test/real.test.js test/connection.test.js",
+    "test": "npm run compile && node --test test/object-status.test.js test/core.test.js test/real.test.js test/connection.test.js test/object-view.test.js",
     "test:host": "npm run compile && node test/host.js",
     "format": "prettier --write src test package.json tsconfig.json",
     "format:check": "prettier --check src test package.json tsconfig.json"
@@ -140,6 +140,14 @@
           "default": "native",
           "scope": "resource",
           "description": "Native DB versions + local baseline bytes by default. Bytes is an explicit legacy preview, without native version parity."
+        },
+        "ibcmd.statusTimeoutSeconds": {
+          "type": "integer",
+          "default": 600,
+          "minimum": 30,
+          "maximum": 3600,
+          "scope": "resource",
+          "description": "Deadline per object-status read in seconds (30–3600). User cancellation remains available; other RPC timeouts are unchanged."
         }
       }
     },

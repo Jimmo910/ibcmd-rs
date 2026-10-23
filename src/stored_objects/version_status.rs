@@ -40,16 +40,19 @@ pub(super) fn attach(
             }
             // A selected nested subsystem exports its descendants too. Roll up through
             // verified canonical ancestors, never a guessed closest string prefix.
-            for target in &targets {
-                let direct = *target == owner.object || *target == owner.root;
-                let ancestor = canonical.contains(&(*target, owner.root.as_str()))
-                    && owner
-                        .object
-                        .strip_prefix(*target)
-                        .is_some_and(|tail| tail.starts_with('.'));
-                if direct || ancestor {
-                    *flags.entry((*target).to_owned()).or_default() |=
-                        changed.contains(entry.id.as_str());
+            let is_changed = changed.contains(entry.id.as_str());
+            let ancestors = owner.object.match_indices('.').filter_map(|(index, _)| {
+                let prefix = &owner.object[..index];
+                canonical
+                    .contains(&(prefix, owner.root.as_str()))
+                    .then_some(prefix)
+            });
+            for target in std::iter::once(owner.object.as_str())
+                .chain(std::iter::once(owner.root.as_str()))
+                .chain(ancestors)
+            {
+                if targets.contains(target) {
+                    *flags.entry(target.to_owned()).or_default() |= is_changed;
                 }
             }
         } else {
@@ -128,6 +131,46 @@ mod tests {
             parts: BTreeMap::new(),
         }
     }
+    #[test]
+    fn large_owner_rollup_keeps_unrelated_roots_conclusive() {
+        let mut current = ConfigDumpInfoSnapshot {
+            entries: vec![],
+            parts: BTreeMap::new(),
+        };
+        let mut objects = vec![];
+        let mut rows = vec![];
+        for i in 0..1000u128 {
+            let name = format!("CommonModule.M{i}");
+            objects.push(object(&name));
+            rows.push(row(&name));
+            let id = uuid::Uuid::from_u128(i + 1).to_string();
+            for (name, id) in [
+                (name.clone(), id.clone()),
+                (format!("{name}.Module"), format!("{id}.0")),
+            ] {
+                current.entries.push(ConfigVersionEntry {
+                    name,
+                    id,
+                    config_version: "a".repeat(40),
+                });
+            }
+        }
+        let baseline = current.clone();
+        current.entries[777].config_version = "b".repeat(40);
+        let native = current.compare(&baseline);
+        let started = std::time::Instant::now();
+        attach(&objects, &current, &native, "base", "snapshot", &mut rows);
+        eprintln!(
+            "rollup 2000 entries / 1000 targets: {:?}",
+            started.elapsed()
+        );
+        for (i, row) in rows.iter().enumerate() {
+            let evidence = row.database_version_status.as_ref().unwrap();
+            assert!(evidence.conclusive);
+            assert_eq!(evidence.changed, Some(i == 388));
+        }
+    }
+
     #[test]
     fn ordinary_modules_and_body_only_forms_do_not_poison_unrelated_clean_objects() {
         let baseline = snapshot();

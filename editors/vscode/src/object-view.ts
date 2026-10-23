@@ -16,6 +16,24 @@ import {
 import { gitBaseline } from "./git-baseline";
 import { Generation } from "./status";
 
+// URI normalization handles drive spelling; Windows file identities ignore casing.
+function fileKey(value: string): string {
+  const normalized = vscode.Uri.file(value).fsPath;
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+function decorationKey(uri: vscode.Uri): string {
+  return uri.scheme === "file" ? "file:" + fileKey(uri.fsPath) : uri.toString();
+}
+function within(candidate: string, directory: string): boolean {
+  const relative = path.relative(fileKey(directory), fileKey(candidate));
+  return (
+    relative === "" ||
+    (!path.isAbsolute(relative) &&
+      relative !== ".." &&
+      !relative.startsWith(".." + path.sep))
+  );
+}
+
 interface Row {
   object: string;
   state: State;
@@ -88,12 +106,12 @@ export class ObjectView
   }
   provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
     const state =
-      this.files.get(uri.toString()) ??
+      this.files.get(decorationKey(uri)) ??
       (uri.scheme === "file"
         ? this.roots.find(
             (r) =>
-              uri.fsPath === r.descriptor ||
-              uri.fsPath.startsWith(r.folder + path.sep),
+              fileKey(uri.fsPath) === fileKey(r.descriptor) ||
+              within(uri.fsPath, r.folder),
           )?.state
         : undefined);
     if (!state) return;
@@ -136,6 +154,11 @@ export class ObjectView
       folder.uri.fsPath,
       cfg.get<string>("sourceDirectory", "."),
     );
+    const seconds = cfg.get<number>("statusTimeoutSeconds", 600);
+    const statusTimeout =
+      Number.isInteger(seconds) && seconds >= 30 && seconds <= 3600
+        ? seconds * 1000
+        : 600000;
     const base = cfg.get<string>("statusBaselineDirectory", "");
     let baseline = base ? path.resolve(folder.uri.fsPath, base) : undefined;
     try {
@@ -167,7 +190,7 @@ export class ObjectView
                 (d) =>
                   d.isDirty &&
                   d.uri.scheme === "file" &&
-                  d.uri.fsPath.startsWith(source + path.sep),
+                  within(d.uri.fsPath, source),
               )
             )
               throw new Error("Save source files before comparing");
@@ -190,6 +213,7 @@ export class ObjectView
                   : {}),
               },
               abort.signal,
+              statusTimeout,
             );
             const current = comparisons(response);
             if (
@@ -212,6 +236,7 @@ export class ObjectView
                         : {}),
                     },
                     abort.signal,
+                    statusTimeout,
                   ),
                 )
               : [];
@@ -294,7 +319,7 @@ export class ObjectView
               files.set(uri.toString(), state);
               for (const p of candidatePaths(row, ref))
                 files.set(
-                  vscode.Uri.file(safePath(source, p)).toString(),
+                  decorationKey(vscode.Uri.file(safePath(source, p))),
                   state,
                 );
             }

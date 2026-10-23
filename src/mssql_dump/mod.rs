@@ -2259,10 +2259,19 @@ mod descriptor_snapshot_tests {
         // from legacy SQL mocks rather than sharing their mutable state.
         const CHILD: &str = "IBCMD_DESCRIPTOR_SNAPSHOT_TEST_CHILD";
         if std::env::var_os(CHILD).is_none() {
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "mssql_dump::descriptor_snapshot_tests::snapshot_uses_active_generation_and_preserves_no_marker_semantics", "--nocapture"])
-                .env(CHILD, "1").status().unwrap();
-            assert!(status.success());
+                .env(CHILD, "1").output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("test result: ok. 1 passed; 0 failed;"),
+                "{stdout}"
+            );
             return;
         }
         let generation = "b627e390-8fad-4a95-afe6-674f54813188";

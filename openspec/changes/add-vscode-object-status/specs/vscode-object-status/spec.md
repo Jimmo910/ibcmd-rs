@@ -76,3 +76,36 @@ native snapshot and reference identity.
 - **AND** legacy byte/tree requests retain their active view and separate cache
 - **AND** read-only adapter tests reject script execution and database writes
 - **AND** adapter tests do not claim an unperformed live SQL login
+
+### Requirement: platform file identity
+Windows dirty-editor and decoration identity SHALL be case-insensitive and preserve
+directory/drive boundaries. POSIX path identity SHALL retain casing.
+
+#### Scenario: Windows path spellings cannot bypass dirty-source blocking
+- **GIVEN** a Windows absolute source path and an unsaved editor differing only in casing
+- **WHEN** status refresh starts
+- **THEN** no status RPC is dispatched and no clean verdict is published
+- **AND** descriptor/folder decorations share normalized identity without crossing sibling or drive boundaries
+- **AND** POSIX casing remains distinct
+
+### Requirement: bounded status requests
+The client SHALL provide a per-status-request deadline from 30 to 3600 seconds,
+defaulting to 600, while retaining explicit cancellation and other RPC defaults.
+
+#### Scenario: long status requests remain bounded and cancellable
+- **GIVEN** source and reference status reads each exceed 30 seconds
+- **WHEN** they complete within the configured 30–3600 second per-request budget
+- **THEN** both results may contribute to the normal guarded verdict
+- **AND** deadline expiry or explicit cancellation clears evidence and prevents late clean publication
+- **AND** other RPC defaults remain unchanged
+
+### Requirement: separate session main cache
+A session SHALL retain separate main/active caches and invalidate exports when
+the relevant versions digest changes, without removing native freshness guards.
+
+#### Scenario: main-view cache belongs to the session
+- **GIVEN** repeated native main-view requests for one configuration
+- **WHEN** the main versions digest is unchanged or subsequently changes
+- **THEN** exports are reused only while that digest is unchanged
+- **AND** main and active exports remain separate
+- **AND** native before/after snapshots remain freshness guards

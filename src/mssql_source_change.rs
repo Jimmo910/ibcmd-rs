@@ -1607,10 +1607,19 @@ mod tests {
     fn source_census_and_held_reads_preserve_typed_cancellation() {
         const CHILD: &str = "IBCMD_SOURCE_CANCELLATION_TEST_CHILD";
         if std::env::var_os(CHILD).is_none() {
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "mssql_source_change::tests::source_census_and_held_reads_preserve_typed_cancellation", "--nocapture"])
-                .env(CHILD, "1").status().unwrap();
-            assert!(status.success());
+                .env(CHILD, "1").output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("test result: ok. 1 passed; 0 failed;"),
+                "{stdout}"
+            );
             return;
         }
         struct Scratch(PathBuf);
