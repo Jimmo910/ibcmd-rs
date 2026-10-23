@@ -43298,6 +43298,26 @@ fn information_register_owner_tail_with_standard_attributes_for_test(
     )
 }
 
+/// Owner version 32 has the 37 fields of version 30. ЗУП 3.1.18 stores 73
+/// information registers that way (`ЗагруженныеВерсииАдресныхСведений` among
+/// them), and 8.3.27.2214 dumps their properties as it does for version 30.
+#[test]
+fn reads_information_register_owner_version_32_like_version_30() {
+    let register_uuid = "11111111-1111-4111-8111-111111111111";
+    let full_tail = information_register_default_owner_tail_for_test();
+    let short_tail = full_tail.strip_suffix(",0,0").unwrap();
+    for version in ["30", "32"] {
+        let raw = exact_information_register_root_for_test(register_uuid, short_tail).replacen(
+            "{33,",
+            &format!("{{{version},"),
+            1,
+        );
+        let header = parse_metadata_header_from_text(&raw, register_uuid).unwrap();
+        let owner = parse_information_register_owner_fields(&raw, &header);
+        assert!(owner.is_some(), "version {version}");
+    }
+}
+
 #[test]
 fn parses_only_exact_information_register_physical_owner_shape() {
     let register_uuid = "11111111-1111-4111-8111-111111111111";
