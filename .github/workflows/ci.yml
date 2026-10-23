@@ -9,6 +9,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  platform-evidence-harness:
+    name: Platform evidence harness
+    runs-on: ubuntu-latest
+    env:
+      IBCMD_TEST_KEEP_FIXTURES: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      TMPDIR: ${{ runner.temp }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Test exact-build evidence audit
+        run: python3 tests/scripts/platform_acceptance_test.py -v
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
