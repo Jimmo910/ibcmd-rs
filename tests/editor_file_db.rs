@@ -11,20 +11,19 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "support/owned_scratch.rs"]
+mod owned_scratch;
+use owned_scratch::OwnedScratch;
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/file-infobase")
         .join(name)
 }
-fn scratch() -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "issue382-backend-{}-{}",
-        std::process::id(),
-        uuid::Uuid::new_v4()
-    ));
-    fs::create_dir_all(&path).unwrap();
-    path
+fn scratch() -> OwnedScratch {
+    OwnedScratch::new("issue382-backend")
 }
+
 #[test]
 fn file_session_reads_tree_files_and_status_without_sql_or_writes() {
     let dir = scratch();

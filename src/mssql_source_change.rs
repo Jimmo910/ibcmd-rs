@@ -2746,11 +2746,23 @@ mod original_source_tests;
 #[cfg(test)]
 mod traversal_budget_tests {
     use super::*;
-    fn root() -> PathBuf {
+    struct Scratch(PathBuf);
+    impl std::ops::Deref for Scratch {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    fn root() -> Scratch {
         let root =
             std::env::temp_dir().join(format!("held-source-budget-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
-        root
+        Scratch(root)
     }
     #[test]
     fn empty_directory_growth_is_bounded_during_initial_and_final_capture() {
