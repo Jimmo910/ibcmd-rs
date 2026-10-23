@@ -2229,9 +2229,9 @@ fn dump_config_inner(
                 bail!("a PostgreSQL export publishes the main configuration");
             }
             let target = args.postgres.as_ref().expect("checked above");
-            Some(offline_rows::activate_rows(postgres_infobase::load(
-                target, false,
-            )?)?)
+            Some(offline_rows::activate_shared(
+                postgres_infobase::load_published(target)?,
+            )?)
         }
         (None, None) => {
             if args.database.trim().is_empty() {
