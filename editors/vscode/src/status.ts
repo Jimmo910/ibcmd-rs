@@ -2,6 +2,7 @@ export interface Base {
   id: string;
   name: string;
   server?: string;
+  rowsDir?: string;
   platform: string;
   source: string;
   mask: boolean;
