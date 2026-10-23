@@ -110,6 +110,11 @@ pub fn run_infobase(args: &[OsString]) -> i32 {
             println!("ibcmd-rs {}", env!("CARGO_PKG_VERSION"));
             0
         }
+        // PostgreSQL is exported (#369); the rest stays the platform's.
+        Ok(Invocation::Import(request)) if is_postgres(&request.common) => refuse_postgres(),
+        Ok(Invocation::ImportFiles(request)) if is_postgres(&request.common) => refuse_postgres(),
+        Ok(Invocation::Apply(request)) if is_postgres(&request.common) => refuse_postgres(),
+        Ok(Invocation::Save(request)) if is_postgres(&request.common) => refuse_postgres(),
         Ok(Invocation::Export(request)) => run_export(request),
         Ok(Invocation::Import(request)) => run_import(request),
         // A file infobase is exported and imported; the rest stays the
@@ -130,6 +135,19 @@ pub fn run_infobase(args: &[OsString]) -> i32 {
         }
     };
     finish(code)
+}
+
+fn is_postgres(common: &parse::Common) -> bool {
+    common
+        .dbms
+        .as_deref()
+        .is_some_and(crate::infobase::is_postgres)
+}
+
+fn refuse_postgres() -> i32 {
+    let refusal = Refusal::UnsupportedDbms("PostgreSQL".to_string());
+    print_refusal(&refusal, &program_name());
+    refusal_exit_code(&refusal)
 }
 
 fn refuse_file_infobase() -> i32 {

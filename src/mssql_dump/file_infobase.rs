@@ -23,17 +23,37 @@ pub(super) fn load(db_path: &Path) -> Result<OfflineRows> {
         db.config_rows("CONFIG").map_err(|err| anyhow!("{err}"))?,
         "CONFIG",
     )?;
-    let stored = OfflineRows::from_memory(
-        config
-            .iter()
-            .map(|(name, bytes)| (name.clone(), Arc::new(bytes.clone()))),
-    );
     let saved_names: BTreeSet<String> = db
         .config_headers("CONFIGSAVE")
         .map_err(|err| anyhow!("{err}"))?
         .into_iter()
         .map(|row| row.file_name)
         .collect();
+    publish(config, &saved_names, || {
+        assemble(
+            db.config_rows("CONFIGSAVE")
+                .map_err(|err| anyhow!("{err}"))?,
+            "CONFIGSAVE",
+        )
+    })
+}
+
+/// The configuration a database publishes from its `CONFIG` rows and the
+/// names `CONFIGSAVE` holds: a completed stage (its `versions` row, no
+/// marker of an unfinished import or apply, every staged row listed) is
+/// published over `CONFIG`, as the platform's export publishes it; anything
+/// else leaves `CONFIG` alone. `staged` reads the `CONFIGSAVE` rows, only
+/// when they are published.
+pub(super) fn publish(
+    config: BTreeMap<String, Vec<u8>>,
+    saved_names: &BTreeSet<String>,
+    staged: impl FnOnce() -> Result<BTreeMap<String, Vec<u8>>>,
+) -> Result<OfflineRows> {
+    let stored = OfflineRows::from_memory(
+        config
+            .iter()
+            .map(|(name, bytes)| (name.clone(), Arc::new(bytes.clone()))),
+    );
     if saved_names.is_empty() {
         return Ok(stored);
     }
@@ -47,11 +67,7 @@ pub(super) fn load(db_path: &Path) -> Result<OfflineRows> {
         );
         return Ok(stored);
     }
-    let staged = assemble(
-        db.config_rows("CONFIGSAVE")
-            .map_err(|err| anyhow!("{err}"))?,
-        "CONFIGSAVE",
-    )?;
+    let staged = staged()?;
     let versions = staged
         .get(STAGE_INVENTORY_ROW)
         .ok_or_else(|| anyhow!("CONFIGSAVE has a `versions` header but no row"))?;
@@ -59,7 +75,7 @@ pub(super) fn load(db_path: &Path) -> Result<OfflineRows> {
     // means the stage is not one this reads.
     let published = config.keys().chain(staged.keys()).map(String::as_str);
     match super::config_dump_info::unlisted_entries(versions, published) {
-        Ok(unlisted) if unlisted.is_disjoint(&saved_names) => stored.with_staged(
+        Ok(unlisted) if unlisted.is_disjoint(saved_names) => stored.with_staged(
             staged
                 .into_iter()
                 .map(|(name, bytes)| (name, Arc::new(bytes))),
@@ -111,19 +127,28 @@ pub(crate) fn file_infobase_config(rows: Vec<ConfigRow>) -> Result<FileInfobaseC
 
 /// Stored rows by name, each assembled from its parts in order.
 fn assemble(rows: Vec<ConfigRow>, table: &str) -> Result<BTreeMap<String, Vec<u8>>> {
+    assemble_parts(
+        rows.into_iter()
+            .map(|row| (row.file_name, row.part_no, row.binary)),
+        table,
+    )
+}
+
+/// The rows of a configuration table by name, each with its parts joined in
+/// part order; a part stored twice or a gap in the parts is refused.
+pub(super) fn assemble_parts(
+    rows: impl IntoIterator<Item = (String, u32, Vec<u8>)>,
+    table: &str,
+) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut parts = BTreeMap::<String, BTreeMap<u32, Vec<u8>>>::new();
-    for row in rows {
+    for (file_name, part_no, binary) in rows {
         if parts
-            .entry(row.file_name.clone())
+            .entry(file_name.clone())
             .or_default()
-            .insert(row.part_no, row.binary)
+            .insert(part_no, binary)
             .is_some()
         {
-            bail!(
-                "{table}: строка {} часть {} записана дважды",
-                row.file_name,
-                row.part_no
-            );
+            bail!("{table}: строка {file_name} часть {part_no} записана дважды");
         }
     }
     parts

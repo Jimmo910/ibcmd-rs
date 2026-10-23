@@ -1095,6 +1095,9 @@ fn common(scan: &Scan) -> Result<Common, Refusal> {
                 .find(|known| known.eq_ignore_ascii_case(value.trim()));
             match known {
                 Some(&"MSSQLServer") => Some("MSSQLServer".to_string()),
+                // Exported directly (#369); the other commands refuse it
+                // (`dropin::run_infobase`).
+                Some(&"PostgreSQL") => Some("PostgreSQL".to_string()),
                 Some(other) => return Err(Refusal::UnsupportedDbms(other.to_string())),
                 None => return Err(Refusal::UnknownDbms(value.to_string())),
             }
@@ -1554,7 +1557,9 @@ mod tests {
     fn the_dbms_is_checked_as_natively() {
         let request = export(&["config", "export", "--dbms=mssqlserver", "--db-name=b", "o"]);
         assert_eq!(request.common.dbms.as_deref(), Some("MSSQLServer"));
-        for dbms in ["PostgreSQL", "IBMDB2", "OracleDatabase"] {
+        let request = export(&["config", "export", "--dbms=postgresql", "--db-name=b", "o"]);
+        assert_eq!(request.common.dbms.as_deref(), Some("PostgreSQL"));
+        for dbms in ["IBMDB2", "OracleDatabase"] {
             assert_eq!(
                 parse(&["config", "export", &format!("--dbms={dbms}"), "o"]),
                 Err(Refusal::UnsupportedDbms(dbms.to_string()))
@@ -2084,8 +2089,8 @@ mod tests {
             Err(Refusal::UnknownDbms("Foo".to_string()))
         );
         assert_eq!(
-            parse(&["config", "apply", "--dbms=PostgreSQL"]),
-            Err(Refusal::UnsupportedDbms("PostgreSQL".to_string()))
+            parse(&["config", "apply", "--dbms=IBMDB2"]),
+            Err(Refusal::UnsupportedDbms("IBMDB2".to_string()))
         );
         // a file infobase is parsed; `super::run_infobase` refuses to apply it
         let request = apply(&["config", "apply", "--db-path=C:\\ib"]);

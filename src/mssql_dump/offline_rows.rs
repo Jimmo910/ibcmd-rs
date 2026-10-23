@@ -114,10 +114,15 @@ pub(super) fn activate(dir: &Path) -> Result<OfflineRowsGuard> {
 
 /// Makes `rows` the Config table of this process until the guard drops.
 pub(super) fn activate_rows(rows: OfflineRows) -> Result<OfflineRowsGuard> {
+    activate_shared(Arc::new(rows))
+}
+
+/// As [`activate_rows`], for rows another reader keeps as well.
+pub(super) fn activate_shared(rows: Arc<OfflineRows>) -> Result<OfflineRowsGuard> {
     let mut active = ACTIVE
         .write()
         .map_err(|_| anyhow!("offline rows lock is poisoned"))?;
-    *active = Some(Arc::new(rows));
+    *active = Some(rows);
     Ok(OfflineRowsGuard { _private: () })
 }
 
@@ -925,6 +930,8 @@ mod tests {
             database: "f2_export".to_owned(),
             rows_dir: Some(dir.clone()),
             file_infobase: None,
+            postgres: None,
+            postgres_snapshot: None,
             model_export: false,
             legacy_export: false,
             output_dir: out.clone(),

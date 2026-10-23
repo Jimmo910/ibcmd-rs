@@ -173,9 +173,25 @@ pub(crate) struct ConnectionConfig {
     pub xml_version_given: bool,
     /// The data file of a file infobase (`--db-path`); `None` for a DBMS.
     pub file_infobase: Option<PathBuf>,
+    /// Retained only for this resolve/export operation; clones share one-use state.
+    pub postgres_snapshot: Option<crate::mssql_dump::PostgresExportSnapshot>,
 }
 
 impl ConnectionConfig {
+    /// The PostgreSQL database of a `--dbms=PostgreSQL` connection (#369).
+    pub(crate) fn postgres(&self) -> Result<Option<crate::sql::postgres::PgTarget>> {
+        if !is_postgres(&self.dbms) {
+            return Ok(None);
+        }
+        crate::sql::postgres::PgTarget::new(
+            &self.db_server,
+            &self.db_name,
+            self.db_user.as_deref(),
+            self.db_pwd.as_deref(),
+        )
+        .map(Some)
+    }
+
     pub(crate) fn legacy_source_version(&self) -> Result<InfobaseConfigSourceVersion> {
         self.legacy_adapter.legacy_selector().ok_or_else(|| {
             anyhow!(
@@ -316,7 +332,13 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
 
 pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigExportReport> {
     let config = resolve_connection(args.connection())?;
-    if config.file_infobase.is_none() {
+    if config.postgres()?.is_some() {
+        if args.extension.is_some() || args.base.is_some() || args.sync {
+            bail!(
+                "a PostgreSQL infobase is exported whole: --extension, --base and --sync are not supported yet"
+            );
+        }
+    } else if config.file_infobase.is_none() {
         ensure_mssql(&config.dbms)?;
     } else if args.extension.is_some() {
         bail!("Выгрузка расширений из файловой информационной базы пока не поддерживается");
@@ -361,6 +383,12 @@ pub(crate) fn export_config_report(
     base: Option<&Path>,
     sync: bool,
 ) -> Result<InfobaseConfigExportReport> {
+    let postgres_snapshot = config
+        .postgres_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.transfer())
+        .transpose()?
+        .flatten();
     let source_version = config.legacy_source_version()?;
     let output_dir = absolute_path(output_dir_arg)?;
     if base.is_some() || sync {
@@ -370,6 +398,7 @@ pub(crate) fn export_config_report(
     }
     let mut dump_args = dump_args(
         config,
+        postgres_snapshot,
         sqlcmd,
         db_pwd_env,
         output_dir.clone(),
@@ -390,6 +419,8 @@ pub(crate) fn export_config_report(
         operation: "infobase config export",
         backend: if config.file_infobase.is_some() {
             "file-infobase-direct"
+        } else if is_postgres(&config.dbms) {
+            "postgres-config-direct"
         } else {
             "mssql-config-direct"
         },
@@ -511,6 +542,7 @@ fn extension_dump_args(
 /// The export of the connection's database into `output_dir`.
 fn dump_args(
     config: &ConnectionConfig,
+    postgres_snapshot: Option<crate::mssql_dump::PostgresExportSnapshot>,
     sqlcmd: Option<&Path>,
     db_pwd_env: &str,
     output_dir: PathBuf,
@@ -520,6 +552,9 @@ fn dump_args(
     MssqlDumpConfigArgs {
         rows_dir: None,
         file_infobase: config.file_infobase.clone(),
+        // Checked when the connection is resolved (`resolve_connection_with`).
+        postgres: config.postgres().ok().flatten(),
+        postgres_snapshot,
         model_export: false,
         legacy_export: false,
         sqlcmd: sqlcmd.map(Path::to_path_buf),
@@ -790,6 +825,12 @@ fn resolve_connection_with(
         None => defaults.get()?.db_user().map(|user| user.value),
     };
     let (db_pwd, password_source) = match db_user {
+        // A PostgreSQL server may log the user in without one (`trust` in
+        // pg_hba.conf); it asks for a password when it wants one
+        // (`sql::postgres`).
+        _ if is_postgres(&dbms) => {
+            resolve_optional_password(request.db_pwd, &settings, request.db_pwd_env, &mut defaults)?
+        }
         Some(_) => resolve_password(request.db_pwd, &settings, request.db_pwd_env, &mut defaults)?,
         None => (None, None),
     };
@@ -806,7 +847,11 @@ fn resolve_connection_with(
         legacy_adapter,
         xml_version_given,
         file_infobase: None,
+        postgres_snapshot: None,
     };
+    // A malformed PostgreSQL server is refused here, before the platform
+    // probe reads the database through `dump_args`.
+    config.postgres()?;
     settle_platform(&mut config, &request, &mut defaults)?;
     Ok(config)
 }
@@ -858,6 +903,7 @@ fn resolve_file_infobase(
         legacy_adapter,
         xml_version_given,
         file_infobase: Some(data_file),
+        postgres_snapshot: None,
     };
     settle_platform(&mut config, request, defaults)?;
     Ok(config)
@@ -871,6 +917,7 @@ fn settle_platform(
     request: &ConnectionRequest<'_>,
     defaults: &mut Defaults<'_>,
 ) -> Result<()> {
+    config.postgres_snapshot = None;
     match request.need {
         PlatformNeed::Given => Ok(()),
         PlatformNeed::Export {
@@ -882,6 +929,7 @@ fn settle_platform(
             if config.xml_version_given {
                 return Ok(());
             }
+            let pending_snapshot = std::cell::RefCell::new(None);
             let platform = {
                 let known: &ConnectionConfig = config;
                 let probe = || {
@@ -891,16 +939,20 @@ fn settle_platform(
                     if !incremental {
                         prepare_output_dir(&absolute_path(output_dir)?, overwrite)?;
                     }
-                    crate::mssql_dump::model_export::configuration_compatibility_8_5_or_later(
-                        &dump_args(
-                            known,
-                            sqlcmd,
-                            request.db_pwd_env,
-                            PathBuf::new(),
-                            Vec::new(),
-                            InfobaseConfigSourceVersion::V2_20,
-                        ),
-                    )
+                    let (compatible, snapshot) =
+                        crate::mssql_dump::model_export::configuration_compatibility_with_snapshot(
+                            &dump_args(
+                                known,
+                                None,
+                                sqlcmd,
+                                request.db_pwd_env,
+                                PathBuf::new(),
+                                Vec::new(),
+                                InfobaseConfigSourceVersion::V2_20,
+                            ),
+                        )?;
+                    *pending_snapshot.borrow_mut() = snapshot;
+                    Ok(compatible)
                 };
                 crate::settings::resolve_platform(
                     None,
@@ -912,6 +964,7 @@ fn settle_platform(
                 )?
             };
             config.legacy_adapter = adapter_for(platform.xml_version())?;
+            config.postgres_snapshot = pending_snapshot.into_inner();
             Ok(())
         }
         PlatformNeed::Import { source_dir } => {
@@ -1089,6 +1142,21 @@ fn resolve_password(
     db_pwd_env: &str,
     defaults: &mut Defaults<'_>,
 ) -> Result<(Option<String>, Option<String>)> {
+    match resolve_optional_password(cli_db_pwd, settings, db_pwd_env, defaults)? {
+        (Some(password), source) => Ok((Some(password), source)),
+        (None, _) => bail!(
+            "не указан пароль пользователя сервера СУБД: передайте --db-pwd (--database-password), -W или переменную окружения {db_pwd_env}"
+        ),
+    }
+}
+
+/// The password from the first place that names one, if any does.
+fn resolve_optional_password(
+    cli_db_pwd: Option<&str>,
+    settings: &Option<Value>,
+    db_pwd_env: &str,
+    defaults: &mut Defaults<'_>,
+) -> Result<(Option<String>, Option<String>)> {
     if let Some(value) = cli_db_pwd.filter(|value| !value.is_empty()) {
         return Ok((Some(value.to_string()), Some("--db-pwd".to_string())));
     }
@@ -1102,9 +1170,12 @@ fn resolve_password(
     if let Some(value) = defaults.get()?.db_password() {
         return Ok((Some(value.value), Some(value.source.to_string())));
     }
-    bail!(
-        "не указан пароль пользователя сервера СУБД: передайте --db-pwd (--database-password), -W или переменную окружения {db_pwd_env}"
-    )
+    Ok((None, None))
+}
+
+/// Whether `dbms` names PostgreSQL, as 1C spells it.
+pub(crate) fn is_postgres(dbms: &str) -> bool {
+    dbms.eq_ignore_ascii_case("PostgreSQL")
 }
 
 pub(crate) fn ensure_mssql(dbms: &str) -> Result<()> {
@@ -1467,6 +1538,100 @@ mod tests {
             config.legacy_source_version().unwrap(),
             InfobaseConfigSourceVersion::V2_20
         );
+    }
+
+    #[test]
+    fn postgres_snapshot_is_consumed_even_when_export_preflight_refuses() {
+        let scratch = Scratch::new("postgres-snapshot-preflight");
+        let load = settings_in(&scratch.0, &[]);
+        let mut args = export_args("synthetic_pg");
+        args.dbms = Some("PostgreSQL".into());
+        args.platform = Some(crate::platform::parse("8.3.27").unwrap());
+        let mut config = resolve_connection_with(args.connection(), &load).unwrap();
+        config.postgres_snapshot = Some(crate::mssql_dump::PostgresExportSnapshot::synthetic(
+            b"previous rows",
+        ));
+        let clone = config.clone();
+        let out = scratch.0.join("occupied-output");
+        fs::create_dir(&out).unwrap();
+        fs::write(out.join("existing"), b"unchanged").unwrap();
+        assert!(
+            export_config_report(
+                &config,
+                None,
+                "UNUSED",
+                &out,
+                false,
+                false,
+                Vec::new(),
+                None,
+                false
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read(out.join("existing")).unwrap(), b"unchanged");
+        assert!(
+            config
+                .postgres_snapshot
+                .as_ref()
+                .unwrap()
+                .transfer()
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            clone
+                .postgres_snapshot
+                .as_ref()
+                .unwrap()
+                .transfer()
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn postgres_snapshot_is_not_retained_when_platform_was_explicit() {
+        let scratch = Scratch::new("postgres-explicit-platform-snapshot");
+        let load = settings_in(&scratch.0, &[]);
+        let mut args = export_args("synthetic_pg");
+        args.dbms = Some("PostgreSQL".into());
+        args.platform = Some(crate::platform::parse("8.3.27").unwrap());
+        let mut config = resolve_connection_with(args.connection(), &load).unwrap();
+        config.postgres_snapshot = Some(crate::mssql_dump::PostgresExportSnapshot::synthetic(
+            b"previous rows",
+        ));
+        let mut defaults = Defaults::new(args.native_config.as_deref(), &load);
+        settle_platform(&mut config, &args.connection(), &mut defaults).unwrap();
+        assert!(config.postgres_snapshot.is_none());
+    }
+
+    #[test]
+    fn a_malformed_postgres_server_is_refused_before_the_platform_probe() {
+        let scratch = Scratch::new("postgres-bad-server");
+        let load = settings_in(&scratch.0, &[]);
+        let mut args = export_args("disposable_pg");
+        args.dbms = Some("PostgreSQL".into());
+        args.db_server = Some("srv other".into());
+        let error = resolve_connection_with(args.connection(), &load).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("unrecognised PostgreSQL server `srv other`"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn postgres_default_user_keeps_an_explicit_password() {
+        let scratch = Scratch::new("postgres-default-password");
+        let load = settings_in(&scratch.0, &[]);
+        let mut args = export_args("disposable_pg");
+        args.dbms = Some("PostgreSQL".into());
+        args.platform = Some(crate::platform::parse("8.3.27").unwrap());
+        args.db_pwd = Some("synthetic-secret".into());
+        let config = resolve_connection_with(args.connection(), &load).unwrap();
+        let target = config.postgres().unwrap().unwrap();
+        assert_eq!(target.user, "postgres");
+        assert_eq!(target.password.as_deref(), Some("synthetic-secret"));
     }
 
     #[test]

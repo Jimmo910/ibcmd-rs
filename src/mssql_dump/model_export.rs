@@ -612,6 +612,20 @@ impl ModelExport {
 /// about the platform, since 8.5 runs 8.3.27-compatible configurations too.
 /// Reads the `root` row and the Configuration row it names, nothing else.
 pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> Result<bool> {
+    configuration_compatibility_with_snapshot(args).map(|(compatible, _)| compatible)
+}
+
+/// Return any PostgreSQL probe rows to the resolving operation, never a global cache.
+pub(crate) fn configuration_compatibility_with_snapshot(
+    args: &MssqlDumpConfigArgs,
+) -> Result<(bool, Option<PostgresExportSnapshot>)> {
+    let (postgres_rows, snapshot) = match (&args.rows_dir, &args.file_infobase, &args.postgres) {
+        (None, None, Some(target)) => {
+            let (rows, snapshot) = super::postgres_infobase::load_for_probe(target)?;
+            (Some(rows), Some(snapshot))
+        }
+        _ => (None, None),
+    };
     let _offline = match (&args.rows_dir, &args.file_infobase) {
         (Some(dir), _) => Some(offline_rows::activate(dir)?),
         (None, Some(path)) => Some(offline_rows::activate_rows(super::file_infobase::load(
@@ -625,8 +639,9 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
         &args.sql_pwd_env,
     );
     // `--rows-dir` answers every read from its folder; no login is needed.
-    let sql = if args.rows_dir.is_some() || args.file_infobase.is_some() {
-        crate::sql::SqlExec::detached("the rows come from a folder or a file infobase")
+    let sql = if args.rows_dir.is_some() || args.file_infobase.is_some() || args.postgres.is_some()
+    {
+        crate::sql::SqlExec::detached("the rows come from a folder, a file infobase or PostgreSQL")
     } else {
         crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
             sqlcmd: args.sqlcmd.as_deref(),
@@ -640,13 +655,20 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
     };
     let read = |name: &str| -> Result<crate::metadata_model::brace::Brace> {
         let names = BTreeSet::from([name.to_string()]);
-        let rows = fetch_binary_rows(
-            &sql,
-            &args.database,
-            MssqlConfigurationTableRole::Current.sql_name(),
-            &names,
-            false,
-        )?;
+        let rows = match &postgres_rows {
+            Some(rows) => rows.rows_named(
+                &args.database,
+                MssqlConfigurationTableRole::Current.sql_name(),
+                &names,
+            )?,
+            None => fetch_binary_rows(
+                &sql,
+                &args.database,
+                MssqlConfigurationTableRole::Current.sql_name(),
+                &names,
+                false,
+            )?,
+        };
         let row = rows
             .into_iter()
             .find(|row| row.file_name == name)
@@ -657,7 +679,10 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
     };
     let uuid = crate::metadata_model::root::export::root_configuration_uuid(&read("root")?)?;
     let shape = crate::metadata_model::root::export::stored_shape(&read(&uuid)?)?;
-    Ok(shape == crate::metadata_model::root::ConfigurationShape::V76)
+    Ok((
+        shape == crate::metadata_model::root::ConfigurationShape::V76,
+        snapshot,
+    ))
 }
 
 // ---------------------------------------------------------------------------
