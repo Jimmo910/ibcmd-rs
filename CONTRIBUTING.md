@@ -21,9 +21,10 @@ short form in [`AGENTS.md`](AGENTS.md).
 
 ## Setup
 
-- Rust through rustup. CI pins **1.95.0**
-  (`rustup toolchain install 1.95.0 -c clippy,rustfmt`); a newer stable works
-  for daily use, and `cargo +1.95.0 …` settles a disagreement with CI.
+- Rust through rustup. `rust-toolchain.toml` pins **1.95.0**, the toolchain
+  of CI and the release builds, and rustup installs it on first use. A bump
+  changes that file and `RUST_VERSION` in `offline-e2e.yml` and `release.yml`
+  together.
 - For the full local gate (`cargo xtask ci`): PowerShell 7 (`pwsh`),
   Python 3 and Node.js (`npx`). A missing tool turns its steps into a
   reported `SKIP`, never into a silent pass.

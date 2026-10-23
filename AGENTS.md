@@ -29,8 +29,9 @@ cargo build --locked --profile iter                                      # binar
   refuses symlinks anywhere in the repository.
 - Plain `cargo test --workspace` is not a gate: the legacy root unit harness
   has known failures (docs/testing.md). Run the suites that cover your change.
-- CI pins Rust 1.95.0. When your clippy disagrees with CI, run
-  `cargo +1.95.0 xtask check`.
+- `rust-toolchain.toml` pins Rust 1.95.0, the toolchain of CI and releases;
+  rustup installs it on first use. Do not override it except for fuzzing
+  (`cargo +nightly fuzz`).
 - Debug builds for tests, `--profile iter` for corpus runs, `--release` only
   for release checks. One cargo command at a time per target directory;
   parallel agents work in separate worktrees.
