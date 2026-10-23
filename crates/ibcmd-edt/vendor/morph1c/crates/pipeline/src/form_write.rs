@@ -389,7 +389,11 @@ fn write_form_bodies_current(
                 })?;
             write_file(
                 &module_out,
-                &crate::module_read::reencode_module_for_format(source, format),
+                &crate::module_read::reencode_form_module_for_format(
+                    source,
+                    format,
+                    form.body.source_module_scaffold_edt_lf,
+                ),
             )?;
         }
 

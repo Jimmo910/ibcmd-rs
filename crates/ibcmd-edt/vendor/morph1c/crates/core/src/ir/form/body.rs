@@ -73,6 +73,11 @@ pub struct FormBody {
     /// Excluded from semantic fingerprints and serialization like wire ordering.
     #[serde(skip)]
     pub source_edt_lf: bool,
+    /// Attached EDT module is a pure-LF empty region scaffold. This source-only
+    /// framing capability never changes the current module String or its digest.
+    /// Designer emission revalidates the complete current scaffold before use.
+    #[serde(skip)]
+    pub source_module_scaffold_edt_lf: bool,
     /// Native merged event spelling only. Owner lists remain ordered semantic
     /// data; replay requires both current owner/name orders to remain identical.
     #[serde(skip)]
@@ -457,6 +462,7 @@ impl FormBody {
             picture_semantics: None,
             picture_resource_selection: None,
             source_edt_lf: false,
+            source_module_scaffold_edt_lf: false,
             source_wire_order: None,
             source_xml221_default_presence: None,
             designer_checkbox_auto_presence: std::collections::BTreeMap::new(),

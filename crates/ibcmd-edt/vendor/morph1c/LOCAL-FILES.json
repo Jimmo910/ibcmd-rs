@@ -89,7 +89,8 @@
     "Witnessed client-interface direct panel versus group shape and ordered declared panel subsets are typed; exact installed EDT LF framing is retained separately from semantic data, with full byte guards and legacy CRLF behavior preserved",
     "Witnessed current EDT LF form framing is a source-only lexical facet; declaration-bound verbatim text retains explicit carriage-return edits while legacy CRLF defaults and native envelope validation remain unchanged",
     "Witnessed current EDT ListSettings.dcss LF framing is a source-only lexical facet with verbatim typed text; legacy CRLF emission, semantic emptiness and native empty ListSettings self-closing spelling remain unchanged",
-    "Witnessed current EDT ConditionalAppearance.dcssca LF framing uses an explicit framed API and a source-only FormBody facet; legacy CRLF API/defaults, complete ordered typed accounting and empty-sidecar omission remain unchanged"
+    "Witnessed current EDT ConditionalAppearance.dcssca LF framing uses an explicit framed API and a source-only FormBody facet; legacy CRLF API/defaults, complete ordered typed accounting and empty-sidecar omission remain unchanged",
+    "Source-bound pure-LF empty Russian form-module region scaffolds use native CRLF framing only after complete current syntax revalidation; generic BSL text, current raw semantic identity, same-format bytes, provenance and unknown/executable text remain unchanged"
   ],
   "files": [
     {
@@ -126,7 +127,7 @@
     },
     {
       "path": "crates/core/src/ir/form/body.rs",
-      "sha256": "44c3f5f0b2e44f01088d513f85e0298c7aac47d2c3b2eee36bc3a268a05e3f2b"
+      "sha256": "771c0abb0265aaacc1e49ea8a4bf9363514bd3269815904461c7b70d669f36e9"
     },
     {
       "path": "crates/core/src/ir/form/data_attributes.rs",
@@ -2650,7 +2651,7 @@
     },
     {
       "path": "crates/pipeline/src/form_read.rs",
-      "sha256": "bc85354f29dea9546a4929a5890e17cff80d50c2290a2ade18ca40b36038e3f9"
+      "sha256": "c18ab9b37f943992349c566c7759ecda1bb02742e92616e285ee23fda7dbde53"
     },
     {
       "path": "crates/pipeline/src/form_ref_read.rs",
@@ -2658,7 +2659,7 @@
     },
     {
       "path": "crates/pipeline/src/form_write.rs",
-      "sha256": "5a2e66eb9662bd53d6a6fdbafae65a8e4e677f0d943f47ce72c32db3c2a82223"
+      "sha256": "8968fe171bc5073fb4a036c7f836e831e369507de0f85a083b7d18f6f0ed1ab2"
     },
     {
       "path": "crates/pipeline/src/fsio.rs",
@@ -2698,7 +2699,7 @@
     },
     {
       "path": "crates/pipeline/src/module_read.rs",
-      "sha256": "5f35f22679e382b680f4156366e74bc680409f0186c283aae21e6aaca5583e18"
+      "sha256": "5731a29355a9a4ef6e707112cc8e81c50ee3a77e20472be580c99acd390b7abf"
     },
     {
       "path": "crates/pipeline/src/mxl_read.rs",

@@ -580,6 +580,11 @@ fn attach_form_body_current(
             _ => None,
         };
 
+        body.source_module_scaffold_edt_lf = format == Format::Edt
+            && module
+                .as_deref()
+                .is_some_and(crate::module_read::is_lf_empty_form_module_scaffold);
+
         // The form HELP is a sidecar too — EDT `Forms/<F>/Help/<lang>.html`, Designer
         // `Forms/<F>/Ext/Help.xml` + `Ext/Help/<lang>.html` — the SAME layout/encodings as the
         // OBJECT help, only anchored at the form (`crate::help_read::read_help_sidecar` is reused
