@@ -618,8 +618,8 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
             path,
         )?)?),
         (None, None) => match &args.postgres {
-            Some(target) => Some(offline_rows::activate_rows(
-                super::postgres_infobase::load(target, false)?,
+            Some(target) => Some(offline_rows::activate_shared(
+                super::postgres_infobase::load_for_probe(target)?,
             )?),
             None => None,
         },

@@ -540,7 +540,7 @@ fn dump_args(
     MssqlDumpConfigArgs {
         rows_dir: None,
         file_infobase: config.file_infobase.clone(),
-        // Checked by the export (`export_config`) before it gets here.
+        // Checked when the connection is resolved (`resolve_connection_with`).
         postgres: config.postgres().ok().flatten(),
         model_export: false,
         legacy_export: false,
@@ -909,6 +909,9 @@ fn resolve_connection_with(
         xml_version_given,
         file_infobase: None,
     };
+    // A malformed PostgreSQL server is refused here, before the platform
+    // probe reads the database through `dump_args`.
+    config.postgres()?;
     settle_platform(&mut config, &request, &mut defaults)?;
     Ok(config)
 }
@@ -1586,6 +1589,20 @@ mod tests {
         assert_eq!(
             config.legacy_source_version().unwrap(),
             InfobaseConfigSourceVersion::V2_20
+        );
+    }
+
+    #[test]
+    fn a_malformed_postgres_server_is_refused_before_the_platform_probe() {
+        let scratch = Scratch::new("postgres-bad-server");
+        let load = settings_in(&scratch.0, &[]);
+        let mut args = export_args("disposable_pg");
+        args.dbms = Some("PostgreSQL".into());
+        args.db_server = Some("srv other".into());
+        let error = resolve_connection_with(args.connection(), &load).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("unrecognised PostgreSQL server `srv other`"),
+            "{error:#}"
         );
     }
 
