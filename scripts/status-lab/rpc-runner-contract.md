@@ -1,7 +1,7 @@
 # Bounded read-only RPC probe: local execution gate
 
-Candidate/API: published `2aff32c7` / `6ca6ade0`, protocol 1.4. This local
-continuation is not part of Draft #532 and is not authorized for publication.
+Candidate/API: SQL contract checkpoint `2aff32c7` / `6ca6ade0`, protocol 1.4.
+This fake-only transport harness is separate from live infobase acceptance.
 
 The runner admits only the reviewed public Python fake peer. Its fixed invocation
 uses the current interpreter with `-I -S -B`, a sealed retained peer snapshot,

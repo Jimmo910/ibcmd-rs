@@ -153,13 +153,15 @@ host remain unexecuted. It does not duplicate the SQL primary's database snapsho
 or profile capture and does not authorize stage/apply or the future operator run.
 
 
-## Windows fake-process control proposal (unpublished)
+## Windows fake-process CI gate
 
 [windows-rpc-controls.md](windows-rpc-controls.md) specifies the seven-test
 Windows gate, four portable models and three real-kernel controls. The fixed
 `windows_rpc_gate.py` requires Windows, exactly that inventory and zero skips.
-The inactive `windows-rpc-ci.yml.proposal` describes an ordinary hosted Windows
-job; it is not installed in `.github/workflows` and has not run. It retains only
+The workflow `.github/workflows/public-fake-rpc-windows.yml` schedules an
+ordinary hosted Windows job on scoped push/PR events. Windows results are pending. It retains only
 new public fake fixtures, requires no product binary/SQL/native/VM/secrets, and
-cannot turn POSIX results into Windows evidence. Source review and separate
-publication/CI coordination are required before activation.
+cannot turn POSIX results into Windows evidence. It checks the committed source manifest before execution and permits artifact
+upload only after a <=4 MiB/128-file/256-entry inventory check. Logs cap at
+64 KiB; artifact retention is seven days. No manual dispatch or runtime/package
+download is used. Existing CI gates are unchanged.

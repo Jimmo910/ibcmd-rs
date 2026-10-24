@@ -1,8 +1,8 @@
-# Windows public fake RPC containment: source proposal
+# Windows public fake RPC containment: CI activation
 
-Base: local `005a4ffa6f2c0d985c5529d82f61d061c9e12c7b`. The public PR #532
-remains on `2aff32c7`. No workflow is installed by this package. No Windows
-runtime result, product execution or SQL acceptance is claimed.
+Base: local `005a4ffa6f2c0d985c5529d82f61d061c9e12c7b`. The earlier public SQL checkpoint is `2aff32c7`. This continuation adds a
+scoped hosted Windows workflow. Windows runtime results remain pending; no
+product execution or SQL acceptance is claimed.
 
 ## Exact gate
 
@@ -13,15 +13,26 @@ fake process contract, not a product binary build. The base must be freshly
 reserved by the operator/CI, empty, and match STATUS_LAB_TEST_ROOT; test fixtures
 use the existing single-use ownership capabilities. Every fixture is retained.
 
-`windows-rpc-ci.yml.proposal` is inactive outside `.github/workflows`. Activation
-needs a separately reviewed public commit and CI authorization. Its only work is
-Python public fake processes on an ordinary Windows runner; no secrets, token
-persistence, native software, Rust, SQL, VM or private inputs. It restores exact
-LF bytes only in its disposable checkout to preserve pinned API hashes. The
-checkout layout reproduces the explicit lab boundary without weakening it.
-The eight-minute job limit is an outer fail-safe, not a passing cleanup result.
-Artifact upload retains only newly owned synthetic fixtures, including failures;
-no artifact expiration is applied to retained local lab fixtures.
+The activated workflow is `.github/workflows/public-fake-rpc-windows.yml`.
+It runs only for scoped push/PR events, with read-only contents permission and
+pinned checkout/upload action revisions. There are no dispatch inputs, secrets,
+product builds, package installs or runtime downloads. Python must already be
+installed in the hosted Windows tool cache. No arbitrary command or shell text
+is supplied through event fields. The eight-minute job limit is an outer
+fail-safe, not a passing cleanup result. Existing CI gates are unchanged.
+
+Before Python executes the fixed entry, PowerShell checks the literal manifest
+SHA-256 and every executed module against `windows-source-sha256.json`. Python
+rechecks those sources plus manifest and interpreter identity before/after the
+suite. Per-probe seals additionally bind settings, source/reference fixture
+inventories, actual interpreter and exact API originals. The candidate/API
+labels remain semantic contract identities, not an actual product binary claim.
+
+Only newly owned public fake fixtures are used. Test log bytes cap at 64 KiB;
+artifact admission refuses >4 MiB total, >1 MiB/file, >128 files, >256 entries,
+hardlinks, symlinks and junctions. Upload is conditional on a successful bounded
+artifact admission marker even when tests fail. Artifact retention is seven
+days. No local lab fixture is deleted or expires through this workflow.
 
 ## Discriminating controls
 
@@ -44,12 +55,12 @@ no artifact expiration is applied to retained local lab fixtures.
   The existing finite fake peer supplies all cases; no arbitrary executable or
   injection surface is added.
 
-The actual Windows gate has not run. macOS model results or the earlier 69-test
+The actual Windows gate has not run at activation review. macOS model results or the earlier 69-test
 POSIX gate cannot establish Job Object layout, assignment, Python DLL loading,
 job nesting on hosted runners or Windows termination behavior. A failing
 Windows run must retain its evidence and stop; do not retry or relax containment
 until the specific failure has been reviewed. This proposal does not authorize
-activation, publishing local runner commits or any actual ibcmd/SQL operation.
+any actual ibcmd/SQL operation.
 
 
 ## Local evidence (POSIX, not Windows)
@@ -79,5 +90,26 @@ External retained logs:
 - `logs/issue-380-windows-model-e315c9c9-full.log`
 
 The seven-test Windows-only entry point, actual Job Object queries, same-handle
-descendant wait and hosted Windows workflow remain unexecuted. Publication and
-workflow activation remain separate boundaries; public PR #532 is unchanged.
+descendant wait and hosted Windows workflow remain unexecuted. The source-reviewed workflow activation is a subsequent checkpoint; these
+local results do not establish any Windows execution result.
+
+
+## Activation checkpoint local evidence
+
+The final workflow/source-manifest/artifact-admission diff received a fresh
+independent APPROVE before execution. Its first review found that an upload
+marker could precede final admission. The fix writes a pending marker, validates
+its bytes/entry within the same cap, and only then atomically renames it to the
+upload marker. Both success and final-refusal regressions passed.
+
+On unchanged reviewed sources: **12 targeted pure/model tests passed (0.016 s)**,
+then the complete suite: **84 run, 81 passed, 3 explicit Windows kernel skips
+(2.412 s)**. These are POSIX results only. Windows fixed-seven/zero-skip results
+remain pending the automatic workflow. No manual dispatch is used.
+
+Manifest SHA-256:
+`b301f67a27a1784a82749b66d44bdba2e2196cc75c8e6b9ce43bce107476ae2d`.
+External retained logs:
+
+- `logs/issue-380-windows-activation-b301f67a-targeted.log`
+- `logs/issue-380-windows-activation-b301f67a-full.log`

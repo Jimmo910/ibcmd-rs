@@ -1,7 +1,9 @@
 # Bounded fake RPC runner evidence
 
-Scope: local continuation after unpublished operator plan `5e8a420d`; public
-PR #532 stays on `2aff32c7`. No new runner delta was pushed. Candidate/API labels
+Historical scope at checkpoint `005a4ffa`: local continuation after operator
+plan `5e8a420d`, with public PR #532 then on `2aff32c7`. No runner delta had
+been pushed at that checkpoint. The later Windows activation is described in
+`windows-rpc-controls.md`; the historical hashes/results below are preserved. Candidate/API labels
 are `2aff32c7` / `6ca6ade0`, protocol 1.4; these are semantic contract bindings,
 not a claim that the Python interpreter is the product binary.
 
