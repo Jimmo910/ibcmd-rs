@@ -1007,6 +1007,7 @@ pub(crate) use source_assets::declare_palette_namespace_beside_style;
 mod eds_export;
 mod forms;
 pub mod help_audit;
+pub(crate) mod import_evidence;
 pub mod incremental;
 pub mod interface_audit;
 mod metadata;
