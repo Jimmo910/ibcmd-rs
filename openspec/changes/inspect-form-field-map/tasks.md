@@ -1,0 +1,7 @@
+- [x] 1. Add failing clean-room structural/privacy/bounds tests (Refs #381).
+- [x] 2. Implement bounded decode, existing-parser raw views and typed report.
+- [x] 3. Add read-only example with static failure handling and no partial output.
+- [ ] 4. Run targeted tests and unchanged governance/policy gates in an allocated slot.
+- [ ] 5. Obtain fresh independent privacy/correctness review before VM execution.
+- [ ] 6. Hand source/binary provenance to the sole operator for serialized observation.
+- [ ] 7. Use observed facts for a separately verified production fix; no parity claim from diagnostics.

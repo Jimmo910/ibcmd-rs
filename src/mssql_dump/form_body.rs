@@ -1,3 +1,9 @@
+mod field_map_observer;
+pub use field_map_observer::{
+    FormFieldMapObservationError, FormFieldMapObservationReport,
+    MAX_FORM_OBSERVER_COMPRESSED_BYTES, observe_form_field_map_blob,
+};
+
 use super::*;
 use crate::form_schema::{
     FORM_DECORATION_HEADER_XML_ORDER, FORM_EXTENDED_TOOLTIP_XML_ORDER,
@@ -4580,6 +4586,29 @@ pub(super) fn form_item_picture_file_name(property_name: &str, content: &[u8]) -
     format!("{property_name}.{extension}")
 }
 
+/// Raw records and declared count from the existing Attributes header. Callers
+/// that only observe settings need not execute DCS or other attribute decoders.
+struct RawFormAttributeRecords<'a> {
+    declared_count: usize,
+    records: Vec<&'a str>,
+}
+fn form_body_attribute_records(trailing: &[String]) -> Option<RawFormAttributeRecords<'_>> {
+    let fields = trailing
+        .first()
+        .and_then(|field| split_1c_braced_fields(field, 0))?;
+    if fields.first().map(|field| field.trim()) != Some("4") {
+        return None;
+    }
+    let declared_count = fields
+        .get(1)
+        .and_then(|field| field.trim().parse::<usize>().ok())
+        .unwrap_or(usize::MAX);
+    Some(RawFormAttributeRecords {
+        declared_count,
+        records: fields.into_iter().skip(2).take(declared_count).collect(),
+    })
+}
+
 fn extract_form_body_attributes_with_dcs_type_index(
     trailing: &[String],
     type_index: &BTreeMap<String, String>,
@@ -4589,23 +4618,11 @@ fn extract_form_body_attributes_with_dcs_type_index(
     object_ref_index: Option<&FormObjectRefIndex<'_>>,
     foreign_types: Option<&BTreeSet<String>>,
 ) -> Vec<FormAttribute> {
-    let Some(fields) = trailing
-        .first()
-        .and_then(|field| split_1c_braced_fields(field, 0))
-    else {
+    let Some(raw) = form_body_attribute_records(trailing) else {
         return Vec::new();
     };
-    if fields.first().map(|field| field.trim()) != Some("4") {
-        return Vec::new();
-    }
-    let attribute_count = fields
-        .get(1)
-        .and_then(|field| field.trim().parse::<usize>().ok())
-        .unwrap_or(usize::MAX);
-    fields
-        .iter()
-        .skip(2)
-        .take(attribute_count)
+    raw.records
+        .into_iter()
         .filter_map(|field| {
             parse_form_attribute_with_dcs_type_index(
                 field,
@@ -4807,6 +4824,26 @@ fn form_attribute_record_head(field: &str) -> Option<(Vec<&str>, &str, String)> 
     Some((fields, id, name))
 }
 
+struct RawFormAttributeView<'a> {
+    fields: Vec<&'a str>,
+    id: &'a str,
+    name: String,
+    pattern: Option<&'a str>,
+    settings_bag: Option<&'a str>,
+}
+fn form_attribute_raw_view(field: &str) -> Option<RawFormAttributeView<'_>> {
+    let (fields, id, name) = form_attribute_record_head(field)?;
+    let pattern = fields.get(5).copied();
+    let settings_bag = fields.get(14).copied();
+    Some(RawFormAttributeView {
+        fields,
+        id,
+        name,
+        pattern,
+        settings_bag,
+    })
+}
+
 fn parse_form_attribute_with_dcs_type_index(
     field: &str,
     type_index: &BTreeMap<String, String>,
@@ -4816,7 +4853,13 @@ fn parse_form_attribute_with_dcs_type_index(
     object_ref_index: Option<&FormObjectRefIndex<'_>>,
     foreign_types: Option<&BTreeSet<String>>,
 ) -> Option<FormAttribute> {
-    let (fields, id, name) = form_attribute_record_head(field)?;
+    let RawFormAttributeView {
+        fields,
+        id,
+        name,
+        pattern,
+        settings_bag,
+    } = form_attribute_raw_view(field)?;
     let title = fields
         .get(4)
         .map(|field| parse_form_localized_strings(field))
@@ -4828,12 +4871,9 @@ fn parse_form_attribute_with_dcs_type_index(
     // `<v8:Type>ent:AccountingRecordType</v8:Type>` for each, while the plain
     // index -- which carries only the configuration's own generated types --
     // could not name the identifier and refused the whole tuple.
-    let parsed_value_types = fields
-        .get(5)
-        .and_then(|field| parse_form_attribute_column_type_pattern(field, type_index));
-    let exact_single_type_uuid = fields
-        .get(5)
-        .and_then(|field| parse_form_exact_single_type_uuid(field));
+    let parsed_value_types =
+        pattern.and_then(|field| parse_form_attribute_column_type_pattern(field, type_index));
+    let exact_single_type_uuid = pattern.and_then(|field| parse_form_exact_single_type_uuid(field));
     let explicit_empty_type = parsed_value_types
         .as_ref()
         .is_some_and(|value_types| value_types.is_empty());
@@ -4894,14 +4934,14 @@ fn parse_form_attribute_with_dcs_type_index(
         .get(15 + column_count)
         .map(|field| parse_form_reference_list(field, object_refs))
         .unwrap_or_default();
-    let settings = fields.get(14).and_then(|field| {
+    let settings = settings_bag.and_then(|field| {
         parse_form_dynamic_list_settings_with_dcs_type_index(field, object_refs, dcs_type_index)
     });
     let settings = settings.map(normalize_form_dynamic_list_settings);
-    let spreadsheet_document_settings = fields.get(14).and_then(|field| {
+    let spreadsheet_document_settings = settings_bag.and_then(|field| {
         parse_form_spreadsheet_document_settings(field, &value_types, object_refs)
     });
-    let design_time_settings = fields.get(14).and_then(|field| {
+    let design_time_settings = settings_bag.and_then(|field| {
         parse_form_chart_settings_xml(field, &value_types, object_refs, 3)
             .or_else(|| parse_form_gantt_chart_settings_xml(field, &value_types, object_refs, 3))
             .or_else(|| parse_form_flowchart_settings_xml(field, &value_types, object_refs, 3))
@@ -4924,7 +4964,7 @@ fn parse_form_attribute_with_dcs_type_index(
     // The list-settings bag is read once for every reader below: its field
     // map, localized twins, shadowed ids and resolvable-field universe are the
     // same facts each of them used to derive again from the same text.
-    let list_facts = fields.get(14).and_then(|field| {
+    let list_facts = settings_bag.and_then(|field| {
         FormDynamicListFieldFacts::read(
             field,
             settings.as_ref(),
@@ -4933,7 +4973,7 @@ fn parse_form_attribute_with_dcs_type_index(
             object_ref_index,
         )
     });
-    if fields.get(14).is_some() {
+    if settings_bag.is_some() {
         let dynamic_list_use_always = list_facts
             .as_ref()
             .map(|facts| facts.use_always(&name, settings.as_ref()))
@@ -5834,7 +5874,7 @@ pub(super) fn parse_form_attribute_additional_columns_group(
                 let [prefix, register_uuid] = member.as_slice() else {
                     return None;
                 };
-                if prefix.trim() != "0" {
+                if !crate::form_schema::form_record_has_zero_marker(prefix) {
                     return None;
                 }
                 let register_uuid = parse_non_zero_uuid(register_uuid.trim())?;
@@ -6172,7 +6212,12 @@ fn parse_form_dynamic_list_settings_with_dcs_type_index(
             .map(|(value, _)| value)
             .unwrap_or_default();
         match key.as_str() {
-            "QueryText" => query_text = parse_form_setting_string(window[1]),
+            property
+                if crate::form_schema::FormDynamicListQueryProperty::classify(property)
+                    == crate::form_schema::FormDynamicListQueryProperty::QueryText =>
+            {
+                query_text = parse_form_setting_string(window[1])
+            }
             "MainTable" => main_table = parse_form_main_table_ref(window[1], object_refs),
             "MainTableCategory" => main_table_category = parse_form_setting_number(window[1]),
             "Field" => {
@@ -6189,7 +6234,10 @@ fn parse_form_dynamic_list_settings_with_dcs_type_index(
             }
             "KeyType" => key_type = parse_form_dynamic_list_key_type(window[1]),
             "KeyFields" => key_fields = parse_form_dynamic_list_key_fields(window[1]),
-            "ManualQuery" => {
+            property
+                if crate::form_schema::FormDynamicListQueryProperty::classify(property)
+                    == crate::form_schema::FormDynamicListQueryProperty::ManualQuery =>
+            {
                 manual_query_explicit = true;
                 manual_query = parse_form_setting_bool(window[1]).unwrap_or(false);
             }
@@ -6959,7 +7007,7 @@ fn form_object_settings_composer_use_always_path(components: &[Vec<&str>]) -> Op
     let [marker, uuid] = head.as_slice() else {
         return None;
     };
-    if marker.trim() != "0"
+    if !crate::form_schema::form_record_has_zero_marker(marker)
         || !uuid
             .trim()
             .eq_ignore_ascii_case(FORM_OBJECT_SETTINGS_COMPOSER_MEMBER_UUID)
@@ -8719,9 +8767,11 @@ fn is_1c_query_temp_batch(tokens: &[String]) -> bool {
 fn query_batch_declares_selection(tokens: &[String]) -> bool {
     let mut depth = 0i64;
     for token in tokens {
-        match token.as_str() {
-            "(" | "{" => depth += 1,
-            ")" | "}" => depth -= 1,
+        match crate::form_schema::FormQueryLexeme::classify(token) {
+            crate::form_schema::FormQueryLexeme::OpenParenthesis
+            | crate::form_schema::FormQueryLexeme::OpenBrace => depth += 1,
+            crate::form_schema::FormQueryLexeme::CloseParenthesis
+            | crate::form_schema::FormQueryLexeme::CloseBrace => depth -= 1,
             _ if depth == 0 && is_1c_query_keyword(token, Q_SELECT) => return true,
             _ => {}
         }

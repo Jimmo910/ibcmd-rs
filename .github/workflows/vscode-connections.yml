@@ -1,9 +1,33 @@
 name: VSCode connections
 on:
   pull_request:
-    paths: ['editors/vscode/**', 'src/**', 'crates/**', 'Cargo.toml', 'Cargo.lock', 'tests/**', '.github/workflows/vscode-connections.yml', '.github/workflows/release.yml']
+    paths:
+      [
+        "examples/form_field_map_observer.rs",
+        "tools/write-form-observer-provenance.py",
+        "editors/vscode/**",
+        "src/**",
+        "crates/**",
+        "Cargo.toml",
+        "Cargo.lock",
+        "tests/**",
+        ".github/workflows/vscode-connections.yml",
+        ".github/workflows/release.yml",
+      ]
   push:
-    paths: ['editors/vscode/**', 'src/**', 'crates/**', 'Cargo.toml', 'Cargo.lock', 'tests/**', '.github/workflows/vscode-connections.yml', '.github/workflows/release.yml']
+    paths:
+      [
+        "examples/form_field_map_observer.rs",
+        "tools/write-form-observer-provenance.py",
+        "editors/vscode/**",
+        "src/**",
+        "crates/**",
+        "Cargo.toml",
+        "Cargo.lock",
+        "tests/**",
+        ".github/workflows/vscode-connections.yml",
+        ".github/workflows/release.yml",
+      ]
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,17 +42,46 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.95.0'
+          toolchain: "1.95.0"
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
       - run: cargo test --locked --test editor_server --test editor_export_plan --no-default-features
+      - name: Test bounded Form field-map observer
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: "2"
+          IBCMD_TEST_KEEP_FIXTURES: "1"
+        run: |
+          cargo test --locked --lib field_map_observer --no-default-features
+          cargo test --locked --lib form_observer_shared_schema_tests --no-default-features
+      - name: Build read-only Windows Form observer
+        if: runner.os == 'Windows'
+        env:
+          CARGO_BUILD_JOBS: "2"
+        run: cargo build --locked --no-default-features --example form_field_map_observer
+      - name: Verify Windows observer CLI non-disclosure and bounds
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python tests/scripts/form_field_map_observer_cli_test.py target/debug/examples/form_field_map_observer.exe "$env:RUNNER_TEMP/observer-fixtures"
+      - name: Bind Windows observer artifact provenance
+        if: runner.os == 'Windows'
+        env:
+          DIAGNOSTIC_REQUESTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python tools/write-form-observer-provenance.py target/debug/examples/form_field_map_observer.exe target/form-observer-artifact
+      - name: Retain reviewed observer for serialized lab diagnostics
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: form-field-map-observer-windows-x64
+          path: target/form-observer-artifact/
+          if-no-files-found: error
       - run: npm ci
         working-directory: editors/vscode
       - run: npm run bundle
