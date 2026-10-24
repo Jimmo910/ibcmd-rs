@@ -20,7 +20,7 @@ use std::{
     io::{Cursor, Read},
     os::windows::fs::OpenOptionsExt,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -137,6 +137,8 @@ impl Case {
         self.root.join("source")
     }
     fn run(&self, phase: &str) {
+        const CHILD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+        const LOG_LIMIT: u64 = 16 * 1024 * 1024;
         assert!(
             phase
                 .bytes()
@@ -146,7 +148,10 @@ impl Case {
         fs::create_dir(&logs).unwrap();
         let temporary = logs.join("tmp");
         fs::create_dir(&temporary).unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
+        let stdout_path = logs.join("stdout.txt");
+        let stderr_path = logs.join("stderr.txt");
+        // Stream before waiting so a stopped compiler still leaves partial logs.
+        let mut child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 &self.marker.test,
@@ -160,23 +165,58 @@ impl Case {
             .env("TMP", &temporary)
             .env("TEMP", &temporary)
             .env("TMPDIR", &temporary)
-            .output()
+            .stdout(Stdio::from(fs::File::create_new(&stdout_path).unwrap()))
+            .stderr(Stdio::from(fs::File::create_new(&stderr_path).unwrap()))
+            .spawn()
             .unwrap();
-        fs::write(logs.join("stdout.txt"), &output.stdout).unwrap();
-        fs::write(logs.join("stderr.txt"), &output.stderr).unwrap();
+        let started = std::time::Instant::now();
+        let mut timed_out = false;
+        let mut output_cap_exceeded = false;
+        let mut kill_error = None;
+        let status = loop {
+            let status = child.try_wait().unwrap();
+            output_cap_exceeded |= fs::metadata(&stdout_path).unwrap().len() > LOG_LIMIT
+                || fs::metadata(&stderr_path).unwrap().len() > LOG_LIMIT;
+            timed_out |= started.elapsed() >= CHILD_TIMEOUT;
+            if timed_out || output_cap_exceeded {
+                // A phase is the exact test child, not another parent dispatcher.
+                // The hosted outer runner also bounds/kills the full parent tree.
+                if status.is_none() {
+                    kill_error = child.kill().err().map(|error| error.to_string());
+                }
+                break status.unwrap_or_else(|| child.wait().unwrap());
+            }
+            if let Some(status) = status {
+                break status;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        output_cap_exceeded |= fs::metadata(&stdout_path).unwrap().len() > LOG_LIMIT
+            || fs::metadata(&stderr_path).unwrap().len() > LOG_LIMIT;
         json(
             &logs.join("process.json"),
             &serde_json::json!({
-                "test": self.marker.test, "phase": phase, "exit": output.status.code(),
+                "test": self.marker.test, "phase": phase, "exit": status.code(),
                 "executable_sha256": self.marker.executable_sha256,
-                "stdout_sha256": sha(&output.stdout), "stderr_sha256": sha(&output.stderr),
+                "stdout_sha256": sha_file(&stdout_path), "stderr_sha256": sha_file(&stderr_path),
+                "timed_out": timed_out, "output_cap_exceeded": output_cap_exceeded,
+                "timeout_seconds": CHILD_TIMEOUT.as_secs(), "stream_budget_bytes": LOG_LIMIT,
+                "kill_error": kill_error,
             }),
         );
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Caps are polled; burst writes can overshoot. Never read an oversized
+        // stream into RAM, and never classify a timeout/cap failure as success.
+        assert!(!timed_out, "child {phase} timed out; logs retained");
         assert!(
-            output.status.success(),
+            !output_cap_exceeded,
+            "child {phase} exceeded log budget; logs retained"
+        );
+        assert!(
+            status.success(),
             "child {phase} failed; retained stdout/stderr under owned case"
         );
+        let stdout_bytes = fs::read(&stdout_path).unwrap();
+        let stdout = String::from_utf8_lossy(&stdout_bytes);
         assert!(
             stdout.contains("running 1 test"),
             "missing exact child selection"
