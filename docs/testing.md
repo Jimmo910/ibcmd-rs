@@ -10,11 +10,11 @@ Nothing in the gate needs SQL Server, a 1C installation, a platform
 executable or a local research corpus: the tests read `tests/fixtures` and
 build what else they need in the system temporary directory. The offline
 matrix of `.github/workflows/offline-e2e.yml` runs on Linux x86-64 and ARM64,
-Windows and macOS ARM64 and Intel; its Linux and Windows lanes are required.
+Windows and macOS ARM64; its Linux and Windows lanes are required. Test
+builds keep line tables only (`CARGO_PROFILE_DEV_DEBUG=line-tables-only`).
 The test commands of each lane:
 
 ```text
-cargo check --locked --workspace --all-targets --no-default-features
 cargo clippy --locked --workspace --exclude ibcmd-rs --all-targets -- -D warnings   # Windows; Quality on Linux
 cargo test --locked --workspace --exclude ibcmd-rs
 cargo test --locked -p ibcmd-rs --test '*' --no-default-features
@@ -22,6 +22,14 @@ cargo test --locked -p ibcmd-rs --lib --no-default-features
 ```
 
 `cargo xtask ci` runs the same commands locally.
+
+A pull request runs only the lanes its changed files can affect
+(`scripts/ci_scope.py`): Markdown that no source, test, profile or tool
+names, and `editors/`, skip every Rust step; changes confined to `src/` and
+the root's integration suites skip the crate tests; changes confined to the
+integration suites (`tests/*.rs`, `tests/support/`) and `tests/scripts/` skip
+the root library. Pushes to master and manual runs run every lane. Root
+examples are compiled by the `platform-oracle` lane below.
 
 The research probes and the live MSSQL tests below are behind features and
 not part of the gate. `.github/workflows/ci.yml` also compiles the root

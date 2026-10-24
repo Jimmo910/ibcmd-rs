@@ -22,6 +22,7 @@ env:
   CARGO_TERM_COLOR: always
   OPENSPEC_TELEMETRY: "0"
   RUST_VERSION: "1.95.0"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   gate:

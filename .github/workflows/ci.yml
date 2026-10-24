@@ -5,6 +5,10 @@ on:
     branches:
       - master
   pull_request:
+    # Documents and the editor client change no compiled target here.
+    paths-ignore:
+      - 'editors/**'
+      - '**/*.md'
   workflow_dispatch:
 
 concurrency:
@@ -13,6 +17,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   sql-ut11-collector:
