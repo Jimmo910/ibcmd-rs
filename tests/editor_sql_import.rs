@@ -438,3 +438,485 @@ mod physical_readset_contracts {
         ));
     }
 }
+
+mod snapshot_contracts {
+    use anyhow::{Result, bail};
+    use ibcmd_rs::{
+        mssql_live_continue::DatabaseIdentity,
+        server::sql_import::{
+            readset::{Check, Limits, Table},
+            snapshot::{self, Profile},
+        },
+        sql::{Dbms, ScriptVariables, SqlClient, SqlParam, SqlRow, SqlValue},
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+
+    #[derive(Clone, Copy)]
+    enum Fault {
+        None,
+        Identity,
+        Version,
+        Schema,
+        MissingSeal,
+        WrongCount,
+        WrongNonce,
+        Truncated,
+        DuplicateIdentity,
+        OutOfOrder,
+        BadType,
+        TransportAfterSeal,
+        SwallowedCallback,
+        EmptySaved,
+        EmptyBoth,
+        ExtraAfterSeal,
+        MissingIdentity,
+        CancelAfterSeal,
+    }
+    struct Recording {
+        calls: AtomicUsize,
+        fault: Fault,
+        cancel: Option<Arc<AtomicBool>>,
+    }
+    fn profile() -> Profile {
+        Profile {
+            identity: DatabaseIdentity {
+                server: "synthetic-server".into(),
+                database: "synthetic]db".into(),
+                database_guid: uuid::Uuid::from_u128(1).to_string(),
+                family_guid: uuid::Uuid::from_u128(2).to_string(),
+                recovery_fork: uuid::Uuid::from_u128(3).to_string(),
+            },
+            sql_version: "synthetic-unmeasured".into(),
+            schema: [7; 32],
+        }
+    }
+    fn text(s: &str) -> SqlValue {
+        SqlValue::Text(s.into())
+    }
+    fn row(set: usize, values: Vec<SqlValue>) -> SqlRow {
+        SqlRow {
+            result_set: set,
+            values,
+        }
+    }
+    fn part(set: usize, name: &str, bytes: &[u8]) -> SqlRow {
+        row(
+            set,
+            vec![
+                text(name),
+                SqlValue::Int(0),
+                SqlValue::Int(bytes.len() as i64),
+                SqlValue::Binary(vec![1]),
+                SqlValue::Binary(vec![2]),
+                SqlValue::Binary(vec![3]),
+                SqlValue::Binary(bytes.to_vec()),
+            ],
+        )
+    }
+    impl Recording {
+        fn new(fault: Fault) -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                fault,
+                cancel: None,
+            }
+        }
+    }
+    impl SqlClient for Recording {
+        fn dbms(&self) -> Dbms {
+            Dbms::SqlServer
+        }
+        fn max_connections(&self) -> usize {
+            8
+        }
+        fn run_script(&self, _: &str, _: ScriptVariables) -> Result<()> {
+            panic!("snapshot must not run a script")
+        }
+        fn execute(&self, _: &str, _: &[SqlParam<'_>]) -> Result<u64> {
+            panic!("snapshot must not execute DML")
+        }
+        fn query_json(&self, _: &str) -> Result<Option<String>> {
+            panic!("snapshot must not issue a second query")
+        }
+        fn write_rows(&self, _: &str, _: &[&str], _: &[Vec<SqlParam<'_>>]) -> Result<u64> {
+            panic!("snapshot must not write rows")
+        }
+        fn read_rows(
+            &self,
+            query: &str,
+            params: &[SqlParam<'_>],
+            each: &mut dyn FnMut(SqlRow) -> Result<()>,
+        ) -> Result<()> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            assert_eq!(query.matches("BEGIN TRANSACTION").count(), 1);
+            assert_eq!(query.matches("WITH (TABLOCK,HOLDLOCK)").count(), 2);
+            assert!(query.contains("USE [synthetic]]db];"));
+            assert!(
+                query.find("snapshot aggregate budget exceeded").unwrap()
+                    < query.find("SELECT FileName,PartNo,DataSize").unwrap()
+            );
+            let (success, failure) = query
+                .split_once("END TRY\nBEGIN CATCH")
+                .expect("snapshot has explicit success and failure paths");
+            assert!(
+                success.rfind("ROLLBACK TRANSACTION;").unwrap()
+                    < success.rfind("SELECT @P7").unwrap()
+            );
+            assert!(failure.contains("IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;"));
+            assert!(!failure.contains("SELECT @P7"));
+            assert!(query.contains("snapshot profile is not measured"));
+            for dml in [
+                "INSERT ",
+                "DELETE ",
+                "UPDATE ",
+                "MERGE ",
+                "COMMIT TRANSACTION",
+            ] {
+                assert!(!query.contains(dml));
+            }
+            let nonce = match params[6] {
+                SqlParam::Text(s) => s,
+                _ => panic!("missing nonce"),
+            };
+            assert!(matches!(params[0],SqlParam::Binary(s) if s==[7;32]));
+            let p = profile();
+            assert!(
+                query.find("snapshot target identity changed").unwrap()
+                    < query.find("SELECT FileName,PartNo,DataSize").unwrap()
+            );
+            let mut metadata = row(
+                0,
+                vec![
+                    text(&p.identity.server),
+                    text(&p.identity.database),
+                    text(&p.identity.database_guid),
+                    text(&p.identity.family_guid),
+                    text(&p.identity.recovery_fork),
+                    text(&p.sql_version),
+                    SqlValue::Binary(p.schema.to_vec()),
+                ],
+            );
+            match self.fault {
+                Fault::Identity => metadata.values[0] = text("other-server"),
+                Fault::Version => metadata.values[5] = text("other-version"),
+                Fault::Schema => metadata.values[6] = SqlValue::Binary(vec![9; 32]),
+                Fault::BadType => {
+                    metadata.values[0] = SqlValue::Binary(b"private-user-path-sentinel".to_vec())
+                }
+                _ => {}
+            }
+            let mut rows = vec![metadata];
+            if matches!(self.fault, Fault::DuplicateIdentity) {
+                rows.push(rows[0].clone());
+            }
+            rows.push(part(1, "selected", b"old"));
+            if !matches!(self.fault, Fault::EmptySaved | Fault::EmptyBoth) {
+                rows.push(part(2, "neighbor", b"aa"));
+            }
+            if matches!(self.fault, Fault::OutOfOrder) {
+                rows.swap(1, 2);
+            }
+            if matches!(self.fault, Fault::Truncated) {
+                rows.remove(1);
+            }
+            if !matches!(self.fault, Fault::MissingSeal) {
+                rows.push(row(
+                    3,
+                    vec![
+                        text(if matches!(self.fault, Fault::WrongNonce) {
+                            "wrong"
+                        } else {
+                            nonce
+                        }),
+                        SqlValue::Int(if matches!(self.fault, Fault::WrongCount) {
+                            2
+                        } else if matches!(self.fault, Fault::EmptyBoth) {
+                            0
+                        } else {
+                            1
+                        }),
+                        SqlValue::Int(
+                            if matches!(self.fault, Fault::EmptySaved | Fault::EmptyBoth) {
+                                0
+                            } else {
+                                1
+                            },
+                        ),
+                        SqlValue::Int(if matches!(self.fault, Fault::EmptyBoth) {
+                            0
+                        } else {
+                            3
+                        }),
+                        SqlValue::Int(
+                            if matches!(self.fault, Fault::EmptySaved | Fault::EmptyBoth) {
+                                0
+                            } else {
+                                2
+                            },
+                        ),
+                    ],
+                ));
+            }
+            if matches!(self.fault, Fault::EmptyBoth) {
+                rows.retain(|r| r.result_set == 0 || r.result_set == 3);
+            }
+            if matches!(self.fault, Fault::MissingIdentity) {
+                rows.remove(0);
+            }
+            if matches!(self.fault, Fault::ExtraAfterSeal) {
+                rows.push(part(2, "extra", b"x"));
+            }
+            for (index, row) in rows.into_iter().enumerate() {
+                if index == 1
+                    && !matches!(self.fault, Fault::CancelAfterSeal)
+                    && let Some(cancel) = &self.cancel
+                {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+                let result = each(row);
+                if !matches!(self.fault, Fault::SwallowedCallback) {
+                    result?;
+                }
+            }
+            if matches!(self.fault, Fault::CancelAfterSeal)
+                && let Some(cancel) = &self.cancel
+            {
+                cancel.store(true, Ordering::Relaxed);
+            }
+            if matches!(self.fault, Fault::TransportAfterSeal) {
+                bail!("synthetic transport lost after seal");
+            }
+            Ok(())
+        }
+    }
+    fn capture(
+        client: &Recording,
+        limits: Limits,
+    ) -> Result<ibcmd_rs::server::sql_import::readset::Readset> {
+        snapshot::capture(client, &profile(), limits, Arc::new(|| Ok(())))
+    }
+    #[test]
+    fn one_request_captures_both_tables_and_complete_headers() {
+        let client = Recording::new(Fault::None);
+        let captured = capture(&client, Limits::default()).unwrap();
+        assert_eq!(client.calls.load(Ordering::Relaxed), 1);
+        let (key, part) = captured.parts(Table::ConfigSave).next().unwrap();
+        assert_eq!(key.file_name, "neighbor");
+        assert_eq!(part.binary.as_slice(), b"aa");
+        let expected = [
+            vec![1u64.to_le_bytes().to_vec(), vec![1]].concat(),
+            vec![1u64.to_le_bytes().to_vec(), vec![2]].concat(),
+            vec![1u64.to_le_bytes().to_vec(), vec![3]].concat(),
+        ]
+        .concat();
+        assert_eq!(part.header, expected);
+        assert!(
+            capture(&Recording::new(Fault::EmptySaved), Limits::default())
+                .unwrap()
+                .parts(Table::ConfigSave)
+                .next()
+                .is_none()
+        );
+    }
+    #[test]
+    fn empty_tables_still_require_metadata_and_a_complete_seal() {
+        let client = Recording::new(Fault::EmptyBoth);
+        let captured = capture(&client, Limits::default()).unwrap();
+        assert_eq!(captured.parts(Table::Config).count(), 0);
+        assert_eq!(captured.parts(Table::ConfigSave).count(), 0);
+        assert_eq!(client.calls.load(Ordering::Relaxed), 1);
+    }
+    #[test]
+    fn cancellation_after_valid_seal_still_discards_the_read_only_snapshot() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let seen = cancelled.clone();
+        let check: Check = Arc::new(move || {
+            if seen.load(Ordering::Relaxed) {
+                Err(ibcmd_rs::cancel::Cancelled.into())
+            } else {
+                Ok(())
+            }
+        });
+        let mut client = Recording::new(Fault::CancelAfterSeal);
+        client.cancel = Some(cancelled);
+        let error = snapshot::capture(&client, &profile(), Limits::default(), check)
+            .err()
+            .unwrap();
+        assert!(ibcmd_rs::cancel::is_cancelled(&error));
+        assert_eq!(client.calls.load(Ordering::Relaxed), 1);
+    }
+    #[test]
+    fn identity_schema_version_shape_and_frame_order_fail_closed() {
+        for fault in [
+            Fault::Identity,
+            Fault::Version,
+            Fault::Schema,
+            Fault::BadType,
+            Fault::DuplicateIdentity,
+            Fault::OutOfOrder,
+            Fault::MissingIdentity,
+            Fault::ExtraAfterSeal,
+        ] {
+            let client = Recording::new(fault);
+            assert!(capture(&client, Limits::default()).is_err());
+            assert_eq!(client.calls.load(Ordering::Relaxed), 1);
+        }
+        let message = capture(&Recording::new(Fault::BadType), Limits::default())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(!message.contains("private-user-path-sentinel"));
+    }
+    #[test]
+    fn missing_wrong_or_transport_failed_seal_never_returns_snapshot() {
+        for fault in [
+            Fault::MissingSeal,
+            Fault::WrongCount,
+            Fault::WrongNonce,
+            Fault::Truncated,
+            Fault::TransportAfterSeal,
+        ] {
+            let client = Recording::new(fault);
+            assert!(capture(&client, Limits::default()).is_err());
+            assert_eq!(client.calls.load(Ordering::Relaxed), 1);
+        }
+    }
+    #[test]
+    fn identity_metadata_is_reserved_before_server_row_admission() {
+        struct BudgetProbe(AtomicUsize);
+        impl SqlClient for BudgetProbe {
+            fn dbms(&self) -> Dbms {
+                Dbms::SqlServer
+            }
+            fn max_connections(&self) -> usize {
+                1
+            }
+            fn run_script(&self, _: &str, _: ScriptVariables) -> Result<()> {
+                panic!("unexpected")
+            }
+            fn execute(&self, _: &str, _: &[SqlParam<'_>]) -> Result<u64> {
+                panic!("unexpected")
+            }
+            fn query_json(&self, _: &str) -> Result<Option<String>> {
+                panic!("unexpected")
+            }
+            fn write_rows(&self, _: &str, _: &[&str], _: &[Vec<SqlParam<'_>>]) -> Result<u64> {
+                panic!("unexpected")
+            }
+            fn read_rows(
+                &self,
+                _: &str,
+                p: &[SqlParam<'_>],
+                _: &mut dyn FnMut(SqlRow) -> Result<()>,
+            ) -> Result<()> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                assert!(matches!(p[4], SqlParam::I64(0)));
+                bail!("synthetic server refuses row metadata before streaming")
+            }
+        }
+        let p = profile();
+        let reserved = [
+            &p.identity.server,
+            &p.identity.database,
+            &p.identity.database_guid,
+            &p.identity.family_guid,
+            &p.identity.recovery_fork,
+        ]
+        .into_iter()
+        .map(|s| s.len() as u64)
+        .sum();
+        let probe = BudgetProbe(AtomicUsize::new(0));
+        let result = snapshot::capture(
+            &probe,
+            &p,
+            Limits {
+                max_metadata_bytes: reserved,
+                ..Limits::default()
+            },
+            Arc::new(|| Ok(())),
+        );
+        assert!(result.is_err());
+        assert_eq!(probe.0.load(Ordering::Relaxed), 1);
+    }
+    #[test]
+    fn decoder_enforces_cumulative_and_part_limits_even_for_bad_transport() {
+        for limits in [
+            Limits {
+                max_parts: 1,
+                ..Limits::default()
+            },
+            Limits {
+                max_part_bytes: 2,
+                ..Limits::default()
+            },
+            Limits {
+                max_payload_bytes: 4,
+                ..Limits::default()
+            },
+            Limits {
+                max_metadata_bytes: 200,
+                ..Limits::default()
+            },
+        ] {
+            assert!(capture(&Recording::new(Fault::None), limits).is_err());
+        }
+        let client = Recording::new(Fault::SwallowedCallback);
+        assert!(
+            capture(
+                &client,
+                Limits {
+                    max_payload_bytes: 1,
+                    ..Limits::default()
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(client.calls.load(Ordering::Relaxed), 1);
+    }
+    #[test]
+    fn invalid_bounds_or_pre_cancelled_request_never_touches_sql() {
+        let client = Recording::new(Fault::None);
+        assert!(
+            capture(
+                &client,
+                Limits {
+                    max_parts: 0,
+                    ..Limits::default()
+                }
+            )
+            .is_err()
+        );
+        let error = snapshot::capture(
+            &client,
+            &profile(),
+            Limits::default(),
+            Arc::new(|| Err(ibcmd_rs::cancel::Cancelled.into())),
+        )
+        .err()
+        .unwrap();
+        assert!(ibcmd_rs::cancel::is_cancelled(&error));
+        assert_eq!(client.calls.load(Ordering::Relaxed), 0);
+    }
+    #[test]
+    fn in_stream_cancellation_remains_typed_and_is_not_retried() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let seen = cancelled.clone();
+        let check: Check = Arc::new(move || {
+            if seen.load(Ordering::Relaxed) {
+                Err(ibcmd_rs::cancel::Cancelled.into())
+            } else {
+                Ok(())
+            }
+        });
+        let mut client = Recording::new(Fault::None);
+        client.cancel = Some(cancelled);
+        let error = snapshot::capture(&client, &profile(), Limits::default(), check)
+            .err()
+            .unwrap();
+        assert!(ibcmd_rs::cancel::is_cancelled(&error));
+        assert_eq!(client.calls.load(Ordering::Relaxed), 1);
+    }
+}

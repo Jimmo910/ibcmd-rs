@@ -4,6 +4,7 @@
 //! shared compiler verification and same-session transactional publication are
 //! separate gates; the RPC SQL route remains closed until those are established.
 pub mod readset;
+pub mod snapshot;
 
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 

@@ -103,3 +103,61 @@ would exceed its limits. Cancellation is checked for merge name/key traversal.
 Independent scoped static review approved this model. The 14 integration tests
 and library check passed; actual SQL acquisition/publication and native acceptance
 remain pending. No runtime database command was performed by these tests.
+
+## Single-request acquisition adapter (synthetic verification only)
+
+The SQL-owned snapshot adapter calls `SqlClient::read_rows` exactly once. Its
+fixed parameterized batch takes table-level shared locks in Config then
+ConfigSave order with HOLDLOCK, preflights total parts, individual/aggregate
+payload and metadata before returning blobs, then streams identity/schema,
+CONFIG and CONFIGSAVE. A terminal nonce/count seal follows a read-only rollback.
+There is no commit, target DML, legacy staging fallback or RPC dispatch change.
+No transaction spans user confirmation. Table-level locking may block writers
+while the bounded snapshot streams; it is not an asynchronous change feed.
+
+The adapter requires an operator-owned exact SQL product version and canonical
+UTF-16LE schema-JSON SHA-256, plus the expected actual target identity. There is
+no accepted default profile. Header fields are framed binary conversions of
+Creation, Modified and Attributes scoped to that measured SQL/schema version;
+this representation is not a platform-independent binary serialization. The
+operator must inspect and measure its supported schema before providing a
+profile. No model/editor argument selects or widens this profile.
+
+A decoder accepts only ordered expected resultsets, exact metadata, complete
+physical rows, cumulative budgets, the matching completion nonce/counts and a
+successful whole request. Callback cancellation is retained as a typed error,
+even if a custom transport incorrectly ignores it. A late transport failure
+discards a sealed stream. The built-in TDS pool discards the connection on any
+callback/query failure; no fallback or SQL execution retry is performed.
+Cancellation checks bracket the request and every received row and subsequent
+readset validation. They do not establish a bounded network interrupt latency;
+lock acquisition uses a 5-second server lock timeout. Real TDS error/rollback,
+locking and concurrent-writer behavior must be tested by the assigned operator.
+
+Source references: Microsoft documents that TABLOCK combined with HOLDLOCK
+retains the shared table lock to transaction end, and that binary conversions
+may vary by SQL Server version. These support the chosen design, not a claim
+that this unexecuted batch has passed native/SQL acceptance:
+[Table hints](https://learn.microsoft.com/en-us/sql/t-sql/queries/hints-transact-sql-table?view=sql-server-ver17),
+[Binary conversions](https://learn.microsoft.com/en-us/sql/t-sql/data-types/binary-and-varbinary-transact-sql?view=sql-server-ver17).
+
+The combined source/readset/recording integration suite passed 23 tests and a
+library check after independent static approval. The first run stopped at a
+test-oracle error (whole-query rollback search also matched CATCH); its failure
+record is retained. The separately granted retry changed only that assertion:
+success-path rollback precedes the seal; CATCH rolls back without sealing.
+Production Rust/SQL hashes were unchanged for the retry. Recording controls check
+one request/no target mutation dispatch, profile/identity/shape/order refusal,
+missing/wrong/truncated seals, late transport failure, cumulative limits and
+pre-/in-stream typed cancellation. They cannot prove actual SQL lock coherence,
+measured schema acceptance or transaction publication authority.
+
+Identity UTF-8 bytes are reserved from the metadata budget before the SQL row
+budget parameter is constructed. Exact actual identity checks run before any
+blob SELECT. The synthetic zero-row-budget probe verifies the subtraction reaches
+the single read request. Metadata visibility is required; the snapshot does not
+change permissions. Schema fingerprints include columns, computed/default/check
+definitions, index structure and triggers. The 32 KiB schema limit bounds accepted
+schema text, not allocation performed by SQL while constructing catalog JSON.
+No new compiler warning refers to the SQL files; the root library check still
+reports 98 warnings elsewhere. Full repository/CI and actual SQL gates are open.

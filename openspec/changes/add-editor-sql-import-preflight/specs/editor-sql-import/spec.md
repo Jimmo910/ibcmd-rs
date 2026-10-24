@@ -55,3 +55,23 @@ actual disposable SQL acceptance are verified.
 - **GIVEN** only a recording backend and portable fixture tests passed
 - **WHEN** capabilities or completion are reported
 - **THEN** real SQL publication and native apply/export are still pending.
+
+### Requirement: Snapshot acquisition is one bounded session request
+The SQL snapshot adapter SHALL acquire identity, a measured storage schema and
+all CONFIG/CONFIGSAVE physical parts in one request while retaining read locks
+on both tables. It SHALL require a matching operator-measured SQL version/schema
+profile, enforce cumulative limits before blob streaming, and accept no partial
+snapshot after callback cancellation, transport failure or a missing terminal seal.
+
+#### Scenario: Unsupported profile or interrupted stream
+- **GIVEN** an unmeasured version/schema, an identity mismatch, an exceeded
+  part/payload budget, cancellation or an incomplete result stream
+- **WHEN** snapshot acquisition is requested
+- **THEN** no immutable snapshot is returned, no target DML is dispatched and
+  no fallback to separate-session reads or legacy staging is attempted.
+
+#### Scenario: Synthetic transport contract
+- **GIVEN** only a recording SQL client
+- **WHEN** the single-request decoder and refusal tests pass
+- **THEN** actual SQL lock/coherence/transport behavior remains an operator
+  acceptance gate and SQL publication remains unavailable.
