@@ -15,7 +15,7 @@ from process_scope import ProcessScope
 from readonly_probe import CANDIDATE, API_BASE, PROTOCOL, decode_frames, public_error
 
 PEER = Path(__file__).with_name("fake_rpc_peer.py")
-CODE = ("rpc_probe.py", "process_scope.py", "readonly_probe.py", "fake_rpc_peer.py", "rpc-runner-contract.md")
+CODE = ("rpc_probe.py", "process_scope.py", "readonly_probe.py", "fake_rpc_peer.py", "rpc-runner-contract.md", "windows_file_identity.py")
 CASES = {"ok", "hang", "stdout-cap", "stderr-cap", "early-error", "wrong-id", "nonzero", "malformed", "mutate-input", "mutate-seal", "descendant-hang", "missing-cancel", "stale-snapshot", "trailing-frame", "trailing-error", "trailing-malformed", "trailing-flood", "trailing-progress"}
 PINNED_API = {
     "src/server/mod.rs": "e7f79e773e1875f75d48f2cb428e9ddcd22393ad8a88fdd416ab9418f01e953a",
@@ -101,10 +101,18 @@ def regular(path, cap, deadline=None, unique=False):
     before = path.lstat()
     need(not unique or before.st_nlink == 1, "input-hardlink-refused")
     need(path.is_file() and before.st_size <= cap, "regular-input-cap")
+    if os.name == "nt":
+        from windows_file_identity import path_identity, fd_identity
+        before_identity = path_identity(path)
+        need(not unique or before_identity[-1] == 1, "input-hardlink-refused")
+    else:
+        before_identity = identity(before)
+        fd_identity = lambda fd: identity(os.fstat(fd))
+        path_identity = lambda name: identity(name.lstat())
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     fd = os.open(path, flags)
     with os.fdopen(fd, "rb") as stream:
-        need(identity(os.fstat(stream.fileno())) == identity(before), "input-rebound")
+        need(fd_identity(stream.fileno()) == before_identity, "input-rebound")
         chunks, size = [], 0
         while True:
             check_deadline(deadline)
@@ -114,10 +122,10 @@ def regular(path, cap, deadline=None, unique=False):
             chunks.append(chunk); size += len(chunk)
             need(size <= cap, "regular-input-cap")
         data = b"".join(chunks)
-        need(len(data) <= cap and identity(os.fstat(stream.fileno())) == identity(before), "input-changed")
-    need(identity(path.lstat()) == identity(before), "input-rebound")
+        need(len(data) <= cap and fd_identity(stream.fileno()) == before_identity, "input-changed")
+    need(path_identity(path) == before_identity, "input-rebound")
     check_deadline(deadline)
-    return data, identity(before)
+    return data, before_identity
 
 
 def inventory(root, deadline=None):

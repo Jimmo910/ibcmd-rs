@@ -6,7 +6,7 @@ from pathlib import Path
 
 SOURCE_NAMES = {"rpc_probe.py", "process_scope.py", "readonly_probe.py", "fake_rpc_peer.py",
     "rpc-runner-contract.md", "test_rpc_probe.py", "test_windows_rpc_probe.py",
-    "windows_rpc_gate.py", "windows_gate_support.py"}
+    "windows_rpc_gate.py", "windows_gate_support.py", "windows_file_identity.py"}
 
 
 def verified_sources():

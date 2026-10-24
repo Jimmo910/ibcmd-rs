@@ -189,3 +189,61 @@ External logs: `logs/issue-380-review-9a1439ae-targeted.log` and
 `logs/issue-380-review-9a1439ae-full.log`. All fixtures retained. No local Cargo
 or corrected Windows execution is included in these counts; the stronger Rust
 assertion awaits the ordinary CI run.
+
+
+## Path/descriptor native witness follow-up
+
+Exact head `5cf8f5f9` reached artifact upload successfully. Fork Windows run
+`40087849695` / job `120854314127` ran seven tests without skips: three model
+controls passed, four named controls errored while preparing seals. The retained
+artifact log places every error at the path-stat/descriptor-fstat identity
+comparison, before fake process/Job Object execution. No kernel pass is claimed.
+
+The artifact ZIP was retained externally and verified against GitHub's archive
+SHA-256 `97ac73a699827f56e7dc87c166b58702c491f4e8b07795c5215c964e13f3598e`.
+Receipt interpreter SHA-256:
+`4d6f5f81a4bca11191c4c7c6b43632694d0a4ce74e068619d8fdc161d469859a`.
+The log does not record which stat field differed, so no particular field is
+asserted to be the cause.
+
+The correction obtains both path and descriptor witnesses with the same native
+read-only metadata API family: [FILE_ID_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info),
+[FILE_BASIC_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_basic_info)
+and [FILE_STANDARD_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_standard_info).
+It preserves volume and full 128-bit file ID, byte size, write/change/creation
+times and link count. It ignores access time, which ordinary reads can change.
+Reparse/directory/deletion-pending/unsupported metadata refuse; owned metadata
+handles close confirmed, and the live Python descriptor handle remains borrowed.
+No mismatching field is dropped and no byte/hash/size/unique-link guard is relaxed.
+POSIX retains its previous stat/fstat witness. This is fake-harness input sealing,
+not a production filedb/SQL adapter or actual product status implementation.
+
+
+Native witness follow-up local evidence: **eight pure ABI/custody/refusal models
+passed (0.001 s)**; then the unchanged reviewed runtime hashes passed the full
+suite: **106 run, 103 passed, three explicit Windows kernel skips (2.351 s)**.
+No Windows API was called locally: model tests inject a fake kernel, and POSIX
+keeps its previous stat/fstat path. This is not corrected Windows proof.
+Manifest SHA-256:
+`1e2350906d046e69f14ce6f73c2070900077a7930f6b23842d6159656511f80a`.
+Retained external logs: `logs/issue-380-native-witness-1e235090-targeted.log`
+and `logs/issue-380-native-witness-1e235090-full.log`.
+
+
+A bounded diagnostic in the corrected gate compares legacy stat/fstat on the
+one fixed, manifest-verified gate source. It emits only differing names from a
+seven-field allowlist; no IDs, timestamps, values or paths. A pure control checks
+that diagnostic projection. Legacy values do not decide admission: the genuine
+native path/descriptor witness remains authoritative. The exact old differing
+field stays unclaimed until this actual Windows diagnostic runs.
+
+
+Final source including the requested label-only diagnostic: **nine pure targeted
+controls passed (0.002 s)**, then the same reviewed hashes passed the full suite:
+**107 run, 104 passed, three explicit Windows kernel skips (2.380 s)**.
+Final manifest SHA-256:
+`380397ccf73b9503d4903352acee50ceb9ebf117e1fba58ec3793ae18044047e`.
+Retained external logs: `logs/issue-380-native-witness-380397cc-targeted.log`
+and `logs/issue-380-native-witness-380397cc-full.log`. These supersede the local
+8/106 checkpoint for the additional diagnostic source; neither establishes an
+actual corrected Windows outcome or live SQL acceptance.

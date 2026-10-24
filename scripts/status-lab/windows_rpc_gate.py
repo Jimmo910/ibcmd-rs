@@ -19,6 +19,12 @@ EXPECTED = {
 }
 
 
+def legacy_stat_mismatch_fields(named, opened):
+    # Finite field labels only: never emit raw file IDs, times, bytes or paths.
+    names = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_birthtime_ns", "st_nlink")
+    return [name for name in names if getattr(named, name, None) != getattr(opened, name, None)]
+
+
 def leaves(suite):
     for item in suite:
         if isinstance(item, unittest.TestSuite):
@@ -42,6 +48,11 @@ def main():
     root = probe.explicit_fixture_base()
     if not root.is_dir() or any(root.iterdir()):
         raise SystemExit("new empty owned fixture base required")
+    # Diagnose the old cross-family mismatch on this fixed, source-verified file.
+    # These legacy values do not decide admission; consistent native witnesses do.
+    with Path(__file__).open("rb") as stream:
+        different = legacy_stat_mismatch_fields(Path(__file__).lstat(), os.fstat(stream.fileno()))
+    print(json.dumps({"schema": 1, "profile": "public-gate-source", "legacyStatDifferentFields": different}))
     suite = unittest.defaultTestLoader.loadTestsFromName("test_windows_rpc_probe")
     tests = list(leaves(suite))
     ids = {test.id().removeprefix("test_windows_rpc_probe.") for test in tests}

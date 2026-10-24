@@ -47,7 +47,7 @@ jobs:
           if (($manifestFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $manifestFile.Length -gt 16384) { throw 'manifest boundary' }
           $manifestHash = (Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
           Write-Output ('Public manifest SHA256=' + $manifestHash + ' bytes=' + $manifestFile.Length)
-          if ($manifestHash -ne '9a1439ae693487583eddf2835b39d77ff3c8130a8be907ab4fe2b4d28dccbbb9') { throw 'manifest binding' }
+          if ($manifestHash -ne '380397ccf73b9503d4903352acee50ceb9ebf117e1fba58ec3793ae18044047e') { throw 'manifest binding' }
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
           foreach ($item in $manifest.sha256.PSObject.Properties) {
             $path = Join-Path 'scripts/status-lab' $item.Name
