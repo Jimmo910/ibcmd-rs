@@ -33,6 +33,7 @@ struct Recording {
     stage: Rows,
     queries: Vec<String>,
     fail: bool,
+    mutating_attempts: usize,
 }
 struct ReadOnlySql(Arc<Mutex<Recording>>);
 
@@ -46,12 +47,15 @@ impl SqlClient for ReadOnlySql {
         1
     }
     fn run_script(&self, _: &str, _: ScriptVariables) -> Result<()> {
+        self.0.lock().unwrap().mutating_attempts += 1;
         bail!("status attempted script")
     }
     fn execute(&self, _: &str, _: &[SqlParam<'_>]) -> Result<u64> {
+        self.0.lock().unwrap().mutating_attempts += 1;
         bail!("status attempted execute")
     }
     fn write_rows(&self, _: &str, _: &[&str], _: &[Vec<SqlParam<'_>>]) -> Result<u64> {
+        self.0.lock().unwrap().mutating_attempts += 1;
         bail!("status attempted bulk write")
     }
     fn query_json(&self, _: &str) -> Result<Option<String>> {
@@ -504,6 +508,11 @@ fn recording_sql_status_contract() {
         fs::read(fixture.join("1Cv8.1CD")).unwrap(),
         bytes,
         "public fixture copy is read-only"
+    );
+    assert_eq!(
+        state.lock().unwrap().mutating_attempts,
+        0,
+        "all status outcomes must avoid writer entry points"
     );
     assert_eq!(
         tree(&source),
