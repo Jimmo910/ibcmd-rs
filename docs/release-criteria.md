@@ -160,6 +160,7 @@ cargo fmt --all --check
 cargo check --locked --workspace --all-targets --no-default-features
 cargo test --locked --workspace --exclude ibcmd-rs
 cargo test --locked -p ibcmd-rs --test '*' --no-default-features
+cargo test --locked -p ibcmd-rs --lib --no-default-features
 cargo build --locked --release --no-default-features
 
 python scripts/generate_sbom.py `
