@@ -12,10 +12,10 @@ import sys
 import tempfile
 import time
 
-FUNCTIONAL = "6a51a621eb49493fbabb0b7be2a3f046b32c24d5"
-FUNCTIONAL_TREE = "3297e5a0ad20561b51511bbf082091e6871b574c"
+FUNCTIONAL = "4052d80e369d55b0a3b4bb7d2d79e8c88a61241b"
+FUNCTIONAL_TREE = "0d9a28aed5d8bc5b896a396030267cf86ec2f659"
 HARNESS = "tests/editor_partial_import_windows.rs"
-HARNESS_BLOB = "fe92dfc022b15696a9e105b94d7840f43d3d6f01"
+HARNESS_BLOB = "a9000be998de9aad5b57558f6311f0fe3c7e05c5"
 CONTROL = "src/mssql_source_change/files/windows_custody_tests.rs"
 CONTROL_BLOB = "88990942c256850a0449214923d7ee7190332cf7"
 GZIP_SHA = "090455ade0bae8bb328bce6890db1d1dd4be204f3dce1081cc4f13da65652809"
@@ -79,6 +79,19 @@ def phases_for(name):
     return ["refusal"]
 
 
+def verify_recovery(probe, published):
+    flags = ["without_handle_rename_passed", "held_rename_denied", "after_drop_rename_passed",
+             "held_target_preserved", "held_source_preserved", "same_parent_attrs_match", "held_attrs_unchanged"]
+    code = probe.get("denial_raw_os_error")
+    if (not all(probe.get(flag) is True for flag in flags)
+            or type(code) is not int or code not in (5, 32)
+            or published.get("published") is not True
+            or type(published.get("raw_os_error")) is not int or published["raw_os_error"] != code
+            or not re.fullmatch(r"[0-9a-f]{64}", published.get("original_sha256", ""))
+            or published["original_sha256"] != published.get("recovery_sha256")):
+        raise RuntimeError("unproven differential denial or committed recovery image")
+
+
 def verify_case(temporary, name, executable_sha):
     roots = list(temporary.glob("ibcmd-windows-plan-*"))
     if len(roots) != 1:
@@ -116,6 +129,9 @@ def verify_case(temporary, name, executable_sha):
                     or published["before_sha256"] == published["after_sha256"]
                     or published["before_sha256"] != published["backup_sha256"]):
                 raise RuntimeError("positive did not publish an actual complete pending stage/backup")
+    if name.endswith("committed_recovery_error_retains_original"):
+        verify_recovery(json.loads((root / "recovery-denial-probe.json").read_text(encoding="utf-8")),
+                        json.loads((root / "committed-recovery.json").read_text(encoding="utf-8")))
     return {"fixture": str(root), "nonce": marker["nonce"], "child_phases": phases}
 
 
@@ -182,8 +198,29 @@ def self_test():
         except RuntimeError:
             continue
         raise RuntimeError("guard accepted an unreviewed path")
+    probe = {flag: True for flag in ["without_handle_rename_passed", "held_rename_denied",
+             "after_drop_rename_passed", "held_target_preserved", "held_source_preserved",
+             "same_parent_attrs_match", "held_attrs_unchanged"]}
+    probe["denial_raw_os_error"] = 5
+    published = {"published": True, "raw_os_error": 5,
+                 "original_sha256": "a" * 64, "recovery_sha256": "a" * 64}
+    verify_recovery(probe, published)
+    verify_recovery(dict(probe, denial_raw_os_error=32), dict(published, raw_os_error=32))
+    for bad_probe, bad_published in [
+        (dict(probe, without_handle_rename_passed=False), published),
+        (dict(probe, after_drop_rename_passed=False), published),
+        (dict(probe, denial_raw_os_error=13), dict(published, raw_os_error=13)),
+        (probe, dict(published, raw_os_error=32)),
+        (probe, dict(published, published=False)),
+        (probe, dict(published, recovery_sha256="b" * 64)),
+    ]:
+        try:
+            verify_recovery(bad_probe, bad_published)
+        except RuntimeError:
+            continue
+        raise RuntimeError("recovery verifier accepted unproven publication")
     guard_self_test()
-    print("classifier 2 valid/5 refusal; path guard 4 refusal; actual Git rename refusal: PASS")
+    print("classifier 2 valid/5 refusal; path guard 4 refusal; actual Git rename refusal; recovery 2 valid/6 refusal: PASS")
 
 
 class Gate:
