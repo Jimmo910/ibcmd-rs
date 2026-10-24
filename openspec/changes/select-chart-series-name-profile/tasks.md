@@ -7,3 +7,10 @@
 - [ ] 7. Thread any approved policy without mutable global state or private-name heuristics.
 - [ ] 8. Run targeted tests, policy gates and the repository verification loop.
 - [ ] 9. Obtain independent review and serialized exact-head native byte/inventory comparison.
+
+
+Partial evidence for steps 3 and 6–8 is recorded in
+`evidence/local-validation.md`: one public wrapper name observation and an
+explicit-English-only correction with four RED/GREEN-tested controls. The full
+steps remain open because paired controls, default export selection and the
+complete verification loop are still pending. No native parity gate is closed.
