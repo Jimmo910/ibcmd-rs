@@ -32,3 +32,8 @@ The observer SHALL preserve warnings, misses, duplicates and ambiguity and SHALL
 - **GIVEN** duplicate ordinals, names, keys or slash/case aliases
 - **WHEN** observation runs
 - **THEN** all bounded occurrences are retained and ambiguity is recorded without overwrite or UUID wildcard inference
+
+#### Scenario: Recognized family without key-anchored header
+- **GIVEN** a recognized four-family descriptor without a header bound to the exact supplied key
+- **WHEN** the metadata audit cannot bind that header
+- **THEN** its warning is retained, the occurrence is explicitly unbound/ambiguous, the graph is rejected and no other UUID or multiple owners are inferred

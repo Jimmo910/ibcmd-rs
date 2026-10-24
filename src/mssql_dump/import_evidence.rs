@@ -135,9 +135,14 @@ impl CandidateObservation {
     pub(crate) fn audit_issue(&self) -> Option<&'static str> {
         self.audit_issue
     }
+    /// True when an occurrence cannot bind uniquely, including a missing
+    /// key-anchored header. This is not a count or proof of multiple owners.
+    /// audit_issue=header distinguishes that absence from occurrence collisions.
     pub(crate) fn ambiguous(&self) -> bool {
         self.ambiguous
     }
+    /// The audit searches by the supplied key; this is a key-anchored header
+    /// candidate, not an independently discovered UUID or full parent binding.
     pub(crate) fn uuid_candidate(&self) -> Option<&str> {
         self.uuid_candidate.as_deref()
     }
@@ -391,6 +396,12 @@ pub(crate) fn observe_view(
                 observation.normalized_text_sha256 =
                     Some(Sha256::digest(row.text.as_bytes()).into());
                 observation.kind_candidate = row.kind.clone();
+                if row.header.is_none() && row.kind.as_deref().and_then(family).is_some() {
+                    // No header bound to this exact key. Preserve the audit warning;
+                    // do not search for another UUID or infer multiple owners.
+                    observation.ambiguous = true;
+                    observation.graph_status = GraphStatus::Rejected;
+                }
                 if let Some(header) = row.header.as_ref() {
                     observation.uuid_candidate = Some(header.uuid.clone());
                     observation.name_candidate = Some(header.name.clone());
@@ -655,6 +666,24 @@ mod tests {
         assert!(result.candidates()[0].ambiguous());
         assert_eq!(result.candidates()[0].graph_status(), GraphStatus::Rejected);
         assert!(result.candidates()[0].collections().is_empty());
+    }
+
+    #[test]
+    fn missing_key_anchored_header_is_unbound_not_an_invented_other_owner() {
+        let text = graph_text(OwnerGraphFamily::Catalog, false)
+            .replace(&format!("{{1,0,{OWNER}}}"), "{0}");
+        let packed = pack(text.as_bytes());
+        let result = observe(&[candidate(OWNER, &packed, 0)]);
+        let row = &result.candidates()[0];
+        assert_eq!(row.kind_candidate(), Some("Catalog"));
+        assert_eq!(row.audit_issue(), Some("header"));
+        assert!(row.ambiguous());
+        assert_eq!(row.graph_status(), GraphStatus::Rejected);
+        assert!(row.uuid_candidate().is_none());
+        assert!(row.name_candidate().is_none());
+        assert!(row.graph_diagnostic().is_none());
+        assert!(row.collections().is_empty());
+        assert!(result.require_owner_completeness().is_err());
     }
 
     #[test]
