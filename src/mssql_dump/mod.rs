@@ -996,6 +996,7 @@ mod form_body;
 pub use form_body::{
     FormFieldMapObservationError, FormFieldMapObservationReport,
     MAX_FORM_OBSERVER_COMPRESSED_BYTES, observe_form_field_map_blob,
+    observe_form_field_map_blob_with_context,
 };
 mod form_extension;
 mod form_ref_index;

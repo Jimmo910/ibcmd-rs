@@ -1,7 +1,9 @@
 mod field_map_observer;
+mod query_identity_observer;
 pub use field_map_observer::{
     FormFieldMapObservationError, FormFieldMapObservationReport,
     MAX_FORM_OBSERVER_COMPRESSED_BYTES, observe_form_field_map_blob,
+    observe_form_field_map_blob_with_context,
 };
 
 use super::*;
@@ -8649,6 +8651,11 @@ pub(super) struct FormDynamicListQuerySelection {
     /// `(source alias, field) -> result column name` for every plain
     /// two-segment selection path.
     pub(super) paths: BTreeMap<(String, String), String>,
+    /// Diagnostic projection only: preserve repeated plain paths without
+    /// changing the established map or any resolver consumer.
+    pub(super) plain_path_occurrences: Vec<(String, String, String)>,
+    /// Selection expressions not represented by a plain path or supported star.
+    pub(super) unclassified_selection_expression_count: usize,
 }
 
 fn is_1c_query_ident(token: &str) -> bool {
@@ -9087,6 +9094,19 @@ fn form_query_source_reference(source: &[String]) -> Option<String> {
 pub(super) fn parse_form_dynamic_list_query_selection(
     query_text: &str,
 ) -> Option<FormDynamicListQuerySelection> {
+    parse_form_dynamic_list_query_selection_projected(query_text, false)
+}
+
+fn parse_form_dynamic_list_query_selection_diagnostic(
+    query_text: &str,
+) -> Option<FormDynamicListQuerySelection> {
+    parse_form_dynamic_list_query_selection_projected(query_text, true)
+}
+
+fn parse_form_dynamic_list_query_selection_projected(
+    query_text: &str,
+    diagnostic_projection: bool,
+) -> Option<FormDynamicListQuerySelection> {
     let tokens = tokenize_1c_query(query_text);
     let batches = split_1c_query_batches(&tokens);
     let batch = batches
@@ -9202,6 +9222,9 @@ pub(super) fn parse_form_dynamic_list_query_selection(
                     && is_1c_query_ident(&item[2]) =>
             {
                 selection.aliases.insert(item[2].clone());
+                if diagnostic_projection {
+                    selection.unclassified_selection_expression_count += 1;
+                }
             }
             Some(alias) if alias == "*" => {
                 let qualifier = (item.len() == 3 && item[1] == "." && is_1c_query_ident(&item[0]))
@@ -9221,11 +9244,23 @@ pub(super) fn parse_form_dynamic_list_query_selection(
                     && is_1c_query_ident(&expression[0])
                     && is_1c_query_ident(&expression[2])
                 {
+                    if diagnostic_projection {
+                        selection.plain_path_occurrences.push((
+                            expression[0].clone(),
+                            expression[2].clone(),
+                            alias.clone(),
+                        ));
+                    }
                     selection
                         .paths
                         .insert((expression[0].clone(), expression[2].clone()), alias);
+                } else {
+                    if diagnostic_projection {
+                        selection.unclassified_selection_expression_count += 1;
+                    }
                 }
             }
+            None if diagnostic_projection => selection.unclassified_selection_expression_count += 1,
             None => {}
         }
     }

@@ -292,6 +292,7 @@ fn ci_steps(root: &Path) -> Vec<Step> {
     ));
     for (name, filter) in [
         ("bounded Form field-map observation", "field_map_observer"),
+        ("bounded Form query identity", "query_identity_observer"),
         (
             "shared Form observer schema",
             "form_observer_shared_schema_tests",

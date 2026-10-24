@@ -60,6 +60,7 @@ jobs:
           IBCMD_TEST_KEEP_FIXTURES: "1"
         run: |
           cargo test --locked --lib field_map_observer --no-default-features
+          cargo test --locked --lib query_identity_observer --no-default-features
           cargo test --locked --lib form_observer_shared_schema_tests --no-default-features
       - name: Build read-only Windows Form observer
         if: runner.os == 'Windows'
@@ -70,6 +71,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: python tests/scripts/form_field_map_observer_cli_test.py target/debug/examples/form_field_map_observer.exe "$env:RUNNER_TEMP/observer-fixtures"
+      - name: Verify frozen context CLI custody and non-disclosure
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          IBCMD_TEST_KEEP_FIXTURES: "1"
+        run: python tests/scripts/form_field_map_context_cli_test.py target/debug/examples/form_field_map_observer.exe "$env:RUNNER_TEMP/observer-context-fixtures"
       - name: Verify observer staging preserves prior artifacts
         env:
           IBCMD_TEST_KEEP_FIXTURES: "1"

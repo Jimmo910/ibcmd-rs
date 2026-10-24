@@ -1,6 +1,8 @@
 //! Bounded, value-free observations of manual DynamicList field-map custody.
 //! All identifiers remain local to this function; reports hold no source strings.
+mod context;
 use super::*;
+use context::{BoundQueryGroup, ObservationContext};
 use serde::Serialize;
 use std::io::Read;
 
@@ -21,6 +23,7 @@ pub enum FormFieldMapObservationError {
     Limit,
     InvalidForm,
     InvalidBag,
+    InvalidContext,
 }
 impl FormFieldMapObservationError {
     pub const fn code(self) -> &'static str {
@@ -28,6 +31,7 @@ impl FormFieldMapObservationError {
             Self::Limit => "FORM_OBSERVER_LIMIT",
             Self::InvalidForm => "FORM_OBSERVER_INVALID_FORM",
             Self::InvalidBag => "FORM_OBSERVER_INVALID_BAG",
+            Self::InvalidContext => "FORM_OBSERVER_INVALID_CONTEXT",
         }
     }
 }
@@ -43,6 +47,8 @@ pub struct FormFieldMapObservationReport {
     schema_version: u8,
     full_typed_universe_available: bool,
     manual_dynamic_list_groups: Vec<Group>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_bound_groups: Option<Vec<BoundQueryGroup>>,
 }
 #[derive(Debug, Serialize)]
 struct Group {
@@ -71,6 +77,27 @@ struct Candidate {
 pub fn observe_form_field_map_blob(
     blob: &[u8],
 ) -> Result<FormFieldMapObservationReport, FormFieldMapObservationError> {
+    observe_with_context(blob, None)
+}
+
+/// Optional VM-local context binds exact attribute names to a frozen XML pair.
+/// Context strings and source bytes never enter the serializable report.
+/// XML parsing and attribute correspondence remain with the reviewed caller;
+/// these bytes bind its context to the exact inputs rather than reparsing XML.
+pub fn observe_form_field_map_blob_with_context(
+    blob: &[u8],
+    context_json: &[u8],
+    native_xml: &[u8],
+    candidate_xml: &[u8],
+) -> Result<FormFieldMapObservationReport, FormFieldMapObservationError> {
+    let context = ObservationContext::read(context_json, blob, native_xml, candidate_xml)?;
+    observe_with_context(blob, Some(context))
+}
+
+fn observe_with_context(
+    blob: &[u8],
+    context: Option<ObservationContext>,
+) -> Result<FormFieldMapObservationReport, FormFieldMapObservationError> {
     if blob.len() > MAX_FORM_OBSERVER_COMPRESSED_BYTES {
         return Err(FormFieldMapObservationError::Limit);
     }
@@ -97,9 +124,19 @@ pub fn observe_form_field_map_blob(
     // Admit all bags and resource bounds before executing a map or query
     // resolver. Errors stop immediately; no production attribute decode runs.
     let mut admitted = Vec::new();
+    let mut context_names = BTreeSet::new();
     for record in raw.records {
         let attribute =
             form_attribute_raw_view(record).ok_or(FormFieldMapObservationError::InvalidForm)?;
+        // Context correspondence concerns all raw attributes, including ones
+        // later excluded as nonmanual or nondynamic. Do not hide duplicates.
+        if context
+            .as_ref()
+            .is_some_and(|context| context.selects_name(&attribute.name))
+            && !context_names.insert(attribute.name.clone())
+        {
+            return Err(FormFieldMapObservationError::InvalidContext);
+        }
         let dynamic = attribute
             .pattern
             .and_then(parse_form_exact_single_type_uuid)
@@ -114,18 +151,23 @@ pub fn observe_form_field_map_blob(
             if admitted.len() >= MAX_GROUPS {
                 return Err(FormFieldMapObservationError::Limit);
             }
-            admitted.push(prepared);
+            admitted.push((attribute.name, prepared));
         }
     }
+    let context_bound_groups = context
+        .as_ref()
+        .map(|context| context.observe(&admitted))
+        .transpose()?;
     let groups = admitted
         .into_iter()
         .enumerate()
-        .map(|(index, bag)| observe_prepared_bag(bag, index + 1))
+        .map(|(index, (_, bag))| observe_prepared_bag(bag, index + 1))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(FormFieldMapObservationReport {
-        schema_version: 1,
+        schema_version: if context.is_some() { 2 } else { 1 },
         full_typed_universe_available: false,
         manual_dynamic_list_groups: groups,
+        context_bound_groups,
     })
 }
 
@@ -475,7 +517,7 @@ mod tests {
     use super::*;
     use flate2::{Compression, write::DeflateEncoder};
     use std::io::Write;
-    fn bag(query: &str) -> String {
+    pub(super) fn bag(query: &str) -> String {
         format!(
             r#"{{0,11,"ManualQuery",{{"B",1}},"QueryText",{{"S","{query}"}},"FieldsMapItemId1",{{"N",20}},"FieldsMapItemName1",{{"S","DeletionMark"}},"FieldsMapItemSecondaryName1",{{"S","ПометкаУдаления"}},"FieldsMapItemId0",{{"N",10}},"FieldsMapItemName0",{{"S","DeletionMark"}},"ReqMapFieldId0",{{"N",10}},"ReqMapFieldId1",{{"N",20}},"PrivacySentinel",{{"S","PRIVATE_SENTINEL_71"}},"AutoFillAvailableFields",{{"B",0}}}}"#
         )
@@ -606,7 +648,7 @@ mod tests {
             FormFieldMapObservationError::Limit
         );
     }
-    fn record(settings: &str) -> String {
+    pub(super) fn record(settings: &str) -> String {
         r##"{9,{1},0,"PRIVATE_ATTRIBUTE",{1,0},{"Pattern",{"#",TYPE}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},{0,0},0,0,0,0,BAG,{0,0}}"##
             .replace("TYPE", FORM_DYNAMIC_LIST_TYPE_UUID).replace("BAG", settings)
     }
@@ -615,7 +657,7 @@ mod tests {
         encoder.write_all(plain.as_bytes()).unwrap();
         encoder.finish().unwrap()
     }
-    fn form(records: &[String]) -> Vec<u8> {
+    pub(super) fn form(records: &[String]) -> Vec<u8> {
         let attributes = format!(
             "{{4,{}{}}}",
             records.len(),
