@@ -2852,10 +2852,18 @@ mod traversal_budget_tests {
     fn after_timestamp_tick(path: &Path) {
         let stamped = fs::metadata(path).unwrap().modified().unwrap();
         let probe = std::env::temp_dir().join(format!("held-source-tick-{}", uuid::Uuid::new_v4()));
-        while {
-            fs::write(&probe, b"").unwrap();
-            fs::metadata(&probe).unwrap().modified().unwrap() <= stamped
-        } {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        for round in 0u64.. {
+            // Changing bytes: some file systems keep the time of a rewrite
+            // that changes nothing.
+            fs::write(&probe, round.to_le_bytes()).unwrap();
+            if fs::metadata(&probe).unwrap().modified().unwrap() > stamped {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the file system clock did not advance within 10 s"
+            );
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         let _ = fs::remove_file(&probe);

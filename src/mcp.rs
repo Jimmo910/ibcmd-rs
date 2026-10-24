@@ -677,6 +677,9 @@ fn walk_source(
     use rustix::fs::{Dir, Mode, OFlags, openat};
     ensure!(depth <= 64, "source directory depth limit");
     let before = FileStamp::of(&directory.metadata()?);
+    // The names this walk visits, so the stored listing never names an entry
+    // the snapshot holds no file or stamp for.
+    let mut names = Vec::new();
     for entry in Dir::read_from(directory)? {
         crate::cancel::check()?;
         let entry = entry?;
@@ -686,6 +689,7 @@ fn walk_source(
         if name == "." || name == ".." {
             continue;
         }
+        names.push(name.to_string());
         *entries += 1;
         ensure!(*entries <= 100_000, "source entry count limit");
         ensure!(
@@ -731,13 +735,13 @@ fn walk_source(
         "source directory changed during enumeration"
     );
     snapshot.stamps.insert(prefix.to_string(), before);
-    snapshot
-        .listings
-        .insert(prefix.to_string(), directory_names(directory)?);
+    names.sort();
+    snapshot.listings.insert(prefix.to_string(), names);
     Ok(())
 }
 
-/// The sorted entry names of `directory`, without `.` and `..`.
+/// The sorted entry names of `directory`, without `.` and `..`, as
+/// `walk_source` lists them.
 #[cfg(unix)]
 fn directory_names(directory: &fs::File) -> Result<Vec<String>> {
     let mut names = Vec::new();
@@ -1168,6 +1172,23 @@ mod source_snapshot_tests {
         let snapshot = SourceSnapshot::capture(&handle).unwrap();
         fs::rename(root.join("Ext/Existing.bsl"), root.join("Ext/Renamed.bsl")).unwrap();
         assert!(snapshot.validate(&handle).is_err());
+    }
+    /// An addition within one tick of the file system's clock leaves the
+    /// directory stamps as they were: only the listing tells.
+    #[test]
+    fn an_addition_with_unchanged_directory_stamps_invalidates_the_snapshot() {
+        let root = scratch_root();
+        fs::create_dir(root.join("Ext")).unwrap();
+        fs::write(root.join("Ext/Existing.bsl"), "same").unwrap();
+        let handle = fs::File::open(&root).unwrap();
+        let mut snapshot = SourceSnapshot::capture(&handle).unwrap();
+        fs::write(root.join("Ext/New.bsl"), "new local-only module").unwrap();
+        for (path, directory) in [("", root.to_path_buf()), ("Ext", root.join("Ext"))] {
+            let stamp = FileStamp::of(&fs::metadata(directory).unwrap());
+            snapshot.stamps.insert(path.to_owned(), stamp);
+        }
+        assert!(snapshot.validate(&handle).is_err());
+        assert_eq!(snapshot.listings["Ext"], ["Existing.bsl"]);
     }
     #[test]
     fn outside_root_symlinks_are_refused() {
