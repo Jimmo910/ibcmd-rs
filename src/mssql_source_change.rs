@@ -10,6 +10,8 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+#[cfg(test)]
+mod directory_census_tests;
 mod files;
 use files::{FileIdentity, OriginalFile, RootAnchor};
 
