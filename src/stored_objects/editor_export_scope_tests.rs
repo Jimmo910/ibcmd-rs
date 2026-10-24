@@ -315,3 +315,122 @@ fn scoped_reads_keep_completed_and_incomplete_configsave_publication_semantics()
     );
     assert!(!crate::mssql_dump::file_db_read_scope_active());
 }
+
+#[test]
+fn strict_sql_main_selection_keeps_its_scope_with_an_immutable_offline_snapshot() {
+    use crate::metadata_model::brace::{Brace, parse_row, serialize_row};
+    let c = case();
+    let mut db = ibcmd_filedb::FileDb::open(&c.db).unwrap();
+    let mut rows = db.config_rows("CONFIG").unwrap();
+    drop(db);
+    let descriptor = rows
+        .iter_mut()
+        .find(|row| row.file_name == "6d1c2a0e-1cd0-4f00-9a00-000000000001")
+        .unwrap();
+    let mut parsed =
+        parse_row(&crate::module_blob::inflate_raw(&descriptor.binary).unwrap()).unwrap();
+    parsed.as_list_mut().unwrap()[1].as_list_mut().unwrap()[8] = Brace::num(99);
+    descriptor.binary = crate::module_blob::deflate_raw(&serialize_row(&parsed)).unwrap();
+    let mut config = StoredConfiguration::from_rows_snapshot(
+        ConfigSource::Database {
+            sql: SqlExec::detached("offline snapshot answers every query; never connect"),
+            database: "editor-selected-main".into(),
+        },
+        crate::platform::parse("8.5.1").unwrap(),
+        rows.into_iter()
+            .map(|row| (row.file_name, Arc::new(row.binary)))
+            .collect(),
+    );
+    let names = ["Language.English".into()];
+    config
+        .main_view_mut()
+        .export(&names, &|_, _, _| {})
+        .unwrap();
+    let plan = config
+        .prepare_editor_export(&names, false, &c.source, &c.stage, &|_, _, _| {})
+        .unwrap();
+    assert_eq!(plan.files, ["ConfigDumpInfo.xml", "Languages/English.xml"]);
+    assert_eq!(
+        fs::read(c.stage.join("Languages/English.xml")).unwrap(),
+        fs::read(fixture("tiny-xml/Languages/English.xml")).unwrap()
+    );
+    assert_eq!(
+        EXPORTED_FILE_PATHS.with(|paths| paths.borrow().clone()),
+        ["Languages/English.xml"],
+        "SQL main overlay must not expand the conversion or its proof to unselected rows"
+    );
+    let rejected = c.root.join("rejected-stage");
+    fs::create_dir(&rejected).unwrap();
+    assert!(
+        config
+            .prepare_editor_export(
+                &[names[0].clone(), "CommonModule.ФайловаяБазаПроверка".into()],
+                false,
+                &c.source,
+                &rejected,
+                &|_, _, _| {}
+            )
+            .is_err()
+    );
+    assert!(fs::read_dir(rejected).unwrap().next().is_none());
+}
+
+#[test]
+fn selected_validation_preserves_each_backends_original_configuration_writer() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/external/upgrade/exchange_plan/current.cf");
+    let limits =
+        ibcmd_core::limits::ResourceLimits::for_input_bytes(fs::metadata(&path).unwrap().len());
+    let profile = ibcmd_core::artifact::StorageProfileId::parse("storage:cf-cli").unwrap();
+    let archive =
+        ibcmd_cf::archive::decode_packed_archive(fs::File::open(path).unwrap(), limits, profile)
+            .unwrap();
+    let rows = archive
+        .entries()
+        .iter()
+        .map(|entry| (entry.name().to_owned(), Arc::new(entry.payload().to_vec())))
+        .collect::<BTreeMap<_, _>>();
+    let mut descriptors = Vec::new();
+    for sql in [false, true] {
+        let c = case();
+        let source = if sql {
+            ConfigSource::Database {
+                sql: SqlExec::detached("memory snapshot answers every query"),
+                database: "editor-writer-scope".into(),
+            }
+        } else {
+            ConfigSource::RowsDir(c.root.join("unused-rows"))
+        };
+        let mut config = StoredConfiguration::from_rows_snapshot(
+            source,
+            crate::platform::parse("8.3.27").unwrap(),
+            rows.clone(),
+        );
+        let names = ["Configuration".to_owned()];
+        let observed = config
+            .main_view_mut()
+            .export(&names, &|_, _, _| {})
+            .unwrap()
+            .remove(0);
+        fs::write(
+            c.source.join("ConfigDumpInfo.xml"),
+            config.native_config_dump_info().unwrap(),
+        )
+        .unwrap();
+        config
+            .prepare_editor_export(&names, false, &c.source, &c.stage, &|_, _, _| {})
+            .unwrap();
+        for (path, expected) in &observed.files {
+            assert_eq!(
+                &fs::read(c.stage.join(path)).unwrap(),
+                expected,
+                "writer drift for sql={sql}: {path}"
+            );
+        }
+        descriptors.push(observed.files["Configuration.xml"].clone());
+    }
+    assert_ne!(
+        descriptors[0], descriptors[1],
+        "fixture must actually distinguish the pre-existing model/legacy writer defaults"
+    );
+}

@@ -1,7 +1,7 @@
 //! Native export queries on the common SQL/filedb export pipeline.
 use crate::{
     cli::InfobaseConfigExportArgs,
-    mssql_dump::{DumpHooks, FileSink, SourceAssetCompletenessStatus, dump_config_with},
+    mssql_dump::{DumpHooks, FileSink, dump_config_with},
 };
 use anyhow::{Context, Result};
 use std::{
@@ -241,30 +241,7 @@ pub fn objects(args: &InfobaseConfigExportArgs, names: &[String], recursive: boo
             native_versions: false,
         },
     )?;
-    anyhow::ensure!(
-        !report.tables.is_empty(),
-        "selected export has no completeness inventory"
-    );
-    for table in &report.tables {
-        let metadata = &table.metadata_root_inventory;
-        anyhow::ensure!(
-            metadata.candidate_set_complete
-                && metadata.missing == 0
-                && metadata.expected == metadata.emitted,
-            "selected metadata conversion is incomplete: {} of {} descriptors missing",
-            metadata.missing,
-            metadata.expected
-        );
-        let assets = &table.source_assets;
-        // A scoped inventory proves this selection, not the rest of CONFIG.
-        anyhow::ensure!(
-            assets.status == SourceAssetCompletenessStatus::Complete,
-            "selected source asset conversion is incomplete: {} opaque, {} missing; candidate set complete={}",
-            assets.opaque,
-            assets.missing,
-            assets.candidate_set_complete
-        );
-    }
+    report.ensure_selected_complete()?;
     sink.publish()
 }
 

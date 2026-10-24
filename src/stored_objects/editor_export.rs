@@ -103,8 +103,11 @@ impl StoredConfiguration {
                         }
                     }
                 } else {
-                    view.resolve(std::slice::from_ref(selector))?;
-                    names.insert(selector.clone());
+                    names.extend(
+                        view.resolve(std::slice::from_ref(selector))?
+                            .into_iter()
+                            .map(|object| object.full_name),
+                    );
                 }
             }
             if names.is_empty() {
@@ -181,7 +184,15 @@ impl StoredConfiguration {
             original.insert("ConfigDumpInfo.xml".into(), sha256_hex(&bytes));
         }
         progress(2, 4, "editor export: convert selection");
-        for exported in view.export(&names.iter().cloned().collect::<Vec<_>>(), progress)? {
+        let exported = {
+            let _engine = engine();
+            view.export_checked_unlocked(
+                &names.iter().cloned().collect::<Vec<_>>(),
+                progress,
+                true,
+            )?
+        };
+        for exported in exported {
             for name in local_files(source, &exported.object)?.keys() {
                 if !exported.files.contains_key(name) {
                     removed.insert(name.clone());

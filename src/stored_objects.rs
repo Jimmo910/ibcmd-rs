@@ -901,10 +901,16 @@ pub struct StoredConfiguration {
     platform: PlatformSpec,
     inventory: Option<Inventory>,
     /// By full name, for the inventory's digest.
-    exports: HashMap<String, Arc<ObjectFiles>>,
+    exports: HashMap<String, CachedExport>,
     cached_bytes: usize,
     main_configuration: bool,
     main_view_cache: Option<Box<StoredConfiguration>>,
+}
+
+// Diagnostic-only reads may withhold files. Such a map cannot prove a deletion.
+struct CachedExport {
+    files: Arc<ObjectFiles>,
+    complete: bool,
 }
 
 impl StoredConfiguration {
@@ -1067,6 +1073,15 @@ impl StoredConfiguration {
         names: &[String],
         progress: Progress<'_>,
     ) -> Result<Vec<Arc<ObjectFiles>>> {
+        self.export_checked_unlocked(names, progress, false)
+    }
+
+    fn export_checked_unlocked(
+        &mut self,
+        names: &[String],
+        progress: Progress<'_>,
+        require_complete: bool,
+    ) -> Result<Vec<Arc<ObjectFiles>>> {
         // The cache is looked at once the inventory is current: a changed
         // `versions` row empties it.
         let resolved = self.with_inventory(|inventory, table| {
@@ -1082,7 +1097,11 @@ impl StoredConfiguration {
         let planned = resolved
             .into_iter()
             .map(|(object, rows, version)| {
-                let cached = self.exports.get(&object.full_name).cloned();
+                let cached = self
+                    .exports
+                    .get(&object.full_name)
+                    .filter(|entry| !require_complete || entry.complete)
+                    .map(|entry| entry.files.clone());
                 (object, cached, rows, version)
             })
             .collect::<Vec<_>>();
@@ -1099,7 +1118,12 @@ impl StoredConfiguration {
         if missing > 0 {
             let what = format!("export of {missing} objects ({} rows)", rows.len());
             progress(0, missing, &what);
-            files = self.export_rows(rows)?;
+            let selected = planned
+                .iter()
+                .filter(|(_, cached, _, _)| cached.is_none())
+                .map(|(object, _, _, _)| object.full_name.clone())
+                .collect::<Vec<_>>();
+            files = self.export_rows(rows, require_complete.then_some(selected.as_slice()))?;
             progress(missing, missing, &what);
         }
         let mut out = Vec::with_capacity(planned.len());
@@ -1119,13 +1143,21 @@ impl StoredConfiguration {
                 version,
                 files: own,
             });
+            if let Some(previous) = self.exports.remove(&object.full_name) {
+                self.cached_bytes -= previous.files.files.values().map(Vec::len).sum::<usize>();
+            }
             if self.cached_bytes + size > CACHE_BYTES {
                 self.exports.clear();
                 self.cached_bytes = 0;
             }
             self.cached_bytes += size;
-            self.exports
-                .insert(object.full_name.clone(), exported.clone());
+            self.exports.insert(
+                object.full_name.clone(),
+                CachedExport {
+                    files: exported.clone(),
+                    complete: require_complete,
+                },
+            );
             out.push(exported);
         }
         Ok(out)
@@ -1135,11 +1167,25 @@ impl StoredConfiguration {
     /// ... --extract-metadata-xml --extract-module-text --no-binary-rows
     /// --platform <platform>` (with `--rows-dir` for a folder), files to a
     /// sink.
-    fn export_rows(&self, rows: BTreeSet<String>) -> Result<BTreeMap<String, Vec<u8>>> {
+    fn export_rows(
+        &self,
+        rows: BTreeSet<String>,
+        selected: Option<&[String]>,
+    ) -> Result<BTreeMap<String, Vec<u8>>> {
         if rows.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let args = self.view_export_args(rows);
+        let args = if let Some(selected) = selected {
+            // Keep the already-resolved recursive closure, including a shallow
+            // Configuration selection. Resolving the canonical objects again in
+            // the engine installs the SQL main overlay before selected reads.
+            let mut args = export_args(&self.source, self.platform, rows.into_iter().collect());
+            args.main_configuration = self.main_configuration;
+            args.objects = selected.to_vec();
+            args
+        } else {
+            self.view_export_args(rows)
+        };
         let sink = Arc::new(MemorySink {
             root: PathBuf::from(MEMORY_ROOT),
             files: Mutex::new(BTreeMap::new()),
@@ -1149,16 +1195,25 @@ impl StoredConfiguration {
             ConfigSource::Database { sql, .. } => Some(sql.clone()),
         };
         crate::platform::note_export_platform(self.platform);
-        dump_config_with(
-            &args,
-            DumpHooks {
-                rows_snapshot: self.rows_snapshot.clone(),
-                sql,
-                object_recursion: None,
-                native_versions: false,
-                sink: Some(sink.clone()),
-            },
-        )?;
+        let hooks = DumpHooks {
+            rows_snapshot: self.rows_snapshot.clone(),
+            sql,
+            object_recursion: selected.map(|_| false),
+            native_versions: false,
+            sink: Some(sink.clone()),
+        };
+        let report = if selected.is_some() {
+            crate::mssql_dump::dump_config_with_selected_validation(
+                &args,
+                hooks,
+                self.main_configuration && matches!(self.source, ConfigSource::Database { .. }),
+            )?
+        } else {
+            dump_config_with(&args, hooks)?
+        };
+        if selected.is_some() {
+            report.ensure_selected_complete()?;
+        }
         let files = std::mem::take(&mut *sink.files.lock().unwrap_or_else(PoisonError::into_inner));
         #[cfg(test)]
         EXPORTED_FILE_PATHS.with(|paths| *paths.borrow_mut() = files.keys().cloned().collect());
@@ -1411,7 +1466,7 @@ impl StoredConfiguration {
         progress: Progress<'_>,
     ) -> Result<Vec<ObjectWrite>> {
         let _engine = engine();
-        let exported = self.export_unlocked(names, progress)?;
+        let exported = self.export_checked_unlocked(names, progress, true)?;
         fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
         let mut writes = Vec::new();
         for (index, files) in exported.iter().enumerate() {

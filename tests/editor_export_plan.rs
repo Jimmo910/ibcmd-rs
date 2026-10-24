@@ -272,3 +272,359 @@ fn partial_inventory_keeps_unselected_version_and_never_advertises_it_current() 
         "old-language"
     );
 }
+
+#[path = "common/selected_export_fixture.rs"]
+mod selected_fixture;
+
+#[test]
+fn incomplete_maps_never_plan_removals_or_publish_even_after_observational_cache_hits() {
+    let mut failures = Vec::new();
+    for asset in [false, true] {
+        for cached in [false, true] {
+            for direct in [false, true] {
+                let (root, mut config) = setup();
+                let db = root.join("db/1Cv8.1CD");
+                if asset {
+                    selected_fixture::install_unadmitted_form_asset(&db, true);
+                } else {
+                    selected_fixture::install_unadmitted_common_module_descriptor(&db);
+                }
+                let name = if asset {
+                    "CommonForm.OpaqueForm"
+                } else {
+                    "CommonModule.ФайловаяБазаПроверка"
+                }
+                .to_owned();
+                let source = root.join("source");
+                let stage = root.join("stage");
+                for path in if asset {
+                    vec![
+                        "CommonForms/OpaqueForm.xml",
+                        "CommonForms/OpaqueForm/Ext/Form.xml",
+                        "CommonForms/OpaqueForm/Ext/Form/Module.bsl",
+                    ]
+                } else {
+                    vec![
+                        "CommonModules/ФайловаяБазаПроверка.xml",
+                        "CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl",
+                    ]
+                } {
+                    let target = source.join(path);
+                    fs::create_dir_all(target.parent().unwrap()).unwrap();
+                    fs::write(target, b"keep locally edited selected file").unwrap();
+                }
+                fs::write(
+                    source.join("ConfigDumpInfo.xml"),
+                    config.native_config_dump_info().unwrap(),
+                )
+                .unwrap();
+                fs::write(source.join("sentinel.txt"), b"keep unrelated file").unwrap();
+                let before = tree(&source);
+                let database = fs::read(&db).unwrap();
+                let view = if direct {
+                    &mut config
+                } else {
+                    config.main_view_mut()
+                };
+                if cached {
+                    view.export(&[name.clone(), "Language.English".into()], &|_, _, _| {})
+                        .unwrap();
+                }
+                let result = if direct {
+                    config
+                        .export_into(
+                            &[name.clone(), "Language.English".into()],
+                            &source,
+                            &|_, _, _| {},
+                        )
+                        .map(|_| ())
+                } else {
+                    config
+                        .prepare_editor_export(
+                            &[name.clone(), "Language.English".into()],
+                            false,
+                            &source,
+                            &stage,
+                            &|_, _, _| {},
+                        )
+                        .map(|plan| {
+                            eprintln!(
+                                "unsafe plan removed={:?} files={:?}",
+                                plan.removed, plan.files
+                            );
+                        })
+                };
+                let preserved = tree(&source) == before && tree(&stage).is_empty();
+                eprintln!(
+                    "editor completeness asset={asset} cached={cached} direct={direct}: refused={}, preserved={preserved}",
+                    result.is_err()
+                );
+                if result.is_ok() || !preserved {
+                    failures.push(format!("asset={asset} cached={cached} direct={direct}: refused={}, preserved={preserved}",result.is_err()));
+                }
+                assert_eq!(fs::read(&db).unwrap(), database);
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn accepted_aliases_produce_the_canonical_plan_and_version_map() {
+    use ibcmd_rs::metadata_model::brace::Brace;
+    fn rename(node: &mut Brace) {
+        match node {
+            Brace::Str(name) if name == "Configuration" => *name = "CustomConfiguration".into(),
+            Brace::List(nodes) => nodes.iter_mut().for_each(rename),
+            _ => {}
+        }
+    }
+    for custom in [false, true] {
+        let (root, mut config) = setup();
+        if custom {
+            selected_fixture::mutate_descriptor(
+                &root.join("db/1Cv8.1CD"),
+                "afb733a6-eae8-418b-b73c-fb9eb581e093",
+                rename,
+            );
+        }
+        let source = root.join("source");
+        let current = config.native_config_dump_info().unwrap();
+        let mut old = ibcmd_xml::config_dump_info::ConfigDumpInfo::parse(&current).unwrap();
+        for entry in &mut old.entries {
+            entry.config_version = "old-version".into();
+        }
+        fs::write(
+            source.join("ConfigDumpInfo.xml"),
+            old.to_native_bytes().unwrap(),
+        )
+        .unwrap();
+        for aliases in [
+            vec![
+                "CommonModule.ФайловаяБазаПроверка",
+                "commonmodule.файловаябазапроверка",
+                "COMMONMODULE.ФайловаяБазаПроверка",
+            ],
+            vec![
+                "Configuration",
+                if custom {
+                    "configuration.customconfiguration"
+                } else {
+                    "configuration.configuration"
+                },
+            ],
+        ] {
+            let mut reference = None;
+            for (i, alias) in aliases.iter().enumerate() {
+                let stage = root.join(format!("alias-{}-{i}", aliases[0]));
+                fs::create_dir(&stage).unwrap();
+                let plan = config
+                    .prepare_editor_export(
+                        &[(*alias).into()],
+                        false,
+                        &source,
+                        &stage,
+                        &|_, _, _| {},
+                    )
+                    .unwrap();
+                let actual = (serde_json::to_value(&plan).unwrap(), tree(&stage));
+                if let Some(expected) = &reference {
+                    assert_eq!(&actual, expected, "alias={alias}, custom={custom}");
+                } else {
+                    reference = Some(actual);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn strict_editor_selection_keeps_unselected_losses_and_valid_legacy_fallback_outside_its_proof() {
+    for legacy in [false, true] {
+        let (root, mut config) = setup();
+        let db = root.join("db/1Cv8.1CD");
+        let name = if legacy {
+            selected_fixture::install_legacy_fallback_object(&db, true, None)
+        } else {
+            selected_fixture::install_unadmitted_form_asset(&db, true);
+            "Language.English".into()
+        };
+        // Populate a different cached object: completeness must cover each cache miss,
+        // without expanding the selected proof to unsupported unselected rows.
+        config
+            .main_view_mut()
+            .export(&["CommonModule.ФайловаяБазаПроверка".into()], &|_, _, _| {})
+            .unwrap();
+        let plan = config
+            .prepare_editor_export(
+                &[name],
+                false,
+                &root.join("source"),
+                &root.join("stage"),
+                &|_, _, _| {},
+            )
+            .unwrap();
+        assert!(!plan.files.is_empty());
+        if !legacy {
+            assert_eq!(
+                fs::read(root.join("stage/Languages/English.xml")).unwrap(),
+                fs::read(fixture("tiny-xml/Languages/English.xml")).unwrap()
+            );
+        }
+    }
+}
+
+fn install_owned_fixture(root: &Path, invalid: bool) {
+    use ibcmd_rs::metadata_model::brace::Brace;
+    let mut bytes = Vec::new();
+    flate2::read::GzDecoder::new(
+        fs::File::open(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/native-export-commands/owned/database.1CD.gz"),
+        )
+        .unwrap(),
+    )
+    .read_to_end(&mut bytes)
+    .unwrap();
+    let recorded = root.join("recorded.1CD");
+    fs::write(&recorded, bytes).unwrap();
+    let mut db = ibcmd_filedb::FileDb::open(&recorded).unwrap();
+    let rows = db.config_rows("CONFIG").unwrap();
+    drop(db);
+    let target = root.join("db/1Cv8.1CD");
+    // The export-only recorded collation stays untouched; mutation uses the
+    // public own writable tiny database and the same metadata rows.
+    ibcmd_filedb::replace_config_table(&target, "CONFIG", &rows).unwrap();
+    if invalid {
+        selected_fixture::mutate_descriptor(
+            &target,
+            "c099c30b-8a08-45b0-be7d-9594366e78a5",
+            |descriptor| {
+                let wrapper = descriptor.as_list_mut().unwrap()[1].as_list_mut().unwrap();
+                let form = wrapper[1].as_list_mut().unwrap();
+                assert_eq!(form[0].as_atom(), Some("13"));
+                assert_eq!(form[2].as_atom(), Some("0"));
+                form[2] = Brace::num(99);
+            },
+        );
+    }
+}
+#[test]
+fn nested_selected_semantics_are_checked_on_active_and_main_views_even_with_cached_files() {
+    for cached in [false, true] {
+        for direct in [false, true] {
+            for recursive in [false, true] {
+                let (root, mut config) = setup();
+                install_owned_fixture(&root, true);
+                let name = if recursive {
+                    "Catalog.CorpusList"
+                } else {
+                    "Catalog.CorpusList.Form.ListForm"
+                }
+                .to_owned();
+                let source = root.join("source");
+                let stage = root.join("stage");
+                let descriptor = source.join("Catalogs/CorpusList/Forms/ListForm.xml");
+                fs::create_dir_all(descriptor.parent().unwrap()).unwrap();
+                fs::write(descriptor, b"preserve local form descriptor").unwrap();
+                fs::write(
+                    source.join("ConfigDumpInfo.xml"),
+                    config.native_config_dump_info().unwrap(),
+                )
+                .unwrap();
+                let before = tree(&source);
+                let view = if direct {
+                    &mut config
+                } else {
+                    config.main_view_mut()
+                };
+                if cached {
+                    view.export(&[name.clone()], &|_, _, _| {}).unwrap();
+                }
+                let result = if direct {
+                    config
+                        .export_into(&[name.clone()], &source, &|_, _, _| {})
+                        .map(|_| ())
+                } else {
+                    config
+                        .prepare_editor_export(
+                            &[name.clone()],
+                            false,
+                            &source,
+                            &stage,
+                            &|_, _, _| {},
+                        )
+                        .map(|_| ())
+                };
+                eprintln!(
+                    "nested editor export direct={direct} cached={cached} recursive={recursive}: {result:?}"
+                );
+                assert!(
+                    result.is_err(),
+                    "direct={direct} cached={cached} recursive={recursive}"
+                );
+                assert_eq!(tree(&source), before);
+                assert!(tree(&stage).is_empty());
+            }
+        }
+    }
+}
+#[test]
+fn certified_and_uncertified_cache_entries_mix_without_losing_owned_recursion() {
+    let (root, mut config) = setup();
+    install_owned_fixture(&root, false);
+    let names = vec!["Catalog.CorpusList".to_owned()];
+    let source = root.join("source");
+    let stage = root.join("stage");
+    let expected = tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/native-export-commands/owned/recursive"),
+    );
+    let plan = config
+        .prepare_editor_export(&names, false, &source, &stage, &|_, _, _| {})
+        .unwrap();
+    let actual = tree(&stage)
+        .into_iter()
+        .filter(|(path, _)| path != "ConfigDumpInfo.xml")
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(actual, expected);
+    let mut with_root = names.clone();
+    with_root.push("Configuration".into());
+    // First object is certified; the Configuration map was only observed.
+    config
+        .main_view_mut()
+        .export(&["Configuration".into()], &|_, _, _| {})
+        .unwrap();
+    let next = root.join("next");
+    fs::create_dir(&next).unwrap();
+    let mixed = config
+        .prepare_editor_export(&with_root, false, &source, &next, &|_, _, _| {})
+        .unwrap();
+    for path in plan
+        .files
+        .iter()
+        .filter(|p| p.as_str() != "ConfigDumpInfo.xml")
+    {
+        assert_eq!(
+            fs::read(stage.join(path)).unwrap(),
+            fs::read(next.join(path)).unwrap()
+        );
+    }
+    assert!(mixed.files.contains(&"Configuration.xml".into()));
+    let cached = root.join("cached");
+    fs::create_dir(&cached).unwrap();
+    let conversions = std::cell::Cell::new(0);
+    config
+        .prepare_editor_export(&with_root, false, &source, &cached, &|_, _, message| {
+            if message.starts_with("export of ") {
+                conversions.set(conversions.get() + 1);
+            }
+        })
+        .unwrap();
+    assert_eq!(
+        conversions.get(),
+        0,
+        "only a strict proof can be reused without conversion"
+    );
+    assert_eq!(tree(&cached), tree(&next));
+}

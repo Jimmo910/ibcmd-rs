@@ -1144,3 +1144,100 @@ fn editor_apply_requires_consent_and_leaves_file_db_to_client() {
     server.ok("shutdown", json!({}));
     assert_eq!(server.finish(true), 0);
 }
+
+#[path = "common/selected_export_fixture.rs"]
+mod selected_export_fixture;
+
+#[test]
+fn rpc_incomplete_selected_exports_refuse_before_any_plan_or_workspace_write() {
+    let mut failures = Vec::new();
+    for asset in [false, true] {
+        let corpus = Corpus::new("incomplete-export");
+        let db = corpus.root.join("incomplete.1CD");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(
+            fs::File::open(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/file-infobase/tiny.1CD.gz"),
+            )
+            .unwrap(),
+        )
+        .read_to_end(&mut bytes)
+        .unwrap();
+        fs::write(&db, bytes).unwrap();
+        if asset {
+            selected_export_fixture::install_unadmitted_form_asset(&db, true);
+        } else {
+            selected_export_fixture::install_unadmitted_common_module_descriptor(&db);
+        }
+        let name = if asset {
+            "CommonForm.OpaqueForm"
+        } else {
+            "CommonModule.ФайловаяБазаПроверка"
+        };
+        let source = corpus.root.join("source");
+        fs::create_dir(&source).unwrap();
+        for path in if asset {
+            vec![
+                "CommonForms/OpaqueForm.xml",
+                "CommonForms/OpaqueForm/Ext/Form.xml",
+            ]
+        } else {
+            vec![
+                "CommonModules/ФайловаяБазаПроверка.xml",
+                "CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl",
+            ]
+        } {
+            let target = source.join(path);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(target, b"keep selected local bytes").unwrap();
+        }
+        let mut config = ibcmd_rs::stored_objects::StoredConfiguration::new(
+            ibcmd_rs::stored_objects::ConfigSource::FileDb(db.clone()),
+            ibcmd_rs::platform::parse("8.5.1").unwrap(),
+        );
+        fs::write(
+            source.join("ConfigDumpInfo.xml"),
+            config.native_config_dump_info().unwrap(),
+        )
+        .unwrap();
+        let before = common::files(&source);
+        let database = fs::read(&db).unwrap();
+        let mut server = Server::start(&corpus);
+        let mut params = corpus.initialize_params();
+        params["protocolVersion"] = json!("1.4");
+        params["infobases"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":"incomplete", "dbPath":db, "platform":"8.5.1"}));
+        server.ok("initialize", params);
+        // Repeat on one session so maps cached by the first call cannot authorize
+        // another publication; RPC errors must never contain a publishable result.
+        for attempt in 0..2 {
+            for method in ["objects/exportPlan", "objects/export"] {
+                let stage = corpus.root.join(format!("stage-{attempt}"));
+                fs::create_dir_all(&stage).unwrap();
+                let target = if method == "objects/exportPlan" {
+                    &stage
+                } else {
+                    &source
+                };
+                let response=server.call(method,json!({"infobase":"incomplete", "objects":[name], "sourceDir":source,"targetDir":target}));
+                let preserved =
+                    common::files(&source) == before && common::files(&stage).is_empty();
+                eprintln!(
+                    "RPC {method} asset={asset} attempt={attempt}: error={}, preserved={preserved}",
+                    response.get("error").is_some()
+                );
+                if response.get("error").is_none() || response.get("result").is_some() || !preserved
+                {
+                    failures.push(format!("{method} asset={asset} attempt={attempt}, preserved={preserved}: {response}"));
+                }
+            }
+        }
+        assert_eq!(fs::read(&db).unwrap(), database);
+        server.ok("shutdown", Value::Null);
+        assert_eq!(server.finish(true), 0);
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

@@ -208,6 +208,14 @@ impl ModelPlan {
             .copied()
     }
 
+    /// A shared form has no owning metadata object. Use its root-list identity,
+    /// not the descriptor layout shared with owned forms; conflicting ownership
+    /// remains uncertain and must keep its diagnostic.
+    pub(super) fn is_unowned_common_form(&self, file_name: &str) -> bool {
+        self.kinds.get(file_name) == Some(&"CommonForm")
+            && !self.owned_kinds.contains_key(file_name)
+    }
+
     /// Whether every descriptor row goes through the model: then the legacy
     /// indexes only the descriptor converters read need not be built.
     pub(super) fn models_every_descriptor(&self, texts: &[MetadataTextRow]) -> bool {

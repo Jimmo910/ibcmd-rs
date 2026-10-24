@@ -8,7 +8,13 @@ const vm = require("node:vm");
 const { execFileSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const hash = (b) => createHash("sha256").update(b).digest("hex");
-async function harness({ dirty = [], confirm, beforePrompt, afterGit } = {}) {
+async function harness({
+  dirty = [],
+  confirm,
+  beforePrompt,
+  afterGit,
+  rpcError,
+} = {}) {
   const root = await fs.mkdtemp(
     path.join(require("node:os").tmpdir(), "issue381-js-"),
   );
@@ -90,6 +96,7 @@ async function harness({ dirty = [], confirm, beforePrompt, afterGit } = {}) {
   const rpc = {
     request: async (method, params) => {
       requests.push({ method, params });
+      if (rpcError) throw rpcError;
       const files = ["CommonModules/Test.xml", "ConfigDumpInfo.xml"],
         expected = {};
       for (const file of files) {
@@ -322,5 +329,31 @@ test("Git warnings recognize affected casing aliases on insensitive filesystems"
       new AbortController().signal,
     ),
     ["COMMONMODULES/TEST.XML"],
+  );
+});
+
+test("refused incomplete conversion cannot publish files or advance ConfigDumpInfo", async () => {
+  const h = await harness({
+    rpcError: new Error("selected source asset conversion is incomplete"),
+  });
+  await assert.rejects(
+    h.run(),
+    /selected source asset conversion is incomplete/,
+  );
+  assert.deepEqual(
+    h.requests.map(({ method }) => method),
+    ["objects/exportPlan"],
+  );
+  assert.equal(
+    await fs.readFile(path.join(h.source, "CommonModules/Test.xml"), "utf8"),
+    "old",
+  );
+  assert.equal(
+    await fs.readFile(path.join(h.source, "ConfigDumpInfo.xml"), "utf8"),
+    "old info",
+  );
+  assert.equal(
+    await fs.readFile(path.join(h.source, "README.md"), "utf8"),
+    "unrelated",
   );
 });

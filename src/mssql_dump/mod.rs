@@ -1476,6 +1476,38 @@ pub struct MssqlDumpConfigReport {
     pub incremental: Option<incremental::IncrementalExportSummary>,
 }
 
+impl MssqlDumpConfigReport {
+    /// Required before a selected file map can authorize publication or removals.
+    /// Observational exports may retain their diagnostics without passing this gate.
+    pub(crate) fn ensure_selected_complete(&self) -> Result<()> {
+        anyhow::ensure!(
+            !self.tables.is_empty(),
+            "selected export has no completeness inventory"
+        );
+        for table in &self.tables {
+            let metadata = &table.metadata_root_inventory;
+            anyhow::ensure!(
+                metadata.candidate_set_complete
+                    && metadata.missing == 0
+                    && metadata.expected == metadata.emitted,
+                "selected metadata conversion is incomplete: {} of {} descriptors missing",
+                metadata.missing,
+                metadata.expected
+            );
+            let assets = &table.source_assets;
+            // A scoped inventory proves this selection, not the rest of CONFIG.
+            anyhow::ensure!(
+                assets.status == SourceAssetCompletenessStatus::Complete,
+                "selected source asset conversion is incomplete: {} opaque, {} missing; candidate set complete={}",
+                assets.opaque,
+                assets.missing,
+                assets.candidate_set_complete
+            );
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MssqlDumpedTableReport {
     pub table: String,
@@ -2483,6 +2515,27 @@ pub(crate) fn dump_config_with(
     args: &MssqlDumpConfigArgs,
     hooks: DumpHooks,
 ) -> Result<MssqlDumpConfigReport> {
+    dump_config_with_options(args, hooks, None)
+}
+
+/// Validate an editor's selected map without changing the renderer that the
+/// same selection uses for observational reads. The extra indexes prove values
+/// and completeness; their presence alone does not enable another writer.
+/// SQL main readers previously converted the whole overlay, so their original
+/// writer eligibility remains unfiltered even when conversion is now selected.
+pub(crate) fn dump_config_with_selected_validation(
+    args: &MssqlDumpConfigArgs,
+    hooks: DumpHooks,
+    originally_unfiltered: bool,
+) -> Result<MssqlDumpConfigReport> {
+    dump_config_with_options(args, hooks, Some(originally_unfiltered))
+}
+
+fn dump_config_with_options(
+    args: &MssqlDumpConfigArgs,
+    hooks: DumpHooks,
+    editor_writer_scope: Option<bool>,
+) -> Result<MssqlDumpConfigReport> {
     let password_marker = if args.sql_user.is_none() {
         password_source_marker(PASSWORD_SOURCE_NONE)
     } else if args.sql_pwd.as_ref().is_some_and(|value| !value.is_empty()) {
@@ -2496,7 +2549,7 @@ pub(crate) fn dump_config_with(
         &args.database,
         args.runtime_journal.as_deref(),
     )?;
-    match dump_config_inner(args, hooks) {
+    match dump_config_inner(args, hooks, editor_writer_scope) {
         Ok(report) => {
             subprocess_journal.finish_passed()?;
             Ok(report)
@@ -2515,6 +2568,7 @@ pub(crate) fn dump_config_with(
 fn dump_config_inner(
     args: &MssqlDumpConfigArgs,
     hooks: DumpHooks,
+    editor_writer_scope: Option<bool>,
 ) -> Result<MssqlDumpConfigReport> {
     // Lab aid: `IBCMD_RS_EXTENSION_MODE=1` runs this export as an extension
     // export's converters run (rows written by `IBCMD_RS_EXTENSION_NORMALIZED_ROWS_OUT`),
@@ -2718,7 +2772,8 @@ fn dump_config_inner(
             incremental
                 .as_ref()
                 .filter(|_| role == MssqlConfigurationTableRole::Current),
-            hooks.object_recursion.is_some() && args.main_configuration && !args.objects.is_empty(),
+            hooks.object_recursion.is_some() && !args.objects.is_empty(),
+            editor_writer_scope,
         )?;
         let mut dumped = dumped;
         if dumped.incremental.is_some() {
@@ -2985,6 +3040,7 @@ pub(crate) fn export_staged_state(
             false,
             None,
             false,
+            None,
         )
     };
     dumped?;
@@ -4745,7 +4801,8 @@ fn dump_table_rows_streamed(
     sink: Option<Arc<dyn FileSink>>,
     main_configuration: bool,
     incremental: Option<&incremental::IncrementalExport>,
-    main_view_selected: bool,
+    selected_object_export: bool,
+    editor_writer_scope: Option<bool>,
 ) -> Result<DumpedTable> {
     let table = inventory_plan.role().sql_name();
     let generate_config_dump_info = inventory_plan.config_dump_info_eligible();
@@ -4780,7 +4837,7 @@ fn dump_table_rows_streamed(
     // Everything below reads the configuration an active dynamic generation
     // publishes; without one this leaves the headers and every later query
     // exactly as they were.
-    let headers = if main_view_selected {
+    let headers = if selected_object_export && main_configuration {
         headers
     } else {
         install_storage_overlay(
@@ -4961,8 +5018,7 @@ fn dump_table_rows_streamed(
     };
     // Selected native exports validate descriptor values against the model's
     // root/owned identities even when only one object will be converted.
-    let broad_metadata_indexes_without_command_refs = main_view_selected
-        || selected_file_names.is_empty()
+    let natural_broad_metadata_indexes = selected_file_names.is_empty()
         || selected_configuration_index_needs
             .is_some_and(SourceReferenceIndexNeeds::needs_broad_metadata_without_command_refs)
         || selected_metadata_index_needs
@@ -4975,9 +5031,14 @@ fn dump_table_rows_streamed(
                 &file_names,
                 &selected_metadata_texts,
             ));
+    let broad_metadata_indexes_without_command_refs =
+        selected_object_export || natural_broad_metadata_indexes;
     let mut selected_configuration_body_rows = Vec::new();
-    if !broad_metadata_indexes_without_command_refs
-        && extract_metadata_xml
+    if !(if editor_writer_scope.is_some() {
+        natural_broad_metadata_indexes
+    } else {
+        broad_metadata_indexes_without_command_refs
+    }) && extract_metadata_xml
         && selected_configuration_index_needs
             .is_some_and(|needs| needs.command_refs || needs.metadata_refs)
     {
@@ -4997,6 +5058,12 @@ fn dump_table_rows_streamed(
     if selected_command_interface_refs.is_none() {
         broad_metadata_indexes = true;
     }
+    let model_writer_enabled = model_export
+        && editor_writer_scope.is_none_or(|originally_unfiltered| {
+            originally_unfiltered
+                || natural_broad_metadata_indexes
+                || selected_command_interface_refs.is_none()
+        });
     if broad_metadata_indexes && !selected_file_names.is_empty() {
         let metadata_fetch_started = Instant::now();
         metadata_rows = fetch_metadata_rows(sql, database, table)?;
@@ -5261,15 +5328,16 @@ fn dump_table_rows_streamed(
     // a run that fetched part of it stays legacy.
     let plan_started = Instant::now();
     let plan_cpu = process_cpu_ms();
-    let model_plan =
-        ((model_export || main_view_selected) && extract_metadata_xml && broad_metadata_indexes)
-            .then(|| {
-                model_export::ModelPlan::new(&metadata_rows, &index_metadata_texts, source_version)
-            });
+    let model_plan = ((model_export || selected_object_export)
+        && extract_metadata_xml
+        && broad_metadata_indexes)
+        .then(|| {
+            model_export::ModelPlan::new(&metadata_rows, &index_metadata_texts, source_version)
+        });
     // The shadow check runs the legacy converters too, so it keeps what
     // they read.
     let modelled = |kinds: &[&str]| {
-        model_export
+        model_writer_enabled
             && !model_export::shadow()
             && model_plan
                 .as_ref()
@@ -5686,7 +5754,7 @@ fn dump_table_rows_streamed(
         .map(|row| (row.file_name.as_str(), row))
         .collect::<BTreeMap<_, _>>();
     let source_asset_discovery_misses = source_asset_discovery_misses(
-        if main_view_selected {
+        if selected_object_export {
             selected_metadata_texts
         } else {
             source_asset_metadata_texts
@@ -5919,10 +5987,17 @@ fn dump_table_rows_streamed(
     // claims its path alone is still produced.
     let mut source_assets = source_assets;
     let mut source_asset_diagnostics = source_asset_diagnostics;
-    if main_view_selected {
+    if selected_object_export {
         // Broad indexes supply references, not extra selected candidates.
         source_assets.retain(|name, _| file_names.contains(name));
-        source_asset_diagnostics.retain(|name, _| file_names.contains(name));
+        source_asset_diagnostics.retain(|name, _| {
+            file_names.contains(name)
+                && !name.strip_suffix(".0").is_some_and(|descriptor| {
+                    model_plan
+                        .as_ref()
+                        .is_some_and(|plan| plan.is_unowned_common_form(descriptor))
+                })
+        });
     }
 
     for (file_name, message) in
@@ -6152,7 +6227,7 @@ fn dump_table_rows_streamed(
     };
     let context = DumpRowContext {
         output: &output,
-        model_export: model.as_ref().filter(|_| model_export),
+        model_export: model.as_ref().filter(|_| model_writer_enabled),
         eds_export: eds_export.as_ref(),
         type_set_leaves: &type_set_leaves,
         output_dir,
@@ -6163,7 +6238,7 @@ fn dump_table_rows_streamed(
         extract_module_text,
         extract_metadata_xml,
         collect_all_source_asset_diagnostics,
-        selected_metadata_validator: model.as_ref().filter(|_| main_view_selected),
+        selected_metadata_validator: model.as_ref().filter(|_| selected_object_export),
         refused_output_paths: &reference_collisions,
         module_text_paths: &module_text_paths,
         source_assets: &source_assets,
@@ -6313,7 +6388,7 @@ fn dump_table_rows_streamed(
     // Native object selection must also cover nested descriptors, which the
     // top-level root inventory intentionally does not count. Diagnostics for
     // module/body/service rows are not descriptor-conversion failures.
-    if main_view_selected
+    if selected_object_export
         && let Some((_, diagnostic)) = metadata_extraction_diagnostics.iter().find(|(name, _)| {
             selected_metadata_texts.iter().any(|row| {
                 row.file_name == **name
