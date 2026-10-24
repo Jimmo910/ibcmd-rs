@@ -222,7 +222,7 @@ class GitHub:
             raise Refusal("Неполный список проекта или исполнителей; изменений нет.")
         matches = [x for x in items["nodes"] if x["project"]["id"] == project["id"]]
         if len(matches) != 1 or matches[0]["isArchived"]:
-            raise Refusal("Задача должна быть добавлена в Project №9 и переведена в Ready сопровождающим.")
+            raise Refusal("Задача должна быть добавлена в Project №9 со статусом Backlog или Ready.")
         item = matches[0]
         sv, av = item["status"], item["agent"]
         if (not sv or sv.get("__typename") != "ProjectV2ItemFieldSingleSelectValue"
@@ -332,8 +332,10 @@ def perform(api, req):
     if action == "claim":
         if state.assignees not in ((), (actor,)):
             raise Refusal("Задача уже назначена другому участнику.")
-        if (not state.assignees and state.status != "Ready") or (state.assignees and state.status not in ("Ready", "In progress")):
-            raise Refusal("Новая задача берётся из Ready; текущий review нельзя отменить командой /claim.")
+        if state.status == "In review":
+            raise Refusal("Задача находится в In review. Команда /claim не возвращает задачу с ревью в работу.")
+        if (not state.assignees and state.status not in ("Backlog", "Ready")) or (state.assignees and state.status not in ("Backlog", "Ready", "In progress")):
+            raise Refusal("Команда /claim доступна для свободной задачи в Backlog или Ready; текущий статус не допускает назначение.")
         owner, status = req.actor, "In progress"
     elif action == "unclaim":
         if (not state.assignees and state.status == "Ready"

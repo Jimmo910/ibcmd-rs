@@ -39,7 +39,7 @@ cargo build --locked --profile iter                                      # binar
 
 ## The loop
 
-1. Take one Ready issue with `/claim` and wait for the bot confirmation (see
+1. Take one Backlog or Ready issue with `/claim` and wait for the bot confirmation (see
    Tracking). Work on `feature/issue-<N>-<slug>` in your own worktree.
 2. New capability (command, format, route, gate): write the OpenSpec change
    first (skill `openspec-change`). Bug: write the failing test first and see
@@ -100,7 +100,7 @@ The working board is https://github.com/users/Untru/projects/9. Anyone who
 can comment on a public issue may claim it without repository Collaboration
 or Project write access:
 
-- Comment `/claim` on an unassigned Ready issue. Wait for the bot's final
+- Comment `/claim` on an unassigned Backlog or Ready issue. Wait for the bot's final
   success reply and verify Assignees / In progress before starting work or
   dispatching an implementer. A pending receipt is not approval to start.
 - The assigned contributor comments `/review #PR` for their open non-Draft
@@ -124,11 +124,11 @@ The bot updates and reads back Assignees, Status and its own `Claim bot:`
 Agent line; under this protocol it preserves other owners' Agent lines. A failed or unfinished
 command may have partially applied: inspect the current assignment and send
 one new command to reconcile your own work. Never rerun an old command to
-restore state. If the bot is unavailable or the issue is not Ready, ask the
+restore state. If the bot is unavailable or the issue is neither Backlog nor Ready, ask the
 maintainer to triage it; do not grant yourself access or start silently.
 Setup, refusals and recovery: [issue self-service](docs/issue-self-service.md).
 
-Maintainers triage new issues into Ready, reconcile unexpected interference,
+Contributors may claim Backlog directly; maintainers may triage into Ready, reconcile unexpected interference,
 and mark Done only after acceptance evidence. A draft PR does not complete
 its issues. Local plans and labels do not replace Project fields. Read back
 manual board transitions and do not mark future work started because it has
