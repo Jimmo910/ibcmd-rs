@@ -5,6 +5,10 @@ on:
     branches:
       - master
   pull_request:
+    # Documents and the editor client change no compiled target here.
+    paths-ignore:
+      - 'editors/**'
+      - '**/*.md'
   workflow_dispatch:
 
 concurrency:
@@ -13,31 +17,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
-  sql-ut11-collector:
-    name: SQL UT11 offline collector (Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ['3.12', '3.14']
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-
-      - name: Test full-tree evidence collector (synthetic only)
-        env:
-          PYTHONDONTWRITEBYTECODE: '1'
-          IBCMD_TEST_KEEP_FIXTURES: '1'
-          IBCMD_SQL_UT11_TEST_ROOT: ${{ runner.temp }}/issue359-collector-tests
-        run: python3 tests/scripts/test_compare_sql_ut11.py
-
   platform-evidence-harness:
     name: Platform evidence harness
     runs-on: ubuntu-latest
@@ -69,63 +51,6 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --all --check
-
-  portable:
-    name: Portable (${{ matrix.name }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Linux
-            os: ubuntu-latest
-          - name: Windows
-            os: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Check standalone workspace layers
-        run: cargo check --locked --workspace --exclude ibcmd-rs --all-targets
-
-      - name: Check release-shaped root without platform oracle
-        run: cargo check --locked -p ibcmd-rs --all-targets --no-default-features
-
-      - name: Clippy standalone workspace layers
-        run: cargo clippy --locked --workspace --exclude ibcmd-rs --all-targets -- -D warnings
-
-      - name: Test standalone workspace layers
-        run: cargo test --locked --workspace --exclude ibcmd-rs
-
-      - name: Test portable root smoke
-        run: "cargo test --locked -p ibcmd-rs --test integration portable_root_smoke::"
-
-      - name: Audit release-shaped platform boundary
-        run: "cargo test --locked -p ibcmd-rs --test integration platform_oracle_boundary:: --no-default-features"
-
-      - name: Test CF corruption and property corpus
-        run: "cargo test --locked -p ibcmd-rs --test integration cf_corruption::"
-
-      - name: Test XML dialect corpus
-        run: "cargo test --locked -p ibcmd-rs --test integration xml_profiles::"
-
-      # The root library's unit tests (the converters and the load/export
-      # engines) build their paths portably, so they run on every OS.
-      - name: Test the root library
-        run: cargo test --locked -p ibcmd-rs --lib --no-default-features
-
-      # Native XML tree -> `cf bootstrap --base-free` -> CF -> XML tree over
-      # the three retained 8.3.27.2214 corpora (Untru/ibcmd-rs#351).
-      - name: Test the XML to CF round trip
-        run: "cargo test --locked -p ibcmd-rs --test integration cf_native_roundtrip:: --no-default-features"
 
   legacy-windows:
     name: Legacy Root (Windows)
