@@ -43,7 +43,8 @@ def main():
         return 31
     if case == "descendant-hang":
         child = subprocess.Popen([sys.executable, "-I", "-S", "-B", "-c",
-            "import signal,time; from pathlib import Path; signal.signal(signal.SIGTERM,signal.SIG_IGN); Path('descendant.ready').write_text('ready'); time.sleep(60)"])
+            "import signal,time; from pathlib import Path; signal.signal(signal.SIGTERM,signal.SIG_IGN); Path('descendant.ready').write_text('ready'); time.sleep(60)"],
+            stdin=subprocess.DEVNULL, stdout=sys.stdout.buffer, stderr=sys.stderr.buffer)
         Path("descendant.pid").write_text(str(child.pid))
         ready_deadline = time.monotonic() + 1
         while not Path("descendant.ready").is_file():

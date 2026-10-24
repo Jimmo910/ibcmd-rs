@@ -92,6 +92,13 @@ class ProcessScope:
                 except ProcessLookupError:
                     pass
         elif os.name == "nt":
+            # Pipe EOF may precede interpreter termination. Give a normal peer
+            # bounded time to exit before kill-on-close tears down the job.
+            if natural_eof:
+                try:
+                    p.wait(timeout=grace)
+                except subprocess.TimeoutExpired:
+                    natural_eof = False
             self._close_job()  # kills the peer and all admitted inheriting descendants
         try:
             code = p.wait(timeout=2)

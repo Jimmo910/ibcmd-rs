@@ -151,3 +151,15 @@ synthetic process/transport contract only. Windows Job Object code has static
 review but no Windows execution evidence; actual ibcmd/TDS/SQL/VM/native/editor
 host remain unexecuted. It does not duplicate the SQL primary's database snapshot
 or profile capture and does not authorize stage/apply or the future operator run.
+
+
+## Windows fake-process control proposal (unpublished)
+
+[windows-rpc-controls.md](windows-rpc-controls.md) specifies the seven-test
+Windows gate, four portable models and three real-kernel controls. The fixed
+`windows_rpc_gate.py` requires Windows, exactly that inventory and zero skips.
+The inactive `windows-rpc-ci.yml.proposal` describes an ordinary hosted Windows
+job; it is not installed in `.github/workflows` and has not run. It retains only
+new public fake fixtures, requires no product binary/SQL/native/VM/secrets, and
+cannot turn POSIX results into Windows evidence. Source review and separate
+publication/CI coordination are required before activation.

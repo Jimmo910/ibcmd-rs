@@ -1,0 +1,52 @@
+# INACTIVE proposal. Copy to .github/workflows ONLY after publication review.
+# Public fake peers only; no SQL/ibcmd/Cargo/native/VM/credentials required.
+name: Public fake RPC Windows controls
+on:
+  push:
+    paths:
+      - 'scripts/status-lab/**'
+      - '.github/workflows/public-fake-rpc-windows.yml'
+  pull_request:
+    paths:
+      - 'scripts/status-lab/**'
+      - '.github/workflows/public-fake-rpc-windows.yml'
+permissions:
+  contents: read
+jobs:
+  windows-fake-only:
+    runs-on: windows-2025
+    timeout-minutes: 8
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: ibcmd-rs-lab/repos/issue-380-sql
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ibcmd-rs-lab/repos/issue-380-sql
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Restore byte-exact sources in this disposable checkout
+        run: git -c core.autocrlf=false -c core.eol=lf checkout-index --all --force
+      - name: Windows kernel controls (exact seven tests, no skips)
+        run: |
+          $env:PYTHONDONTWRITEBYTECODE = '1'
+          $env:STATUS_LAB_TEST_ROOT = Join-Path $env:GITHUB_WORKSPACE 'ibcmd-rs-lab/tmp/issue-380-rpc-runner'
+          # Reserve a new base; never adopt an existing fixture directory.
+          if (Test-Path $env:STATUS_LAB_TEST_ROOT) { throw 'fixture base already exists' }
+          New-Item -ItemType Directory -Path $env:STATUS_LAB_TEST_ROOT -ErrorAction Stop | Out-Null
+          $env:TMP = $env:STATUS_LAB_TEST_ROOT
+          $env:TEMP = $env:STATUS_LAB_TEST_ROOT
+          $env:TMPDIR = $env:STATUS_LAB_TEST_ROOT
+          python -B scripts/status-lab/windows_rpc_gate.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain only owned public fake fixtures and gate receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-fake-rpc-windows
+          path: ibcmd-rs-lab/tmp/issue-380-rpc-runner
+          if-no-files-found: error
+          retention-days: 7
