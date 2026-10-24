@@ -144,9 +144,10 @@ class GitHub:
       }}
     }"""
 
-    def __init__(self, token, project_token, opener=None):
+    def __init__(self, token, project_token, opener=None, *, single_writer_confirmed=False):
         if not token:
             raise ApiFailure("Нет GITHUB_TOKEN для обработки issue.")
+        self.single_writer_confirmed = single_writer_confirmed is True
         self.token = token
         self.project_token = project_token
         self.opener = opener or urllib.request.build_opener(NoRedirect())
@@ -352,6 +353,8 @@ def perform(api, req):
 
     def change(kind, target):
         nonlocal state
+        # This guard detects observable drift; it is not a conditional API write.
+        # Direct editors must pause ingestion and drain the queue (see the runbook).
         if api.snapshot(req.issue) != state:
             raise Refusal("Состояние изменилось во время команды; дальнейшие записи остановлены. Проверьте назначение.")
         if kind == "add":
@@ -404,6 +407,8 @@ def run(event, api):
         return "duplicate"
     receipt_id = api.receipt(req, "pending", f"@{req.actor}, проверяю команду. Начинайте работу только после итогового подтверждения; при незавершённом запуске отправьте новую команду.")
     try:
+        if getattr(api, "single_writer_confirmed", False) is not True:
+            raise ApiFailure("Владелец ещё не подтвердил режим единственного редактора: ISSUE_BOT_SINGLE_WRITER_CONFIRMED должен быть true. См. docs/issue-self-service.md.")
         if any(value["request"] > req.comment for _, value in receipts):
             raise Refusal("Более новая команда уже зарегистрирована; старая команда не применяется.")
         result = perform(api, req)
@@ -419,7 +424,8 @@ def run(event, api):
 
 def main():
     try:
-        api = GitHub(os.environ.get("GITHUB_TOKEN", ""), os.environ.get("PROJECT_TOKEN", ""))
+        api = GitHub(os.environ.get("GITHUB_TOKEN", ""), os.environ.get("PROJECT_TOKEN", ""),
+            single_writer_confirmed=os.environ.get("ISSUE_BOT_SINGLE_WRITER_CONFIRMED") == "true")
         if sys.argv[1:] == ["--check-config"]:
             api.check_configuration()
             print("Project №9: схема и право обновления подтверждены; записи не выполнялись.")

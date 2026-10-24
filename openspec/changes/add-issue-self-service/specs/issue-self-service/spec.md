@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Public self-service ownership
-The bot SHALL accept `/claim` only for an open unlocked unassigned Ready issue in the configured project, assigning only the verified command author, setting In progress and recording its own Agent line while preserving other owners' text.
+The bot SHALL accept a new `/claim` only for an open unlocked unassigned Ready issue in the configured project, assigning only the verified command author, setting In progress and recording its own Agent line while preserving other owners' text under the confirmed single writer protocol. A sole existing owner MAY use a new command to reconcile their own partial claim; In review SHALL NOT be demoted by `/claim`.
 
 #### Scenario: External contributor takes a task
 - **GIVEN** a human commenter without collaborator access and a free Ready issue
@@ -27,7 +27,7 @@ The bot SHALL permit only the verified sole owner to release a task or request r
 - **THEN** it is refused without changing tracking state.
 
 ### Requirement: Serialized durable command processing
-The bot SHALL serialize commands per issue and create a digest-bound durable receipt before tracking mutations. Duplicate or stale commands SHALL NOT replay. Every tracking write SHALL use fresh guarded state and verify its result. An uncertain or partial operation SHALL NOT produce a success receipt.
+The bot SHALL serialize commands per issue and create a digest-bound durable receipt before tracking mutations. Duplicate or stale commands SHALL NOT replay. Every tracking write SHALL use fresh guarded state and verify its result. An observed uncertain or partial operation SHALL NOT produce a success receipt. These checks SHALL NOT be described as conditional writes: direct Project edits between read and write are not detectable reliably and are outside the supported protocol.
 
 #### Scenario: Concurrent and repeated claims
 - **GIVEN** competing command deliveries or a repeated delivery
@@ -35,7 +35,7 @@ The bot SHALL serialize commands per issue and create a digest-bound durable rec
 - **THEN** a confirmed owner is never displaced and a recorded request is not applied again.
 
 #### Scenario: Drift or API failure
-- **GIVEN** tracking state changes externally or an API write fails
+- **GIVEN** an API write fails or a changed tracking snapshot is observed
 - **WHEN** the operation is checked
 - **THEN** further tracking writes stop, the receipt records refusal/error where possible, and no successful confirmation is emitted for an unverified state.
 
@@ -46,3 +46,16 @@ The workflow SHALL execute only trusted default-branch code for commands, treat 
 - **GIVEN** PROJECT_TOKEN is absent or cannot access the configured Project
 - **WHEN** a command is received
 - **THEN** no Assignees/Status/Agent write occurs and the contributor receives a configuration error where repository comment access permits.
+
+### Requirement: Confirmed single writer protocol
+Commands SHALL refuse all tracking mutations unless the repository owner has explicitly confirmed the single writer protocol through ISSUE_BOT_SINGLE_WRITER_CONFIRMED=true. Direct owner maintenance and other Status/Agent automations SHALL occur only after command ingestion is disabled and every running and queued command is verified terminal. The owner SHALL read back maintenance before enabling ingestion. Acknowledgement SHALL NOT be represented as API-level exclusion of direct editors.
+
+#### Scenario: Owner has not confirmed the protocol
+- **GIVEN** the acknowledgement variable is absent or not exactly true
+- **WHEN** a public command is processed
+- **THEN** no Assignees/Status/Agent write occurs and a configuration error is recorded where comment access permits.
+
+#### Scenario: Owner maintenance
+- **GIVEN** direct tracking edits are needed
+- **WHEN** the owner disables ingestion and verifies all command jobs terminal
+- **THEN** maintenance is performed and read back before re-enabling; old commands are not replayed.

@@ -112,8 +112,16 @@ or Project write access:
 - Work through a fork and pull request when repository write access is absent.
   Keep a concrete human operator responsible for agent work.
 
+While command processing is enabled, route tracking changes through the bot.
+Before direct owner maintenance of Assignees, Status or Agent, disable this
+workflow and verify every running/queued command is terminal; then edit,
+read back and re-enable. The API has no conditional field write: a manual
+edit inside the read/write interval can be overwritten without detection.
+Owner acknowledgement (`ISSUE_BOT_SINGLE_WRITER_CONFIRMED=true`) is required
+before commands can mutate tracking. See the maintenance runbook below.
+
 The bot updates and reads back Assignees, Status and its own `Claim bot:`
-Agent line; preserve all other owners' Agent lines. A failed or unfinished
+Agent line; under this protocol it preserves other owners' Agent lines. A failed or unfinished
 command may have partially applied: inspect the current assignment and send
 one new command to reconcile your own work. Never rerun an old command to
 restore state. If the bot is unavailable or the issue is not Ready, ask the

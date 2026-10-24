@@ -65,6 +65,7 @@ jobs:
           persist-credentials: false
       - name: Process immutable event as data
         env:
+          ISSUE_BOT_SINGLE_WRITER_CONFIRMED: ${{ vars.ISSUE_BOT_SINGLE_WRITER_CONFIRMED }}
           GITHUB_TOKEN: ${{ github.token }}
           PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PYTHONDONTWRITEBYTECODE: '1'

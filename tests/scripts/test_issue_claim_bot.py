@@ -35,6 +35,7 @@ def pull(**changes):
 
 class Fake:
     def __init__(self, e=None, state=None):
+        self.single_writer_confirmed = True
         self.e = e or event()
         self.state = state or initial()
         self.writes = []
@@ -177,6 +178,19 @@ class Commands(unittest.TestCase):
         self.assertEqual(f.stored[0][1]["outcome"],"pending")
         self.assertEqual(bot.run(f.e,f),"duplicate")
         self.assertEqual((f.state,f.writes),(state,writes))
+
+    def test_owner_acknowledgement_is_required_before_any_tracking_write(self):
+        for field in ["a","s"]:
+            f=Fake();f.single_writer_confirmed=False
+            def manual_change(api,changed_field):
+                if changed_field==field:
+                    api.state=dataclasses.replace(api.state,agent=api.state.agent+"\nMaintainer: concurrent note",status="Done")
+            f.on_field=manual_change
+            with self.subTest(field=field):
+                self.assertEqual(bot.run(f.e,f),"error")
+                self.assertEqual(f.writes,[])
+                self.assertEqual(f.state,initial())
+                self.assertEqual(f.stored[0][1]["outcome"],"error")
 
     def test_configuration_failure_before_assignment_keeps_error_receipt(self):
         f=Fake()
