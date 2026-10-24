@@ -83,3 +83,12 @@ It uses the existing child-only soft FD limit128 for1024 XMLs; do not alter host
 ## Completion and limits
 
 The evidence table must distinguish baseline predicted/observed red, fixed Windows compile/runtime, synthetic profile refusal, existing regression results and unavailable profiles. Record every pass/fail/ignored/missing outcome with exact run/job/head/harness hash. Do not claim actual remote/ReFS acceptance, end-to-end Windows editor import or MCP mutation, universal ABA protection or atomic source/target CAS. Source review, local macOS compilation and any #530 target-layer results are separate evidence only. Publication/CI/Ready/merge remain outside this preparation phase.
+
+
+## Reviewed-runner preparation
+
+The dedicated `source-custody.yml` ordinary PR workflow and `tools/run-source-custody-ci.py` implement this plan for the single Jimmo910 source-custody branch. They add no manual trigger or permissions beyond contents:read. Existing CI workflows and merge requirements are unchanged. The Windows matrix entry executes both immutable inputs sequentially; a separate Ubuntu entry executes the unchanged exact low-FD control. Neither job accepts a moving production candidate: HEAD must descend from the fixed input and differ only in this change's OpenSpec documents, runner and dedicated workflow.
+
+The runner requires pinned Rust1.95 and the declared host, refuses reused target/evidence roots, compiles separate lib harnesses, verifies a single root executable per phase, records its SHA256 and runs each test exactly once. Receipts/raw stdout/stderr and new owned fixtures are uploaded even after failure; build caches and unrelated temporary compiler files are excluded. The classifier requires one selected non-ignored test with the exact name/result; expected baseline failures additionally require exit101 and the pinned assertion text. Local stdlib-only classifier self-checks passed two valid outcomes and five refusal cases (zero selected, ignored, unrelated assertion, wrong process exit, unexpected success). This is parser evidence only; no Rust compilation or Windows runtime ran during runner preparation.
+
+The source/contract approvals predate this runner delta; obtain fresh independent review of this workflow/runner and exact prospective head before ordinary fork push/Draft. Do not reuse this branch-specific pinned workflow as a general future CI claim after production changes.
