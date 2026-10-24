@@ -3,6 +3,7 @@
 //! This module does not execute SQL or make a plan publishable. Target snapshot,
 //! shared compiler verification and same-session transactional publication are
 //! separate gates; the RPC SQL route remains closed until those are established.
+pub mod coverage;
 pub mod readset;
 pub mod snapshot;
 

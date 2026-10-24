@@ -920,3 +920,180 @@ mod snapshot_contracts {
         assert_eq!(client.calls.load(Ordering::Relaxed), 1);
     }
 }
+
+mod coverage_contracts {
+    use ibcmd_rs::server::sql_import::{
+        coverage::{self, Limits},
+        readset::Check,
+    };
+    use std::{
+        collections::BTreeSet,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+    fn keys(values: &[&str]) -> BTreeSet<String> {
+        values.iter().map(|v| v.to_string()).collect()
+    }
+    fn check() -> Check {
+        Arc::new(|| Ok(()))
+    }
+    fn limits() -> Limits {
+        Limits {
+            max_witness_keys: 32,
+            max_key_bytes: 256,
+        }
+    }
+    #[test]
+    fn incoming_a_only_inventory_cannot_hide_configuration_neighbor_b() {
+        let baseline = keys(&["A", "B"]);
+        let stage = keys(&["A"]);
+        let pruned = keys(&["A"]);
+        assert!(
+            coverage::require_preserved(&baseline, &stage, &pruned, &pruned, limits(), &check())
+                .is_err()
+        );
+        assert!(
+            coverage::require_preserved(&baseline, &stage, &baseline, &pruned, limits(), &check())
+                .is_err()
+        );
+        assert!(
+            coverage::require_preserved(
+                &baseline,
+                &stage,
+                &baseline,
+                &baseline,
+                limits(),
+                &check()
+            )
+            .is_ok()
+        );
+    }
+    #[test]
+    fn original_stage_neighbor_and_unexpected_compiled_keys_cannot_disappear_or_expand() {
+        let baseline = keys(&["A", "B"]);
+        let original_stage = keys(&["C"]);
+        let complete = keys(&["A", "B", "C"]);
+        assert!(
+            coverage::require_preserved(
+                &baseline,
+                &original_stage,
+                &baseline,
+                &baseline,
+                limits(),
+                &check()
+            )
+            .is_err()
+        );
+        assert!(
+            coverage::require_preserved(
+                &baseline,
+                &original_stage,
+                &complete,
+                &baseline,
+                limits(),
+                &check()
+            )
+            .is_err()
+        );
+        assert!(
+            coverage::require_preserved(
+                &baseline,
+                &original_stage,
+                &complete,
+                &keys(&["A", "B", "C", "D"]),
+                limits(),
+                &check()
+            )
+            .is_err()
+        );
+        assert!(
+            coverage::require_preserved(
+                &baseline,
+                &original_stage,
+                &complete,
+                &complete,
+                limits(),
+                &check()
+            )
+            .is_ok()
+        );
+    }
+    #[test]
+    fn structural_historical_projection_is_separate_from_partial_omission() {
+        // Synthetic already-projected body witnesses only. This is NOT evidence
+        // of actual engine alias resolution: raw physical history is not input.
+        let projected = keys(&["A", "B"]);
+        let empty = keys(&[]);
+        assert!(
+            coverage::require_preserved(
+                &projected,
+                &empty,
+                &projected,
+                &projected,
+                limits(),
+                &check()
+            )
+            .is_ok()
+        );
+        let new_partial = keys(&["A"]);
+        assert!(
+            coverage::require_preserved(
+                &projected,
+                &new_partial,
+                &new_partial,
+                &new_partial,
+                limits(),
+                &check()
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn witness_cardinality_bytes_and_typed_cancellation_are_bounded() {
+        let baseline = keys(&["A", "B"]);
+        let empty = keys(&[]);
+        for limit in [
+            Limits {
+                max_witness_keys: 5,
+                ..limits()
+            },
+            Limits {
+                max_key_bytes: 5,
+                ..limits()
+            },
+        ] {
+            assert!(
+                coverage::require_preserved(
+                    &baseline,
+                    &empty,
+                    &baseline,
+                    &baseline,
+                    limit,
+                    &check()
+                )
+                .is_err()
+            );
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let cancelled: Check = Arc::new(move || {
+            if seen.fetch_add(1, Ordering::Relaxed) >= 2 {
+                Err(ibcmd_rs::cancel::Cancelled.into())
+            } else {
+                Ok(())
+            }
+        });
+        let error = coverage::require_preserved(
+            &baseline,
+            &empty,
+            &baseline,
+            &baseline,
+            limits(),
+            &cancelled,
+        )
+        .unwrap_err();
+        assert!(ibcmd_rs::cancel::is_cancelled(&error));
+    }
+}

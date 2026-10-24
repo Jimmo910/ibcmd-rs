@@ -75,3 +75,22 @@ snapshot after callback cancellation, transport failure or a missing terminal se
 - **WHEN** the single-request decoder and refusal tests pass
 - **THEN** actual SQL lock/coherence/transport behavior remains an operator
   acceptance gate and SQL publication remains unavailable.
+
+### Requirement: Partial staging cannot prune unselected coverage
+The SQL planner SHALL retain an independently justified pre-stage projected body
+coverage witness and original staging coverage before consulting incoming stage
+versions. It SHALL refuse omitted or unexplained effective/compiled keys before
+publication. Historical generation projection SHALL NOT authorize a new partial
+stage to hide an unselected object.
+
+#### Scenario: Partial inventory hides a configuration-only neighbor
+- **GIVEN** pre-stage projected CONFIG contains A and B and staging names only A
+- **WHEN** the candidate effective or compiled coverage contains only A
+- **THEN** preparation refuses before target writes instead of validating the
+  already-pruned set.
+
+#### Scenario: Original staged neighbor is omitted
+- **GIVEN** a previously admitted staged neighbor C independent of incoming versions
+- **WHEN** effective or compiled coverage omits C
+- **THEN** preparation refuses, and C's original physical headers and parts remain
+  outside any replacement authority.

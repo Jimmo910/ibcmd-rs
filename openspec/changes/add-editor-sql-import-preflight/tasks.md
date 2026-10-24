@@ -22,3 +22,6 @@
   23 combined integration tests and library check passed after reviewed fixes.
 - [ ] F.4 Measure exact SQL/schema/header profile and prove actual acquisition
   locking, empty-resultset numbering, interruption and concurrent-writer controls.
+- [x] F.5 Owned structural body-coverage invariant and omission/expansion/budget/
+  cancellation controls: 27 combined tests and library check passed; not wired
+  to shared effective-view policy or SQL routing and not an ownership proof.
