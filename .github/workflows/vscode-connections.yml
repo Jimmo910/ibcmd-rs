@@ -70,17 +70,27 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: python tests/scripts/form_field_map_observer_cli_test.py target/debug/examples/form_field_map_observer.exe "$env:RUNNER_TEMP/observer-fixtures"
+      - name: Verify observer staging preserves prior artifacts
+        env:
+          IBCMD_TEST_KEEP_FIXTURES: "1"
+        run: python tests/scripts/form_observer_provenance_test.py "${{ runner.temp }}/observer-provenance-fixtures"
       - name: Bind Windows observer artifact provenance
+        id: observer_artifact
         if: runner.os == 'Windows'
+        shell: pwsh
         env:
           DIAGNOSTIC_REQUESTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: python tools/write-form-observer-provenance.py target/debug/examples/form_field_map_observer.exe target/form-observer-artifact
+        run: |
+          $observerArtifactDirectory = Join-Path $env:RUNNER_TEMP ("form-observer-artifact-{0}-{1}" -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+          python tools/write-form-observer-provenance.py target/debug/examples/form_field_map_observer.exe "$observerArtifactDirectory"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "directory=$observerArtifactDirectory" >> $env:GITHUB_OUTPUT
       - name: Retain reviewed observer for serialized lab diagnostics
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: form-field-map-observer-windows-x64
-          path: target/form-observer-artifact/
+          path: ${{ steps.observer_artifact.outputs.directory }}/
           if-no-files-found: error
       - run: npm ci
         working-directory: editors/vscode
