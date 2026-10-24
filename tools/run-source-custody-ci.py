@@ -9,6 +9,7 @@ import platform
 import re
 import subprocess
 import sys
+import tempfile
 
 BASE = "6ca6ade04ceee151f056e29acb5cd6deaaa9fbc4"
 BASELINE = "751751f8f5670d84cf2d96aab86895b6c5013d83"
@@ -58,6 +59,63 @@ def classify(output, code, name, expected_red=None):
         raise RuntimeError("unexpected test outcome; inspect retained stdout/stderr")
 
 
+
+def head_diff_args(before, after):
+    # Renames must expose the deleted source as well as the added destination.
+    return ["git", "diff", "--no-renames", "--name-only", "-z", before, after, "--"]
+
+
+def require_allowed_head_changes(raw):
+    if raw and not raw.endswith(b"\0"):
+        raise RuntimeError("unterminated HEAD path receipt")
+    allowed = [b"tools/run-source-custody-ci.py", b".github/workflows/source-custody.yml"]
+    for path in raw.split(b"\0")[:-1]:
+        if path not in allowed and not path.startswith(b"openspec/changes/enforce-windows-source-custody/"):
+            raise RuntimeError("HEAD production differs from pinned fixed candidate; update/review pins")
+
+
+def head_guard_self_test():
+    fixture = Path(tempfile.mkdtemp(prefix="source-custody-head-guard-",
+                                   dir=os.environ.get("RUNNER_TEMP") or os.environ.get("TMPDIR")))
+    # No commits, identities, hooks, remote, global config changes or teardown.
+    template = fixture / "empty-template"
+    template.mkdir()
+    env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=fixture, env=env)
+
+    git("-c", "init.templateDir=" + str(template), "init", "--quiet")
+    source = fixture / "src/mssql_source_change/files/windows_profile.rs"
+    source.parent.mkdir(parents=True)
+    source.write_text("// public synthetic guard fixture\n", encoding="utf-8")
+    git("add", "--", ".")
+    before = git("write-tree").decode().strip()
+    destination = fixture / "openspec/changes/enforce-windows-source-custody/moved-profile.rs"
+    destination.parent.mkdir(parents=True)
+    source.rename(destination)
+    git("add", "--all")
+    after = git("write-tree").decode().strip()
+    # Prove that this fixture discriminates the old name-only guard.
+    old = git("-c", "diff.renames=true", "diff", "--name-only", "-z", before, after, "--")
+    require_allowed_head_changes(old)
+    raw = git("-c", "diff.renames=true", *head_diff_args(before, after)[1:])
+    if source.relative_to(fixture).as_posix().encode() not in raw.split(b"\0")[:-1]:
+        raise RuntimeError("guard regression did not expose the protected deletion")
+    try:
+        require_allowed_head_changes(raw)
+    except RuntimeError:
+        (fixture / "guard-receipt.json").write_text(json.dumps({
+            "before_tree": before, "after_tree": after, "diff.renames": True,
+            "old_paths": old.decode().split("\0")[:-1],
+            "guard_paths": raw.decode().split("\0")[:-1],
+            "old_guard_admitted": True, "fixed_guard_refused": True,
+        }, indent=2), encoding="utf-8")
+        print("HEAD guard: protected-source to allowed-doc rename refused; fixture retained")
+        return
+    raise RuntimeError("HEAD guard accepted a protected production rename")
+
+
 def self_test():
     name = "example::exact"
     passed = f"running 1 test\ntest {name} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;"
@@ -76,6 +134,7 @@ def self_test():
             continue
         raise RuntimeError("outcome verifier accepted an invalid receipt")
     print("outcome verifier: 2 valid + 5 refusal controls passed")
+    head_guard_self_test()
 
 
 def main(mode):
@@ -120,11 +179,10 @@ def main(mode):
     head = checked(["git", "rev-parse", "HEAD"])
     receipt["head"] = head
     checked(["git", "merge-base", "--is-ancestor", FIXED, head])
-    changed = checked(["git", "diff", "--name-only", FIXED, head]).splitlines()
-    allowed = ["tools/run-source-custody-ci.py", ".github/workflows/source-custody.yml"]
-    if any(p not in allowed and not p.startswith("openspec/changes/enforce-windows-source-custody/")
-           for p in changed):
-        raise RuntimeError("HEAD production differs from pinned fixed candidate; update/review pins")
+    changed = run(head_diff_args(FIXED, head), label="head-diff")
+    if changed.returncode:
+        raise RuntimeError("HEAD path inspection failed")
+    require_allowed_head_changes(changed.stdout)
     if checked(["git", "rev-parse", FIXED + "^{tree}"]) != FIXED_TREE:
         raise RuntimeError("fixed tree mismatch")
     checked(["git", "merge-base", "--is-ancestor", BASE, BASELINE])

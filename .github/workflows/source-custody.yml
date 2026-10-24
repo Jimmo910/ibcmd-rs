@@ -54,6 +54,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: source-custody-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/source-custody-evidence-${{ matrix.mode }}
+          path: |
+            ${{ runner.temp }}/source-custody-evidence-${{ matrix.mode }}
+            ${{ runner.temp }}/source-custody-head-guard-*
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
