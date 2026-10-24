@@ -12,10 +12,10 @@ import sys
 import tempfile
 import time
 
-FUNCTIONAL = "4052d80e369d55b0a3b4bb7d2d79e8c88a61241b"
-FUNCTIONAL_TREE = "0d9a28aed5d8bc5b896a396030267cf86ec2f659"
+FUNCTIONAL = "21ca0c9bc2e270e11a49d1c7cc671076205efc18"
+FUNCTIONAL_TREE = "d2dc0515c95f8a84da1c4bcfdc309b583a7aff19"
 HARNESS = "tests/editor_partial_import_windows.rs"
-HARNESS_BLOB = "a9000be998de9aad5b57558f6311f0fe3c7e05c5"
+HARNESS_BLOB = "e8fe7ffed05192ccd1a661aae367473259f339de"
 CONTROL = "src/mssql_source_change/files/windows_custody_tests.rs"
 CONTROL_BLOB = "88990942c256850a0449214923d7ee7190332cf7"
 GZIP_SHA = "090455ade0bae8bb328bce6890db1d1dd4be204f3dce1081cc4f13da65652809"
