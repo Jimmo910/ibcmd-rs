@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Share-participating Windows directory custody
-Windows source root and ancestor custody SHALL use directory access that participates in Windows delete-sharing checks while preserving the existing absence of write/delete sharing. Leaf read/share behavior SHALL remain unchanged. Unavailable required access SHALL refuse without permission changes.
+Windows source root and ancestor custody SHALL use read-only directory access that participates in Windows delete-sharing checks and SHALL exclude DELETE sharing. Directory READ and WRITE sharing SHALL permit ordinary destination-parent add-child opens for unpinned child renames. Leaf read/share behavior SHALL remain unchanged with strict READ sharing and write/delete exclusion. Unavailable required access SHALL refuse without permission changes.
 
 #### Scenario: Directory-only custody without a leaf
 - **GIVEN** an owned empty local NTFS source root and a successful ancestor rename round-trip before capture
@@ -31,7 +31,7 @@ Selected pinned originals, detached immutable compiler caches, final witness/dig
 
 #### Scenario: Idle child edits remain possible
 - **GIVEN** a held source directory anchor without a pinned leaf
-- **WHEN** ordinary child files are created or edited
+- **WHEN** ordinary child files are created or edited, or unpinned child entries are renamed (including entries created after capture)
 - **THEN** those operations SHALL remain possible; directory custody SHALL not be presented as a frozen subtree.
 
 #### Scenario: Detached cache changes before publication
