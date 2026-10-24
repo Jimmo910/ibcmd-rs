@@ -53,9 +53,23 @@ external lab paths (relative to `/Volumes/Work/Dev/ibcmd-rs-lab`):
 
 Both inspected candidate receipts explicitly record `native_runs=0` and
 `input_is_not_native_oracle=true`. Their successful bootstrap/readback is not a
-native receipt. The actual native FILE receipt custody path is requested from
-#381; the executable and native result have not been independently consumed or
-re-executed here. The
+native receipt. The sanitized retained native FILE receipts supplied by #381 were subsequently
+read-only inspected and independently rehashed:
+
+- `lenovo-lab-inspection/artifacts/chart-native-baseline-v2/baseline-aggregate.sanitized.json`,
+  SHA-256 `8ca5f63ce04282a61785cee4732106a907cbd8a92b714a0b13ae19bcf2697dbb`.
+- Same directory, `native-baseline-outcome.sanitized.json`, SHA-256
+  `acdf051c92e038dad5821e83897f6dd0c9f8d5500c1e181a68ccd9e247e1ad1a`.
+
+They record one invocation with four phases (`native-version`,
+`native-create-empty`, `native-load-public-cf`, `native-export-baseline`), all
+exit 0 and stderr 0, with the same public CF before/after. The aggregate explicitly
+records `SQLUsed=false` and no native output tree/private XML transfer.
+The original receipt hash is the referenced `f65179de...` above; that original
+VM receipt and executable were not fetched or re-executed here. The sanitized
+outcome is `FINAL_AUDIT_INCOMPLETE` with `inventory_entry_budget_exceeded`.
+These are historical FILE admission/name observations, not complete parity,
+SQL creation/schema/identity evidence, a fresh run or an operator lease. The
 evidence explicitly records `native_full_acceptance=false` and incomplete final
 accounting. The CF is candidate-compiled public source, not native expected
 output. A FILE import/export observation is not a native SQL apply baseline.
@@ -63,8 +77,8 @@ The shorthand combining CF prefix and 7505-byte length is not a full hash.
 
 ## Missing operator-owned bindings (STOP)
 
-- Actual retained native FILE receipt custody and current operator proof of
-  the chosen seed; a known CF hash/candidate readback is not that proof.
+- Current operator custody/freeze and target authority for the chosen seed.
+  Historical sanitized FILE receipts above do not establish a fresh SQL baseline.
 - Fresh disposable SQL fixture native create/import/apply/export receipts on the
   actual requested platform, including native executable hash and full exported
   tree hash. A file-infobase receipt cannot fill this field.
