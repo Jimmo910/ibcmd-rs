@@ -3,8 +3,8 @@
 ## Immutable inputs and placement
 
 - Baseline/tests-only: `751751f8f5670d84cf2d96aab86895b6c5013d83`.
-- Fixed production candidate: `8433693b85f6130dccfff11c219207530b02f432`.
-- Fixed tree: `9c75fc6e226437422a7246ceaac63fb4a3e31c1e`.
+- Fixed production candidate: `2070c830907558ca14ccaf925f6dc43f2a201401`.
+- Fixed tree: `d4bf7220a101b06d18fa457b82dd51b36245adb3`.
 - Shared base: `6ca6ade04ceee151f056e29acb5cd6deaaa9fbc4`.
 
 Before execution, verify both exact commit/tree receipts and byte-identical windows_custody_tests.rs blobs. No moving branch HEAD, old binary or compile-only result substitutes for either input. Coordinator chooses the separately authorized ordinary push/PR Windows job placement; this document creates no workflow, dispatch, publication, settings change or execution grant. Do not use VM/SSH, user data, native1C, ACL changes or a registration/selector bypass.
@@ -95,3 +95,6 @@ The source/contract approvals predate this runner delta; obtain fresh independen
 
 
 The HEAD guard explicitly requests `git diff --no-renames --name-only -z` and parses NUL-delimited byte paths. This exposes protected deletions/additions even when an unchanged production file is renamed into the allowed OpenSpec directory. Its local retained Git fixture forces `diff.renames=true`, confirms the old destination-only listing would be admitted, then requires the production guard to reject the same rename. The fixture uses public synthetic bytes, tree objects without commits/identity, an empty template and no remote or global configuration. CI retains that owned self-test fixture (including its synthetic Git objects) alongside the scoped receipts; no unrelated cache is added. This guard regression is separate from unrun Windows custody evidence.
+
+
+The first published candidate843 did not pass actual Windows compilation: E0432 rejected importing DRIVE_FIXED from the windows-sys FileSystem namespace. Candidate2070 declares the official documented GetDriveTypeW DRIVE_FIXED=3 return code locally, without a new dependency/feature or predicate change. The old immutable843/tree9c75 and run receipts remain historical evidence; compilation failure is not an observed baseline RED or fixed acceptance. Baseline751 and all four identical custody controls are preserved. The new functional pin and this runner-pin delta require source re-review and a new ordinary push event only after the first paired run's available receipts are retained; no manual rerun or moving-head substitution.
