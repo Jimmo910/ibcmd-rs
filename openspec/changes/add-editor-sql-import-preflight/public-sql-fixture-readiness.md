@@ -75,7 +75,30 @@ accounting. The CF is candidate-compiled public source, not native expected
 output. A FILE import/export observation is not a native SQL apply baseline.
 The shorthand combining CF prefix and 7505-byte length is not a full hash.
 
-## Missing operator-owned bindings (STOP)
+## Phase boundary: source preparation versus capture
+
+The missing outputs below are requirements before candidate/capture probes, not
+prerequisites for creating their new disposable source. A new database GUID,
+measured schema/header/part profile and native SQL baseline cannot exist before
+creation. Their absence does not block a separately reviewed source-preparation
+plan using an already authorized identity and existing security configuration.
+
+Pre-create review binds the exact public CF and native executable/help, actual
+existing SQL server/principal/auth mechanism and permissions, a fresh owned
+run/data/temp/output namespace, and absence of the unique
+`IBCMDLAB_PUBLIC_SQL_<runid>` target. The sole operator must have released the
+preceding phase and hold the new lease. Exact native create/load/apply/export
+arguments come from actual inspected help/configuration, never guessed syntax.
+No originals, security changes, force/drop, or retry against an existing name.
+
+After creation/native load/apply/export, the operator measures the generated
+GUID/family/fork, SQL version/schema/header/parts, baseline fingerprints and idle
+freeze before candidate #382/#380 runs. Those outputs populate the existing
+strict snapshot-capture plan; that validator is not weakened or used as the
+pre-create source-preparation validator. Measurement alone does not certify a
+writer profile or transfer capture authentication to Rust RPC.
+
+## Capture/candidate bindings still to measure (STOP before those probes)
 
 - Current operator custody/freeze and target authority for the chosen seed.
   Historical sanitized FILE receipts above do not establish a fresh SQL baseline.
@@ -105,9 +128,10 @@ This connection is not an inferred Rust `serve` settings/auth binding for #380.
 Sharing a public seed does not share target identity, authentication authority,
 product settings or a runtime acceptance result between the two probes.
 
-## Exact first offline action
+## Exact first offline action for the capture phase
 
-After the operator obtains the missing independently verified bindings, populate
+After the separately reviewed source-preparation phase produces the generated
+bindings and the operator verifies the remaining capture bindings, populate
 a fresh external private `plan.json` using the strict source-only README schema,
 verify the reviewed package hashes, then run:
 
@@ -116,7 +140,8 @@ python validate.py --plan EXTERNAL_PRIVATE_RUN/plan.json
 ```
 
 Do not manufacture placeholders to make validation pass. Without those bindings,
-stop before SQL dispatch. Offline plan validation does not grant a VM/SQL/native
+stop before capture/candidate dispatch. This does not forbid the separately
+reviewed native source-preparation phase described above. Offline plan validation does not grant a VM/SQL/native
 lease or authorize database creation. After the sole operator separately obtains
 the lease and disposable-target authority, the package permits one parameterized
 ExecuteReader against its supplied existing dedicated connection. No USE,
