@@ -1,8 +1,8 @@
 # Shared public SQL probe fixture readiness
 
-Status: source inspection only, no target bound and no SQL/native/VM operation.
-This packet separates a candidate public seed from native SQL provenance. It is
-not a valid operator plan or an accepted profile. The #380 read-only RPC packet
+Status: source and sanitized operator-receipt inspection. The reviewer executed
+no SQL/native/VM operation. A native SQL source baseline is now measured below;
+this packet is still not a capture plan or an accepted reader/writer profile. The #380 read-only RPC packet
 and #382 profile capture may share one source only after the sole operator proves
 and freezes the exact new disposable SQL fixture under an assigned lease.
 
@@ -75,6 +75,43 @@ accounting. The CF is candidate-compiled public source, not native expected
 output. A FILE import/export observation is not a native SQL apply baseline.
 The shorthand combining CF prefix and 7505-byte length is not a full hash.
 
+## Actual public native SQL baseline (receipt-verified)
+
+The sole operator completed create/load/apply/save-CF/CDI/XML on native
+8.3.27.2342. Independent read-only rehash/inspection confirmed:
+
+- `lenovo-lab-inspection/artifacts/public-sql-native2342-baseline/manifest.sanitized.json`,
+  SHA-256 `aa22ac9eafc3bb9f655c3e41a9e9028e58ba8fa79a633090a20b9b4c08d4cac4`.
+- `lenovo-lab-inspection/artifacts/export-only009-54c8096f-871d-491e-b7c0-0e6dd9a037ab/release-aggregate.sanitized.json`,
+  SHA-256 `1077c6c57b8de08774ef11894e67e34118de5b5e37da4d053098ea97a89437d1`.
+
+The composed chain preserves the initial canceled apply and failed CDI-path
+receipts; it does not rewrite those runs as success. A separately approved
+single exact-warning response completed apply/save, followed by export-only CDI
+and XML. No create/load/apply/save was blindly replayed after successful phases.
+
+Actual sanitized target bindings: server `WIN-LHDQGRLB1L1`, database
+`IBCMDLAB_PUBLIC_SQL_151c08962516426e96ccf4e48d240ff9`, database ID12,
+GUID `9000716B-B12F-45BE-BB5B-27FB88534F95`, family/recovery fork
+`DF1E79FC-77D9-4DF6-AF59-C753F3AF6EFC`, SQL ProductVersion16.0.1000.6,
+collation Cyrillic_General_CI_AS. Identity is unchanged and the recorded final
+observation has no other target user sessions and FULL RELEASE. This historical
+quiescence observation is not a future lease or freeze interval.
+
+VM-local outputs: saved CF77760 bytes SHA-256
+`4baf69f561e84e22b8986e6ab95d74ee83bf80373f971aa1454eb1ea9dbe33e7`;
+6 XML files/25135 bytes, inventory SHA-256
+`4bcc455f8d1a4a61b20546951bcd4b403c3d58b8ce0fe8e0589440f0a164e9cc`;
+CDI1101 bytes SHA-256
+`d26f3f250f563454701dabc537ac116f6240bef21485f5326350e9ace182ca46`,
+identical to the CDI within full XML export. Raw files remain in the VM. The
+original public CF, saved CF and prior receipts remain unchanged.
+
+This completes native source preparation, not #382 partial module/form staging
+acceptance. Strict SQL snapshot/schema/header/parts measurement, actual reader
+comparison, network TLS and guarded publication remain separate. The fixture
+contains a module/template; no document/form roundtrip is implied.
+
 ## Phase boundary: source preparation versus capture
 
 The missing outputs below are requirements before candidate/capture probes, not
@@ -98,15 +135,23 @@ strict snapshot-capture plan; that validator is not weakened or used as the
 pre-create source-preparation validator. Measurement alone does not certify a
 writer profile or transfer capture authentication to Rust RPC.
 
+## Capture runtime control (measured separately)
+
+The PS5.1 compatibility helpers have actual operator Windows conversion-only
+10/10 PASS, no SQL connection construction/Open and no capture invocation.
+Independently rehashed receipt: `lenovo-lab-inspection/artifacts/snapshot-runtime-control-f29671fb-3358-4f86-82b1-ece0df199f8b/release.sanitized.json`,
+SHA-256 `e8279d993efd9b6053aaea1ab6927b7a776f7a37c9f2b608c3d74c06ad6787ca`.
+This binds wrapper `0d133311...` and conversion control `66bd3299...` on
+PowerShell5.1.20348.558/.NET4.0.30319.42000; it does not prove provider/capture.
+A future changed measurement-plan/schema path needs its own reviewed controls.
+
 ## Capture/candidate bindings still to measure (STOP before those probes)
 
-- Current operator custody/freeze and target authority for the chosen seed.
-  Historical sanitized FILE receipts above do not establish a fresh SQL baseline.
-- Fresh disposable SQL fixture native create/import/apply/export receipts on the
-  actual requested platform, including native executable hash and full exported
-  tree hash. A file-infobase receipt cannot fill this field.
-- Independently recorded exact server/database, database GUID, family GUID,
-  recovery fork, SQL ProductVersion and actual storage schema/header/part layout.
+- Fresh operator custody/freeze/current lease for the now-known native SQL
+  source. Historical FULL RELEASE is not an active measurement window.
+- Actual one-session storage schema/header/part profile and full physical
+  readset/fingerprint, bound to the measured identity above. Native source
+  preparation is complete; it must not be repeated to satisfy this field.
 - Exact current tested candidate binary/embedded revision and matching RPC packet
   provenance; source-only observer tests are not an accepted SQL profile.
 - Source freeze/exclusivity receipt and window, precise baseline hashes, and
@@ -117,7 +162,7 @@ writer profile or transfer capture authentication to Rust RPC.
   binding (reference only, no values), and its actual Windows seven-RPC probe
   passing with zero skipped cases; neither is established by this packet.
 
-No concrete SQL target or credential is recorded in this packet. Authentication
+The public disposable target identity is recorded above; credentials are not. Authentication
 reference for the #359 capture package is a mechanism only: the sole operator
 supplies an already-open,
 dedicated NON-POOLED `System.Data.Common.DbConnection` using their existing
