@@ -28,6 +28,14 @@ def digest(value):
 
 
 def verify(doc):
+    require(isinstance(doc, dict), "transcript must be a JSON object")
+    try:
+        return _verify(doc)
+    except (AttributeError, KeyError, TypeError, IndexError, RecursionError):
+        raise ValueError("malformed transcript shape") from None
+
+
+def _verify(doc):
     require(type(doc.get("schema")) is int and doc["schema"] == 1, "unknown transcript schema")
     require(doc["fixture"]["kind"] == "public-clean-room", "public fixture required")
     require(digest(doc["fixture"]["sha256"]), "fixture digest required")
@@ -57,6 +65,7 @@ def verify(doc):
     require(stamp(by_operation["stage"]["completedAt"]) < stamp(by_operation["apply"]["authorizedAt"]),
             "stage/apply consent order differs")
     bindings = doc["requestBindings"]
+    require(isinstance(bindings, dict), "request bindings must be a JSON object")
     require(set(bindings) == {"infobase", "sourceDir", "versionBaselineDir"}, "native status bindings required")
     require(all(isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", v) for v in bindings.values()),
             "sanitized logical request bindings required")
@@ -155,7 +164,7 @@ def main():
             raw = stream.read(MAX_BYTES + 1)
         require(len(raw) <= MAX_BYTES, "transcript exceeds 1 MiB")
         result = verify(json.loads(raw))
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError) as error:
         parser.exit(1, f"status transcript refused: {type(error).__name__}: {error}\n")
     print(json.dumps(result, sort_keys=True))
 

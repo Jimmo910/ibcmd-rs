@@ -96,7 +96,8 @@ def decode_frames(raw):
 
 def public_error(response, stderr):
     need(isinstance(stderr, bytes) and len(stderr) <= STDERR_CAP, "stderr cap exceeded")
-    code = response.get("error", {}).get("code")
+    error = response.get("error") if isinstance(response, dict) else None
+    code = error.get("code") if isinstance(error, dict) else None
     need(type(code) is int and code in {-32800, -32010, -32011, -32012, -32014, -32602, -32603}, "known error code required")
     # Never echo raw SQL/client messages, data, stderr, paths or identifiers.
     return {"errorCode": code, "category": "cancelled" if code == -32800 else "refused", "publishedStatus": False}

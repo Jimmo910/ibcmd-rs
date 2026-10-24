@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import unittest
 
-from windows_gate_support import CappedLog, admit_artifacts, verified_sources
+from windows_gate_support import CappedLog, PublicResult, admit_artifacts, verified_sources
 
 EXPECTED = {
     "WindowsOrderingModel.test_eof_waits_for_normal_exit_before_closing_job",
@@ -39,8 +39,8 @@ def main():
         raise SystemExit("interpreter cap")
     binary_sha256 = hashlib.sha256(binary_path.read_bytes()).hexdigest()
     import rpc_probe as probe
-    root = probe.FIXTURE_BASE
-    if os.environ.get("STATUS_LAB_TEST_ROOT") != str(root) or not root.is_dir() or any(root.iterdir()):
+    root = probe.explicit_fixture_base()
+    if not root.is_dir() or any(root.iterdir()):
         raise SystemExit("new empty owned fixture base required")
     suite = unittest.defaultTestLoader.loadTestsFromName("test_windows_rpc_probe")
     tests = list(leaves(suite))
@@ -49,14 +49,16 @@ def main():
         raise SystemExit("exact test inventory required")
     log = CappedLog(root / "windows-gate-tests.log")
     try:
-        result = unittest.TextTestRunner(stream=log, verbosity=2).run(unittest.TestSuite(tests))
+        result = unittest.TextTestRunner(stream=log, verbosity=2, resultclass=PublicResult).run(unittest.TestSuite(tests))
     finally:
         log.close()
     try:
         unchanged = (before == verified_sources() and manifest_sha256 == hashlib.sha256(manifest_path.read_bytes()).hexdigest() and binary_sha256 == hashlib.sha256(binary_path.read_bytes()).hexdigest())
     except Exception:
         unchanged = False
-    passed = result.wasSuccessful() and result.testsRun == len(EXPECTED) and not result.skipped and unchanged and not log.overflow
+    public_outcomes = {key.removeprefix("test_windows_rpc_probe."): value for key, value in result.public_outcomes.items()}
+    all_named_passed = set(public_outcomes) == EXPECTED and all(value == "pass" for value in public_outcomes.values())
+    passed = all_named_passed and result.wasSuccessful() and result.testsRun == len(EXPECTED) and not result.skipped and unchanged and not log.overflow
     receipt = {"schema": 1, "platform": "windows", "fixtureOnly": True,
         "productExecuted": False, "liveAcceptance": False, "publishedStatus": False,
         "success": passed, "testsRun": result.testsRun, "skipped": len(result.skipped),
@@ -64,6 +66,10 @@ def main():
         "candidateCommit": probe.CANDIDATE, "apiBase": probe.API_BASE, "protocol": probe.PROTOCOL}
     with (root / "windows-gate-receipt.json").open("x") as out:
         json.dump(receipt, out, indent=2)
+    # Fixed public test names/outcomes remain inspectable even if admission fails.
+    # Never print assertion text, frames, stderr, exception messages or paths.
+    outcomes = [{"test": name, "outcome": public_outcomes.get(name, "unknown")} for name in sorted(EXPECTED)]
+    print(json.dumps({"schema": 1, "fixtureOnly": True, "testsRun": result.testsRun, "outcomes": outcomes}))
     # The workflow uploads only after this bounded artifact admission marker.
     admit_artifacts(root)
     print("Windows public fake gate:", "PASS" if passed else "FAIL", "tests", result.testsRun, "skips", len(result.skipped))

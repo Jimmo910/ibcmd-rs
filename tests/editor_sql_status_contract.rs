@@ -461,10 +461,12 @@ fn recording_sql_status_contract() {
     fs::write(&reference_path, &reference).unwrap();
 
     state.lock().unwrap().fail = true;
+    let error = config
+        .status_with_versions(Some(&names), &source, &baseline, &progress)
+        .unwrap_err();
     assert!(
-        config
-            .status_with_versions(Some(&names), &source, &baseline, &progress)
-            .is_err()
+        format!("{error:#}").contains("injected SQL read failure"),
+        "expected the injected SQL refusal: {error:#}"
     );
     state.lock().unwrap().fail = false;
     let flag = Arc::new(AtomicBool::new(false));

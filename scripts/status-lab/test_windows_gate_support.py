@@ -1,9 +1,10 @@
 """Pure bounded-log/artifact controls; no peer processes or Windows emulation."""
 import json
+import io
 import os
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import rpc_probe as probe
 import windows_gate_support as support
@@ -39,6 +40,41 @@ class GateSupport(unittest.TestCase):
         for i in range(257): (root / str(i)).mkdir()
         with self.assertRaisesRegex(ValueError, "artifact-boundary"):
             support.artifact_inventory(root)
+    def test_windows_direntry_zero_link_cache_uses_real_stat(self):
+        root = self.root(); path = root / "public.txt"; path.write_bytes(b"abc")
+        entry = Mock(path=str(path))
+        entry.is_symlink.return_value = False
+        entry.is_dir.return_value = False
+        entry.is_file.return_value = True
+        entry.stat.return_value = Mock(st_nlink=0, st_size=3)
+        context = Mock()
+        context.__enter__ = Mock(return_value=iter([entry]))
+        context.__exit__ = Mock(return_value=False)
+        with patch("os.scandir", return_value=context):
+            self.assertEqual(support.artifact_inventory(root), {"files": 1, "bytes": 3, "entries": 1})
+        entry.stat.assert_not_called()
+    def test_actual_hardlinks_still_refuse(self):
+        root = self.root(); path = root / "public.txt"; path.write_bytes(b"abc")
+        os.link(path, root / "public-hardlink.txt")
+        with self.assertRaisesRegex(ValueError, "artifact-boundary"):
+            support.artifact_inventory(root)
+    def assert_public_subtest_outcome(self, kind):
+        class Synthetic(unittest.TestCase):
+            def runTest(self):
+                with self.subTest(case="public-control"):
+                    if kind == "failure": self.fail("private-shaped-public-marker")
+                    if kind == "error": raise ValueError("private-shaped-public-marker")
+                    if kind == "skip": self.skipTest("private-shaped-public-marker")
+        case = Synthetic()
+        result = unittest.TextTestRunner(stream=io.StringIO(), resultclass=support.PublicResult).run(unittest.TestSuite([case]))
+        self.assertEqual(result.public_outcomes, {case.id(): kind})
+        self.assertNotIn("private-shaped", json.dumps(result.public_outcomes))
+    def test_failed_subtest_marks_owning_named_control(self):
+        self.assert_public_subtest_outcome("failure")
+    def test_error_subtest_marks_owning_named_control(self):
+        self.assert_public_subtest_outcome("error")
+    def test_skipped_subtest_cannot_be_overwritten_as_pass(self):
+        self.assert_public_subtest_outcome("skip")
     def test_committed_manifest_binds_all_executed_sources(self):
         result = support.verified_sources()
         self.assertEqual(set(result), support.SOURCE_NAMES)

@@ -54,12 +54,22 @@ class OwnedFixture:
     token: object
 
 
+def explicit_fixture_base():
+    value = os.environ.get("STATUS_LAB_TEST_ROOT")
+    need(isinstance(value, str) and bool(value), "explicit-fixture-base-required")
+    candidate = Path(value)
+    need(candidate.is_absolute(), "explicit-fixture-base-required")
+    for component in (candidate, *candidate.parents):
+        need(not component.is_symlink() and not (hasattr(component, "is_junction") and component.is_junction()), "symlink-refused")
+    need(candidate.resolve(strict=True) == FIXTURE_BASE, "explicit-fixture-base-required")
+    return FIXTURE_BASE
+
+
 def create_fixture_root():
-    base = FIXTURE_BASE
+    base = explicit_fixture_base()
     need(base.parents[1].name == "ibcmd-rs-lab" and base.is_dir(), "external-fixture-base-required")
     for component in (base, *base.parents):
         need(not component.is_symlink(), "symlink-refused")
-    need(os.environ.get("STATUS_LAB_TEST_ROOT") == str(base), "explicit-fixture-base-required")
     root = Path(tempfile.mkdtemp(prefix="rpc-contract-", dir=base))
     token = object()
     stamp = root.lstat()

@@ -148,3 +148,44 @@ three explicit Windows kernel skips (2.499 s)**. External retained logs:
 `logs/issue-380-checkout-469f2805-full.log`. The manifest remains `b301f67a`.
 These results validate the LF contract under this local Git, not the unexecuted
 corrected Windows workflow. No product/SQL/native/VM/host/Rust process ran.
+
+
+## Real Windows artifact metadata and review follow-up
+
+On `6e2a834e`, fork run `40087101511` / job `120852166426` printed the correct
+manifest SHA-256 (`b301f67a`, 887 bytes), invoked the test suite, then failed
+artifact admission. The seven outcomes were not uploaded, so no 7/7 result is
+claimed. [Python 3.12 documents](https://docs.python.org/3.12/library/os.html#os.DirEntry.stat)
+that Windows DirEntry.stat returns zero link/device/inode fields; os.stat must
+be used for those values. Admission now queries no-follow os.stat and retains
+st_nlink==1, regular-file, reparse-point, count and byte limits. A simulated
+zero-link DirEntry and a real retained hardlink are separate counterexamples.
+
+Fixed public test labels/outcomes are emitted before artifact admission, without
+assertion text, exception messages, frames, stderr or paths. Failed/error/skipped
+subtests mark their owning control and cannot be printed as pass. The gate now
+requires all seven exact named outcomes to be pass as well as the existing
+aggregate count, zero-skip, source/seal and process checks.
+
+CodeRabbit review `5637960036` was COMMENTED, not APPROVED. Its three confirmed
+shape/path findings are addressed together: malformed peer error objects use
+the defined ValueError refusal; malformed root/nested/deep transcript JSON uses
+the bounded CLI refusal path; fixture spelling is resolved before comparison,
+while absolute/confined/empty/new ownership and symlink/junction guards remain.
+The Rust recording refusal assertion now checks the injected SQL failure chain;
+no local Cargo run is included in this source-only follow-up. Existing decoder
+malformation tests are retained; the new shape matrix is not duplicated there.
+
+Current follow-up manifest SHA-256:
+`9a1439ae693487583eddf2835b39d77ff3c8130a8be907ab4fe2b4d28dccbbb9`.
+Actual corrected Windows outcomes remain pending; prior failed logs are retained.
+
+
+Follow-up local validation: three old malformed-shape AttributeErrors reproduced
+against published `6e2a834e` functions in memory. The revised **20 targeted pure
+controls passed (0.017 s)**, then the same reviewed sources passed the complete
+suite: **98 run, 95 passed, three explicit Windows kernel skips (2.505 s)**.
+External logs: `logs/issue-380-review-9a1439ae-targeted.log` and
+`logs/issue-380-review-9a1439ae-full.log`. All fixtures retained. No local Cargo
+or corrected Windows execution is included in these counts; the stronger Rust
+assertion awaits the ordinary CI run.
