@@ -92,6 +92,16 @@ mod source_three_way_oracle;
 mod template_fonts;
 mod xml_profiles;
 
+#[test]
+fn scratch_tags_are_refused_across_suites() {
+    common::claim_tag("integration-claim-probe", "tests/first.rs");
+    common::claim_tag("integration-claim-probe", "tests/first.rs");
+    let second = std::panic::catch_unwind(|| {
+        common::claim_tag("integration-claim-probe", "tests/second.rs");
+    });
+    assert!(second.is_err(), "a second suite claimed the same tag");
+}
+
 /// Each `tests/<suite>.rs` is a module here or a `[[test]]` target in
 /// `Cargo.toml`, never both: with `autotests = false` nothing else builds it.
 #[test]

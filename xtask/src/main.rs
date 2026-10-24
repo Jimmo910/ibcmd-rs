@@ -592,6 +592,8 @@ fn affected_test_steps(affected: &Affected) -> Vec<Step> {
         ));
     }
     if !modules.is_empty() && !whole_integration {
+        // libtest filters match substrings: `x::` also runs a suite named
+        // `<prefix>_x`, more tests rather than fewer.
         let filters: Vec<String> = modules.iter().map(|suite| format!("{suite}::")).collect();
         let mut args = vec![
             "test",

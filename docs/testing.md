@@ -56,7 +56,10 @@ cargo test --locked -p ibcmd-rs --test integration cf_export::clean_room_cf_expo
 
 The suites of that binary run in parallel in one process, so none of them may
 change process-wide state, and scratch directories need names of their own
-(`common::temp_dir` refuses a tag that two suites use). A suite that runs
+(`common::temp_dir` refuses a tag that two suites use). The filter
+`<suite>::` matches test names by substring, so it also runs a suite whose
+name ends with `<suite>` (`extension_export::` runs `file_extension_export`
+too). A suite that runs
 process-global engine operations in the test process (cancellation scopes,
 offline rows, the offline compile, stored-object views) or needs its own
 `main` keeps a `[[test]]` target of its own in `Cargo.toml` and runs with
