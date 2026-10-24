@@ -8,6 +8,11 @@ WriteSession::snapshot SHALL retain its Result<String> API and provide an opaque
 - **WHEN** snapshot is called twice without changes
 - **THEN** the same token SHALL be returned and ordinary external writer/delete/ancestor-renaming operations SHALL remain denied while the session is held.
 
+#### Scenario: Ancestor already opened for delete access
+- **GIVEN** an ordinary existing DELETE-access handle on a clean-room database ancestor
+- **WHEN** the writer attempts to acquire share-participating ancestor custody without FILE_SHARE_DELETE
+- **THEN** it SHALL refuse before database or recovery mutation; it SHALL NOT fall back to zero-access custody or change permissions.
+
 #### Scenario: Same bytes on another identity
 - **GIVEN** a completed preflight whose original leaf is subsequently replaced by a distinct live file containing identical bytes
 - **WHEN** a new locked session takes a snapshot

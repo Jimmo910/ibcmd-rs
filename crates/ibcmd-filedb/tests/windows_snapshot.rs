@@ -81,6 +81,31 @@ fn snapshot_holds_exclusive_data_and_ancestor_custody() {
 }
 
 #[test]
+fn preexisting_ancestor_delete_access_refuses_before_database_or_recovery_mutation() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = Scratch::new("ancestor-delete");
+    let original = fs::read(dir.data()).unwrap();
+    // DELETE is ordinary per-handle access on this owned clean-room directory;
+    // no ACL, privilege or access setting is changed. The new held ancestor's
+    // omission of SHARE_DELETE must conflict with this already-open access.
+    let delete = OpenOptions::new()
+        .access_mode(0x00010000) // DELETE
+        .share_mode(1 | 2 | 4)
+        .custom_flags(0x02000000 | 0x00200000) // BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+        .open(dir.db())
+        .unwrap();
+    let error = match open_for_write(&dir.db()) {
+        Ok(_) => panic!("ancestor DELETE access was not excluded"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, Error::Io(ref error) if error.raw_os_error() == Some(32)));
+    drop(delete);
+    assert_eq!(fs::read(dir.data()).unwrap(), original);
+    assert!(!backup_file(&dir.db()).exists());
+    assert_no_work(&dir);
+}
+
+#[test]
 fn same_bytes_on_a_distinct_live_identity_invalidate_snapshot() {
     let dir = Scratch::new("identity");
     let original = fs::read(dir.data()).unwrap();
