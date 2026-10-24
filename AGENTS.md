@@ -41,8 +41,10 @@ cargo build --locked --profile iter                                      # binar
   build on the machine with linker crashes. When the work in a worktree is
   done, run `cargo clean` there or remove the worktree; delete the infobases,
   native exports and corpus outputs your runs created. A target directory
-  another cargo process uses (`ps -eo args | grep -E 'cargo|rustc'`) is not
-  yours to clean. Check `df -h` before a long build or corpus run.
+  another cargo process uses (`pgrep -a cargo`; PowerShell:
+  `Get-Process cargo, rustc`) is not yours to clean. Check free space
+  (`df -h`; PowerShell: `Get-PSDrive -PSProvider FileSystem`) before a long
+  build or corpus run.
 
 ## The loop
 
