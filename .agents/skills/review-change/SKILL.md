@@ -35,7 +35,7 @@ evidence, never by silence. Repeat until `APPROVE`.
 
 ## 4. The PR
 
-Branch `agent/issue-<N>-<slug>`; title `type(scope): summary`. Body:
+Branch `feature/issue-<N>-<slug>`; title `type(scope): summary`. Body:
 
 ```markdown
 ## What
@@ -59,7 +59,12 @@ ready only after `ci` passes and the critic approves.
 
 ## 5. The board
 
-Move the issue to In review and read the value back (AGENTS.md, Tracking).
+As the assigned contributor, comment `/review #PR` on the issue after the PR
+leaves Draft. Wait for the bot's success reply and read back In review and
+the PR reference in Agent (AGENTS.md, Tracking). Project write access and
+repository Collaboration are not required. If the bot is unavailable, ask
+the maintainer to perform and verify this transition; do not request broad
+access or silently leave stale tracking.
 
 ## 6. Rules you missed
 
