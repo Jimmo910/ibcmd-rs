@@ -3580,9 +3580,12 @@ fn parse_moxel_header_footer_record(text: &str) -> Option<Option<MoxelHeaderFoot
         "16" => {
             let source_format_ref = fields.get(1)?.trim().parse::<usize>().ok()?;
             let text = parse_moxel_localized_values(fields.get(2)?)?;
-            let text_kind = match (fields.len(), fields.get(3)?.trim()) {
-                (4, "0") => MoxelHeaderFooterText::Plain,
-                (5, "1") => MoxelHeaderFooterText::Formatted,
+            // A three-field record carries no flag and publishes `tl` like flag
+            // 0: ЗУП 3.1.18 stores all six records of 32 templates this way
+            // (`{16,1,{1,0}}`), and 8.3.27.2214 writes each with a `<tl>` child.
+            let text_kind = match (fields.len(), fields.get(3).map(|flag| flag.trim())) {
+                (3, None) | (4, Some("0")) => MoxelHeaderFooterText::Plain,
+                (5, Some("1")) => MoxelHeaderFooterText::Formatted,
                 _ => return None,
             };
             Some(Some(MoxelHeaderFooter {

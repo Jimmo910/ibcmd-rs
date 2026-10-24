@@ -2302,12 +2302,13 @@ pub(super) fn is_xml_path(path: &Path) -> bool {
 
 pub(super) fn write_source_asset(
     context: &DumpRowContext<'_>,
+    file_name: &str,
     asset: &SourceAsset,
     bytes: &[u8],
     parsed_form_body: Option<&ParsedFormBodyBlob>,
     timings: &mut MssqlDumpTimingReport,
 ) -> Result<WrittenSourceAsset> {
-    match write_source_asset_inner(context, asset, bytes, parsed_form_body, timings) {
+    match write_source_asset_inner(context, file_name, asset, bytes, parsed_form_body, timings) {
         Ok(written) => Ok(written),
         Err(error) => {
             // A classified refusal is reportable: the diagnostic export records
@@ -2341,6 +2342,7 @@ pub(super) fn write_source_asset(
 
 fn write_source_asset_inner(
     context: &DumpRowContext<'_>,
+    file_name: &str,
     asset: &SourceAsset,
     bytes: &[u8],
     parsed_form_body: Option<&ParsedFormBodyBlob>,
@@ -2464,6 +2466,7 @@ fn write_source_asset_inner(
             };
             // A platform 8.5 body is read through its 8.3.27 down-conversion;
             // what its appended members say is applied to the written XML.
+            let original_body = body;
             let converted_8_5_1;
             let mut facts_8_5_1 = None;
             let body = if super::form::layout_8_5_1::is_form_body_8_5_1(body) {
@@ -2503,6 +2506,7 @@ fn write_source_asset_inner(
                 owner_reference.as_deref(),
             )
             .with_form_reference_index(context.role_rights_object_refs)
+            .with_foreign_types(context.foreign_type_ids)
             .with_metadata_command_refs(context.metadata_refs)
             .with_metadata_command_facts(context.metadata_command_facts)
             .with_metadata_field_declarations(context.metadata_field_declarations)
@@ -2513,11 +2517,19 @@ fn write_source_asset_inner(
             // What the writer spells for an adopted form beyond its body: the
             // call types of its handlers and its base form, itself written by
             // the same writer in the same dialect.
+            // An extension's form of an adopted object (`<uuid>.0`) is
+            // adopted whether or not it keeps a base form record.
+            let adopted = super::extension::active().is_some_and(|extension| {
+                file_name
+                    .strip_suffix(".0")
+                    .is_some_and(|uuid| extension.adopted(uuid).is_some())
+            });
             let adoption = super::form_extension::form_adoption(
-                body,
+                original_body,
                 &form_context,
                 context.source_version,
                 context.object_refs,
+                adopted,
             )
             .with_context(|| {
                 format!(
@@ -2560,6 +2572,7 @@ fn write_source_asset_inner(
                             xml,
                             facts,
                             context.object_refs,
+                            adoption.as_ref(),
                         )
                             .map_err(|error| {
                                 anyhow::Error::new(SourceAssetRefusal::new(
@@ -2775,7 +2788,22 @@ fn write_source_asset_inner(
             let content = if context.source_version == InfobaseConfigSourceVersion::V2_20 {
                 ibcmd_xml::palette::strip_unused_palette_namespace(content)
             } else {
-                content
+                // 8.5 names the kind of a settings picture
+                // (`dcs_2_21::with_8_5_picture_values`).
+                let text = String::from_utf8(content).with_context(|| {
+                    format!(
+                        "data-composition source asset {} is not UTF-8",
+                        asset.primary_path.display()
+                    )
+                })?;
+                super::dcs_2_21::with_8_5_picture_values(&text, context.object_refs)
+                    .with_context(|| {
+                        format!(
+                            "failed to write the 8.5 picture values of source asset {}",
+                            asset.primary_path.display()
+                        )
+                    })?
+                    .into_bytes()
             };
             let path = output_dir.join(&asset.primary_path);
             if let Some(parent) = path.parent() {

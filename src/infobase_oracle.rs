@@ -240,6 +240,7 @@ pub fn roundtrip_config(
         batch_size: args.batch_size,
         path_prefix: args.path_prefix.clone(),
         files: Vec::new(),
+        native_files: None,
         script_output: args.script_output.clone(),
         // A clone of the source database: its own rows are patched.
         stage_mode: InfobaseImportStageMode::Patch,
@@ -294,6 +295,7 @@ pub fn roundtrip_config(
     let after_apply_export = export_config_report(
         &ConnectionConfig {
             file_infobase: None,
+            postgres_snapshot: None,
             dbms: config.dbms.clone(),
             db_server: config.db_server.clone(),
             db_name: target_db.clone(),

@@ -31,6 +31,7 @@
 //! 1 for `config apply` only when its metadata check finds errors).
 
 pub mod apply;
+mod export_queries;
 pub mod help;
 pub mod parse;
 
@@ -41,13 +42,13 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::cli::{
-    InfobaseConfigExportArgs, InfobaseConfigImportArgs, InfobaseConfigSaveArgs,
-    InfobaseImportStageMode, InfobaseImportVerify,
+    InfobaseConfigExportArgs, InfobaseConfigImportArgs, InfobaseConfigLoadArgs,
+    InfobaseConfigSaveArgs, InfobaseImportStageMode, InfobaseImportVerify,
 };
 use crate::infobase::OutputDirectoryNotEmpty;
 pub use parse::{
-    ApplyRequest, Common, ExportRequest, ImportFilesRequest, ImportRequest, Invocation, Refusal,
-    SaveRequest,
+    ApplyRequest, Common, ExportRequest, ImportFilesRequest, ImportRequest, Invocation,
+    LoadRequest, Refusal, SaveRequest,
 };
 
 const PLANNED: &str = "не поддерживается в этой версии ibcmd-rs (планируется в следующих)";
@@ -64,7 +65,8 @@ pub const EXIT_FAILED: i32 = -1;
 /// would refuse too, ibcmd-rs's own for one the platform would run.
 pub fn refusal_exit_code(refusal: &Refusal) -> i32 {
     match refusal {
-        Refusal::Parse(_)
+        Refusal::NativeMalformed(_)
+        | Refusal::Parse(_)
         | Refusal::MissingValue(_)
         | Refusal::Incomplete { .. }
         | Refusal::UnknownDbms(_)
@@ -110,26 +112,59 @@ pub fn run_infobase(args: &[OsString]) -> i32 {
             println!("ibcmd-rs {}", env!("CARGO_PKG_VERSION"));
             0
         }
+        // PostgreSQL is exported and imported (#369, #370); the rest stays
+        // the platform's.
+        Ok(Invocation::ImportFiles(request)) if is_postgres(&request.common) => {
+            refuse_postgres("infobase config import files")
+        }
+        Ok(Invocation::Apply(request)) if is_postgres(&request.common) => {
+            refuse_postgres("infobase config apply")
+        }
+        Ok(Invocation::Save(request)) if is_postgres(&request.common) => {
+            refuse_postgres("infobase config save")
+        }
         Ok(Invocation::Export(request)) => run_export(request),
+        Ok(Invocation::ExportQuery(request)) => export_queries::run(request),
         Ok(Invocation::Import(request)) => run_import(request),
-        // A file infobase is exported and imported; the rest stays the
-        // platform's for now.
+        // A file infobase is exported, imported and saved; the rest stays
+        // the platform's for now.
         Ok(Invocation::ImportFiles(request)) if request.common.db_path.is_some() => {
             refuse_file_infobase()
         }
         Ok(Invocation::Apply(request)) if request.common.db_path.is_some() => {
             refuse_file_infobase()
         }
-        Ok(Invocation::Save(request)) if request.common.db_path.is_some() => refuse_file_infobase(),
         Ok(Invocation::ImportFiles(request)) => run_import_files(request),
         Ok(Invocation::Apply(request)) => apply::run(request),
         Ok(Invocation::Save(request)) => run_save(request),
+        Ok(Invocation::Load(request)) => run_load(request),
         Err(refusal) => {
             print_refusal(&refusal, &program_name());
             refusal_exit_code(&refusal)
         }
     };
     finish(code)
+}
+
+fn is_postgres(common: &parse::Common) -> bool {
+    common
+        .dbms
+        .as_deref()
+        .is_some_and(crate::infobase::is_postgres)
+}
+
+fn refuse_postgres(command: &str) -> i32 {
+    let refusal = Refusal::Unsupported(postgres_refusal(command));
+    print_refusal(&refusal, &program_name());
+    refusal_exit_code(&refusal)
+}
+
+/// A command ibcmd-rs does not run on PostgreSQL yet, from the `--dbms`
+/// flag here or from the settings in the library (`infobase::import_config`).
+pub(crate) fn postgres_refusal(command: &str) -> String {
+    format!(
+        "Команда `{command}` для PostgreSQL не поддерживается в этой версии ibcmd-rs: на PostgreSQL выполняются config export, config import и config load"
+    )
 }
 
 fn refuse_file_infobase() -> i32 {
@@ -183,6 +218,7 @@ pub fn unsupported_mode_message(mode: &str) -> String {
 /// (the platform prints the list of an incomplete command there).
 pub fn refusal_message(refusal: &Refusal, program: &str) -> (String, bool) {
     let message = match refusal {
+        Refusal::NativeMalformed(message) => message.clone(),
         Refusal::Parse(argument) => format!("Ошибка разбора параметра: {argument}"),
         Refusal::MissingValue(name) => format!("Не указано значение параметра: {name}"),
         Refusal::Incomplete { path } => return (incomplete_message(path, program), true),
@@ -194,12 +230,12 @@ pub fn refusal_message(refusal: &Refusal, program: &str) -> (String, bool) {
             format!("Параметр `{option}` (работа через автономный сервер) {PLANNED}")
         }
         Refusal::UnsupportedDbms(dbms) => format!(
-            "СУБД `{dbms}` не поддерживается в этой версии ibcmd-rs: поддерживается только MSSQLServer"
+            "СУБД `{dbms}` не поддерживается в этой версии ibcmd-rs: поддерживаются MSSQLServer и PostgreSQL"
         ),
         Refusal::UnknownDbms(dbms) => format!("Указанный тип СУБД не поддерживается: '{dbms}'"),
         Refusal::FileInfobase => {
             "Для файловой информационной базы (--db-path) ibcmd-rs выполняет только \
-config export и config import; эту команду выполните штатным ibcmd или укажите \
+config export, config import и config save; эту команду выполните штатным ibcmd или укажите \
 --dbms=MSSQLServer, --db-server и --db-name"
                 .to_string()
         }
@@ -377,6 +413,7 @@ pub fn import_args(request: &ImportRequest) -> InfobaseConfigImportArgs {
         batch_size: None,
         path_prefix: Vec::new(),
         files: Vec::new(),
+        native_files: None,
         script_output: Some(script),
         stage_mode: if request.base_free {
             InfobaseImportStageMode::BaseFree
@@ -406,6 +443,7 @@ pub fn import_files_args(request: &ImportFilesRequest) -> InfobaseConfigImportAr
     });
     args.stage_mode = InfobaseImportStageMode::Patch;
     args.files = request.files.clone();
+    args.native_files = Some(request.partial);
     args
 }
 
@@ -414,6 +452,7 @@ pub fn save_args(request: &SaveRequest) -> InfobaseConfigSaveArgs {
     InfobaseConfigSaveArgs {
         settings: common.settings.clone(),
         native_config: common.native_config.clone(),
+        db_path: common.db_path.clone(),
         dbms: common.dbms.clone(),
         db_server: common.db_server.as_deref().map(sql_server_name),
         db_name: common.db_name.clone(),
@@ -456,6 +495,7 @@ fn write_json(path: &Path, value: &impl Serialize) -> anyhow::Result<()> {
 }
 
 /// One operation with the platform's messages around it.
+#[derive(Clone, Copy)]
 struct Operation {
     /// `infobase config export`, for the report.
     command: &'static str,
@@ -485,7 +525,11 @@ impl Operation {
         for line in message.lines() {
             eprintln!("[ERROR] {line}");
         }
-        eprintln!("[ERROR] {} {} с ошибкой", self.title, self.ended);
+        eprintln!(
+            "[ERROR] {} {} с ошибкой",
+            self.title,
+            self.ended.trim_end_matches('.')
+        );
         self.record_failure(message, report);
         EXIT_FAILED
     }
@@ -552,10 +596,25 @@ const SAVE: Operation = Operation {
 };
 
 fn run_export(mut request: ExportRequest) -> i32 {
+    let operation = if request.sync {
+        Operation {
+            command: EXPORT.command,
+            title: "Синхронизация ранее экспортированной конфигурации c конфигурацией информационной базы",
+            ended: "завершен.",
+        }
+    } else if request.base.is_some() {
+        Operation {
+            command: EXPORT.command,
+            title: "Экспорт изменений конфигурации в XML",
+            ended: "завершен",
+        }
+    } else {
+        EXPORT
+    };
     let report = request.common.report.clone();
     if let Err(message) = read_requested_password(&mut request.common) {
-        EXPORT.start();
-        return EXPORT.fail_with(&message, report.as_deref());
+        operation.start();
+        return operation.fail_with(&message, report.as_deref());
     }
     if let Some(threads) = request.threads {
         crate::parallel::request_workers(threads);
@@ -565,21 +624,80 @@ fn run_export(mut request: ExportRequest) -> i32 {
     crate::mssql_dump::model_export::set_quiet_summaries(
         std::env::var_os("IBCMD_RS_VERBOSE").is_none_or(|value| value != "1"),
     );
-    let args = export_args(&request);
-    EXPORT.start();
-    match crate::infobase::export_config(&args) {
-        Ok(value) => EXPORT.succeed(report.as_deref(), &value),
+    let mut args = export_args(&request);
+    operation.start();
+    if request.sync {
+        if !args.output_dir.is_dir() {
+            eprintln!(
+                "[ERROR] Операция невозможна, при выполнении экспорта конфигурации в XML обнаружены ошибки: Каталог {} не существует.",
+                args.output_dir.display()
+            );
+            return EXIT_FAILED;
+        }
+        args.base = Some(args.output_dir.join("ConfigDumpInfo.xml"));
+    }
+    if let Some(base_path) = &args.base {
+        let changes = (|| -> anyhow::Result<String> {
+            let base = std::fs::read(base_path)?;
+            let current = crate::infobase::export_commands::info(&args)?;
+            crate::infobase::export_commands::status(&current, &base, false)
+        })();
+        match changes {
+            Ok(changes) if changes == "modified: all\n" => {
+                let message = full_export_required_message(request.sync);
+                eprintln!("[ERROR] {message}");
+                operation.record_failure(&message, report.as_deref());
+                return EXIT_FAILED;
+            }
+            Ok(changes) if changes.is_empty() => {
+                return operation
+                    .succeed(report.as_deref(), &serde_json::json!({ "unchanged": true }));
+            }
+            Ok(_) => {}
+            Err(error) => return operation.fail_with(&format!("{error:#}"), report.as_deref()),
+        }
+    }
+    match crate::infobase::export_config_native(&args) {
+        Ok(value) => operation.succeed(report.as_deref(), &value),
+        Err(error)
+            if error
+                .downcast_ref::<crate::mssql_dump::incremental::NativeFullExportRequired>()
+                .is_some() =>
+        {
+            let message = full_export_required_message(request.sync);
+            eprintln!("[ERROR] {message}");
+            operation.record_failure(&message, report.as_deref());
+            EXIT_FAILED
+        }
+        Err(error)
+            if error
+                .downcast_ref::<crate::file_extension_export::MissingExtension>()
+                .is_some() =>
+        {
+            operation.refuse_with(&format!("{error:#}"), report.as_deref())
+        }
         Err(error) if error.downcast_ref::<OutputDirectoryNotEmpty>().is_some() => {
             let message = format!(
                 "Операция невозможна, при выполнении экспорта конфигурации в XML обнаружены ошибки: Каталог {} не пуст.",
                 Path::new(&request.path).display()
             );
             eprintln!("[ERROR] {message}");
-            EXPORT.record_failure(&message, report.as_deref());
+            operation.record_failure(&message, report.as_deref());
             EXIT_FAILED
         }
-        Err(error) => EXPORT.fail_with(&format!("{error:#}"), report.as_deref()),
+        Err(error) => operation.fail_with(&format!("{error:#}"), report.as_deref()),
     }
+}
+
+fn full_export_required_message(sync: bool) -> String {
+    let export = if sync {
+        "экспорта конфигурации"
+    } else {
+        "экспорта изменений конфигурации"
+    };
+    format!(
+        "Операция невозможна, при выполнении {export} в XML обнаружены ошибки: Требуется экспортировать конфигурацию полностью."
+    )
 }
 
 fn run_import(mut request: ImportRequest) -> i32 {
@@ -597,7 +715,7 @@ fn run_import(mut request: ImportRequest) -> i32 {
 }
 
 fn run_import_files(mut request: ImportFilesRequest) -> i32 {
-    use crate::mssql::files_stage::{FilesRefused, select};
+    use crate::mssql::files_stage::{FilesRefused, select_native};
     let report = request.common.report.clone();
     if let Err(message) = read_requested_password(&mut request.common) {
         IMPORT_FILES.start();
@@ -612,20 +730,23 @@ fn run_import_files(mut request: ImportFilesRequest) -> i32 {
         }
     };
     // The files are checked against the directory before any connection.
-    if let Err(refusal) = select(&request.base_dir, &request.files) {
-        return refused(&refusal);
-    }
-    // Without `--partial` the directory is taken for a whole export of the
-    // configuration. What the platform does with a directory that is not one
-    // is not measured, so such a directory is refused rather than guessed at.
-    if !request.partial && !request.base_dir.join("Configuration.xml").is_file() {
-        return IMPORT_FILES.refuse_with(
-            &format!(
-                "Каталог {} не является полной выгрузкой конфигурации (в нем нет Configuration.xml); \
-                 для каталога с частью файлов конфигурации укажите --partial",
-                request.base_dir.display()
-            ),
+    // A directory with part of the files is taken with `--partial` and
+    // without alike (8.5.1.1529, `docs/import/import-files.md`).
+    let selection = match select_native(&request.base_dir, &request.files, request.partial) {
+        Ok(selection) => selection,
+        Err(refusal) => return refused(&refusal),
+    };
+    // Every listed file missing under `--partial`: the platform stages
+    // nothing and succeeds, and so does this, writing nothing.
+    if selection.files().is_empty() {
+        return IMPORT_FILES.succeed(
             report.as_deref(),
+            &serde_json::json!({
+                "operation": IMPORT_FILES.command,
+                "ok": true,
+                "staged": false,
+                "skipped_files": selection.skipped(),
+            }),
         );
     }
     let args = import_files_args(&request);
@@ -635,6 +756,50 @@ fn run_import_files(mut request: ImportFilesRequest) -> i32 {
             Some(refusal) => refused(refusal),
             None => IMPORT_FILES.fail_with(&format!("{error:#}"), report.as_deref()),
         },
+    }
+}
+
+/// The title is the platform's own name of the command and the lines it
+/// prints (8.5.1.1529: `Загрузка конфигурации...`, `Загрузка конфигурации
+/// успешно завершена`).
+const LOAD: Operation = Operation {
+    command: "infobase config load",
+    title: "Загрузка конфигурации",
+    ended: "завершена",
+};
+
+pub fn load_args(request: &LoadRequest) -> InfobaseConfigLoadArgs {
+    let common = &request.common;
+    InfobaseConfigLoadArgs {
+        settings: common.settings.clone(),
+        native_config: common.native_config.clone(),
+        db_path: common.db_path.clone(),
+        dbms: common.dbms.clone(),
+        db_server: common.db_server.as_deref().map(sql_server_name),
+        db_name: common.db_name.clone(),
+        db_user: common.db_user.clone(),
+        db_pwd: common.db_pwd.clone(),
+        db_pwd_env: common
+            .db_pwd_env
+            .clone()
+            .unwrap_or_else(|| "IBCMD_DB_PSW".to_string()),
+        // the built-in SQL Server client, unless `--sqlcmd` asks for sqlcmd.exe
+        sqlcmd: common.sqlcmd.clone(),
+        input: PathBuf::from(&request.path),
+    }
+}
+
+fn run_load(mut request: LoadRequest) -> i32 {
+    let report = request.common.report.clone();
+    if let Err(message) = read_requested_password(&mut request.common) {
+        LOAD.start();
+        return LOAD.fail_with(&message, report.as_deref());
+    }
+    let args = load_args(&request);
+    LOAD.start();
+    match crate::infobase::load_config(&args) {
+        Ok(value) => LOAD.succeed(report.as_deref(), &value),
+        Err(error) => LOAD.fail_with(&format!("{error:#}"), report.as_deref()),
     }
 }
 
@@ -732,6 +897,17 @@ mod tests {
         let absolute = std::env::temp_dir().join("elsewhere");
         common.temp = Some(absolute.clone());
         assert_eq!(scratch_dir(&common), absolute.join("ibcmd-rs"));
+    }
+
+    #[test]
+    fn a_load_keeps_the_sqlcmd_it_was_given() {
+        let mut common = common();
+        common.sqlcmd = Some(PathBuf::from(r"sqlcmd-dir/sqlcmd.exe"));
+        let args = load_args(&LoadRequest {
+            common,
+            path: OsString::from("a.cf"),
+        });
+        assert_eq!(args.sqlcmd, Some(PathBuf::from(r"sqlcmd-dir/sqlcmd.exe")));
     }
 
     #[test]

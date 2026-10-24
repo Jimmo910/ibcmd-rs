@@ -394,3 +394,32 @@
 - Запросы выполняются по одному: дешёвый запрос ждёт долгого (его можно
   отменить).
 - Расширения конфигурации (ConfigCAS) сервер пока не показывает.
+
+
+### Editor protocol 1.3: apply (#384)
+
+`config/pending` also accepts connected file databases: `pending`,
+`stagedRows`, and `conclusive: true` describe CONFIGSAVE row presence;
+`needsRestructuring: null` makes no structural compatibility assertion.
+
+`config/apply/prepare {infobase}` is read-only. It returns `backend`,
+`modes: ["exclusive"]` and `warning`. For a file database the backend is
+`external-native`, with the resolved connected `dbPath` and bound `platform`.
+The client asks for explicit consent and invokes the configured native tool;
+the server never launches it. For SQL the backend is `own`.
+
+`config/apply {infobase, mode: "exclusive", confirm: true, recoveryDir}`
+uses the existing own SQL backend and returns `{backend: "own", report}`.
+`recoveryDir` is absolute; each operation retains its own UUID child directory.
+Missing consent returns `-32015`; unsupported mode/invalid parameters return
+`-32602`; file/offline sources return `-32013`. Native execution is not an
+RPC server capability. No assumed exclusivity, structural override, session
+termination or dynamic mode is exposed by this method.
+
+Cancellation is checked before acquiring work, after acquiring the shared
+operation lock, after planning, and before SQL publication. It cannot interrupt
+an already executing SQL transaction. Clients must treat lost/cancelled replies
+after execution starts as uncertain, then refresh pending/recovery state before
+retrying. A completed transaction is not labelled cancelled after publication.
+The extension logs fixed apply lifecycle messages instead of forwarding raw
+native/server output which may contain private data.

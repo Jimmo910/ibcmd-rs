@@ -99,6 +99,7 @@ impl DirectoryConversion {
             .unwrap_or_else(|| Path::new("."));
         let temporary = tempfile::Builder::new()
             .prefix(".ibcmd-new-")
+            .disable_cleanup(keep_fixtures())
             .tempdir_in(parent)
             .map_err(EdtError::source)?;
         let staging = temporary.path().join("tree");
@@ -116,9 +117,19 @@ fn absent(path: &Path) -> Result<(), EdtError> {
         Err(error) => Err(EdtError::source(error)),
     }
 }
+fn keep_fixtures() -> bool {
+    cfg!(test) || std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1")
+}
+fn cleanup_stage(path: &Path) -> Result<(), EdtError> {
+    if !keep_fixtures() {
+        fs::remove_dir_all(path).map_err(EdtError::source)?;
+    }
+    Ok(())
+}
 fn stage() -> Result<tempfile::TempDir, EdtError> {
     tempfile::Builder::new()
         .prefix("ibcmd-edt-disk-")
+        .disable_cleanup(keep_fixtures())
         .tempdir()
         .map_err(EdtError::source)
 }
@@ -290,7 +301,7 @@ fn xml_to_edt(
         version,
         &forms,
     )?;
-    fs::remove_dir_all(&rebuilt.root).map_err(EdtError::source)?;
+    cleanup_stage(&rebuilt.root)?;
     let project = owner.path().join("project");
     fs::create_dir(&project).map_err(EdtError::source)?;
     render(Format::Edt, &config, &project.join("src"), version)?;
@@ -383,7 +394,7 @@ fn edt_to_xml(
                 disposition: Disposition::Converted,
             }),
     );
-    fs::remove_dir_all(&rebuilt.root).map_err(EdtError::source)?;
+    cleanup_stage(&rebuilt.root)?;
     let rendered = render(
         Format::Designer,
         &config,
@@ -414,7 +425,7 @@ fn edt_to_xml(
                     "retained original XML disagrees with current typed EDT semantics",
                 ));
             }
-            fs::remove_dir_all(&original_rebuilt.root).map_err(EdtError::source)?;
+            cleanup_stage(&original_rebuilt.root)?;
             original.copy_to(&owner.path().join("restored"))?
         }
         None => rendered,
@@ -548,5 +559,115 @@ mod tests {
                 assert!(!destination.exists());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod module_scaffold_encoder_tests {
+    use super::*;
+    use morph1c_core::ir::{
+        FormBody, MetadataObject, NamedFormBody, ObjectKind, PropertyValue, Token, Uuid,
+    };
+    use morph1c_pipeline::ConvertOptions;
+
+    #[test]
+    fn module_scaffold_actual_encoder_keeps_accounting_and_provenance_guards() {
+        let root = tempfile::Builder::new()
+            .prefix("ibcmd-scaffold-encoder-")
+            .tempdir()
+            .unwrap()
+            .keep();
+        let text = include_str!("../tests/fixtures/form-module-scaffold/edt-lf.bsl");
+        let native = include_bytes!("../tests/fixtures/form-module-scaffold/native-crlf.bsl");
+        let (mut config, skipped) = morph1c_pipeline::read_config(
+            Format::Designer,
+            Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/subsystem-ci/src"
+            )),
+            &ConvertOptions::default(),
+        )
+        .unwrap();
+        assert!(skipped.is_empty());
+        let mut object =
+            MetadataObject::new(ObjectKind::new("CommonForm"), "Witness", Uuid([0x37; 16]));
+        let field = morph1c_core::spec::registry::spec_for("CommonForm")
+            .unwrap()
+            .fields()
+            .iter()
+            .find(|field| field.name == "formType")
+            .unwrap()
+            .id;
+        object
+            .properties
+            .push((field, PropertyValue::Enum(Token::new("Managed"))));
+        object.form_bodies.push(NamedFormBody {
+            name: "Witness".into(),
+            body: FormBody::new(),
+            ordinary_body: None,
+            module: Some(text.into()),
+            help: vec![],
+            help_resources: vec![],
+        });
+        config.objects.push(object);
+        let source_path = root.join("native-source");
+        morph1c_pipeline::write_config(Format::Designer, &config, &source_path).unwrap();
+        let options = ConversionOptions {
+            edt_version: "2025.2.3".into(),
+            xml_dialect: "2.21".into(),
+            runtime_version: Some("8.5.1".into()),
+        };
+        let source = read_directory_source(&source_path).unwrap();
+        let generated = source.xml_to_edt(&options).unwrap();
+        generated.verify().unwrap();
+        let project_path = root.join("project");
+        generated.publish_new(&project_path).unwrap();
+        assert_eq!(
+            fs::read(project_path.join("src/CommonForms/Witness/Module.bsl")).unwrap(),
+            text.as_bytes()
+        );
+        // Copy without provenance; retain the original project and all source bytes.
+        let plain = root.join("without-provenance");
+        fn copy(from: &Path, to: &Path) {
+            fs::create_dir(to).unwrap();
+            for entry in fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_name() == ".ibcmd-provenance" {
+                    continue;
+                }
+                let target = to.join(entry.file_name());
+                if entry.file_type().unwrap().is_dir() {
+                    copy(&entry.path(), &target);
+                } else {
+                    fs::copy(entry.path(), target).unwrap();
+                }
+            }
+        }
+        copy(&project_path, &plain);
+        let current = read_directory_project(&plain).unwrap();
+        let converted = current.edt_to_xml(&options).unwrap();
+        converted.verify().unwrap();
+        let target = root.join("native-current");
+        converted.publish_new(&target).unwrap();
+        let module = "CommonForms/Witness/Ext/Form/Module.bsl";
+        assert_eq!(fs::read(target.join(module)).unwrap(), native);
+        assert_eq!(
+            fs::read(plain.join("src/CommonForms/Witness/Module.bsl")).unwrap(),
+            text.as_bytes()
+        );
+        // Full source/provenance branch must still recover native-origin LF exactly.
+        let retained = read_directory_project(&project_path).unwrap();
+        let restored = retained.edt_to_xml(&options).unwrap();
+        restored.verify().unwrap();
+        let returned = root.join("native-returned");
+        restored.publish_new(&returned).unwrap();
+        assert_eq!(
+            fs::read(returned.join(module)).unwrap(),
+            fs::read(source_path.join(module)).unwrap()
+        );
+        source.inventory.verify().unwrap();
+        current.inventory.verify().unwrap();
+        retained.inventory.verify().unwrap();
+        assert!(source._owner.path().exists() && current._owner.path().exists());
     }
 }

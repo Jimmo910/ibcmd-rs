@@ -249,7 +249,9 @@ pub(crate) fn fetch_extension_image(
 
 /// The staged rows of one namespace as content-addressed rows, and the digest
 /// of the staged `configinfo` that roots them.
-fn staged_cas_rows(staged: Vec<(String, i32, Vec<u8>)>) -> Result<(CasHash, Vec<CasStorageRow>)> {
+pub(crate) fn staged_cas_rows(
+    staged: Vec<(String, i32, Vec<u8>)>,
+) -> Result<(CasHash, Vec<CasStorageRow>)> {
     let mut root = None;
     let mut rows = Vec::with_capacity(staged.len());
     for (logical_name, part_no, packed) in staged {
@@ -295,7 +297,7 @@ fn write_lab_rows_out(fetched: &[(&MssqlExtensionInfo, StorageImage)]) -> Result
     Ok(())
 }
 
-fn prepare_atomic_staging_root(output: &Path) -> Result<PathBuf> {
+pub(crate) fn prepare_atomic_staging_root(output: &Path) -> Result<PathBuf> {
     let parent = output.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let staging = parent.join(format!(".ibcmd-rs-extension-export-{}", Uuid::new_v4()));

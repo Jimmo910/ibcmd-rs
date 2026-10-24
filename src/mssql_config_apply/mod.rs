@@ -1744,7 +1744,9 @@ pub fn apply_with_gate(
 ) -> Result<ConfigApplyReport> {
     let total = Instant::now();
     let client = require_client(sql)?;
+    crate::cancel::check()?;
     let mut plan = plan_with_gate(sql, options, structural_gate)?;
+    crate::cancel::check()?;
     if plan.report.nothing_to_apply {
         return Ok(plan.report);
     }
@@ -1824,6 +1826,7 @@ pub fn apply_with_gate(
         BackupPolicy::File(_) => {}
     }
 
+    crate::cancel::check()?;
     // The recovery artifact: the pre-image of what the script overwrites.
     let started = Instant::now();
     let token = plan
@@ -1867,6 +1870,7 @@ pub fn apply_with_gate(
     plan.report.timings.recovery_ms = ms(started);
 
     let started = Instant::now();
+    crate::cancel::check()?;
     if let Err(error) = client.run_script(&script, ScriptVariables::Refuse) {
         // the refusals of the transaction's own checks are typed; a drifted
         // fingerprint or a failed postcondition stays an ordinary failure

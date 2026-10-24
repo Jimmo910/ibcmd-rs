@@ -87,14 +87,17 @@
 
 ## Что нужно
 
-- Windows x64.
-- Microsoft SQL Server (вход Windows или логин SQL Server).
+- Архив релиза для своей ОС и архитектуры: Windows x64, Linux x64/ARM64
+  или macOS x64/ARM64. Для офлайн-конвертации база данных не нужна.
+- Для серверной базы — SQL Server или поддержанный маршрут PostgreSQL
+  (ограничения ниже). Вход Windows в SQL Server требует Windows; на других
+  ОС укажите логин SQL Server.
 - Штатная платформа 1С той же версии, что и база, нужна только для создания
   пустой базы (`infobase create`) и для того, что применение отправляет на
   штатный `config apply` (см. [Применение конфигурации](#применение-конфигурации)).
   Выгрузке, загрузке и обычному применению она не нужна.
 
-Скачайте архив `ibcmd-rs-<версия>-x86_64-pc-windows-msvc.zip` со страницы
+Для Windows скачайте архив `ibcmd-rs-<версия>-x86_64-pc-windows-msvc.zip` со страницы
 [Releases](https://github.com/Untru/ibcmd-rs/releases) и распакуйте его.
 
 ## Как подменить ibcmd
@@ -162,14 +165,23 @@ ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 ^
 create`), конфигурация собирается целиком из XML.
 
 **Файловые базы.** `--db-path=<каталог базы>` вместо `--dbms`, `--db-server`
-и `--db-name` выгружает и загружает конфигурацию файловой базы (`1Cv8.1CD`)
-без платформы; применяет загрузку штатный `ibcmd infobase config apply`.
+и `--db-name` выгружает, загружает и сохраняет в .cf конфигурацию файловой
+базы (`1Cv8.1CD`) без платформы; применяет загрузку штатный `ibcmd infobase config apply`.
 Загружать можно только закрытую базу, прежний файл остаётся рядом как
-`1Cv8.1CD.ibcmd-rs.bak`. Подробности — в [docs/COMMANDS.md](docs/COMMANDS.md#файловые-базы).
+`1Cv8.1CD.ibcmd-rs.bak`. Полная запись поддерживается на Unix и Windows
+с проверкой каталога и файлов перед заменой; частичная загрузка
+`import files` через файловый backend пока требует Unix.
+Подробности — в [docs/COMMANDS.md](docs/COMMANDS.md#файловые-базы).
+На измеренном профиле 8.3.27.2214 можно также выгрузить одно расширение:
+`infobase config export --db-path=<каталог базы> --extension=<имя> <каталог XML>`.
+
+**PostgreSQL.** Поддержаны `config export`, `config import` и `config load`
+без установки клиентских библиотек; ограничения и измеренные маршруты — в
+[справочнике команд](docs/COMMANDS.md#postgresql).
 
 **Чего пока нет.** Остальные команды и режимы штатного `ibcmd` (`infobase
-create`, `config load`, расширения, `server` и другие), применение и
-сохранение файловых баз и СУБД кроме MSSQLServer отвечают сообщением «не
+create`, загрузка и применение расширений, `server` и другие), применение
+файловых баз и неподдержанные операции PostgreSQL отвечают сообщением «не
 поддерживается в этой версии ibcmd-rs» с кодом 1. Штатный `ibcmd` вместо них
 не запускается.
 
@@ -374,6 +386,12 @@ platform = "8.5.1.1150"
 но с режимом совместимости 8.3.27; сама база не отличает 8.3.27 от 8.5,
 поэтому такую базу привязывают к 8.5.1 записью `[[database]]`.
 
+Минимальный клиент подключений VS Code находится в
+[editors/vscode](editors/vscode/README.md): добавление и правка общей TOML,
+привязка нескольких баз к рабочей области, SecretStorage и строка состояния.
+Это клиент `serve --stdio` (протокол 1.1). Он показывает дерево конфигурации
+из базы или XML для просмотра, поиска и перехода к местным файлам.
+
 ## Подключение к SQL Server
 
 Утилита подключается к SQL Server сама, по протоколу TDS; `sqlcmd` и `bcp`
@@ -475,3 +493,34 @@ ibcmd-rs cf load F:\src\MyExtension-edit F:\cf\MyExtension-new.cfe --base F:\cf\
 - [scripts/empty-load](scripts/empty-load) — скрипты проверки загрузки в пустую
   базу; [scripts/timing](scripts/timing) — замеры против штатного `ibcmd`.
 - [openspec/changes](openspec/changes) — спецификации и результаты проверок.
+
+
+### MCP для ИИ-клиентов (#386)
+
+`ibcmd-rs mcp --settings /operator/ibcmd-rs.toml` — отдельный настоящий MCP stdio
+adapter на official rmcp 3.6.0. Операции `status`/`compare`/`import` требуют XML source-root без скрытых файлов, каталогов (включая `.git`) и ссылок. В настройках нужны `[mcp] database = "fixed-id"`
+и `source-root = "/approved/source"`; база задаётся фиксированным `[[database]]`
+с `rows-dir` либо `db-path`. Tools: `tree`, `read`, `export`, `status`, `compare`,
+`import`. Export возвращает ограниченные файлы в памяти. Status/compare используют
+общий движок и показывают changed/baseOnly/localOnly для выбранных объектов, включая
+объекты только в source-root. Чтение файлов ограничено дескрипторами Unix; на других
+платформах адаптер отказывает при запуске.
+
+Import берёт выбранные `objects` из фиксированного source-root и требует явного
+`agent-write = true` в соответствующем `[[database]]` с `db-path`; без него запись
+запрещена. Tool parameters не могут менять opt-in, базу, settings, сервер или путь.
+Import только создаёт CONFIGSAVE; штатный apply выполняет внешний оператор.
+После публикации ответ содержит `restartRequired: true`: текущая MCP-сессия
+закрывает доступ до перезапуска и нового закрепления identity. SQL и запись в
+rows-dir через MCP закрыты. Подробности policy, ограничения и evidence —
+[OpenSpec MCP](openspec/changes/add-mcp-adapter/design.md).
+
+## Расширение VS Code и Cursor
+
+Клиент показывает подключения и дерево объектов лабораторной базы. Платформенный
+VSIX включает `ibcmd-rs`; Windows x64 — `ibcmd-rs.exe`. Свой исполняемый файл задаётся
+машинной настройкой `ibcmd-rs.path`. [Установка, сборка и проверки](editors/vscode/README.md#platform-vsix-packaging-and-installation).
+
+![Дерево офлайн-фикстуры — иллюстрация, проверенная через API редактора](editors/vscode/images/offline-tree.svg)
+
+Публикация Marketplace/Open VSX и выпуск релиза остаются шагами владельца.

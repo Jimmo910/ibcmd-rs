@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+mod comparison;
+pub mod config_dump_info;
 pub mod dcs;
 pub mod dcs_schema;
 pub mod dcs_storage;
@@ -15,6 +17,7 @@ mod reader;
 pub mod source_tree;
 mod writer;
 
+pub use comparison::equal_ignoring_structural_line_endings;
 pub use dcs::{
     DCS_WRITER_EVIDENCE, DCS_WRITER_EVIDENCE_INVALID_CODE, DCS_WRITER_EVIDENCE_PENDING_CODE,
     DCS_WRITER_EVIDENCE_RELEASE, DcsChildParseOutcome, DcsListSettingsTailError,

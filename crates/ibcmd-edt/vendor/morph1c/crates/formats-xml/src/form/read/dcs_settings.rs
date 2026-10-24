@@ -67,6 +67,7 @@ pub(crate) fn read_designer_list_settings(ls: &Element) -> Result<DcsListSetting
         ],
     )?;
     Ok(DcsListSettings {
+        source_edt_lf: false,
         filter,
         data_parameters,
         order,

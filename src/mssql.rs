@@ -2471,11 +2471,25 @@ pub(crate) fn compile_dcs_template_body(
     match source {
         Some(source) => {
             let resolver = |name: &str| source.dcs_generated_type_id(name);
+            // Only the new readable picture spelling needs the full picture
+            // index; leave other template compilation independent of that scan.
+            let readable_ns = b"http://v8.1c.ru/8.3/xcf/readable";
+            let picture_refs = bytes
+                .windows(readable_ns.len())
+                .any(|window| window == readable_ns)
+                .then(|| source.moxel_object_refs())
+                .transpose()
+                .map_err(|error| {
+                    crate::compiler::bodies::template::TemplateCodecError::InvalidSource(format!(
+                        "failed to read configuration picture context: {error:#}"
+                    ))
+                })?;
             compile_evidenced_template_with_resolvers(
                 TemplateKind::DataCompositionSchema,
                 TemplateSource::Bytes(bytes),
                 source.dcs_style_items(),
                 &resolver,
+                picture_refs.as_ref(),
             )
         }
         None => compile_evidenced_template(
@@ -3910,7 +3924,13 @@ fn stage_source_files(
     if !args.path_prefix.is_empty() {
         bail!("--file selects the objects itself: it does not go with --path-prefix");
     }
-    let selection = files_stage::select(&args.source_root, &args.files)?;
+    let selection = match args.native_files {
+        Some(partial) => files_stage::select_native(&args.source_root, &args.files, partial)?,
+        None => files_stage::select(&args.source_root, &args.files)?,
+    };
+    if args.native_files.is_some() {
+        refuse_existing_stage(args, sql_override.as_ref())?;
+    }
     let mut scoped = args.clone();
     scoped.path_prefix = selection.owners().to_vec();
     scoped.files = selection.files().to_vec();
@@ -3925,6 +3945,57 @@ fn stage_source_files(
             <InfobaseConfigSourceVersion as clap::ValueEnum>::from_str(&version, true).ok();
     }
     stage_source_objects_patch(&scoped, Some(&selection), sql_override, original)
+}
+
+/// `import files` adds to a stage `ConfigSave` already holds (8.5.1.1529:
+/// two imports one after the other leave the rows of both), and this stage
+/// replaces `ConfigSave`: a stage there is refused, not lost.
+fn refuse_existing_stage(
+    args: &MssqlStageSourceObjectsArgs,
+    sql_override: Option<&SqlExec>,
+) -> Result<()> {
+    let owned;
+    let sql = match sql_override {
+        Some(sql) => sql,
+        None => {
+            let password = resolve_sqlcmd_password(
+                args.sql_user.as_deref(),
+                args.sql_pwd.as_deref(),
+                &args.sql_pwd_env,
+            );
+            owned = stage_sql(
+                args.sqlcmd.as_deref(),
+                args.bcp_executable.as_deref(),
+                &args.server,
+                args.sql_user.as_deref(),
+                password.as_deref(),
+                &args.sql_pwd_env,
+            )?;
+            &owned
+        }
+    };
+    let staged = storage_table_stats(sql, &args.database, "ConfigSave")?;
+    if staged.row_count != 0 {
+        return Err(files_stage::FilesRefused::existing_stage(staged.row_count).into());
+    }
+    Ok(())
+}
+
+/// Published target names for the files-import deletion check, including
+/// bodies held only by an active dynamic generation's alias.
+fn file_import_target_row_names(
+    rows: &std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>,
+    aliases: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut names = rows
+        .keys()
+        .filter(|name| !name.contains("_dynupdate_"))
+        .cloned()
+        .chain(aliases.keys().cloned())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn stage_source_objects_patch(
@@ -4234,6 +4305,22 @@ fn stage_source_objects_patch(
                 &args.source_root,
                 &mut metadata_objects,
                 &mut common_modules,
+            )?;
+            let prefetched = PREFETCHED_BASE_ROWS
+                .get()
+                .filter(|(database, _)| database == &args.database)
+                .map(|(_, rows)| rows);
+            let aliases = BASE_ROW_ALIASES
+                .get()
+                .filter(|(database, _)| database == &args.database)
+                .map(|(_, aliases)| aliases.clone())
+                .unwrap_or_default();
+            let target_names = prefetched.map(|rows| file_import_target_row_names(rows, &aliases));
+            selection.refuse_removed_bodies(
+                &args.source_root,
+                target_names.as_deref(),
+                &metadata_objects,
+                &common_modules,
             )?;
         }
         let metadata_object_count = metadata_objects.len();
@@ -4553,8 +4640,27 @@ fn is_form_metadata_xml(path: &str) -> bool {
 fn is_stage_metadata_xml(path: &str) -> bool {
     is_configuration_metadata_xml(path)
         || is_root_metadata_xml(path)
+        || is_nested_subsystem_xml(path)
         || is_template_metadata_xml(path)
         || is_form_metadata_xml(path)
+}
+
+/// The folder of subsystems, at the root and inside a subsystem.
+const SUBSYSTEMS_FOLDER: &str = "subsystems";
+
+/// A subsystem of a subsystem (`Subsystems/A/Subsystems/B.xml`, any depth):
+/// a metadata object of its own row, which the patch stage compiles like a
+/// root one (#417: an edit of a nested subsystem's content had no entry).
+fn is_nested_subsystem_xml(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_ascii_lowercase();
+    let parts = lower.split('/').collect::<Vec<_>>();
+    lower.ends_with(".xml")
+        && parts.len() >= 4
+        && parts.len() % 2 == 0
+        && parts
+            .iter()
+            .step_by(2)
+            .all(|segment| *segment == SUBSYSTEMS_FOLDER)
 }
 
 fn is_configuration_metadata_xml(path: &str) -> bool {
@@ -9761,8 +9867,14 @@ fn build_bulk_stage_apply_sql(
     table: &str,
     staged_rows: usize,
     expected_total_rows: usize,
+    require_empty_config_save: bool,
 ) -> String {
     let stage = format!("tempdb.dbo.{}", quote_ident(table));
+    let empty_stage_guard = if require_empty_config_save {
+        "IF EXISTS (SELECT 1 FROM dbo.ConfigSave WITH (UPDLOCK, HOLDLOCK))\n    THROW 55006, 'import files cannot replace an existing ConfigSave stage', 1;\n"
+    } else {
+        ""
+    };
     let sql = format!(
         "SET NOCOUNT ON;\n\
          SET XACT_ABORT ON;\n\
@@ -9775,7 +9887,7 @@ fn build_bulk_stage_apply_sql(
                     (SELECT 1 FROM dbo.Config c WHERE c.FileName = s.FileName AND c.PartNo = 0))\n\
              THROW 55001, 'A staged metadata row has no Config row to take its attributes from', 1;\n\
          BEGIN TRAN;\n\
-         DELETE FROM dbo.ConfigSave;\n\
+         {empty_stage_guard}DELETE FROM dbo.ConfigSave;\n\
          INSERT INTO dbo.ConfigSave (FileName, Creation, Modified, Attributes, DataSize, BinaryData, PartNo)\n\
          SELECT FileName, DATEADD(year, 2000, SYSUTCDATETIME()), DATEADD(year, 2000, SYSUTCDATETIME()), Attributes, DataSize, BinaryData, PartNo\n\
          FROM dbo.Config\n\
@@ -9978,7 +10090,13 @@ fn stage_source_rows_bulk(
     let expected_total_rows = staged_parts + 2;
     fs::write(
         &apply_path,
-        build_bulk_stage_apply_sql(&args.database, &table, staged_parts, expected_total_rows),
+        build_bulk_stage_apply_sql(
+            &args.database,
+            &table,
+            staged_parts,
+            expected_total_rows,
+            args.native_files.is_some(),
+        ),
     )
     .with_context(|| format!("failed to write {}", apply_path.display()))?;
     if !args.script_only {
@@ -11773,8 +11891,20 @@ mod tests {
     }
 
     #[test]
+    fn files_stage_bulk_refuses_a_stage_created_after_the_early_check() {
+        let sql = build_bulk_stage_apply_sql("Db", "ibcmd_rs_stage_Db_1", 10, 12, true);
+        let transaction = sql.find("BEGIN TRAN;").unwrap();
+        let refusal = sql.find("FROM dbo.ConfigSave WITH (UPDLOCK, HOLDLOCK)")
+            .expect("native import must check ConfigSave again while holding the write transaction lock");
+        let delete = sql.find("DELETE FROM dbo.ConfigSave;").unwrap();
+        assert!(transaction < refusal && refusal < delete);
+        let ordinary = build_bulk_stage_apply_sql("Db", "ibcmd_rs_stage_Db_1", 10, 12, false);
+        assert!(!ordinary.contains("FROM dbo.ConfigSave WITH (UPDLOCK, HOLDLOCK)"));
+    }
+
+    #[test]
     fn bulk_stage_apply_sql_keeps_the_per_row_guards() {
-        let sql = build_bulk_stage_apply_sql("Db", "ibcmd_rs_stage_Db_1", 10, 12);
+        let sql = build_bulk_stage_apply_sql("Db", "ibcmd_rs_stage_Db_1", 10, 12, false);
         assert!(sql.contains("USE [Db];"));
         assert!(sql.contains("FROM tempdb.dbo.[ibcmd_rs_stage_Db_1]) <> 10"));
         assert!(sql.contains("WHERE FileName IN (N'root', N'version') AND PartNo = 0;"));
@@ -15367,6 +15497,42 @@ mod tests {
             Some(b"PK\x03\x04".as_slice())
         );
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dcs_picture_import_refuses_a_standard_picture_shadowed_by_configuration() {
+        let root = std::env::temp_dir().join(format!(
+            "ibcmd-rs-dcs-picture-kind-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(root.join("CommonPictures")).unwrap();
+        fs::write(root.join("CommonPictures/Information.xml"), br#"<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.21"><CommonPicture uuid="11111111-2222-4333-8444-555555555555"><Properties><Name>Information</Name></Properties></CommonPicture></MetaDataObject>"#).unwrap();
+        let source = decode_base64_fixture(include_str!(concat!(
+            "../tests/fixtures/native-evidence/8.3.27.2214/",
+            "dcs-output-parameters/native-template.xml.b64"
+        )));
+        let stored = String::from_utf8(source).unwrap().replace(
+            "<dcscor:value xsi:type=\"xs:string\">Probe Title</dcscor:value>",
+            "<dcscor:value xsi:type=\"v8ui:Picture\" ref=\"v8ui:Information\"/>",
+        );
+        let source = stored.replace(
+            "<dcscor:value xsi:type=\"v8ui:Picture\" ref=\"v8ui:Information\"/>",
+            "<dcscor:value xmlns:d6p1=\"http://v8.1c.ru/8.3/xcf/readable\" xsi:type=\"d6p1:Picture\">\r\n\t\t\t\t\t\t<d6p1:Ref>StdPicture.Information</d6p1:Ref>\r\n\t\t\t\t\t\t<d6p1:LoadTransparent>true</d6p1:LoadTransparent>\r\n\t\t\t\t\t</dcscor:value>",
+        );
+        let context = MetadataSourceContext::new(root.clone());
+        assert!(super::compile_dcs_template_body(stored.as_bytes(), Some(&context)).is_ok());
+        assert!(
+            super::compile_dcs_template_body(source.as_bytes(), Some(&context)).is_err(),
+            "the single StdPicture must not become the external CommonPicture of the same name"
+        );
+        let common = source.replace("StdPicture.Information", "CommonPicture.Information");
+        assert!(super::compile_dcs_template_body(common.as_bytes(), Some(&context)).is_ok());
+        assert!(super::compile_dcs_template_body(source.as_bytes(), None).is_err());
+        fs::remove_file(root.join("CommonPictures/Information.xml")).unwrap();
+        let context = MetadataSourceContext::new(root.clone());
+        assert!(super::compile_dcs_template_body(source.as_bytes(), Some(&context)).is_ok());
+        assert!(super::compile_dcs_template_body(common.as_bytes(), Some(&context)).is_err());
         let _ = fs::remove_dir_all(root);
     }
 

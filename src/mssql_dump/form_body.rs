@@ -125,6 +125,13 @@ const MAX_FORM_SERVER_STATE_XML_BYTES: usize = 64 * 1_048_576;
 /// Immutable dependencies supplied by the source-asset caller for one form.
 /// Form-local indexes deliberately remain inside the parser.
 pub(super) struct FormParseContext<'a> {
+    /// Type ids the exported object carries from outside its configuration
+    /// (`copyinfo` of an external data processor). The platform cannot name a
+    /// `<UseAlways>` path through such a type and writes the raw
+    /// `<attribute id>/<code>` pair instead -- see
+    /// `parse_form_attribute_direct_use_always`. `None` (the default) behaves
+    /// as an empty set: every type is the configuration's own.
+    foreign_types: Option<&'a BTreeSet<String>>,
     type_index: &'a BTreeMap<String, String>,
     type_index_collisions: &'a BTreeSet<String>,
     dcs_type_index: &'a DcsTypeIndex,
@@ -215,6 +222,7 @@ impl<'a> FormParseContext<'a> {
         form_owner_reference: Option<&'a str>,
     ) -> Self {
         Self {
+            foreign_types: None,
             type_index,
             type_index_collisions,
             dcs_type_index,
@@ -242,6 +250,11 @@ impl<'a> FormParseContext<'a> {
         form_reference_index: &'a BTreeMap<String, String>,
     ) -> Self {
         self.form_reference_index = Some(form_reference_index);
+        self
+    }
+
+    pub(super) fn with_foreign_types(mut self, foreign_types: &'a BTreeSet<String>) -> Self {
+        self.foreign_types = Some(foreign_types);
         self
     }
 
@@ -470,6 +483,7 @@ fn extract_form_body_xml_from_body_detailed_single(
         context.object_refs,
         context.metadata_field_declarations,
         context.object_ref_index,
+        context.foreign_types,
     );
     let attribute_save_field_bindings = extract_form_body_attribute_save_field_bindings(
         &body.trailing,
@@ -4573,6 +4587,7 @@ fn extract_form_body_attributes_with_dcs_type_index(
     object_refs: &BTreeMap<String, String>,
     declarations: Option<&MetadataFieldDeclarationIndex>,
     object_ref_index: Option<&FormObjectRefIndex<'_>>,
+    foreign_types: Option<&BTreeSet<String>>,
 ) -> Vec<FormAttribute> {
     let Some(fields) = trailing
         .first()
@@ -4599,6 +4614,7 @@ fn extract_form_body_attributes_with_dcs_type_index(
                 object_refs,
                 declarations,
                 object_ref_index,
+                foreign_types,
             )
         })
         .collect()
@@ -4749,6 +4765,7 @@ pub(super) fn parse_form_attribute(
         object_refs,
         None,
         None,
+        None,
     )
 }
 
@@ -4765,6 +4782,7 @@ pub(super) fn parse_form_attribute_with_declarations(
         &DcsTypeIndex::new(),
         object_refs,
         Some(declarations),
+        None,
         None,
     )
 }
@@ -4796,6 +4814,7 @@ fn parse_form_attribute_with_dcs_type_index(
     object_refs: &BTreeMap<String, String>,
     declarations: Option<&MetadataFieldDeclarationIndex>,
     object_ref_index: Option<&FormObjectRefIndex<'_>>,
+    foreign_types: Option<&BTreeSet<String>>,
 ) -> Option<FormAttribute> {
     let (fields, id, name) = form_attribute_record_head(field)?;
     let title = fields
@@ -4890,6 +4909,7 @@ fn parse_form_attribute_with_dcs_type_index(
     });
     let mut use_always = parse_form_attribute_direct_use_always(
         &name,
+        &id,
         fields.get(8).copied(),
         &columns,
         object_refs,
@@ -4899,6 +4919,7 @@ fn parse_form_attribute_with_dcs_type_index(
             .map(String::as_str),
         exact_single_type_uuid.as_deref(),
         declarations,
+        foreign_types,
     );
     // The list-settings bag is read once for every reader below: its field
     // map, localized twins, shadowed ids and resolvable-field universe are the
@@ -6684,12 +6705,14 @@ pub(super) fn parse_form_dynamic_list_field_secondary_name_by_item_id(
 
 pub(super) fn parse_form_attribute_direct_use_always(
     attribute_name: &str,
+    attribute_id: &str,
     field: Option<&str>,
     columns: &[FormAttributeColumn],
     object_refs: &BTreeMap<String, String>,
     value_type: Option<&str>,
     value_type_uuid: Option<&str>,
     declarations: Option<&MetadataFieldDeclarationIndex>,
+    foreign_types: Option<&BTreeSet<String>>,
 ) -> Vec<String> {
     let Some(fields) = field.and_then(|value| split_1c_braced_fields(value.trim(), 0)) else {
         return Vec::new();
@@ -6745,11 +6768,7 @@ pub(super) fn parse_form_attribute_direct_use_always(
         // A settings composer walks its own member tables end to end: its
         // members name each other, and naming each component against the
         // composer's head alone gets every step past the first wrong.
-        let joined = if value_type_uuid == Some(DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID) {
-            form_settings_composer_use_always_path(&parts)
-        } else if let Some(path) = form_object_settings_composer_use_always_path(&parts) {
-            Some(path)
-        } else {
+        let named = || {
             parts
                 .iter()
                 .map(|value_fields| {
@@ -6764,10 +6783,40 @@ pub(super) fn parse_form_attribute_direct_use_always(
                 .collect::<Option<Vec<_>>>()
                 .map(|segments| segments.join("."))
         };
-        let Some(joined) = joined else {
+        // The second member says whether the string is already the whole path.
+        // The platform spells a path only through a type it can name. Two
+        // cases are open here: the type is a reference the object carries from
+        // outside its configuration (`copyinfo`), and the type is an id
+        // neither the configuration nor the built-in table knows -- an object
+        // rebuilt from its own XML keeps such references as `<v8:TypeId>`.
+        let unknown_id = value_type_uuid.is_some_and(|uuid| {
+            value_type.is_none() && super::builtin_type_reference(uuid).is_none()
+        });
+        let foreign = unknown_id
+            || foreign_types.is_some_and(|set| {
+                value_type_uuid.is_some_and(|uuid| set.contains(&uuid.to_ascii_lowercase()))
+                    || value_type.is_some_and(|name| set.contains(name))
+            });
+        let joined = if value_type_uuid == Some(DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID) {
+            form_settings_composer_use_always_path(&parts).map(|path| (path, false))
+        } else if let Some(path) = form_object_settings_composer_use_always_path(&parts) {
+            Some((path, false))
+        } else if foreign {
+            match form_use_always_numeric_path(attribute_id, &parts) {
+                Some(raw) => Some((raw, true)),
+                None => named().map(|path| (path, false)),
+            }
+        } else {
+            named().map(|path| (path, false))
+        };
+        let Some((joined, complete)) = joined else {
             continue;
         };
-        let field_name = format!("{attribute_name}.{joined}");
+        let field_name = if complete {
+            joined
+        } else {
+            format!("{attribute_name}.{joined}")
+        };
         if seen.insert(field_name.clone()) {
             parsed.push(field_name);
         }
@@ -6995,6 +7044,41 @@ pub(super) fn form_attribute_use_always_segment_name(
         "3" => Some("ValueType".to_string()),
         _ => None,
     }
+}
+
+/// Field codes whose `<UseAlways>` name is a property of the attribute's
+/// *type*, not of the object: `-8` is `RegisterRecords` on a document object
+/// and `Ref` on a catalog one, and `-10` (`Predefined`), `-1` (`Picture`), `1`
+/// (`Presentation`) and `3` (`ValueType`) read the same on every type.
+const TYPE_DEPENDENT_FIELD_CODES: &[&str] = &["-8"];
+
+/// A one-component `<UseAlways>` path whose name only the attribute's type can
+/// supply, written the way the platform writes it when it has no type to ask:
+/// the raw `<attribute id>/<code>` pair the record stores, with no attribute
+/// name in front.
+///
+/// Evidence: `Обработка все типы` (`tests/fixtures/external/all_types`),
+/// attributes `Реквизит43` (`id="44"`) and `Реквизит44` (`id="45"`), both of a
+/// `ДокументОбъект` type: the platform writes `<Field>44/-8</Field>` and
+/// `<Field>45/-8</Field>` in its own dump of the Designer-saved object and of
+/// the object rebuilt from that XML by `ibcmd config import`. Every `<Field>`
+/// of the 38 956-file XML corpus spells a name, and every attribute there
+/// carries a type the configuration defines.
+fn form_use_always_numeric_path(attribute_id: &str, parts: &[Vec<&str>]) -> Option<String> {
+    let [component] = parts else {
+        return None;
+    };
+    let [code] = component.as_slice() else {
+        return None;
+    };
+    let code = code.trim();
+    let digits = code.strip_prefix('-').unwrap_or(code);
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    TYPE_DEPENDENT_FIELD_CODES
+        .contains(&code)
+        .then(|| format!("{attribute_id}/{code}"))
 }
 
 /// Field-map ids whose remembered name an earlier entry of the same map already
@@ -19958,6 +20042,13 @@ pub(super) fn parse_form_font_style_ref(
     let style_slot = split_1c_braced_fields(fields.get(3)?.trim(), 0)?;
     if style_slot.len() == 1 {
         let code = style_slot.first()?.trim().parse::<i32>().ok()?;
+        // The bare `{0}` names no style item, and 8.3.27.2214 writes it as
+        // `ref="0"`: 21 ЗУП 3.1.18 fonts stored `{7,2,0,{0},1,100}` come out as
+        // `<Font ref="0" kind="StyleItem"/>`, two more in another stand corpus
+        // add a height.
+        if code == 0 {
+            return Some(code.to_string());
+        }
         return standard_style_item_for_code(code).map(|(_, name)| format!("style:{name}"));
     }
     if style_slot.first().map(|value| value.trim()) != Some("0") {
@@ -37190,9 +37281,7 @@ fn format_form_extended_tooltip_property_xml(
                 )
             })
             .unwrap_or_default(),
-        FormExtendedTooltipXmlProperty::Events => {
-            format_form_extended_tooltip_events_xml(&tooltip.events, indent)
-        }
+        FormExtendedTooltipXmlProperty::Events => format_form_events_xml(&tooltip.events, indent),
     }
 }
 
@@ -37218,7 +37307,7 @@ fn format_form_extended_tooltip_title_xml(
     xml
 }
 
-fn format_form_extended_tooltip_events_xml(events: &[FormBodyEvent], indent: usize) -> String {
+pub(super) fn format_form_events_xml(events: &[FormBodyEvent], indent: usize) -> String {
     if events.is_empty() {
         return String::new();
     }
@@ -38411,6 +38500,10 @@ pub(super) fn form_body_module_text_bytes(body: &ParsedFormBodyBlob) -> Option<V
 /// the item's own leading `3`, its `{"U"}` value, its second font-shaped
 /// member and its three padding `0`s -- are required to read as observed
 /// rather than interpreted, so a record outside the proven shape is refused.
+/// The one exception is the period itself: beside the proven
+/// `{1,<begin>,<end>,0}` the two forms of the corpus also carry
+/// `{1,<begin>,<end>,1,{1,<begin>,<end>}}` (the replacement period, spelled by
+/// no element), whose extra member is read and dropped.
 fn parse_form_planner_settings_xml(
     field: &str,
     value_types: &[ConstantValueType],
@@ -38522,8 +38615,23 @@ fn format_form_planner_settings_xml(
     scalar!("timeScaleWrapEndIndent", form_chart_integer(t(15)?)?);
     xml.push_str(&form_planner_time_scale_xml(t(16)?, object_refs, child)?);
     let period = split_1c_braced_fields(t(18)?.trim(), 0)?;
-    if period.len() != 4 || period.first()?.trim() != "1" || period.get(3)?.trim() != "0" {
+    if period.first()?.trim() != "1" {
         return None;
+    }
+    match (period.len(), period.get(3)?.trim()) {
+        (4, "0") => {}
+        // A form saved by an older platform carries the replacement period
+        // `{1,<begin>,<end>}` behind the same flag; the platform's own XML
+        // spells no element for it, so the member is read and dropped.
+        (5, "1") => {
+            let replacement = split_1c_braced_fields(period.get(4)?.trim(), 0)?;
+            if replacement.len() != 3 || replacement.first()?.trim() != "1" {
+                return None;
+            }
+            form_planner_date(replacement.get(1)?.trim())?;
+            form_planner_date(replacement.get(2)?.trim())?;
+        }
+        _ => return None,
     }
     xml.push_str(&format!("{child_tab}<pl:period>\r\n"));
     xml.push_str(&format!(

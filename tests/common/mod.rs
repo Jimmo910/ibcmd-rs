@@ -62,6 +62,9 @@ pub fn export(input: &Path, out: &Path) -> Output {
 /// A scratch directory per test tag, cleared here and reused by the next run
 /// (a per-process name left a new one behind on every run).
 pub fn temp_dir(tag: &str) -> PathBuf {
+    if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        return std::env::temp_dir().join(format!("ibcmd-external-{tag}-{}", uuid::Uuid::new_v4()));
+    }
     let dir = std::env::temp_dir().join(format!("ibcmd-external-{tag}"));
     let _ = fs::remove_dir_all(&dir);
     dir

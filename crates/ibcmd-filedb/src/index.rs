@@ -143,13 +143,22 @@ pub fn config_key(collation: Collation, file_name: &str, part_no: u32) -> Result
 }
 
 /// Every `(record, key)` of the index in key order.
+#[cfg(test)]
 pub(crate) fn read_entries(object: &[u8], page_size: usize) -> Result<Vec<(u32, Vec<u8>)>> {
+    read_entries_checked(object, page_size, &mut |_| Ok(()))
+}
+pub(crate) fn read_entries_checked(
+    object: &[u8],
+    page_size: usize,
+    check: &mut dyn FnMut(usize) -> Result<()>,
+) -> Result<Vec<(u32, Vec<u8>)>> {
     let (root, key_len) = descriptor(object, page_size)?;
     let pages = object.len() / page_size;
     let mut out = Vec::new();
     let mut stack = vec![(root, 0usize)];
     let mut visited = 0usize;
     while let Some((page, depth)) = stack.pop() {
+        check(0)?;
         visited += 1;
         if page as usize >= pages || visited > pages || depth > 16 {
             return Err(corrupt("Индекс: ссылка на страницу вне объекта или цикл"));
@@ -158,7 +167,7 @@ pub(crate) fn read_entries(object: &[u8], page_size: usize) -> Result<Vec<(u32, 
         let flags = u16::from_le_bytes([p[0], p[1]]);
         let count = u16::from_le_bytes([p[2], p[3]]) as usize;
         if flags & FLAG_LEAF != 0 {
-            read_leaf(p, key_len, count, &mut out)?;
+            read_leaf(p, key_len, count, &mut out, check)?;
         } else {
             let entry = key_len + 8;
             if BRANCH_HEADER + count * entry > page_size {
@@ -192,7 +201,13 @@ fn descriptor(object: &[u8], page_size: usize) -> Result<(u32, usize)> {
     Ok((root, key_len))
 }
 
-fn read_leaf(p: &[u8], key_len: usize, count: usize, out: &mut Vec<(u32, Vec<u8>)>) -> Result<()> {
+fn read_leaf(
+    p: &[u8],
+    key_len: usize,
+    count: usize,
+    out: &mut Vec<(u32, Vec<u8>)>,
+    check: &mut dyn FnMut(usize) -> Result<()>,
+) -> Result<()> {
     let u16_at = |at: usize| u16::from_le_bytes([p[at], p[at + 1]]);
     let rec_mask = u32::from_le_bytes(p[14..18].try_into().unwrap()) as u64;
     let left_mask = u16_at(18) as u64;
@@ -216,6 +231,7 @@ fn read_leaf(p: &[u8], key_len: usize, count: usize, out: &mut Vec<(u32, Vec<u8>
     let mut end = p.len();
     let mut prev = vec![0u8; key_len];
     for k in 0..count {
+        check(key_len)?;
         let mut raw = [0u8; 8];
         raw[..entry].copy_from_slice(&p[LEAF_HEADER + k * entry..LEAF_HEADER + (k + 1) * entry]);
         let v = u64::from_le_bytes(raw);

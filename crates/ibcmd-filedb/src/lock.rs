@@ -37,6 +37,11 @@ pub(crate) fn open_locked(path: &Path, mode: Mode) -> Result<File> {
     {
         use std::os::windows::fs::OpenOptionsExt;
         const FILE_SHARE_READ: u32 = 1;
+        // Refuse a write through a leaf reparse point rather than opening its target.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
+        if mode == Mode::Write {
+            options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        }
         options.share_mode(if mode == Mode::Write {
             0
         } else {
@@ -57,6 +62,35 @@ pub(crate) fn open_locked(path: &Path, mode: Mode) -> Result<File> {
         _ => Error::Io(err),
     })?;
     Ok(file)
+}
+
+#[cfg(unix)]
+pub(crate) fn lock_write_descriptor(file: &File) -> Result<()> {
+    posix_lock(file, Mode::Write).map_err(|error| match error.raw_os_error() {
+        Some(libc::EAGAIN) | Some(libc::EACCES) => {
+            Error::Busy("file database descriptor is busy".into())
+        }
+        _ => Error::Io(error),
+    })
+}
+
+pub(crate) fn lock_read_descriptor(file: &File) -> Result<()> {
+    #[cfg(unix)]
+    {
+        posix_lock(file, Mode::Read).map_err(|error| match error.raw_os_error() {
+            Some(libc::EAGAIN) | Some(libc::EACCES) => {
+                Error::Busy("file database descriptor is busy".into())
+            }
+            _ => Error::Io(error),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        Err(Error::Refused(
+            "descriptor-based file database reading is not supported on this OS".into(),
+        ))
+    }
 }
 
 #[cfg(unix)]

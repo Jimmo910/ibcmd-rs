@@ -1,3 +1,7 @@
+// Let shared integration-fixture helpers use the same crate path in unit tests.
+#[cfg(test)]
+extern crate self as ibcmd_rs;
+
 pub mod adapters;
 pub mod apply_check;
 pub mod cancel;
@@ -12,6 +16,9 @@ pub mod dropin;
 pub mod dump_sources;
 pub mod extension;
 pub mod external;
+mod file_extension_export;
+mod file_identity;
+pub mod file_import;
 mod file_infobase;
 pub mod form_matrix;
 pub mod form_provenance;
@@ -45,9 +52,11 @@ mod mssql_recovery_artifact;
 pub mod mssql_source_change;
 pub mod mssql_worker_switch;
 pub mod mxl_line_provenance;
+pub mod native_export_status;
 pub mod parallel;
 pub mod plan;
 pub mod platform;
+mod postgres_infobase;
 #[cfg(feature = "platform-oracle")]
 pub mod probe;
 #[cfg(feature = "platform-oracle")]
@@ -73,3 +82,8 @@ pub mod mssql_live_continue;
 
 mod profile_process;
 mod rac_process;
+
+pub mod mcp;
+
+#[cfg(test)]
+mod test_process;

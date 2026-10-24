@@ -72,7 +72,14 @@ cargo build --locked --profile iter                                      # binar
   rather than growing `src/`.
 - `crates/ibcmd-schema/data/*.json` comes from EDT through
   `tools/import-edt-*.ps1`; re-run the importer, do not hand-edit.
-  `crates/ibcmd-edt/vendor/morph1c` is a vendored snapshot; do not edit it.
+  `crates/ibcmd-edt/vendor/morph1c` is a pinned snapshot. Do not edit it
+  without explicit maintainer approval of the exact adaptation/path/commit
+  scope. Approved changes must preserve upstream provenance, add positive and
+  rejection tests, and update only corresponding `LOCAL-FILES.json` entries
+  and adaptation notes after semantic review. Existing adaptations or passing
+  tests are not approval. Any new path or behavior outside the approved scope
+  requires fresh owner approval; no blanket refresh or inherited mismatch cleanup.
+  Approved scopes are recorded in `docs/morph1c-local-adaptations.md`.
 - Never commit private `.cf`/`.1CD` files, native export trees, raw blobs,
   application XML/BSL, credentials, or reports with application paths.
   Fixtures are clean-room or minimized sanitized fragments.

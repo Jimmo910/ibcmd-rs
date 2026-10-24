@@ -34,7 +34,7 @@ use crate::metadata_model::xml::Element;
 /// Decodes one stored row of a common kind into the object's element.
 pub(crate) fn decode(kind: &str, row: &Brace, context: &ExportContext) -> Result<Element> {
     if kind == "ExternalDataSource" {
-        return crate::metadata_model::external_data_source::decode(row);
+        return crate::metadata_model::external_data_source::decode(row, &context.names);
     }
     let root = list(row)?;
     if atom(item(root, 0)?)? != "1" {

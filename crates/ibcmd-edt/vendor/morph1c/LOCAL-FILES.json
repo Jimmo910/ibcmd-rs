@@ -85,7 +85,14 @@
     "Chart numeric projection follows SDK EFloat/EDouble rounding and integral long conversion; closed CURRENT numeric records preserve genuinely lossy binary64 values alongside existing chart design/item records, and lexical fraction widths never replay old values",
     "DesignRecord validation binds the already-native current chart counterpart before restoring separate Enum/Value records; dotted literal payloads and unrelated projected values are never projected twice",
     "CURRENT DynamicList availability includes effective main-table CommonAttributes with content/autoUse/separation and family-specific SDK policies; calculated-field availability consumes CURRENT Configuration compatibility >8.3.18, with root mode and common definitions in dependency digests",
-    "CURRENT chart design projection retains validated Designer names-only factory presence while replacing values with freshly computed native defaults; EDT hidden source spelling is cleared"
+    "CURRENT chart design projection retains validated Designer names-only factory presence while replacing values with freshly computed native defaults; EDT hidden source spelling is cleared",
+    "EDT 2026.1 Configuration.distr reads as the root ParentConfigurations.bin in the .distr item order and is written back as .distr; only the witnessed supplier shapes, canonical UUID identifiers and item modes are accepted",
+    "Witnessed client-interface direct panel versus group shape and ordered declared panel subsets are typed; exact installed EDT LF framing is retained separately from semantic data, with full byte guards and legacy CRLF behavior preserved",
+    "Witnessed current EDT LF form framing is a source-only lexical facet; declaration-bound verbatim text retains explicit carriage-return edits while legacy CRLF defaults and native envelope validation remain unchanged",
+    "Witnessed current EDT ListSettings.dcss LF framing is a source-only lexical facet with verbatim typed text; legacy CRLF emission, semantic emptiness and native empty ListSettings self-closing spelling remain unchanged",
+    "Witnessed current EDT ConditionalAppearance.dcssca LF framing uses an explicit framed API and a source-only FormBody facet; legacy CRLF API/defaults, complete ordered typed accounting and empty-sidecar omission remain unchanged",
+    "Source-bound pure-LF empty Russian form-module region scaffolds use native CRLF framing only after complete current syntax revalidation; generic BSL text, current raw semantic identity, same-format bytes, provenance and unknown/executable text remain unchanged",
+    "Witnessed current EDT DCS element-only structural LF becomes canonical CRLF with a source-only owner facet restoring same-EDT output; mixed content, CDATA, xml:space scopes and leaf values remain exact and mixed eligible source separators fail closed"
   ],
   "files": [
     {
@@ -122,7 +129,7 @@
     },
     {
       "path": "crates/core/src/ir/form/body.rs",
-      "sha256": "c854e348f06a40e2abbfc3712b0e15398bf0ab6637077e5ee49e2db10925f0ad"
+      "sha256": "771c0abb0265aaacc1e49ea8a4bf9363514bd3269815904461c7b70d669f36e9"
     },
     {
       "path": "crates/core/src/ir/form/data_attributes.rs",
@@ -134,7 +141,7 @@
     },
     {
       "path": "crates/core/src/ir/form/dcs.rs",
-      "sha256": "356dcb0ad6d57b86981d924a223a039d8ba85633c164f8f5aa196cf31e80d1bc"
+      "sha256": "c3d6af468525fedeb9fcd6f80ea53d68003d9de8e81f8bbb81ac086af1f7f466"
     },
     {
       "path": "crates/core/src/ir/form/decorations.rs",
@@ -158,7 +165,7 @@
     },
     {
       "path": "crates/core/src/ir/mod.rs",
-      "sha256": "62934d6f16cc8b742b17b1c1586e3b8e4024e672823a43ac52cf3c1c2e687e7f"
+      "sha256": "9f9fffbab06af9cdcac43127bdd49a93005cee340a4f4766f5ef101b678e94ba"
     },
     {
       "path": "crates/core/src/ir/semantic_view.rs",
@@ -1682,11 +1689,11 @@
     },
     {
       "path": "crates/formats-xml/src/form/dcss/form_settings.rs",
-      "sha256": "c9c97b7113a43496f97e1eec3bd0884e959246ecf1de45634833aa749551605e"
+      "sha256": "4c4a493e51dd3e123e3d34bbfb150029dd9cf65f767778adea2d663e332e06c6"
     },
     {
       "path": "crates/formats-xml/src/form/dcss/list_settings.rs",
-      "sha256": "acdf829740440bec11cc4e46791c0b9f28229c67410ea2d89ee070424ce8eced"
+      "sha256": "bd0cd4258d74f1f2f657fae3308d33fbc4604c89875c5b08c6413f9a323e924f"
     },
     {
       "path": "crates/formats-xml/src/form/dcss/mod.rs",
@@ -1758,7 +1765,7 @@
     },
     {
       "path": "crates/formats-xml/src/form/mod.rs",
-      "sha256": "a87d702419579dc1cb096d4d4d7cc75ecc953455316d8fbe64263185e028321b"
+      "sha256": "b911e89522fb6bba311175a02c14cdc46ec20a772d6e29a3e7c07884ef122eec"
     },
     {
       "path": "crates/formats-xml/src/form/mxlx.rs",
@@ -1790,7 +1797,7 @@
     },
     {
       "path": "crates/formats-xml/src/form/read/dcs_settings.rs",
-      "sha256": "cdc7b2d0fc70dc4f6ef2b30f6b4fcffdfed8ddabc85dafabf24b372dd4c2905c"
+      "sha256": "04dbaf6dc84020ba0b70cc47828532b3f8e46584c74b5b0ae62dafc6b585df7c"
     },
     {
       "path": "crates/formats-xml/src/form/read/designer.rs",
@@ -1822,7 +1829,7 @@
     },
     {
       "path": "crates/formats-xml/src/form/read/mod.rs",
-      "sha256": "a8f62aa7ff3d027aa47d09a108f3d0d0aaee4e3618e5b6f3c71771403d9ccea0"
+      "sha256": "7d24fe63f0b24c0c8081463e9e9adf743af8011100546069d8965456edb0caaf"
     },
     {
       "path": "crates/formats-xml/src/form/read/mxl.rs",
@@ -1902,11 +1909,11 @@
     },
     {
       "path": "crates/formats-xml/src/form/write/designer_dcs.rs",
-      "sha256": "ce6bb887f6295eda8963e45a1272920bdb42fce42e50029859c002e66dabcaef"
+      "sha256": "bf4b316fbbb4f5940f7493bc0bcc08ef36e825b17aa06e49898e137f915ac850"
     },
     {
       "path": "crates/formats-xml/src/form/write/edt.rs",
-      "sha256": "2162ab1c274ffbb30555052e0d4e602a9ddf195a747416b1af260a2cc1c7b8c5"
+      "sha256": "a3e80128a8b7ec70c9c02c0091d80f7e965f17064d270cdb9b228e343351c899"
     },
     {
       "path": "crates/formats-xml/src/form/write/edt_controls.rs",
@@ -2618,7 +2625,7 @@
     },
     {
       "path": "crates/pipeline/src/config_interface_read.rs",
-      "sha256": "257723dea43a2ec633c8f8520e8163b6121dbc62b48b7d3d4f78510448df5626"
+      "sha256": "2356c76be3aa27eecb65f7d3903c070924250f7f715ce824f92ef0584d1653a1"
     },
     {
       "path": "crates/pipeline/src/convert.rs",
@@ -2626,7 +2633,7 @@
     },
     {
       "path": "crates/pipeline/src/dcs_read.rs",
-      "sha256": "f129faf9ce58c5c462ddc204832d1595c3e67d4ff60606ad3e2670dee2167e64"
+      "sha256": "8d3470d1a71f2f6a3efade855bfa2ab11280f66e0f160d0f91bcb6c3ed5700c5"
     },
     {
       "path": "crates/pipeline/src/exchange_plan_content_read.rs",
@@ -2634,11 +2641,15 @@
     },
     {
       "path": "crates/pipeline/src/ext_read.rs",
-      "sha256": "0a44af9a5d409567e1b9f1adc9a53aafdc307e8feaeaa6b3e8864aa8e1c87657"
+      "sha256": "e4d2333feb9d209646d4efcd7a865ff17dc1331bcace7f9d9eb61281d981a0ba"
     },
     {
       "path": "crates/pipeline/src/ext_read/mobile_signature.rs",
       "sha256": "057894426fd1e137853a9702567516c07f6609b5b4b51c7d6959e88e69bbd521"
+    },
+    {
+      "path": "crates/pipeline/src/ext_read/parent_distribution.rs",
+      "sha256": "531692403564616ad480953a7cb25ba541f2e92db142d48d4502ee43b274b762"
     },
     {
       "path": "crates/pipeline/src/flowchart_read.rs",
@@ -2646,7 +2657,7 @@
     },
     {
       "path": "crates/pipeline/src/form_read.rs",
-      "sha256": "12fd90e85d998d03228c0c2d1e49297fd610e6a0287501621295dc5590033534"
+      "sha256": "c18ab9b37f943992349c566c7759ecda1bb02742e92616e285ee23fda7dbde53"
     },
     {
       "path": "crates/pipeline/src/form_ref_read.rs",
@@ -2654,7 +2665,7 @@
     },
     {
       "path": "crates/pipeline/src/form_write.rs",
-      "sha256": "b6b3764121a04fd5f822a84f21859f9d8c6440d68605eca20d78f500d5a26da4"
+      "sha256": "8968fe171bc5073fb4a036c7f836e831e369507de0f85a083b7d18f6f0ed1ab2"
     },
     {
       "path": "crates/pipeline/src/fsio.rs",
@@ -2686,7 +2697,7 @@
     },
     {
       "path": "crates/pipeline/src/lib.rs",
-      "sha256": "cdabb0a062006f94c2675810e8253f7dc8a3b2dc89bc2a739575c2d2d8b80f6b"
+      "sha256": "461d5441ee463e1b0073cc8ec6fce7b8edbb8f88760c1c1435328d6465e4d81e"
     },
     {
       "path": "crates/pipeline/src/metadata_picture_semantics.rs",
@@ -2694,7 +2705,7 @@
     },
     {
       "path": "crates/pipeline/src/module_read.rs",
-      "sha256": "5f35f22679e382b680f4156366e74bc680409f0186c283aae21e6aaca5583e18"
+      "sha256": "5731a29355a9a4ef6e707112cc8e81c50ee3a77e20472be580c99acd390b7abf"
     },
     {
       "path": "crates/pipeline/src/mxl_read.rs",
@@ -2730,7 +2741,7 @@
     },
     {
       "path": "crates/pipeline/src/sdk_body_projection.rs",
-      "sha256": "20cbbf5e84a50c7cb6b9580da156985ce070a5c324975d18e7e0a03e27e0190f"
+      "sha256": "0ac643feea8c1ee9cfff2008519508e32fad4d24a89815580b2d5e4c7a1b4fa9"
     },
     {
       "path": "crates/pipeline/src/sidecar_version.rs",

@@ -3451,6 +3451,7 @@ fn cct_direct_item_failure_rolls_back_staged_identity_and_corrected_item_commits
         &BTreeMap::new(),
         &wrong_owner_refs,
         &BTreeMap::new(),
+        &BTreeMap::new(),
         &mut child_ids,
     ) {
         Err(failure) => failure,
@@ -3488,6 +3489,7 @@ fn cct_direct_item_failure_rolls_back_staged_identity_and_corrected_item_commits
         "Owner",
         &BTreeMap::new(),
         &corrected_refs,
+        &BTreeMap::new(),
         &BTreeMap::new(),
         &mut child_ids,
     )
@@ -3533,6 +3535,7 @@ fn cct_direct_uuid_collisions_are_exact_ambiguous_and_retryable() {
             "Owner",
             &BTreeMap::new(),
             &refs,
+            &BTreeMap::new(),
             &BTreeMap::new(),
             &mut child_ids,
         ) {
@@ -3580,6 +3583,7 @@ fn cct_direct_uuid_collisions_are_exact_ambiguous_and_retryable() {
             "Owner",
             &BTreeMap::new(),
             &corrected_refs,
+            &BTreeMap::new(),
             &BTreeMap::new(),
             &mut child_ids,
         )
@@ -3659,6 +3663,7 @@ fn cct_tabular_late_failure_rolls_back_all_staged_ids_and_corrected_item_commits
         &BTreeMap::new(),
         &refs,
         &BTreeMap::new(),
+        &BTreeMap::new(),
         &mut generated_ids,
         &mut child_ids,
     ) {
@@ -3699,6 +3704,7 @@ fn cct_tabular_late_failure_rolls_back_all_staged_ids_and_corrected_item_commits
         "Owner",
         &BTreeMap::new(),
         &refs,
+        &BTreeMap::new(),
         &BTreeMap::new(),
         &mut generated_ids,
         &mut child_ids,
@@ -6503,6 +6509,23 @@ fn metadata_command_reference_index_reads_catalog_use_standard_commands_from_rea
     let index = build_metadata_command_reference_index_from_texts(&rows);
     assert!(!index[false_uuid].use_standard_commands);
     assert!(index[true_uuid].use_standard_commands);
+}
+
+/// A business process's `<BasedOn>` is field 15 of its owner record, the slot
+/// `parse_business_process_properties_from_text` writes its own
+/// `BusinessProcesses/<name>.xml` from. The row is `BusinessProcess.Задание`
+/// of the business-process-duty evidence, whose native XML lists three
+/// `<BasedOn>` members.
+#[test]
+fn metadata_command_reference_index_reads_business_process_based_on() {
+    let uuid = "dad11c2e-08fc-4a6b-8829-8be6c64c15fc";
+    let packed = include_bytes!(
+        "../../tests/fixtures/native-evidence/8.3.27.2214/business-process-duty/raw/dad11c2e-08fc-4a6b-8829-8be6c64c15fc.deflate"
+    );
+    let row = metadata_text_row_from_blob(uuid, packed).expect("the business process row decodes");
+    assert_eq!(row.kind.as_deref(), Some("BusinessProcess"));
+    let index = build_metadata_command_reference_index_from_texts(&[row]);
+    assert_eq!(index[uuid].based_on_declared, Some(3));
 }
 
 /// A constant's `<UseStandardCommands>` is slot 7 of its record, the slot its
@@ -11227,6 +11250,20 @@ fn list_settings_transliteration_fails_closed_outside_the_evidenced_vocabulary()
 /// `CommonForms/МашиночитаемыеДоверенности`, whose
 /// `ref="0:4a6c2c50-ce27-4fc2-bd95-d719c0a331be"` is exported as
 /// `ref="style:ЗачеркнутыйШрифтБЭД"`.
+/// A `StyleItem` font whose style slot is the bare `{0}` names no style item,
+/// and 8.3.27.2214 writes it `ref="0"`: ЗУП 3.1.18 stores `{7,2,0,{0},1,100}`
+/// on `Documents/ВедомостьНаВыплатуЗарплатыВБанк/Forms/ФормаДокумента`
+/// `СоставФинансирование` and the platform writes
+/// `<Font ref="0" kind="StyleItem"/>` (21 fonts in 16 forms; two more carry a
+/// height in another stand corpus).
+#[test]
+fn a_style_item_font_without_a_style_reads_as_ref_zero() {
+    assert_eq!(
+        parse_form_font_tuple_xml_tag("{7,2,0,{0},1,100}", &BTreeMap::new(), "Font").as_deref(),
+        Some("<Font ref=\"0\" kind=\"StyleItem\"/>")
+    );
+}
+
 #[test]
 fn transliterated_appearance_resolves_style_item_font_references() {
     let document = concat!(
@@ -13093,7 +13130,8 @@ fn formats_form_attribute_type_description_settings_from_element_type() {
         }])
     );
 
-    let xml = format_form_attributes_xml(&[attribute]);
+    let mut attributes = [attribute];
+    let xml = format_form_attributes_xml(&attributes);
     assert!(
         xml.contains(r#"<Settings xsi:type="v8:TypeDescription">"#),
         "{xml}"
@@ -13102,17 +13140,20 @@ fn formats_form_attribute_type_description_settings_from_element_type() {
     assert!(xml.contains("<v8:StringQualifiers>"), "{xml}");
     assert!(!xml.contains(r#"<Settings xsi:type="v8:TypeDescription"/>"#));
 
-    assert_eq!(
-        format_type_description_value_types_xml(
-            &[ConstantValueType::Reference {
-                reference: "d5p1:TextDocument".to_string()
-            }],
-            "\t"
-        ),
-        concat!(
-            "\t<v8:Type xmlns:d5p1=\"http://v8.1c.ru/8.1/data/txtedt\">",
-            "d5p1:TextDocument</v8:Type>\r\n"
-        )
+    // Exercise the actual Settings caller at its declaration depth, keeping
+    // the native d5 QName and URI rather than rendering an unparented fragment.
+    attributes[0].type_description_settings = Some(vec![ConstantValueType::Reference {
+        reference: "d5p1:TextDocument".to_owned(),
+    }]);
+    let xml = format_form_attributes_xml(&attributes);
+    assert!(
+        xml.contains(concat!(
+            "\t\t\t<Settings xsi:type=\"v8:TypeDescription\">\r\n",
+            "\t\t\t\t<v8:Type xmlns:d5p1=\"http://v8.1c.ru/8.1/data/txtedt\">",
+            "d5p1:TextDocument</v8:Type>\r\n",
+            "\t\t\t</Settings>\r\n"
+        )),
+        "{xml}"
     );
 }
 
@@ -29833,15 +29874,24 @@ fn detects_previously_unmapped_style_web_colors_from_real_objects() {
 /// `DataHistory` in the owner's slot 12 (`uh`
 /// `РежимАктуализацииГрафикаПриИзмененииПервичныхДокументов`). All four are
 /// single-object variations across the 3 378 constants of the stand.
-fn constant_record_for_test(multi_line: &str, folders: &str, quick: &str, history: &str) -> String {
+fn constant_record_for_test(
+    multi_line: &str,
+    folders: &str,
+    quick: &str,
+    history: &str,
+    negatives: &str,
+    extended: &str,
+) -> String {
     RECORD_LITERAL
         .replace("{MULTILINE}", multi_line)
         .replace("{FOLDERS}", folders)
         .replace("{QUICK}", quick)
         .replace("{HISTORY}", history)
+        .replace("{NEGATIVES}", negatives)
+        .replace("{EXTENDED}", extended)
 }
 
-const RECORD_LITERAL: &str = "{1,\r\n{16,\r\n{27,\r\n{2,\r\n{3,\r\n{1,0,1d3d0d77-e5da-484f-9bb6-f25b74778d2f},\"ИспользоватьСинхронизациюКалендарей\",\r\n{1,\"ru\",\"Использовать синхронизацию календарей\"},\"\",0,0,00000000-0000-0000-0000-000000000000,0},\r\n{\"Pattern\",\r\n{\"B\"}\r\n}\r\n},0,\r\n{0},\r\n{0},0,\"\",{MULTILINE},\r\n{\"U\"},\r\n{\"U\"},{FOLDERS},00000000-0000-0000-0000-000000000000,{QUICK},0,\r\n{5006,0},\r\n{3,0,0},\r\n{0,0},0,\r\n{0},\r\n{\"S\",\"\"},0,0,0},9b8809f9-4d93-4ce7-a22f-6260b4ee79e1,fdf4c338-647a-4b9f-a4e3-41ef1cdcac5f,32fc8242-6142-4b63-b1e0-6876cb459a27,353606e0-5425-4f65-9741-8798a050ffcf,1,1,\r\n{0},\r\n{0},00000000-0000-0000-0000-000000000000,0,{HISTORY},7f042bcc-a493-5225-957c-e053d66501be,6ffb2cde-5407-5bed-82ee-3d454b299d37,0,0},0}";
+const RECORD_LITERAL: &str = "{1,\r\n{16,\r\n{27,\r\n{2,\r\n{3,\r\n{1,0,1d3d0d77-e5da-484f-9bb6-f25b74778d2f},\"ИспользоватьСинхронизациюКалендарей\",\r\n{1,\"ru\",\"Использовать синхронизацию календарей\"},\"\",0,0,00000000-0000-0000-0000-000000000000,0},\r\n{\"Pattern\",\r\n{\"B\"}\r\n}\r\n},0,\r\n{0},\r\n{0},{NEGATIVES},\"\",{MULTILINE},\r\n{\"U\"},\r\n{\"U\"},{FOLDERS},00000000-0000-0000-0000-000000000000,{QUICK},0,\r\n{5006,0},\r\n{3,0,0},\r\n{0,0},{EXTENDED},\r\n{0},\r\n{\"S\",\"\"},0,0,0},9b8809f9-4d93-4ce7-a22f-6260b4ee79e1,fdf4c338-647a-4b9f-a4e3-41ef1cdcac5f,32fc8242-6142-4b63-b1e0-6876cb459a27,353606e0-5425-4f65-9741-8798a050ffcf,1,1,\r\n{0},\r\n{0},00000000-0000-0000-0000-000000000000,0,{HISTORY},7f042bcc-a493-5225-957c-e053d66501be,6ffb2cde-5407-5bed-82ee-3d454b299d37,0,0},0}";
 
 #[test]
 fn common_attribute_indexing_names_every_code_the_corpus_stores() {
@@ -29962,23 +30012,34 @@ fn constant_reads_the_four_properties_the_writer_used_to_pin() {
             &BTreeMap::new(),
         )
     };
-    let plain = parse(&constant_record_for_test("0", "0", "2", "0")).expect("plain constant");
+    let plain =
+        parse(&constant_record_for_test("0", "0", "2", "0", "0", "0")).expect("plain constant");
+    assert!(!plain.mark_negatives);
+    assert!(!plain.extended_edit);
     assert!(!plain.multi_line);
     assert_eq!(plain.choice_folders_and_items, "Items");
     assert_eq!(plain.quick_choice, "Auto");
     assert_eq!(plain.data_history, "DontUse");
 
-    let varied = parse(&constant_record_for_test("1", "1", "0", "1")).expect("varied constant");
+    let varied =
+        parse(&constant_record_for_test("1", "1", "0", "1", "1", "1")).expect("varied constant");
     assert!(varied.multi_line);
     assert_eq!(varied.choice_folders_and_items, "Folders");
     assert_eq!(varied.quick_choice, "DontUse");
     assert_eq!(varied.data_history, "Use");
+    // Slots 5 and 17: the matrix rows `КнстРеквизитОтрицательные` and
+    // `КнстРеквизитРасшрПравка` state one each, and the writer used to print
+    // `false` for both whatever the record said.
+    assert!(varied.mark_negatives);
+    assert!(varied.extended_edit);
 
     // Values outside the closed sets still refuse the whole object.
-    assert!(parse(&constant_record_for_test("2", "0", "2", "0")).is_none());
-    assert!(parse(&constant_record_for_test("0", "9", "2", "0")).is_none());
-    assert!(parse(&constant_record_for_test("0", "0", "9", "0")).is_none());
-    assert!(parse(&constant_record_for_test("0", "0", "2", "9")).is_none());
+    assert!(parse(&constant_record_for_test("2", "0", "2", "0", "0", "0")).is_none());
+    assert!(parse(&constant_record_for_test("0", "9", "2", "0", "0", "0")).is_none());
+    assert!(parse(&constant_record_for_test("0", "0", "9", "0", "0", "0")).is_none());
+    assert!(parse(&constant_record_for_test("0", "0", "2", "9", "0", "0")).is_none());
+    assert!(parse(&constant_record_for_test("0", "0", "2", "0", "2", "0")).is_none());
+    assert!(parse(&constant_record_for_test("0", "0", "2", "0", "0", "2")).is_none());
 }
 
 #[test]
@@ -38867,6 +38928,29 @@ fn moxel_header_footer_block_omits_the_empty_records() {
     );
 }
 
+/// A `{16,ref,text}` record without the trailing flag publishes `tl`, as the
+/// flag-0 record does. ЗУП 3.1.18 stores the six records of
+/// `DataProcessors/ДокументооборотСКонтролирующимиОрганами/Templates/БланкПечатиДИВ`
+/// this way (`{16,1,{1,0}}` ... `{16,2,{1,1,{"ru","Сформировано [&Дата] [&Время]"}}}`),
+/// and 8.3.27.2214 writes all six elements with a `<tl>` child; 32 templates of
+/// that configuration carry the shape.
+#[test]
+fn moxel_header_footer_record_without_a_flag_reads_as_plain_text() {
+    let mut fields = vec!["8", "1", "9", "{0}", "{0}", "{0}", "0"];
+    let empty = "{16,1,\r\n{1,0}\r\n}";
+    let text = "{16,2,\r\n{1,1,\r\n{\"ru\",\"Сформировано [&Дата] [&Время]\"}\r\n}\r\n}";
+    fields.extend([empty, empty, empty, empty, empty, text]);
+    let slots = parse_moxel_header_footer_slots(&fields).expect("the block decodes");
+    let header = slots[0].as_ref().unwrap();
+    assert_eq!(header.source_format_ref, 1);
+    assert!(header.text_kind == MoxelHeaderFooterText::Plain);
+    assert!(header.text.is_empty());
+    let footer = slots[5].as_ref().unwrap();
+    assert_eq!(footer.source_format_ref, 2);
+    assert!(footer.text_kind == MoxelHeaderFooterText::Plain);
+    assert_eq!(footer.text[0].content, "Сформировано [&Дата] [&Время]");
+}
+
 /// The header/footer record grammar, on the record shapes the platform writes.
 ///
 /// Every one of the 522 records published by the 87 header/footer-carrying
@@ -43298,6 +43382,26 @@ fn information_register_owner_tail_with_standard_attributes_for_test(
     )
 }
 
+/// Owner version 32 has the 37 fields of version 30. ЗУП 3.1.18 stores 73
+/// information registers that way (`ЗагруженныеВерсииАдресныхСведений` among
+/// them), and 8.3.27.2214 dumps their properties as it does for version 30.
+#[test]
+fn reads_information_register_owner_version_32_like_version_30() {
+    let register_uuid = "11111111-1111-4111-8111-111111111111";
+    let full_tail = information_register_default_owner_tail_for_test();
+    let short_tail = full_tail.strip_suffix(",0,0").unwrap();
+    for version in ["30", "32"] {
+        let raw = exact_information_register_root_for_test(register_uuid, short_tail).replacen(
+            "{33,",
+            &format!("{{{version},"),
+            1,
+        );
+        let header = parse_metadata_header_from_text(&raw, register_uuid).unwrap();
+        let owner = parse_information_register_owner_fields(&raw, &header);
+        assert!(owner.is_some(), "version {version}");
+    }
+}
+
 #[test]
 fn parses_only_exact_information_register_physical_owner_shape() {
     let register_uuid = "11111111-1111-4111-8111-111111111111";
@@ -43645,6 +43749,25 @@ fn accepts_independent_captured_information_register_standard_attribute_bags() {
         let attribute = parse_information_register_standard_attribute("Active", &bag).unwrap();
         assert_eq!(attribute.fill_checking, "DontCheck");
         assert!(matches!(attribute.fill_value, MetadataChildFillValue::Nil));
+    }
+}
+
+/// Standard-attribute bag revision 9 has the 23 keys of revision 12: the
+/// data-history key is absent and the platform dumps it as `Use`. ЗУП 3.1.18
+/// stores `{9,23,...}` bags (`InformationRegisters/
+/// ДанныеОВремениДляРасчетаСреднегоОбщийКорректировка` among them), and
+/// 8.3.27.2214 writes `<xr:DataHistory>Use</xr:DataHistory>` on each of their
+/// standard attributes.
+#[test]
+fn reads_information_register_standard_attribute_bag_revision_9_like_12() {
+    let current = information_register_standard_attribute_bag_for_test("Active", false, false);
+    let data_history = r##"9288a8ed-b259-46d0-a8e3-70d87956ff2d,{"#",d46ea122-3201-4e5e-bed4-e669c6e463c8,{d46ea122-3201-4e5e-bed4-e669c6e463c8,1}},"##;
+    assert!(current.contains(data_history));
+    let without_history = current.replacen(data_history, "", 1);
+    for revision in ["12", "9"] {
+        let raw = without_history.replacen("{13,24,", &format!("{{{revision},23,"), 1);
+        let bag = parse_information_register_standard_attribute_bag(&raw);
+        assert!(bag.is_some(), "revision {revision}");
     }
 }
 
@@ -49870,6 +49993,8 @@ fn constant_shadow_properties(value_type: ConstantValueType) -> ConstantProperti
         choice_history_on_input: "Auto",
         data_lock_control_mode: "Managed",
         multi_line: false,
+        mark_negatives: false,
+        extended_edit: false,
         choice_folders_and_items: "Items",
         quick_choice: "Auto",
         data_history: "DontUse",
@@ -62883,7 +63008,7 @@ fn document_tabular_sections_accept_legacy_and_extended_envelopes_only() {
 }
 
 #[test]
-fn document_choice_form_requires_one_matching_catalog_or_document_reference_type() {
+fn document_choice_form_accepts_any_resolved_form_reference() {
     let catalog_form_uuid = "11111111-1111-4111-8111-111111111111";
     let document_form_uuid = "22222222-2222-4222-8222-222222222222";
     let common_form_uuid = "33333333-3333-4333-8333-333333333333";
@@ -62918,56 +63043,44 @@ fn document_choice_form_requires_one_matching_catalog_or_document_reference_type
             },
         ),
     ]);
-    let catalog_type = ConstantValueType::Reference {
-        reference: "cfg:CatalogRef.Customers".to_string(),
-    };
-    let document_type = ConstantValueType::Reference {
-        reference: "cfg:DocumentRef.Order".to_string(),
-    };
     assert!(matches!(
-        parse_document_child_choice_form(
-            catalog_form_uuid,
-            std::slice::from_ref(&catalog_type),
-            &form_refs,
-        ),
+        parse_document_child_choice_form(catalog_form_uuid, &form_refs),
         Some(MetadataChoiceForm::Reference(ref value))
             if value == "Catalog.Customers.Form.Choice"
     ));
     assert!(matches!(
-        parse_document_child_choice_form(
-            document_form_uuid,
-            std::slice::from_ref(&document_type),
-            &form_refs,
-        ),
+        parse_document_child_choice_form(document_form_uuid, &form_refs),
         Some(MetadataChoiceForm::Reference(ref value))
             if value == "Document.Order.Form.Choice"
     ));
     assert!(matches!(
-        parse_document_child_choice_form("00000000-0000-0000-0000-000000000000", &[], &form_refs,),
+        parse_document_child_choice_form("00000000-0000-0000-0000-000000000000", &form_refs),
         Some(MetadataChoiceForm::Empty)
     ));
+    // The platform does not require the form's owner to be the attribute's
+    // type owner: the matrix writes a document form on a string attribute of
+    // a catalog and a document. Any resolved form reference is admitted.
+    for (uuid, reference) in [
+        (catalog_form_uuid, "Catalog.Customers.Form.Choice"),
+        (document_form_uuid, "Document.Order.Form.Choice"),
+        (common_form_uuid, "CommonForm.Choice"),
+        (foreign_form_uuid, "Catalog.Other.Form.Choice"),
+    ] {
+        assert!(
+            matches!(
+                parse_document_child_choice_form(uuid, &form_refs),
+                Some(MetadataChoiceForm::Reference(value)) if value == reference
+            ),
+            "{uuid}"
+        );
+    }
     assert!(
-        parse_document_child_choice_form(
-            catalog_form_uuid,
-            &[catalog_type.clone(), catalog_type.clone()],
-            &form_refs,
-        )
-        .is_none()
-    );
-    assert!(
-        parse_document_child_choice_form(foreign_form_uuid, &[catalog_type], &form_refs).is_none()
-    );
-    assert!(
-        parse_document_child_choice_form(common_form_uuid, &[document_type], &form_refs).is_none()
-    );
-    assert!(
-        parse_document_child_choice_form("55555555-5555-4555-8555-555555555555", &[], &form_refs,)
+        parse_document_child_choice_form("55555555-5555-4555-8555-555555555555", &form_refs)
             .is_none()
     );
     assert!(
         parse_document_child_choice_form(
             &format!("{{\"#\",{DESIGN_TIME_REF_TYPE_UUID},{{0,0,{catalog_form_uuid}}}}}"),
-            &[],
             &form_refs,
         )
         .is_none()
@@ -63662,7 +63775,7 @@ fn catalog_nonempty_paths_and_typed_values_resolve_fail_closed() {
 }
 
 #[test]
-fn catalog_choice_form_requires_bare_uuid_and_pattern_owner() {
+fn catalog_choice_form_accepts_any_resolved_form_reference() {
     let form_uuid = "11111111-1111-4111-8111-111111111111";
     let owner_uuid = "22222222-2222-4222-8222-222222222222";
     let form_refs = BTreeMap::from([(
@@ -63672,20 +63785,15 @@ fn catalog_choice_form_requires_bare_uuid_and_pattern_owner() {
             kind: "Form",
         },
     )]);
-    let matching_types = [ConstantValueType::Reference {
-        reference: "cfg:CatalogRef.Statuses".to_string(),
-    }];
+    // The matrix proves the platform accepts a document form on a string
+    // catalog attribute, so no reference-type owner check is applied.
     assert!(matches!(
-        parse_catalog_child_choice_form(form_uuid, &matching_types, &form_refs),
+        parse_catalog_child_choice_form(form_uuid, &form_refs),
         Some(MetadataChoiceForm::Reference(reference))
             if reference == "Catalog.Statuses.Form.Choice"
     ));
-    let foreign_types = [ConstantValueType::Reference {
-        reference: "cfg:CatalogRef.Products".to_string(),
-    }];
-    assert!(parse_catalog_child_choice_form(form_uuid, &foreign_types, &form_refs).is_none());
     let typed = format!("{{\"#\",{DESIGN_TIME_REF_TYPE_UUID},{{0,{owner_uuid},{form_uuid}}}}}");
-    assert!(parse_catalog_child_choice_form(&typed, &matching_types, &form_refs).is_none());
+    assert!(parse_catalog_child_choice_form(&typed, &form_refs).is_none());
 }
 
 #[test]
@@ -74683,8 +74791,8 @@ fn a_root_bound_platform_type_name_is_one_fact_for_every_reader() {
     // document root the writer uses the root prefix and declares nothing, and
     // both the `MDClasses` root and the `logform` root bind `cfg`, `v8` and
     // `v8ui`. Census of the eight stand corpora: 1 520 `<v8:Type>` elements
-    // spell one of the six names below and not one of them carries an inline
-    // `xmlns`. So all three readers must answer the same for all six.
+    // spell one of the names below and not one of them carries an inline
+    // `xmlns`. So all three readers must answer the same for every one.
     for (identifier, reference) in ROOT_BOUND_PLATFORM_TYPE_REFERENCES {
         assert_eq!(builtin_type_reference(identifier), Some(*reference));
         assert_eq!(form_builtin_type_reference(identifier), Some(*reference));
@@ -74779,6 +74887,7 @@ fn task_tabular_sections_are_read_by_the_shared_owned_section_reader() {
         &BTreeMap::new(),
         &refs,
         &BTreeMap::new(),
+        &BTreeMap::new(),
         &mut generated_ids,
         &mut child_ids,
     )
@@ -74815,6 +74924,7 @@ fn task_tabular_sections_are_read_by_the_shared_owned_section_reader() {
             "БюджетнаяЗадача",
             &BTreeMap::new(),
             &refs,
+            &BTreeMap::new(),
             &BTreeMap::new(),
             &mut generated_ids,
             &mut child_ids,
@@ -77321,6 +77431,64 @@ fn renders_form_planner_settings_items_zero_to_platform_proven_xml() {
             "../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/items-zero-settings.xml"
         ),
     );
+}
+
+/// A form saved by an older platform (8.3.26) stores its period as
+/// `{1,<begin>,<end>,1,{1,<begin>,<end>}}` -- the flag and the replacement
+/// period behind it -- where 8.3.27 stores `{1,<begin>,<end>,0}`. The platform
+/// still writes `<pl:period><pl:begin>,<pl:end>` from the first two members and
+/// drops the rest.
+///
+/// Evidence: `Обработка все типы` `epf`, DataProcessor attribute `Реквизит69`
+/// (`{1,20261014000000,20261014235959,1,{1,00010101000000,00010101000000}}`).
+/// Its native `ibcmd.exe config export` writes
+/// `<pl:period><pl:begin>2026-10-14T00:00:00</pl:begin>` +
+/// `<pl:end>2026-10-14T23:59:59</pl:end>`, so the five-member record decodes to
+/// exactly what the four-member control decodes to.
+#[test]
+fn reads_the_replacement_period_an_older_platform_stores_behind_the_flag() {
+    let raw = include_str!(
+        "../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/control.txt"
+    );
+    let native = include_str!(
+        "../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/control-settings.xml"
+    );
+    let replaced = raw.replace(
+        "{1,20150217000000,20150217235959,0}",
+        "{1,20150217000000,20150217235959,1,{1,00010101000000,00010101000000}}",
+    );
+    assert_ne!(
+        replaced, raw,
+        "the control fixture must carry the four-member period"
+    );
+    assert_platform_proven_form_planner_settings(&replaced, native);
+}
+
+/// The replacement-period record is only admitted for the flag the older
+/// platform writes. A flag of `0` with a record behind it, or a record that is
+/// not a period, stays unproven and the block is refused rather than rendered
+/// from members the platform never reads.
+#[test]
+fn refuses_a_five_member_period_that_is_not_the_older_platform_record() {
+    let raw = include_str!(
+        "../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/control.txt"
+    );
+    for replacement in [
+        "{1,20150217000000,20150217235959,0,{1,00010101000000,00010101000000}}",
+        "{1,20150217000000,20150217235959,1,{1,00010101000000}}",
+        "{1,20150217000000,20150217235959,1,{2,00010101000000,00010101000000}}",
+        "{1,20150217000000,20150217235959,1,{1,00010101000000,0001010100000}}",
+    ] {
+        let replaced = raw.replace("{1,20150217000000,20150217235959,0}", replacement);
+        assert_ne!(
+            replaced, raw,
+            "the control fixture must carry the four-member period"
+        );
+        assert!(
+            parse_and_render_form_planner_settings_for_test(&replaced).is_none(),
+            "unproven period `{replacement}` must not decode into a planner block"
+        );
+    }
 }
 
 /// Evidence: fixture `form-graphical-scheme-settings`. Two of its ten pairs are
@@ -80448,4 +80616,405 @@ fn form_root_read_only_uses_its_own_head_flag_and_native_xml_position() {
     let mut unsupported = vec!["1"; 18];
     unsupported[0] = "99";
     assert_eq!(extract_form_read_only(&unsupported), None);
+}
+
+#[test]
+fn a_label_field_places_its_title_back_colour_after_the_title() {
+    // ERP 2.6.1 exported by 8.5.1.1529: `Title`, `TitleBackColor`,
+    // `EditMode` (`РаботаСРезультатамиОбмена/ОбъектыКПоискуИУстановкеСоответствий`).
+    let order = super::form::xml_2_21_order::child_order("LabelField").unwrap();
+    let at = |name: &str| order.iter().position(|item| *item == name).unwrap();
+    assert!(at("Title") < at("TitleBackColor"));
+    assert!(at("TitleBackColor") < at("EditMode"));
+}
+
+fn revision_16_data_processor_text_for_test() -> &'static str {
+    "{1,\r\n{16,fada799c-d476-400d-a17b-7f06cb05c404,c860ba98-e76d-4281-bdc4-8d9126aedbc8,\r\n{0,\r\n{1,\r\n{0,0,84871d25-90e1-43a9-8431-aaa4e9749b2d},\"РасчетЗарплаты\",\r\n{1,\"ru\",\"Расчеты и выплаты\"},\"\",0,0}\r\n},a6f35643-81e5-447b-9a32-dc8d1e3edbf3,0,0,d3985c5b-0dce-44be-8828-860eb5a6f62e,de359b87-41da-4795-9e0c-535e0733d84d,00000000-0000-0000-0000-000000000000,\r\n{0},\r\n{0}\r\n},5,\r\n{2bcef0d1-0981-11d6-b9b8-0050bae0a95d,0},\r\n{3daea016-69b7-4ed4-9453-127911372fe6,0},\r\n{45556acb-826a-4f73-898a-6025fc9536e1,0},\r\n{d5b0e5ed-256d-401c-9c36-f630cafd8a62,1,a6f35643-81e5-447b-9a32-dc8d1e3edbf3},\r\n{ec6bb5e5-b7a8-4d75-bec9-658107a699cf,0}\r\n}"
+}
+
+#[test]
+fn a_data_processor_of_revision_16_indexes_its_object_and_manager_types() {
+    // ЗУП 3.1.18 `DataProcessors/РасчетЗарплаты`: 8.3.27.2214 dumps
+    // DataProcessorObject fada799c-… and DataProcessorManager d3985c5b-….
+    let text = revision_16_data_processor_text_for_test();
+    let entries = parse_generated_type_entries_from_blob(
+        &deflate_for_test(text.as_bytes()),
+        "84871d25-90e1-43a9-8431-aaa4e9749b2d",
+    )
+    .unwrap();
+    for (type_id, reference) in [
+        (
+            "fada799c-d476-400d-a17b-7f06cb05c404",
+            "cfg:DataProcessorObject.РасчетЗарплаты",
+        ),
+        (
+            "d3985c5b-0dce-44be-8828-860eb5a6f62e",
+            "cfg:DataProcessorManager.РасчетЗарплаты",
+        ),
+    ] {
+        assert!(
+            entries
+                .iter()
+                .any(|(id, name)| id == type_id && name == reference),
+            "{entries:?}"
+        );
+    }
+}
+
+#[test]
+fn revision_16_data_processor_generated_types_require_the_complete_record() {
+    let uuid = "84871d25-90e1-43a9-8431-aaa4e9749b2d";
+    let root = split_1c_braced_fields(revision_16_data_processor_text_for_test(), 0).unwrap();
+    let fields = split_1c_braced_fields(root[1], 0).unwrap();
+    assert_eq!(fields.len(), 12);
+    assert_eq!(
+        super::metadata::metadata_source_for_object_fields(
+            16,
+            revision_16_data_processor_text_for_test(),
+            uuid,
+            &fields,
+        ),
+        Some(("DataProcessor", "DataProcessors")),
+    );
+    for count in [11, 13] {
+        let mut changed = fields.clone();
+        changed.resize(count, "0");
+        let changed_object = format!("{{{}}}", changed.join(","));
+        let mut changed_root = root.clone();
+        changed_root[1] = &changed_object;
+        let text = format!("{{{}}}", changed_root.join(","));
+        assert_eq!(
+            super::metadata::metadata_source_for_object_fields(16, &text, uuid, &changed),
+            Some(("Constant", "Constants")),
+            "an unrecognized revision-16 shape must retain the constant fallback",
+        );
+        let entries =
+            parse_generated_type_entries_from_blob(&deflate_for_test(text.as_bytes()), uuid)
+                .unwrap();
+        assert!(
+            entries
+                .iter()
+                .all(|(_, reference)| !reference.starts_with("cfg:DataProcessor")),
+            "{count}-field record incorrectly indexed as a data processor: {entries:?}",
+        );
+    }
+}
+
+#[test]
+fn an_older_root_without_the_analytics_client_right_grants_it() {
+    // ЗУП 3.1.18: 282 roles store the five window modes and not
+    // `AnalyticsSystemClient`, all with `setForNewObjects` false, and
+    // 8.3.27.2214 writes the analytics client `true` on all 282. (Монитор's
+    // two such roles have the flag true, so the `true` it takes there equals
+    // the default and is not written.)
+    let value = "{0,d066966a-ff6a-4a41-bd68-6191cab083bc,1,f6168734-8b8d-4a88-ab39-ef6b51758e83,1,\
+                 b9b44b51-3ac9-47cd-8b5a-df51afdcceb0,1,818fc6c3-4691-44e3-a80c-e8d424730ead,1,\
+                 155a0b35-4343-4047-989b-d385373b063e,1,d8682bbb-7800-4aa0-8590-d3cb11fe2a29,1}";
+    let rights = super::role_rights::parse_configuration_root_object_rights(value, false).unwrap();
+    let analytics = rights
+        .iter()
+        .find(|right| right.name == "AnalyticsSystemClient")
+        .expect("the analytics client right is printed");
+    assert!(analytics.value);
+}
+
+#[test]
+fn role_rights_configuration_root_rejects_duplicate_mode_names() {
+    let modes = [
+        "d066966a-ff6a-4a41-bd68-6191cab083bc",
+        "f6168734-8b8d-4a88-ab39-ef6b51758e83",
+        "b9b44b51-3ac9-47cd-8b5a-df51afdcceb0",
+        "818fc6c3-4691-44e3-a80c-e8d424730ead",
+        "155a0b35-4343-4047-989b-d385373b063e",
+    ];
+    for indices in [&[0, 1, 2, 3, 0][..], &[0, 1, 2, 3, 4, 0][..]] {
+        let pairs = indices
+            .iter()
+            .map(|&i| format!("{},1", modes[i]))
+            .collect::<Vec<_>>()
+            .join(",");
+        let value = format!("{{0,{pairs},d8682bbb-7800-4aa0-8590-d3cb11fe2a29,1}}");
+        for set_for_new_objects in [false, true] {
+            assert!(
+                super::role_rights::parse_configuration_root_object_rights(
+                    &value,
+                    set_for_new_objects
+                )
+                .is_none(),
+                "duplicate mode accepted with flag {set_for_new_objects}"
+            );
+        }
+    }
+}
+
+#[test]
+fn adopted_form_validation_does_not_leave_a_module() {
+    // Extension state is process-wide; preserve the regression in a child
+    // process so the ordinary converters tested beside it see no context.
+    const CHILD: &str = "IBCMD_RS_ADOPTED_FORM_CLEANUP_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "mssql_dump::tests::adopted_form_validation_does_not_leave_a_module",
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "isolated adopted-form cleanup failed: {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let root = std::env::temp_dir().join(format!(
+        "ibcmd-adopted-row-cleanup-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let form_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+    let event_id = "9f2e5ddb-3492-4f5d-8f0d-416b8d1d5c5b";
+    let metadata = deflate_for_test(format!(
+        "{{1,{{4,{{14,{{3,{{1,0,{form_uuid}}},\"AdoptedBroken\",{{1,\"en\",\"Adopted broken\"}},\"\",0,0,00000000-0000-0000-0000-000000000000,0}},0,1,{{2,{{\"#\",1708fdaa-cbce-4289-b373-07a5a74bee91,1}},{{\"#\",1708fdaa-cbce-4289-b373-07a5a74bee91,2}}}},0}},{{0}},{{0}},0}},0}}"
+    ).as_bytes());
+    let body = deflate_for_test(format!(
+        "{{4,{{1,{event_id},\"Handler\",1,0,{event_id},3,1}},\"Procedure StillParsed()\r\nEndProcedure\r\n\",{{0}}}}"
+    ).as_bytes());
+    let _extension = extension::activate(extension::ExtensionContext::new([
+        extension::AdoptedHeader {
+            uuid: form_uuid.to_owned(),
+            properties: Vec::new(),
+            extended_object: None,
+            added_values: Vec::new(),
+        },
+    ]))
+    .unwrap();
+    let row = |name: String, bytes: Vec<u8>| ConfigRow {
+        file_name: name,
+        part_no: 0,
+        data_size: bytes.len() as i64,
+        binary_hex: encode_hex_for_test(&bytes),
+    };
+    let dumped = dump_table_rows_with_options_mode(
+        &root,
+        "Config",
+        vec![
+            row(form_uuid.to_owned(), metadata),
+            row(format!("{form_uuid}.0"), body),
+        ],
+        false,
+        false,
+        true,
+        true,
+        InfobaseConfigSourceVersion::V2_20,
+        RootMetadataInventoryScope::Scoped,
+        SourceAssetCompletenessScope::Scoped,
+        true,
+        false,
+        false,
+        None,
+    )
+    .unwrap();
+    assert!(
+        dumped
+            .failed_rows
+            .iter()
+            .any(|row| row.file_name == format!("{form_uuid}.0")
+                && row.message.contains("malformed adopted form event")),
+        "{:?}",
+        dumped
+            .failed_rows
+            .iter()
+            .map(|row| &row.message)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !root
+            .join("CommonForms/AdoptedBroken/Ext/Form/Module.bsl")
+            .exists(),
+        "failed row left its module in output"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn type_spelling_binds_common_command_builtin_namespaces() {
+    for (id, name, namespace) in [
+        (
+            "151f8778-e2d0-496a-9f02-d9ffd93b57ec",
+            "fd:FormattedDocument",
+            "http://v8.1c.ru/8.2/data/formatted-document",
+        ),
+        (
+            "48510817-200c-48c2-9973-06cf90840514",
+            "pdfdoc:PDFDocument",
+            "http://v8.1c.ru/8.3/data/pdf",
+        ),
+        (
+            "43dc7f37-5b1d-42a7-8f28-f545080d0255",
+            "pl:Planner",
+            "http://v8.1c.ru/8.3/data/planner",
+        ),
+        (
+            "2957f638-fc52-4bbb-9bd5-614550730ca6",
+            "d5p1:Dendrogram",
+            "http://v8.1c.ru/8.2/data/chart",
+        ),
+    ] {
+        let types = parse_common_command_parameter_types(
+            &format!(r##"{{"Pattern",{{"#",{id}}}}}"##),
+            &BTreeMap::new(),
+        );
+        assert_eq!(types.len(), 1);
+        let mut xml = String::new();
+        format_common_command_parameter_type_xml(&mut xml, &types);
+        let prefix = name.split_once(':').unwrap().0;
+        assert!(
+            xml.contains(&format!(
+                "<v8:Type xmlns:{prefix}=\"{namespace}\">{name}</v8:Type>"
+            )),
+            "{xml}"
+        );
+    }
+}
+
+#[test]
+fn type_spelling_uses_form_declaration_depth() {
+    let types = [ConstantValueType::Reference {
+        reference: "d7p1:Dendrogram".to_owned(),
+    }];
+    for (indent, depth) in [(3, 5), (5, 7), (6, 8)] {
+        let xml = format_form_metadata_types_xml_with_indent(&types, &"\t".repeat(indent));
+        let expected = format!(
+            "<v8:Type xmlns:d{depth}p1=\"http://v8.1c.ru/8.2/data/chart\">d{depth}p1:Dendrogram</v8:Type>"
+        );
+        assert!(xml.contains(&expected), "{xml}");
+    }
+    for (indent, depth) in [(4, 5), (6, 7)] {
+        let xml = format_type_description_value_types_xml(&types, &"\t".repeat(indent));
+        let expected = format!(
+            "<v8:Type xmlns:d{depth}p1=\"http://v8.1c.ru/8.2/data/chart\">d{depth}p1:Dendrogram</v8:Type>"
+        );
+        assert!(xml.contains(&expected), "{xml}");
+    }
+}
+
+#[test]
+fn type_spelling_rebases_form_filter_without_named_aliases() {
+    let types = [ConstantValueType::Reference {
+        reference: "d7p1:Filter".to_owned(),
+    }];
+    let xml = format_form_metadata_types_xml(&types);
+    assert!(
+        xml.contains("<v8:Type xmlns:d5p1=\"http://v8.1c.ru/8.2/misc\">d5p1:Filter</v8:Type>"),
+        "{xml}"
+    );
+    for name in ["dcsset:Filter", "cfg:Filter"] {
+        let xml = format_form_metadata_types_xml(&[ConstantValueType::Reference {
+            reference: name.to_owned(),
+        }]);
+        assert!(xml.contains(&format!(">{name}</v8:Type>")), "{xml}");
+    }
+}
+
+#[test]
+fn type_spelling_keeps_event_subscription_type_ids() {
+    let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let xml = format_event_subscription_source_xml(
+        &MetadataHeader {
+            uuid: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".to_owned(),
+            name: "UnknownSource".to_owned(),
+            synonyms: Vec::new(),
+            comment: String::new(),
+            template_type_code: None,
+        },
+        &EventSubscriptionProperties {
+            source_types: vec![ConstantValueType::TypeId {
+                type_id: id.to_owned(),
+            }],
+            event: "BeforeWrite".to_owned(),
+            handler: "CommonModule.Handlers.BeforeWrite".to_owned(),
+        },
+        InfobaseConfigSourceVersion::V2_20,
+    );
+    assert!(
+        xml.contains(&format!("<v8:TypeId>{id}</v8:TypeId>")),
+        "{xml}"
+    );
+}
+
+#[test]
+fn type_spelling_uses_generic_declaration_depth() {
+    let types = [ConstantValueType::Reference {
+        reference: "d7p1:Dendrogram".to_owned(),
+    }];
+    for (indent, depth) in [(3, 5), (5, 7), (6, 8)] {
+        let xml = format_metadata_types_xml_with_indent(&types, &"\t".repeat(indent));
+        let expected = format!(
+            "<v8:Type xmlns:d{depth}p1=\"http://v8.1c.ru/8.2/data/chart\">d{depth}p1:Dendrogram</v8:Type>"
+        );
+        assert!(xml.contains(&expected), "{xml}");
+    }
+    let xml = format_constant_type_member_xml(&types[0]);
+    assert!(
+        xml.contains(
+            "<v8:Type xmlns:d5p1=\"http://v8.1c.ru/8.2/data/chart\">d5p1:Dendrogram</v8:Type>"
+        ),
+        "{xml}"
+    );
+}
+
+/// Slots 5 and 17 of a constant's code-27 detail record are `MarkNegatives`
+/// and `ExtendedEdit`; the writer spelled both `false` for every constant.
+/// Evidence: `1Cv8.cf` of the attribute matrix, constants
+/// `КнстРеквизитОтрицательные` (slot 5 `1`) and `КнстРеквизитРасшрПравка`
+/// (slot 17 `1`), where the platform writes `true` and the export wrote
+/// `false`.
+#[test]
+fn a_constant_writes_the_two_flags_its_detail_record_states() {
+    let header = constant_shadow_header();
+    let plain = constant_shadow_properties(ConstantValueType::Boolean);
+    let xml = format_constant_source_xml(&header, &plain, InfobaseConfigSourceVersion::V2_20);
+    assert!(xml.contains("<MarkNegatives>false</MarkNegatives>"));
+    assert!(xml.contains("<ExtendedEdit>false</ExtendedEdit>"));
+
+    for (mark_negatives, extended_edit) in [(true, false), (false, true), (true, true)] {
+        let mut flagged = constant_shadow_properties(ConstantValueType::Boolean);
+        flagged.mark_negatives = mark_negatives;
+        flagged.extended_edit = extended_edit;
+        let xml = format_constant_source_xml(&header, &flagged, InfobaseConfigSourceVersion::V2_20);
+        assert!(xml.contains(&format!("<MarkNegatives>{mark_negatives}</MarkNegatives>")));
+        assert!(xml.contains(&format!("<ExtendedEdit>{extended_edit}</ExtendedEdit>")));
+    }
+}
+
+#[test]
+fn eds_guard_compatibility_alias_does_not_pollute_foreign_types() {
+    let (uuid, text) = flat_configuration_properties_text(68, 61, &[(26, "80320")]);
+    let row = metadata::metadata_text_row_from_text(&uuid, text).unwrap();
+    assert_eq!(
+        configuration_compatibility_mode_from_texts(
+            std::slice::from_ref(&row),
+            InfobaseConfigSourceVersion::V2_20
+        )
+        .as_deref(),
+        Some("Version8_3_20")
+    );
+    let mut indexes = MetadataTypeIndexes::default();
+    indexes.foreign.insert("existing-foreign".to_owned());
+    respell_any_ib_ref_by_compatibility(&mut indexes, &[row], InfobaseConfigSourceVersion::V2_20);
+    assert_eq!(
+        indexes.foreign,
+        BTreeSet::from(["existing-foreign".to_owned()])
+    );
+    assert_eq!(
+        indexes.dcs[ANY_IB_REF_TYPE_ID],
+        DcsTypeResolution::TypeSet {
+            qname: "cfg:AnyRef".to_owned()
+        }
+    );
 }

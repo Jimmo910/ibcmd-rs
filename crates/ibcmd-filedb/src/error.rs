@@ -18,12 +18,24 @@ pub enum Error {
     /// The caller asked for something the format layer does not do: an unknown
     /// table, a key outside the verified collation range.
     Refused(String),
+    /// The database publication succeeded, but updating its backup failed.
+    /// The pre-write database is retained at recovery; the previous backup is
+    /// untouched. Callers must never report this outcome as cancellation.
+    Published {
+        recovery: std::path::PathBuf,
+        error: io::Error,
+    },
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Io(err) => write!(f, "{err}"),
+            Error::Published { recovery, error } => write!(
+                f,
+                "database was published, but backup publication failed ({error}); previous backup is retained; pre-write recovery database remains at {}; inspect before retrying",
+                recovery.display()
+            ),
             Error::Unsupported(text)
             | Error::Corrupt(text)
             | Error::Busy(text)
@@ -35,7 +47,7 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::Io(err) => Some(err),
+            Error::Io(err) | Error::Published { error: err, .. } => Some(err),
             _ => None,
         }
     }

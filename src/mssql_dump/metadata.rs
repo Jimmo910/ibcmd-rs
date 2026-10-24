@@ -401,6 +401,21 @@ pub(super) fn metadata_source_for_object_fields(
 ) -> Option<(&'static str, &'static str)> {
     let header_index = metadata_header_field_index(&fields, uuid);
 
+    // ExternalDataSource children share code 0 with IntegrationService and a
+    // form descriptor, and code 11 is otherwise unused. Their measured body
+    // layouts decide before the IntegrationService fallback; a measured shape
+    // that fails to parse is refused instead of being rewritten as a service.
+    if code == 0 || code == 11 {
+        if let Some(family) =
+            crate::metadata_model::external_data_source_children::family(text, uuid)
+        {
+            return Some(family);
+        }
+        if crate::metadata_model::external_data_source_children::looks_like_eds_child(text) {
+            return None;
+        }
+    }
+
     // EDS and SettingsStorage both wrap their own header in {0,...}. A body
     // candidate is never allowed to fall through to another code2 family:
     // promotion requires the complete schema-owned row and exact own UUID.
@@ -523,7 +538,9 @@ pub(super) fn metadata_source_for_object_fields(
         9 => Some(("CommonCommand", "CommonCommands")),
         12 if header_index == Some(1) => Some(("CommonModule", "CommonModules")),
         14 => Some(("FilterCriterion", "FilterCriteria")),
-        16 if header_index == Some(3) && fields.len() == 12 => {
+        DataProcessorRevision16Layout::OBJECT_CODE
+            if DataProcessorRevision16Layout::recognizes(code, header_index, fields.len()) =>
+        {
             Some(("DataProcessor", "DataProcessors"))
         }
         16 => Some(("Constant", "Constants")),

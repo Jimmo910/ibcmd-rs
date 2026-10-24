@@ -39,6 +39,8 @@ pub enum Commands {
     /// stdout in Content-Length frames, as a language server; one process per
     /// editor window. Not the platform's `ibcmd server`.
     Serve(ServeArgs),
+    /// Serve MCP tools over local stdio with a fixed operator-owned settings file.
+    Mcp(crate::mcp::McpArgs),
     /// What `serve --stdio` does with the objects of a configuration, from
     /// the command line: its tree, the comparison with a source folder, one
     /// file as the export writes it, the export of selected objects.
@@ -837,6 +839,10 @@ pub struct InfobaseConfigImportArgs {
     /// `import files`: only the rows these files compile to (paths relative
     /// to `source_dir`); empty for the whole tree.
     pub files: Vec<String>,
+    /// `import files` by the platform's rules (`files_stage::select_native`):
+    /// `Some(true)` with `--partial`, `Some(false)` without; `None` for any
+    /// other caller.
+    pub native_files: Option<bool>,
     /// Optional path for the generated SQL scripts (and the bulk rows file).
     pub script_output: Option<PathBuf>,
     /// Patch the target's rows, compile every row, or decide by the target.
@@ -856,6 +862,9 @@ pub struct InfobaseConfigSaveArgs {
     /// The platform ibcmd's configuration file (`--config`/`-c`), kept for
     /// the settings layer.
     pub native_config: Option<PathBuf>,
+    /// `--db-path`: a file infobase (the directory holding 1Cv8.1CD) in place
+    /// of a DBMS connection.
+    pub db_path: Option<PathBuf>,
     /// DBMS type. Only MSSQLServer is served.
     pub dbms: Option<String>,
     pub db_server: Option<String>,
@@ -873,6 +882,25 @@ pub struct InfobaseConfigSaveArgs {
     pub overwrite: bool,
     /// The .cf to write.
     pub output: PathBuf,
+}
+
+/// `infobase config load <file.cf>` (#353): the drop-in's arguments.
+#[derive(Debug, Clone)]
+pub struct InfobaseConfigLoadArgs {
+    pub settings: Option<PathBuf>,
+    pub native_config: Option<PathBuf>,
+    /// `--db-path`: a file infobase in place of a DBMS connection.
+    pub db_path: Option<PathBuf>,
+    pub dbms: Option<String>,
+    pub db_server: Option<String>,
+    pub db_name: Option<String>,
+    pub db_user: Option<String>,
+    pub db_pwd: Option<String>,
+    pub db_pwd_env: String,
+    /// `--sqlcmd`: sqlcmd.exe in place of the built-in SQL Server client.
+    pub sqlcmd: Option<PathBuf>,
+    /// The `.cf` to stage.
+    pub input: PathBuf,
 }
 
 /// Research commands under `infobase config` that run the installed
@@ -1760,6 +1788,14 @@ pub struct MssqlDumpConfigArgs {
     /// itself. No server or platform is used.
     #[arg(long, conflicts_with = "rows_dir")]
     pub file_infobase: Option<PathBuf>,
+    /// The PostgreSQL database `infobase config export --dbms=PostgreSQL`
+    /// reads (#369): its rows answer every read, as a file infobase's do.
+    /// Not a command-line option.
+    #[arg(skip)]
+    pub postgres: Option<crate::sql::postgres::PgTarget>,
+    /// One operation's retained PostgreSQL probe rows; never a CLI option.
+    #[arg(skip)]
+    pub postgres_snapshot: Option<crate::mssql_dump::PostgresExportSnapshot>,
     /// Write every descriptor through the metadata model (the default for a
     /// full export; kept for scripts that pass it).
     #[arg(long, hide = true, conflicts_with = "legacy_export")]
@@ -3168,6 +3204,11 @@ pub struct MssqlStageSourceObjectsArgs {
         conflicts_with_all = ["path_prefix", "base_free"]
     )]
     pub files: Vec<String>,
+    /// `--file` by the rules of the platform's `import files`
+    /// (`files_stage::select_native`), set by the drop-in: `Some(true)` with
+    /// `--partial`, `Some(false)` without.
+    #[arg(skip)]
+    pub native_files: Option<bool>,
     /// Optional path for generated SQL script. Defaults to C:\temp\ibcmd-rs.
     #[arg(long)]
     pub script_output: Option<PathBuf>,

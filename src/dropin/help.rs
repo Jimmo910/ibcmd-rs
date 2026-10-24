@@ -52,8 +52,9 @@ pub fn infobase_help(program: &str) -> String {
         параметрами
 
     --dbms=<kind>
-        Тип СУБД, в которой размещается информационная база.
-        Поддерживается только MSSQLServer
+        Тип СУБД, в которой размещается информационная база:
+        MSSQLServer или PostgreSQL (на PostgreSQL выполняются config
+        export, config import и config load)
 
     --database-server=<server> | --db-server=<server>
         Имя сервера СУБД: server, server\\instance, server/instance или
@@ -129,16 +130,26 @@ pub fn infobase_help(program: &str) -> String {
                     только объекты, версия (configVersion) которых отличается
                     от указанной в файле, и ConfigDumpInfo.xml всей
                     конфигурации; файлы остальных объектов не записываются.
-                    Если объект или его реквизит переименован, выгружается вся
-                    конфигурация. Каталог может содержать предыдущую выгрузку
+                    При удалении или переименовании требуется полная выгрузка
+                    (код -1). Без изменений ничего не записывается.
 
                 --sync
-                    Синхронизировать каталог с конфигурацией: после выгрузки
-                    удалить файлы, которых нет в полной выгрузке (удаленных и
-                    переименованных объектов). Затрагиваются только
-                    Configuration.xml, ConfigDumpInfo.xml, Ext и каталоги
-                    объектов метаданных, каталоги с точкой (.git) - никогда.
-                    Вместе с --base - инкрементальное обновление выгрузки
+                    Обновить существующий каталог по его ConfigDumpInfo.xml.
+                    При удалении/переименовании требуется полная выгрузка
+                    (код -1); при отсутствии изменений файлы не записываются.
+                    Нельзя указывать вместе с --base (код 2).
+
+                info [--out=<directory>]
+                    ConfigDumpInfo без конвертации тел объектов. Без --out:
+                    XML в stdout без BOM; --out: существующий каталог.
+
+                status --base=<ConfigDumpInfo.xml> [--out=<file>] [--short]
+                    Изменения версий: added/modified; при удалении или
+                    переименовании modified: all. Без изменений stdout пуст.
+
+                objects --out=<directory> [--recursive] <objects...>
+                    Выбранные объекты по полному имени. Дочерние объекты
+                    включаются только с --recursive. Без ConfigDumpInfo.xml.
 
                 <path>
                     путь к каталогу файлов конфигурации
@@ -159,20 +170,25 @@ pub fn infobase_help(program: &str) -> String {
                         собираются из перечисленных файлов (описание объекта,
                         модуль, форма, макет, справка...), и root, version,
                         versions; остальные строки остаются как в
-                        конфигурации базы. Объект каждого файла должен быть
-                        в базе, а файл его описания (Catalogs/X.xml для
-                        Catalogs/X/Ext/ObjectModule.bsl) - в каталоге.
-                        Удаление файлов и объектов, новые объекты и
-                        Configuration.xml не загружаются: код возврата 1
+                        конфигурации базы. Файл описания объекта
+                        (Catalogs/X.xml) загружает объект целиком: его
+                        файлы, которые есть в каталоге, и вложенные объекты,
+                        как у платформы. Объект каждого файла должен быть в
+                        базе, а файл его описания - в каталоге. Удаление
+                        файлов и объектов, новые объекты, Configuration.xml
+                        и загрузка поверх уже подготовленной в ConfigSave
+                        не выполняются: код возврата 1
 
                         --base-dir=<path>
                             Каталог, относительно которого указаны файлы.
                             Файл вне его не загружается
 
                         --partial
-                            Каталог содержит только часть файлов
-                            конфигурации. Без него каталог должен быть полной
-                            выгрузкой (с Configuration.xml)
+                            Разрешить частичный набор файлов объектов: файл
+                            из списка, которого нет в каталоге, пропускается,
+                            тела загружаемого целиком объекта, которых нет в
+                            каталоге, остаются. Без него платформа их удаляет;
+                            ibcmd-rs такую загрузку отклоняет (код 1)
 
                         --no-check
                             Не проверять перед записью, что выгрузка
@@ -246,6 +262,16 @@ pub fn infobase_help(program: &str) -> String {
 
                 --db
                     Выгрузить конфигурацию базы данных
+
+                <path>
+                    путь к файлу конфигурации
+
+            load
+                Загрузка конфигурации из файла .cf: элементы файла
+                записываются как есть в подготовку загрузки (ConfigSave) вместе
+                со списком строк базы, которых в файле нет; применяет загрузку
+                штатный config apply. Файловая база (--db-path), PostgreSQL и
+                SQL Server
 
                 <path>
                     путь к файлу конфигурации
@@ -337,7 +363,7 @@ pub fn overview(program: &str) -> String {
 
 Поддерживаемые режимы:
 
-{infobase:<23}{summary}: config export, config import, config import files, config apply, config save
+{infobase:<23}{summary}: config export, config import, config import files, config apply, config save, config load
 
 Не поддерживаются в этой версии ibcmd-rs (планируются в следующих):
 
@@ -365,13 +391,15 @@ mod tests {
         for command in [
             "ibcmd infobase create",
             "ibcmd infobase config check",
-            "ibcmd infobase config export info",
             "ibcmd infobase config import all-extensions",
             "ibcmd infobase config support",
             "ibcmd infobase config extension",
         ] {
             assert!(help.contains(command), "{command}");
         }
+        assert!(help.contains("info [--out=<directory>]"));
+        assert!(help.contains("status --base=<ConfigDumpInfo.xml>"));
+        assert!(help.contains("objects --out=<directory>"));
         // import files is served (#363): described, not listed as refused
         assert!(!help.contains("ibcmd infobase config import files"));
         for word in ["--base-dir=<path>", "--partial", "--no-check", "<file> ..."] {
@@ -381,9 +409,9 @@ mod tests {
         assert!(!help.contains("config support disable"));
         // apply is served: described with its words, not listed as refused
         assert!(!help.contains("ibcmd infobase config apply"));
-        // so is save; load is not
+        // so are save and load (#353)
         assert!(!help.contains("ibcmd infobase config save"));
-        assert!(help.contains("ibcmd infobase config load"));
+        assert!(!help.contains("ibcmd infobase config load"));
         assert!(help.contains("путь к файлу конфигурации"));
         for word in [
             "--dynamic=<auto|disable|prompt|force>",

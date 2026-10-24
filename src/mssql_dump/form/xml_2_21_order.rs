@@ -645,6 +645,10 @@ pub(in crate::mssql_dump) fn child_order(parent: &str) -> Option<&'static [&'sta
             "SkipOnInput",
             "Title",
             "TitleTextColor",
+            // ERP 2.6.1 on 8.5.1.1529 (`DataProcessors/РаботаСРезультатамиОбмена/
+            // Forms/ОбъектыКПоискуИУстановкеСоответствий`): `Title`,
+            // `TitleBackColor`, `EditMode`; placed as in `InputField`.
+            "TitleBackColor",
             "TitleFont",
             "TitleLocation",
             "TitleHeight",

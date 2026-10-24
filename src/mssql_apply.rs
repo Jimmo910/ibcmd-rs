@@ -224,6 +224,8 @@ fn apply_source_change_inner(
             &MssqlDumpConfigArgs {
                 rows_dir: None,
                 file_infobase: None,
+                postgres: None,
+                postgres_snapshot: None,
                 model_export: false,
                 legacy_export: false,
                 sqlcmd: args.sqlcmd.clone(),
@@ -504,6 +506,7 @@ fn apply_source_change_inner(
                     } else {
                         Vec::new()
                     },
+                    native_files: None,
                     script_output: None,
                     script_only: false,
                     bulk: false,

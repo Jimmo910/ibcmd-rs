@@ -1148,10 +1148,10 @@ fn adjust_predefined_files(
 /// What the platform does to the form XML of an extension beyond what the
 /// stored body states: the older shape of a form in an old compatibility mode
 /// (no schema namespace on the root of `Ext/Form.xml`) and the completion of
-/// items saved by an older platform (see [`form`]), and the call types of an
-/// adopted form that has no base form record. The base form of the others and
-/// their call types are written with the form itself
-/// (`form_extension::form_adoption`).
+/// items saved by an older platform (see [`form`]). The call types of an
+/// adopted form and its base form are written with the form itself
+/// (`form_extension::form_adoption`); here they are only checked against the
+/// stored event blocks of a form without a base form record.
 fn adjust_form_files(
     output_dir: &Path,
     entry: &StorageExportEntryReport,
@@ -1183,9 +1183,7 @@ fn adjust_form_files(
                 .context("the adopted form's storage body is missing")?;
             let body = crate::module_blob::parse_form_body_blob(&packed)
                 .context("the adopted form's storage body is not readable")?;
-            if let Some(called) = form::add_call_types(&adjusted, &body.layout)? {
-                adjusted = called;
-            }
+            form::check_call_types(&adjusted, &body.layout)?;
         }
         if old_root && !adjusted.contains("dcssch:") {
             adjusted = without_schema_namespace(&adjusted);

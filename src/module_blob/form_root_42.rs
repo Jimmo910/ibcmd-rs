@@ -407,7 +407,18 @@ fn upgrade_table(items: Vec<Node>) -> Vec<Node> {
 /// Dynamic-list table `51` -> `55`: its property bag loses keys 15 and 19
 /// and gains `20 = {"B",1}`, the event list after the bag upgrades, five
 /// zeros close the record.
+///
+/// Table `53` (root `48`, ЗУП 3.1.18: 44 tables re-saved by 8.3.27.2214)
+/// takes the same path but closes with two zeros: up to the bag it is the
+/// `55` record behind the default visibility tuple, `20` joins its bag in
+/// all 44, and 15/19 leave it in most (14 of 21, 11 of 18; their values are
+/// the defaults, which `Form.xml` does not spell either way).
 fn upgrade_dynamic_list_table(items: Vec<Node>) -> Vec<Node> {
+    let closing = if items.first().is_some_and(|tag| tag.is("53")) {
+        2
+    } else {
+        5
+    };
     let mut upgraded = items.clone();
     drop_default_visibility(&mut upgraded);
     let Some(count) = upgraded
@@ -417,11 +428,12 @@ fn upgrade_dynamic_list_table(items: Vec<Node>) -> Vec<Node> {
     else {
         return items;
     };
-    let bag_end = 55 + 2 * count;
-    if upgraded.len() < bag_end {
+    let bag_start = 55;
+    if count > (upgraded.len() - bag_start) / 2 {
         return items;
     }
-    let mut bag = upgraded[55..bag_end]
+    let bag_end = bag_start + 2 * count;
+    let mut bag = upgraded[bag_start..bag_end]
         .chunks_exact(2)
         .map(|pair| (pair[0].clone(), pair[1].clone()))
         .collect::<Vec<_>>();
@@ -444,7 +456,7 @@ fn upgrade_dynamic_list_table(items: Vec<Node>) -> Vec<Node> {
         out.push(value);
     }
     out.extend(rest);
-    out.extend(["0", "0", "0", "0", "0"].map(Node::leaf));
+    out.extend(std::iter::repeat_with(|| Node::leaf("0")).take(closing));
     out
 }
 
@@ -565,7 +577,11 @@ fn upgrade(
         upgrade_item(items)
     } else if own == "49" && depth > 1 && items.len() > 90 && items[1].as_list().is_some() {
         upgrade_table(items)
-    } else if own == "51" && depth > 1 && items.len() > 90 && items[1].as_list().is_some() {
+    } else if matches!(own.as_str(), "51" | "53")
+        && depth > 1
+        && items.len() > 90
+        && items[1].as_list().is_some()
+    {
         upgrade_dynamic_list_table(items)
     } else if parent_kind == Some("22") && own == "28" && matches!(items.len(), 48 | 49) {
         upgrade_button(items)
@@ -678,6 +694,71 @@ mod tests {
                 "0,\"\",\"\",0,1,\"\",0,0,0,0,0,0,3,3,0,0,0,100,1,1,0,0,0,{50,0},1},\"\",{0,0},{0,0},{0,0},{0,0},0,0}"
             )
         );
+    }
+
+    #[test]
+    fn a_table_53_reads_as_the_re_saved_55() {
+        // Up to its bag a `53` is the `55` behind the default visibility
+        // tuple; key 15 leaves the bag, `20` joins it, two zeros close.
+        let mut members = vec![
+            "53".to_owned(),
+            "{1,02023637-7868-4a5f-8576-835a76e0c9ba}".to_owned(),
+            "0".to_owned(),
+            "0".to_owned(),
+            "1".to_owned(),
+            DEFAULT_VISIBLE.to_owned(),
+        ];
+        members.resize(55, "0".to_owned());
+        members.extend(["1", "15", r#"{"U"}"#].map(str::to_owned));
+        members.resize(95, "0".to_owned());
+        let items = parse_str(&format!("{{{}}}", members.join(",")))
+            .as_list()
+            .unwrap()
+            .to_vec();
+        let upgraded = upgrade_dynamic_list_table(items);
+        let mut expected = vec![
+            "55".to_owned(),
+            "{1,02023637-7868-4a5f-8576-835a76e0c9ba}".to_owned(),
+            "0".to_owned(),
+            "0".to_owned(),
+            "0".to_owned(),
+        ];
+        expected.resize(54, "0".to_owned());
+        expected.extend(["1", "20", r#"{"B",1}"#].map(str::to_owned));
+        expected.resize(96, "0".to_owned());
+        assert_eq!(
+            Node::List(upgraded).rendered(),
+            format!("{{{}}}", expected.join(","))
+        );
+    }
+
+    #[test]
+    fn oversized_dynamic_list_property_counts_keep_the_original_record() {
+        for tag in ["53", "51"] {
+            for count in [usize::MAX, usize::MAX / 2 + 1, usize::MAX / 2, 20] {
+                let mut members = vec![
+                    tag.to_owned(),
+                    "{1,02023637-7868-4a5f-8576-835a76e0c9ba}".to_owned(),
+                    "0".to_owned(),
+                    "0".to_owned(),
+                    "1".to_owned(),
+                    DEFAULT_VISIBLE.to_owned(),
+                ];
+                members.resize(55, "0".to_owned());
+                members.push(count.to_string());
+                members.resize(95, "0".to_owned());
+                let items = parse_str(&format!("{{{}}}", members.join(",")))
+                    .as_list()
+                    .unwrap()
+                    .to_vec();
+                let original = Node::List(items.clone()).rendered();
+                assert_eq!(
+                    Node::List(upgrade_dynamic_list_table(items)).rendered(),
+                    original,
+                    "tag {tag}, oversized count {count}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -359,6 +359,10 @@ const OWNED_CLASSES: &[(&str, &str)] = &[
     ("3daea016-69b7-4ed4-9453-127911372fe6", "Template"),
     ("37f2fa9a-b276-11d4-9435-004095e12fc7", "Subsystem"),
     ("274bf899-db0e-4df6-8ab5-67bf6371ec0b", "Recalculation"),
+    // ExternalDataSource children with their own files.
+    ("2bb208ca-e441-4023-9ab9-32a7807a85d0", "Cube"),
+    ("e3403acd-1c95-421b-87e4-4dfa29d38b52", "Table"),
+    ("631411f3-8c65-4066-a78f-57a72e015c1c", "DimensionTable"),
     // Forms, one class per owner kind.
     ("d3b5d6eb-4ea2-4610-a3e2-624d4e815934", "Form"),
     ("b64d9a44-1642-11d6-a3c7-0050bae0a776", "Form"),

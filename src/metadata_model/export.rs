@@ -241,6 +241,9 @@ pub fn decode_object(kind: &str, row: &Brace, context: &ExportContext) -> Result
         "Subsystem" | "Form" | "Template" | "CommonForm" => {
             super::common::forms_export::decode(kind, row, context)
         }
+        "Cube" | "Table" | "DimensionTable" => {
+            super::external_data_source_children::decode_row(kind, row, context)
+        }
         other => bail!("not yet: no row decoder for {other}"),
     }
 }
@@ -306,6 +309,9 @@ pub fn configuration_objects(row: &Brace) -> Result<Vec<(String, String)>> {
 pub fn owned_object_names(kind: &str, row: &Brace, owner: &str) -> Result<ObjectNames> {
     match kind {
         "Recalculation" => super::registers::export::owned_names(kind, row, owner),
+        "Cube" | "Table" | "DimensionTable" => {
+            super::external_data_source_children::owned_names(kind, row, owner)
+        }
         // A nested subsystem names itself like a top-level one; the owner
         // goes in front.
         "Subsystem" => {

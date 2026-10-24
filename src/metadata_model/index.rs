@@ -116,6 +116,10 @@ pub const NESTED_COLLECTIONS: &[(&str, &str)] = &[
     ("Recalculations", "Recalculation"),
     ("Interfaces", "Interface"),
     ("PaletteColors", "PaletteColor"),
+    // ExternalDataSource children; their owner chain is EDS -> Cube -> DimensionTable.
+    ("Cubes", "Cube"),
+    ("Tables", "Table"),
+    ("DimensionTables", "DimensionTable"),
 ];
 
 /// `Catalogs` -> `Catalog`; nested collections use the same folder names.

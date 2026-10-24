@@ -177,7 +177,7 @@ impl ModelPlan {
                 }
                 owned_kinds.insert(uuid.clone(), kind);
                 owned.push((owner.clone(), kind, uuid.clone()));
-                if kind == "Subsystem" {
+                if matches!(kind, "Subsystem" | "Cube") {
                     let nested = owned_lists(&uuid);
                     if !nested.is_empty() {
                         pending.push((uuid, nested));
@@ -206,6 +206,14 @@ impl ModelPlan {
             .get(file_name)
             .or_else(|| self.owned_kinds.get(file_name))
             .copied()
+    }
+
+    /// A shared form has no owning metadata object. Use its root-list identity,
+    /// not the descriptor layout shared with owned forms; conflicting ownership
+    /// remains uncertain and must keep its diagnostic.
+    pub(super) fn is_unowned_common_form(&self, file_name: &str) -> bool {
+        self.kinds.get(file_name) == Some(&"CommonForm")
+            && !self.owned_kinds.contains_key(file_name)
     }
 
     /// Whether every descriptor row goes through the model: then the legacy
@@ -528,6 +536,35 @@ impl ModelExport {
         &self.context.names
     }
 
+    /// Validate known scalar domains without requiring a model output path.
+    /// A generic decoder coverage gap still belongs to the legacy writer;
+    /// a typed invalid value must never become that writer's guessed default.
+    pub(super) fn validate_descriptor_values(&self, file_name: &str, stored: &[u8]) -> Result<()> {
+        let Some(kind) = self
+            .plan
+            .kind_of(file_name)
+            .filter(|kind| has_decoder(kind))
+        else {
+            return Ok(());
+        };
+        let result = (|| {
+            let text = String::from_utf8(inflate_raw_deflate(stored)?)?;
+            // Legacy readers apply these native-evidenced upgrades before
+            // conversion. Validate the same stored values in that admitted
+            // layout too, without changing the raw model writer's coverage.
+            let text = upgrade::upgrade_record_by_shape(&text, file_name).unwrap_or(text);
+            let text = upgrade::upgrade_metadata_record(kind, &text).unwrap_or(text);
+            let tree = parse_row(text.as_bytes())?;
+            decode_object(kind, &tree, &self.context)
+        })();
+        if let Err(error) = result
+            && error.is::<crate::metadata_model::export::values::UnsupportedDescriptorValue>()
+        {
+            return Err(error).context("stored descriptor has an unsupported value");
+        }
+        Ok(())
+    }
+
     /// The descriptor XML of a row through the model, or `None` when its kind
     /// has no decoder: the legacy converter writes it then.
     pub(super) fn export_row(
@@ -610,13 +647,43 @@ impl ModelExport {
 /// Configuration row stores the `{76,...}` tuple. Such a configuration can
 /// only be 8.5.1's (the settings' export rule); an older one says nothing
 /// about the platform, since 8.5 runs 8.3.27-compatible configurations too.
-/// Reads the `root` row and the Configuration row it names, nothing else.
+/// Resolves the export's published storage view, including a completed stage
+/// for the main configuration, then reads the root service row and its Configuration row.
 pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> Result<bool> {
+    configuration_compatibility_with_snapshot(args).map(|(compatible, _)| compatible)
+}
+
+/// Return any PostgreSQL probe rows to the resolving operation, never a global cache.
+pub(crate) fn configuration_compatibility_with_snapshot(
+    args: &MssqlDumpConfigArgs,
+) -> Result<(bool, Option<PostgresExportSnapshot>)> {
+    if args.rows_dir.is_none()
+        && args.file_infobase.is_none()
+        && let Some(target) = &args.postgres
+    {
+        let (rows, snapshot) = super::postgres_infobase::load_for_probe(target)?;
+        let read = |name: &str| -> Result<crate::metadata_model::brace::Brace> {
+            let names = BTreeSet::from([name.to_owned()]);
+            let row = rows
+                .rows_named(
+                    &args.database,
+                    MssqlConfigurationTableRole::Current.sql_name(),
+                    &names,
+                )?
+                .into_iter()
+                .find(|row| row.file_name == name)
+                .ok_or_else(|| anyhow!("the Config table has no `{name}` row"))?;
+            let text = inflate_raw_deflate(&row.binary)
+                .with_context(|| format!("failed to inflate the `{name}` row"))?;
+            parse_row(&text).with_context(|| format!("failed to parse the `{name}` row"))
+        };
+        return Ok((configuration_compatibility_from_read(read)?, Some(snapshot)));
+    }
     let _offline = match (&args.rows_dir, &args.file_infobase) {
         (Some(dir), _) => Some(offline_rows::activate(dir)?),
-        (None, Some(path)) => Some(offline_rows::activate_rows(super::file_infobase::load(
-            path,
-        )?)?),
+        (None, Some(path)) => Some(offline_rows::activate_shared(
+            super::file_infobase::read_rows(path)?,
+        )?),
         (None, None) => None,
     };
     let password = sql_password(
@@ -625,24 +692,29 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
         &args.sql_pwd_env,
     );
     // `--rows-dir` answers every read from its folder; no login is needed.
-    let sql = if args.rows_dir.is_some() || args.file_infobase.is_some() {
-        crate::sql::SqlExec::detached("the rows come from a folder or a file infobase")
+    let sql = if args.rows_dir.is_some() || args.file_infobase.is_some() || args.postgres.is_some()
+    {
+        crate::sql::SqlExec::detached("the rows come from a folder, a file infobase or PostgreSQL")
     } else {
-        crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
-            sqlcmd: args.sqlcmd.as_deref(),
-            bcp: args.bcp_executable.as_deref(),
-            server: &args.server,
-            user: args.sql_user.as_deref(),
-            password: password.as_deref(),
-            password_env: &args.sql_pwd_env,
-            trust_server_certificate: true,
-        })?
+        super::sql_for_export(args, password.as_deref())?
     };
+    Ok((
+        configuration_compatibility_from_storage(&sql, &args.database, args.main_configuration)?,
+        None,
+    ))
+}
+
+fn configuration_compatibility_from_storage(
+    sql: &crate::sql::SqlExec,
+    database: &str,
+    main_configuration: bool,
+) -> Result<bool> {
+    let _views = dynamic_generation::StorageViewScope::begin(database);
     let read = |name: &str| -> Result<crate::metadata_model::brace::Brace> {
         let names = BTreeSet::from([name.to_string()]);
         let rows = fetch_binary_rows(
-            &sql,
-            &args.database,
+            sql,
+            database,
             MssqlConfigurationTableRole::Current.sql_name(),
             &names,
             false,
@@ -655,6 +727,22 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
             .with_context(|| format!("failed to inflate the `{name}` row"))?;
         parse_row(&text).with_context(|| format!("failed to parse the `{name}` row"))
     };
+    // No row at all: the default configuration of an empty infobase
+    // (#469), which keeps no compatibility mode to tell.
+    let table = MssqlConfigurationTableRole::Current.sql_name();
+    let selected = BTreeSet::new();
+    let headers = fetch_row_headers(sql, database, table, &selected)?;
+    let headers =
+        install_storage_overlay(sql, database, table, &selected, headers, main_configuration)?;
+    if headers.is_empty() {
+        return Ok(false);
+    }
+    configuration_compatibility_from_read(read)
+}
+
+fn configuration_compatibility_from_read(
+    read: impl Fn(&str) -> Result<crate::metadata_model::brace::Brace>,
+) -> Result<bool> {
     let uuid = crate::metadata_model::root::export::root_configuration_uuid(&read("root")?)?;
     let shape = crate::metadata_model::root::export::stored_shape(&read(&uuid)?)?;
     Ok(shape == crate::metadata_model::root::ConfigurationShape::V76)
@@ -937,5 +1025,132 @@ mod tests {
             assert_eq!(kind_folder(kind).as_deref(), Some(folder), "{kind}");
         }
         assert_eq!(kind_folder("Configuration"), None);
+    }
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+    use crate::sql::{
+        Dbms, ScriptVariables, SqlClient, SqlLogin, SqlParam, SqlRow, SqlTarget, SqlValue,
+    };
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    struct StageClient {
+        replies: Mutex<VecDeque<Vec<SqlRow>>>,
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl SqlClient for StageClient {
+        fn dbms(&self) -> Dbms {
+            Dbms::SqlServer
+        }
+        fn max_connections(&self) -> usize {
+            1
+        }
+        fn read_rows(
+            &self,
+            query: &str,
+            _: &[SqlParam<'_>],
+            each: &mut dyn FnMut(SqlRow) -> Result<()>,
+        ) -> Result<()> {
+            self.calls.lock().unwrap().push(query.to_owned());
+            for row in self
+                .replies
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("unexpected SQL read")
+            {
+                each(row)?;
+            }
+            Ok(())
+        }
+        fn run_script(&self, _: &str, _: ScriptVariables) -> Result<()> {
+            panic!("read-only probe")
+        }
+        fn execute(&self, _: &str, _: &[SqlParam<'_>]) -> Result<u64> {
+            panic!("read-only probe")
+        }
+        fn query_json(&self, _: &str) -> Result<Option<String>> {
+            panic!("unexpected JSON query")
+        }
+        fn write_rows(&self, _: &str, _: &[&str], _: &[Vec<SqlParam<'_>>]) -> Result<u64> {
+            panic!("read-only probe")
+        }
+    }
+
+    #[test]
+    fn compatibility_probe_reads_a_completed_stage_over_empty_config() {
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase/tiny-source");
+        let path = root.join("Configuration.xml");
+        let xml = fs::read(&path).unwrap();
+        let facts = crate::metadata_model::root::configuration_facts(&xml).unwrap();
+        let context = crate::metadata_model::DescriptorContext::new(&root, "2.21").unwrap();
+        let packed = |bytes: Vec<u8>| crate::module_blob::deflate_raw(&bytes).unwrap();
+        let descriptor = packed(
+            crate::metadata_model::compile_descriptor("Configuration", &path, &xml, &context)
+                .unwrap(),
+        );
+        let root_row = packed(crate::metadata_model::root::root_row(&facts));
+        let versions = packed(crate::metadata_model::root::versions_row(
+            &[facts.uuid.clone()],
+            || "10000000-0000-4000-8000-000000000001".to_owned(),
+        ));
+        let header = |name: &str, size: usize| SqlRow {
+            result_set: 0,
+            values: vec![
+                SqlValue::Text(name.to_owned()),
+                SqlValue::Int(0),
+                SqlValue::Int(size as i64),
+            ],
+        };
+        let binary = |name: &str, bytes: Vec<u8>| SqlRow {
+            result_set: 0,
+            values: vec![
+                SqlValue::Text(name.to_owned()),
+                SqlValue::Int(0),
+                SqlValue::Int(bytes.len() as i64),
+                SqlValue::Binary(bytes),
+            ],
+        };
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let client = StageClient {
+            calls: Arc::clone(&calls),
+            replies: Mutex::new(VecDeque::from([
+                vec![],
+                vec![
+                    header("root", root_row.len()),
+                    header(&facts.uuid, descriptor.len()),
+                    header("versions", versions.len()),
+                ],
+                vec![binary("versions", versions)],
+                vec![binary("root", root_row)],
+                vec![binary(&facts.uuid, descriptor)],
+            ])),
+        };
+        let sql = crate::sql::SqlExec::with_client(
+            SqlTarget {
+                server: "memory-only".to_owned(),
+                database: None,
+                login: SqlLogin::Integrated,
+                trust_server_certificate: false,
+            },
+            Box::new(client),
+        );
+        assert!(
+            configuration_compatibility_from_storage(&sql, "compatibility-stage-test", true)
+                .unwrap()
+        );
+        let calls = calls.lock().unwrap();
+        assert!(
+            calls
+                .iter()
+                .skip(1)
+                .all(|query| query.contains("[ConfigSave]")),
+            "{calls:?}"
+        );
     }
 }

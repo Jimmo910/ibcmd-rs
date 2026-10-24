@@ -39,7 +39,7 @@ fn owner_form_ref_falls_back_to_a_foreign_common_form() {
 }
 
 #[test]
-fn foreign_types_never_override_storage_ids_but_may_respell_a_type_set() {
+fn foreign_object_references_stay_ids_and_a_type_set_may_respell() {
     const ANY_IB_REF: &str = "280f5f0e-9c8a-49cc-bf6d-4d296cc17a63";
     let mut indexes = MetadataTypeIndexes::default();
     indexes.references.insert(
@@ -73,16 +73,23 @@ fn foreign_types_never_override_storage_ids_but_may_respell_a_type_set() {
         indexes.references["aaaaaaaa-0000-0000-0000-000000000001"],
         "cfg:CatalogRef.Own"
     );
-    assert_eq!(
-        indexes.references["bbbbbbbb-0000-0000-0000-000000000002"],
-        "cfg:DocumentRef.Д"
+    // A configuration object the configuration being written does not define
+    // keeps its id: the platform writes it as `<v8:TypeId>`, never by name.
+    assert!(
+        !indexes
+            .references
+            .contains_key("bbbbbbbb-0000-0000-0000-000000000002")
     );
     assert_eq!(
         indexes.dcs["bbbbbbbb-0000-0000-0000-000000000002"],
-        DcsTypeResolution::Type {
-            qname: "cfg:DocumentRef.Д".into()
-        }
+        DcsTypeResolution::KeepId
     );
+    assert!(
+        indexes
+            .foreign
+            .contains("bbbbbbbb-0000-0000-0000-000000000002")
+    );
+    assert!(indexes.foreign.contains("cfg:DocumentRef.Д"));
     assert_eq!(
         indexes.dcs[ANY_IB_REF],
         DcsTypeResolution::TypeSet {
@@ -528,4 +535,26 @@ fn a_compact_bag_group_reads_popup_behavior() {
     assert_eq!(item.behavior, Some("PopUp"));
     let xml = format_form_child_items_xml(&[item], 1);
     assert!(xml.contains("<Behavior>PopUp</Behavior>"), "{xml}");
+}
+
+#[test]
+fn eds_guard_stored_reference_is_not_marked_foreign() {
+    let id = "aaaaaaaa-0000-4000-8000-000000000001";
+    let mut indexes = MetadataTypeIndexes::default();
+    indexes
+        .references
+        .insert(id.to_owned(), "cfg:CatalogRef.Own".to_owned());
+    merge_foreign_type_references(
+        &mut indexes,
+        &ForeignReferences {
+            objects: BTreeMap::new(),
+            types: vec![(
+                id.to_owned(),
+                "cfg:CatalogRef.Foreign".to_owned(),
+                "Ref".to_owned(),
+            )],
+        },
+    );
+    assert!(indexes.foreign.is_empty());
+    assert_eq!(indexes.references[id], "cfg:CatalogRef.Own");
 }

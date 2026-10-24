@@ -29,6 +29,7 @@ fn example() -> morph1c_core::ir::Configuration {
         slot: "ParentConfigurations".into(),
         bytes: vec![0xff, 0, 1, 2],
         mobile_signature_lexical: None,
+        edt_distribution: false,
     });
     r.parent_configuration_resources = vec![
         ParentConfigurationResource {

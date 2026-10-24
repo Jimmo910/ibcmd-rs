@@ -31,6 +31,14 @@
 //! views, the platform it noted, `crate::cancel`), so the operations of a
 //! [`StoredConfiguration`] take one lock and run one at a time.
 
+mod editor_export;
+mod version_status;
+
+#[cfg(test)]
+thread_local! {
+    static EXPORTED_FILE_PATHS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -72,6 +80,8 @@ pub enum ConfigSource {
     /// A folder of `<FileName>__part<N>.bin` files: `mssql-dump-config
     /// --rows-dir`. Read-only, and it holds no ConfigSave.
     RowsDir(PathBuf),
+    /// A real file infobase; reads include its complete CONFIGSAVE stage.
+    FileDb(PathBuf),
     /// A SQL Server database, through a handle whose connections are kept
     /// between operations.
     Database { sql: SqlExec, database: String },
@@ -82,7 +92,7 @@ impl ConfigSource {
     /// as `mssql-dump-config --rows-dir` without `--database`).
     fn database(&self) -> &str {
         match self {
-            Self::RowsDir(_) => "",
+            Self::RowsDir(_) | Self::FileDb(_) => "",
             Self::Database { database, .. } => database,
         }
     }
@@ -196,6 +206,31 @@ pub struct ObjectStatus {
     pub base_only: Vec<String>,
     /// Files of the object the folder holds and the database does not export.
     pub local_only: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database_version_status: Option<DatabaseVersionEvidence>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseVersionEvidence {
+    pub basis: &'static str,
+    pub object: String,
+    pub object_version: Option<String>,
+    pub baseline_identity: String,
+    pub database_snapshot: String,
+    pub conclusive: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionedObjectStatus {
+    pub objects: Vec<ObjectStatus>,
+    pub full_required: bool,
+    pub database_snapshot: String,
+    pub native_changes: Vec<crate::native_export_status::VersionChange>,
+    pub native_owners: crate::native_export_status::NativeVersionOwners,
 }
 
 /// What an export of one object into a source folder changed there.
@@ -703,15 +738,39 @@ impl Inventory {
 
 /// The rows of the named objects, read through the view the caller (the
 /// export, for `mssql-dump-config --object`) has begun.
-pub(crate) fn stored_rows_of(
+pub(crate) fn stored_rows_selected(
     table: &ConfigTable<'_>,
     names: &[String],
+    recursive: Option<bool>,
 ) -> Result<BTreeSet<String>> {
     let mut inventory = Inventory::read(table, table.names()?)?;
     let mut rows = BTreeSet::new();
     for name in names {
         let object = inventory.resolve(table, name)?;
-        rows.extend(inventory.rows_of(table, &object)?);
+        if recursive.unwrap_or(true) {
+            rows.extend(inventory.rows_of(table, &object)?);
+            if object.kind == "Configuration" && recursive == Some(true) {
+                for (kind, _) in inventory.kinds() {
+                    inventory.name_kind(table, kind)?;
+                }
+                let top = inventory
+                    .top
+                    .iter()
+                    .filter_map(|(_, id)| inventory.objects.get(id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for child in top {
+                    rows.extend(inventory.rows_of(table, &child)?);
+                }
+            }
+        } else {
+            inventory.rows_under(&object.uuid, &mut rows);
+            if object.kind == "Configuration" {
+                for id in inventory.contained.clone() {
+                    inventory.rows_under(&id, &mut rows);
+                }
+            }
+        }
     }
     Ok(rows)
 }
@@ -750,6 +809,24 @@ fn relative_slash(root: &Path, path: &Path) -> Option<String> {
             .collect::<Vec<_>>()
             .join("/"),
     )
+}
+
+/// Source bytes are borrowed from a confined snapshot, or read lazily by the
+/// existing CLI/editor path. Source-only paths need no content reads.
+enum StatusFile<'a> {
+    Bytes(&'a [u8]),
+    Path(PathBuf),
+}
+impl StatusFile<'_> {
+    fn equals(&self, expected: &[u8]) -> Result<bool> {
+        Ok(match self {
+            Self::Bytes(bytes) => *bytes == expected,
+            Self::Path(path) => {
+                fs::read(path).with_context(|| format!("failed to read {}", path.display()))?
+                    == expected
+            }
+        })
+    }
 }
 
 /// The files of `object` in a source folder, by relative path (dot folders
@@ -799,6 +876,27 @@ pub fn object_of_path(path: &str) -> Option<String> {
     (!name.is_empty()).then(|| format!("{kind}.{name}"))
 }
 
+/// Descriptor paths follow the same root/owned collection pairs as source_prefixes.
+/// Body XML under Ext is not a metadata descriptor.
+fn descriptor_path(path: &str) -> bool {
+    if path == "Configuration.xml" {
+        return true;
+    }
+    let Some(stem) = path.strip_suffix(".xml") else {
+        return false;
+    };
+    let parts = stem.split('/').collect::<Vec<_>>();
+    !parts.is_empty()
+        && parts.len() % 2 == 0
+        && parts.chunks(2).all(|pair| {
+            !pair[1].is_empty()
+                && ROOT_COLLECTIONS
+                    .iter()
+                    .chain(NESTED_COLLECTIONS)
+                    .any(|(folder, _)| *folder == pair[0])
+        })
+}
+
 /// A relative path as the export names files: `/`-separated, without `.`,
 /// `..` or a root.
 pub fn normalize_path(path: &str) -> Option<String> {
@@ -820,22 +918,70 @@ pub fn normalize_path(path: &str) -> Option<String> {
 /// it read is kept until the database's `versions` row changes.
 pub struct StoredConfiguration {
     source: ConfigSource,
+    rows_snapshot: Option<Arc<BTreeMap<String, Arc<Vec<u8>>>>>,
     platform: PlatformSpec,
     inventory: Option<Inventory>,
     /// By full name, for the inventory's digest.
-    exports: HashMap<String, Arc<ObjectFiles>>,
+    exports: HashMap<String, CachedExport>,
     cached_bytes: usize,
+    main_configuration: bool,
+    main_view_cache: Option<Box<StoredConfiguration>>,
+}
+
+// Diagnostic-only reads may withhold files. Such a map cannot prove a deletion.
+struct CachedExport {
+    files: Arc<ObjectFiles>,
+    complete: bool,
+    /// Typed values checked on the exact bytes converted for this descriptor.
+    checked_descriptor: Option<String>,
 }
 
 impl StoredConfiguration {
     pub fn new(source: ConfigSource, platform: PlatformSpec) -> Self {
         Self {
             source,
+            rows_snapshot: None,
             platform,
             inventory: None,
             exports: HashMap::new(),
             cached_bytes: 0,
+            main_configuration: false,
+            main_view_cache: None,
         }
+    }
+
+    /// Same engine and offline reader, with caller-confined immutable rows instead
+    /// of reopening source paths. `source` retains the operator's target identity.
+    pub(crate) fn from_rows_snapshot(
+        source: ConfigSource,
+        platform: PlatformSpec,
+        rows: BTreeMap<String, Arc<Vec<u8>>>,
+    ) -> Self {
+        let mut configuration = Self::new(source, platform);
+        configuration.rows_snapshot = Some(Arc::new(rows));
+        configuration
+    }
+
+    /// Separate cache/view for native main-state reads. Legacy active-state readers stay unchanged.
+    pub fn main_view(&self) -> Self {
+        let mut view = Self::new(self.source.clone(), self.platform);
+        view.rows_snapshot = self.rows_snapshot.clone();
+        view.main_configuration = true;
+        view
+    }
+
+    /// One session-owned main cache, separate from the legacy active-state cache.
+    /// Each operation still checks the main versions digest before using cached exports.
+    pub fn main_view_mut(&mut self) -> &mut Self {
+        if self.main_configuration {
+            return self;
+        }
+        if self.main_view_cache.is_none() {
+            self.main_view_cache = Some(Box::new(self.main_view()));
+        }
+        self.main_view_cache
+            .as_deref_mut()
+            .expect("initialized above")
     }
 
     pub fn source(&self) -> &ConfigSource {
@@ -857,6 +1003,7 @@ impl StoredConfiguration {
             inventory,
             exports,
             cached_bytes,
+            main_configuration,
             ..
         } = self;
         let run = |table: &ConfigTable<'_>| -> Result<T> {
@@ -876,10 +1023,34 @@ impl StoredConfiguration {
             }
             body(inventory.as_mut().expect("read above"), table)
         };
+        if let Some(rows) = &self.rows_snapshot {
+            return crate::mssql_dump::with_memory_rows_table(rows, run);
+        }
         match source {
             ConfigSource::RowsDir(dir) => with_rows_dir_table(dir, run),
-            ConfigSource::Database { sql, database } => with_database_table(sql, database, run),
+            ConfigSource::FileDb(path) => crate::mssql_dump::with_file_db_table(path, run),
+            ConfigSource::Database { sql, database } => {
+                if *main_configuration {
+                    crate::mssql_dump::with_main_database_table(sql, database, run)
+                } else {
+                    with_database_table(sql, database, run)
+                }
+            }
         }
+    }
+
+    /// Native ConfigDumpInfo of the main configuration (completed ConfigSave
+    /// included), for native version status. Does not replace `status`, which
+    /// compares exported bytes with a source folder.
+    pub fn native_config_dump_info(&mut self) -> Result<Vec<u8>> {
+        let _engine = engine();
+        let mut args = export_args(&self.source, self.platform, Vec::new());
+        args.main_configuration = true;
+        let sql = match &self.source {
+            ConfigSource::Database { sql, .. } => Some(sql.clone()),
+            _ => None,
+        };
+        crate::mssql_dump::read_config_dump_info_with_sql(&args, sql, self.rows_snapshot.clone())
     }
 
     /// The children of a node of the tree (`None`: the configuration).
@@ -925,9 +1096,28 @@ impl StoredConfiguration {
         names: &[String],
         progress: Progress<'_>,
     ) -> Result<Vec<Arc<ObjectFiles>>> {
+        self.export_checked_unlocked(names, progress, false)
+    }
+
+    fn export_checked_unlocked(
+        &mut self,
+        names: &[String],
+        progress: Progress<'_>,
+        require_complete: bool,
+    ) -> Result<Vec<Arc<ObjectFiles>>> {
+        self.export_with_descriptor_check_unlocked(names, progress, require_complete, None)
+    }
+
+    fn export_with_descriptor_check_unlocked(
+        &mut self,
+        names: &[String],
+        progress: Progress<'_>,
+        require_complete: bool,
+        requested_descriptor: Option<&str>,
+    ) -> Result<Vec<Arc<ObjectFiles>>> {
         // The cache is looked at once the inventory is current: a changed
         // `versions` row empties it.
-        let resolved = self.with_inventory(|inventory, table| {
+        let (digest, resolved) = self.with_inventory(|inventory, table| {
             let mut resolved = Vec::new();
             for name in names {
                 let object = inventory.resolve(table, name)?;
@@ -935,12 +1125,24 @@ impl StoredConfiguration {
                 let version = inventory.version_of(&rows);
                 resolved.push((object, rows, version));
             }
-            Ok(resolved)
+            Ok((inventory.digest.clone(), resolved))
         })?;
+        // Only descriptor paths need this proof, including owned descriptors
+        // cached in their top-level owner's map. Modules/body XML keep their route.
+        let requested_descriptor = requested_descriptor.filter(|path| descriptor_path(path));
         let planned = resolved
             .into_iter()
             .map(|(object, rows, version)| {
-                let cached = self.exports.get(&object.full_name).cloned();
+                let cached = self
+                    .exports
+                    .get(&object.full_name)
+                    .filter(|entry| !require_complete || entry.complete)
+                    .filter(|entry| {
+                        requested_descriptor.is_none()
+                            || entry.complete
+                            || entry.checked_descriptor.as_deref() == requested_descriptor
+                    })
+                    .map(|entry| entry.files.clone());
                 (object, cached, rows, version)
             })
             .collect::<Vec<_>>();
@@ -957,7 +1159,27 @@ impl StoredConfiguration {
         if missing > 0 {
             let what = format!("export of {missing} objects ({} rows)", rows.len());
             progress(0, missing, &what);
-            files = self.export_rows(rows)?;
+            let selected = planned
+                .iter()
+                .filter(|(_, cached, _, _)| cached.is_none())
+                .map(|(object, _, _, _)| object.full_name.clone())
+                .collect::<Vec<_>>();
+            files = self.export_rows(
+                rows,
+                require_complete.then_some(selected.as_slice()),
+                requested_descriptor,
+            )?;
+            if requested_descriptor.is_some() {
+                // Rendering and typed validation share raw row bytes. Also bind
+                // that proof to the versions that named this ObjectFiles map;
+                // never certify a conversion read after external publication.
+                self.with_inventory(|inventory, _| {
+                    if inventory.digest != digest {
+                        bail!("stored configuration changed during requested descriptor conversion; retry the read");
+                    }
+                    Ok(())
+                })?;
+            }
             progress(missing, missing, &what);
         }
         let mut out = Vec::with_capacity(planned.len());
@@ -977,13 +1199,22 @@ impl StoredConfiguration {
                 version,
                 files: own,
             });
+            if let Some(previous) = self.exports.remove(&object.full_name) {
+                self.cached_bytes -= previous.files.files.values().map(Vec::len).sum::<usize>();
+            }
             if self.cached_bytes + size > CACHE_BYTES {
                 self.exports.clear();
                 self.cached_bytes = 0;
             }
             self.cached_bytes += size;
-            self.exports
-                .insert(object.full_name.clone(), exported.clone());
+            self.exports.insert(
+                object.full_name.clone(),
+                CachedExport {
+                    files: exported.clone(),
+                    complete: require_complete,
+                    checked_descriptor: requested_descriptor.map(str::to_owned),
+                },
+            );
             out.push(exported);
         }
         Ok(out)
@@ -993,32 +1224,140 @@ impl StoredConfiguration {
     /// ... --extract-metadata-xml --extract-module-text --no-binary-rows
     /// --platform <platform>` (with `--rows-dir` for a folder), files to a
     /// sink.
-    fn export_rows(&self, rows: BTreeSet<String>) -> Result<BTreeMap<String, Vec<u8>>> {
+    fn export_rows(
+        &self,
+        rows: BTreeSet<String>,
+        selected: Option<&[String]>,
+        requested_descriptor: Option<&str>,
+    ) -> Result<BTreeMap<String, Vec<u8>>> {
         if rows.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let args = export_args(&self.source, self.platform, rows.into_iter().collect());
+        let args = if let Some(selected) = selected {
+            // Keep the already-resolved recursive closure, including a shallow
+            // Configuration selection. Resolving the canonical objects again in
+            // the engine installs the SQL main overlay before selected reads.
+            let mut args = export_args(&self.source, self.platform, rows.into_iter().collect());
+            args.main_configuration = self.main_configuration;
+            args.objects = selected.to_vec();
+            args
+        } else {
+            self.view_export_args(rows)
+        };
         let sink = Arc::new(MemorySink {
             root: PathBuf::from(MEMORY_ROOT),
             files: Mutex::new(BTreeMap::new()),
         });
         let sql = match &self.source {
-            ConfigSource::RowsDir(_) => None,
+            ConfigSource::RowsDir(_) | ConfigSource::FileDb(_) => None,
             ConfigSource::Database { sql, .. } => Some(sql.clone()),
         };
         crate::platform::note_export_platform(self.platform);
-        dump_config_with(
-            &args,
-            DumpHooks {
-                sql,
-                sink: Some(sink.clone()),
-            },
-        )?;
+        let hooks = DumpHooks {
+            rows_snapshot: self.rows_snapshot.clone(),
+            sql,
+            object_recursion: selected.map(|_| false),
+            native_versions: false,
+            sink: Some(sink.clone()),
+        };
+        let report = if selected.is_some() {
+            crate::mssql_dump::dump_config_with_selected_validation(
+                &args,
+                hooks,
+                self.main_configuration && matches!(self.source, ConfigSource::Database { .. }),
+            )?
+        } else if let Some(path) = requested_descriptor {
+            crate::mssql_dump::dump_config_with_descriptor_validation(
+                &args,
+                hooks,
+                path,
+                self.main_configuration && matches!(self.source, ConfigSource::Database { .. }),
+            )?
+        } else {
+            dump_config_with(&args, hooks)?
+        };
+        if selected.is_some() {
+            report.ensure_selected_complete()?;
+        }
         let files = std::mem::take(&mut *sink.files.lock().unwrap_or_else(PoisonError::into_inner));
+        #[cfg(test)]
+        EXPORTED_FILE_PATHS.with(|paths| *paths.borrow_mut() = files.keys().cloned().collect());
         Ok(files)
     }
 
-    /// What the export writes for the objects, in memory.
+    fn view_export_args(&self, rows: BTreeSet<String>) -> MssqlDumpConfigArgs {
+        let mut args = export_args(&self.source, self.platform, rows.into_iter().collect());
+        if self.main_configuration {
+            args.main_configuration = true;
+            // Selected SQL rows cannot reconstruct the completed ConfigSave overlay.
+            // Read the shared whole main view, then partition its files by object.
+            if matches!(self.source, ConfigSource::Database { .. }) {
+                args.file_names.clear();
+            }
+        }
+        args
+    }
+
+    /// Native DB-version evidence combined with the existing byte comparison.
+    /// Bracket all reads with the shared native inventory; external mutations
+    /// or a changed reference fail instead of attaching stale native evidence.
+    pub fn status_with_versions(
+        &mut self,
+        names: Option<&[String]>,
+        source_dir: &Path,
+        baseline_dir: &Path,
+        progress: Progress<'_>,
+    ) -> Result<VersionedObjectStatus> {
+        use crate::native_export_status::ConfigDumpInfoSnapshot;
+        if !self.main_configuration {
+            return self.main_view_mut().status_with_versions(
+                names,
+                source_dir,
+                baseline_dir,
+                progress,
+            );
+        }
+        let reference_path = baseline_dir.join("ConfigDumpInfo.xml");
+        if !fs::symlink_metadata(&reference_path)?.file_type().is_file() {
+            bail!("native status requires a regular ConfigDumpInfo.xml reference");
+        }
+        let reference_bytes = fs::read(&reference_path)?;
+        let reference = ConfigDumpInfoSnapshot::parse(&reference_bytes)?;
+        let before = self.native_config_dump_info()?;
+        let current = ConfigDumpInfoSnapshot::parse(&before)?;
+        crate::cancel::check()?;
+        let objects = {
+            let _engine = engine();
+            self.all_objects()?
+        };
+        let mut statuses = self.status(names, source_dir, progress)?;
+        crate::cancel::check()?;
+        if self.native_config_dump_info()? != before
+            || fs::read(&reference_path)? != reference_bytes
+        {
+            bail!("configuration or native reference changed during status comparison");
+        }
+        let native = current.compare(&reference);
+        version_status::attach(
+            &objects,
+            &current,
+            &native,
+            &sha256_hex(&reference_bytes),
+            &sha256_hex(&before),
+            &mut statuses,
+        );
+        Ok(VersionedObjectStatus {
+            objects: statuses,
+            full_required: native.full_required,
+            database_snapshot: sha256_hex(&before),
+            native_changes: native.changes,
+            native_owners: current.owners(),
+        })
+    }
+
+    /// Diagnostic conversion of selected objects in memory. Unsupported descriptors
+    /// or assets may be withheld while usable files are returned successfully.
+    /// Complete-result consumers must use [`Self::export_complete`] instead.
     pub fn export(
         &mut self,
         names: &[String],
@@ -1028,17 +1367,32 @@ impl StoredConfiguration {
         self.export_unlocked(names, progress)
     }
 
+    /// Convert selected objects in memory, requiring semantic and descriptor/asset
+    /// completeness checks before returning any file maps. Diagnostic cache entries
+    /// are revalidated; the existing storage view and renderer are retained.
+    pub fn export_complete(
+        &mut self,
+        names: &[String],
+        progress: Progress<'_>,
+    ) -> Result<Vec<Arc<ObjectFiles>>> {
+        let _engine = engine();
+        self.export_checked_unlocked(names, progress, true)
+    }
+
     /// The export of the object a file belongs to, and the file's path as
     /// the export names it: `files.get(path)` is the file as the export
     /// writes it (`None`: it writes no such file). Nothing is written to
-    /// disk.
+    /// disk. A present requested descriptor is checked for typed semantic errors
+    /// on the same stored row bytes used to render it; independent files and
+    /// unsupported/missing files retain the diagnostic conversion semantics.
     pub fn read_file(&mut self, path: &str) -> Result<(Arc<ObjectFiles>, String)> {
         let path =
             normalize_path(path).ok_or_else(|| anyhow!("{path:?} is not a relative path"))?;
         let name = object_of_path(&path)
             .ok_or_else(|| anyhow!("{path} is not a file of a configuration object"))?;
         let _engine = engine();
-        let exported = self.export_unlocked(&[name], &|_, _, _| {})?;
+        let exported =
+            self.export_with_descriptor_check_unlocked(&[name], &|_, _, _| {}, false, Some(&path))?;
         let exported = exported.into_iter().next().expect("one object asked for");
         Ok((exported, path))
     }
@@ -1049,6 +1403,49 @@ impl StoredConfiguration {
         &mut self,
         names: Option<&[String]>,
         dir: &Path,
+        progress: Progress<'_>,
+    ) -> Result<Vec<ObjectStatus>> {
+        self.status_with_files(
+            names,
+            || folder_objects(dir),
+            |object| {
+                Ok(local_files(dir, object)?
+                    .into_iter()
+                    .map(|(path, file)| (path, StatusFile::Path(file)))
+                    .collect())
+            },
+            progress,
+        )
+    }
+
+    /// The same status semantics over caller-confined immutable source files.
+    /// This includes source-only paths and explicitly selected objects absent
+    /// from the base; no source pathname is reopened by the engine.
+    pub(crate) fn status_snapshot(
+        &mut self,
+        names: &[String],
+        files: &BTreeMap<String, Vec<u8>>,
+        progress: Progress<'_>,
+    ) -> Result<Vec<ObjectStatus>> {
+        self.status_with_files(
+            Some(names),
+            || Ok(Vec::new()),
+            |object| {
+                Ok(files
+                    .iter()
+                    .filter(|(path, _)| object.owns_path(path))
+                    .map(|(path, bytes)| (path.clone(), StatusFile::Bytes(bytes)))
+                    .collect())
+            },
+            progress,
+        )
+    }
+
+    fn status_with_files<'a>(
+        &mut self,
+        names: Option<&[String]>,
+        local_objects: impl FnOnce() -> Result<Vec<String>>,
+        mut local_files: impl FnMut(&StoredObject) -> Result<BTreeMap<String, StatusFile<'a>>>,
         progress: Progress<'_>,
     ) -> Result<Vec<ObjectStatus>> {
         let _engine = engine();
@@ -1071,7 +1468,7 @@ impl StoredConfiguration {
                     .iter()
                     .map(|object| object.full_name.to_lowercase())
                     .collect::<HashSet<_>>();
-                let absent = folder_objects(dir)?
+                let absent = local_objects()?
                     .into_iter()
                     .filter(|name| !known.contains(&name.to_lowercase()))
                     .collect();
@@ -1086,12 +1483,13 @@ impl StoredConfiguration {
         for (index, files) in exported.iter().enumerate() {
             progress(index + 1, exported.len(), &files.object.full_name);
             crate::cancel::check()?;
-            let local = local_files(dir, &files.object)?;
+            let local = local_files(&files.object)?;
             let mut status = ObjectStatus {
                 object: files.object.full_name.clone(),
                 kind: files.object.kind.clone(),
                 status: StatusKind::Same,
                 version: Some(files.version.clone()),
+                database_version_status: None,
                 changed: Vec::new(),
                 base_only: Vec::new(),
                 local_only: Vec::new(),
@@ -1099,10 +1497,8 @@ impl StoredConfiguration {
             for (path, bytes) in &files.files {
                 match local.get(path) {
                     None => status.base_only.push(path.clone()),
-                    Some(file) => {
-                        let on_disk = fs::read(file)
-                            .with_context(|| format!("failed to read {}", file.display()))?;
-                        if &on_disk != bytes {
+                    Some(on_disk) => {
+                        if !on_disk.equals(bytes)? {
                             status.changed.push(path.clone());
                         }
                     }
@@ -1127,12 +1523,13 @@ impl StoredConfiguration {
         }
         for name in local_only_names {
             let object = folder_object(&name).ok_or_else(|| UnknownObject(name.clone()))?;
-            let local = local_files(dir, &object)?;
+            let local = local_files(&object)?;
             statuses.push(ObjectStatus {
                 object: name,
                 kind: object.kind,
                 status: StatusKind::NotInBase,
                 version: None,
+                database_version_status: None,
                 changed: Vec::new(),
                 base_only: Vec::new(),
                 local_only: local.into_keys().collect(),
@@ -1151,7 +1548,7 @@ impl StoredConfiguration {
         progress: Progress<'_>,
     ) -> Result<Vec<ObjectWrite>> {
         let _engine = engine();
-        let exported = self.export_unlocked(names, progress)?;
+        let exported = self.export_checked_unlocked(names, progress, true)?;
         fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
         let mut writes = Vec::new();
         for (index, files) in exported.iter().enumerate() {
@@ -1213,9 +1610,14 @@ fn export_args(
         database: source.database().to_string(),
         rows_dir: match source {
             ConfigSource::RowsDir(dir) => Some(dir.clone()),
-            ConfigSource::Database { .. } => None,
+            ConfigSource::Database { .. } | ConfigSource::FileDb(_) => None,
         },
-        file_infobase: None,
+        file_infobase: match source {
+            ConfigSource::FileDb(path) => Some(path.clone()),
+            _ => None,
+        },
+        postgres: None,
+        postgres_snapshot: None,
         model_export: false,
         legacy_export: false,
         output_dir: PathBuf::from(MEMORY_ROOT),
@@ -1364,6 +1766,239 @@ pub fn require_database(source: &ConfigSource, what: &str) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn immutable_snapshot_after_rebinding() -> (StoredConfiguration, PathBuf) {
+        use std::io::Read;
+        let root = std::env::temp_dir().join(format!("derived-snapshot-{}", uuid::Uuid::new_v4()));
+        let db = root.join("db");
+        fs::create_dir_all(&db).unwrap();
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase/tiny.1CD.gz");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(fixture).unwrap())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+        let rows = exclusive(|| {
+            crate::mssql_dump::with_file_db_table(&db, |table| table.rows(&table.names()?))
+        })
+        .unwrap()
+        .into_iter()
+        .map(|(name, bytes)| (name, Arc::new(bytes)))
+        .collect();
+        let configuration = StoredConfiguration::from_rows_snapshot(
+            ConfigSource::FileDb(db.clone()),
+            crate::platform::parse("8.5.1").unwrap(),
+            rows,
+        );
+        fs::rename(db.join("1Cv8.1CD"), root.join("preserved.1CD")).unwrap();
+        fs::write(db.join("1Cv8.1CD"), b"replacement must never be opened").unwrap();
+        (configuration, root)
+    }
+
+    fn isolated_snapshot_test(name: &str) -> bool {
+        const CHILD: &str = "IBCMD_DERIVED_SNAPSHOT_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            return false;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("test result: ok. 1 passed; 0 failed;"),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        true
+    }
+
+    #[test]
+    fn derived_main_views_keep_immutable_rows_after_source_rebinding() {
+        if isolated_snapshot_test(
+            "stored_objects::tests::derived_main_views_keep_immutable_rows_after_source_rebinding",
+        ) {
+            return;
+        }
+        let (mut active, root) = immutable_snapshot_after_rebinding();
+        let children = active.children(None).unwrap();
+        let names = vec!["CommonModule.ФайловаяБазаПроверка".into()];
+        let progress = |_, _, _: &str| {};
+        let expected = active.export(&names, &progress).unwrap().remove(0);
+        let mut standalone = active.main_view();
+        assert_eq!(
+            serde_json::to_value(standalone.children(None).unwrap()).unwrap(),
+            serde_json::to_value(&children).unwrap()
+        );
+        let first = active
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        assert_eq!(first.files, expected.files);
+        assert!(
+            !Arc::ptr_eq(&first, &expected),
+            "main/active caches stay separate"
+        );
+        active.main_view_mut().children(None).unwrap();
+        let second = active
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "main cache keeps immutable export"
+        );
+        let nested = standalone
+            .main_view()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        assert_eq!(nested.files, expected.files);
+        assert_eq!(
+            fs::read(root.join("db/1Cv8.1CD")).unwrap(),
+            b"replacement must never be opened"
+        );
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn native_inventory_keeps_immutable_rows_after_source_rebinding() {
+        if isolated_snapshot_test(
+            "stored_objects::tests::native_inventory_keeps_immutable_rows_after_source_rebinding",
+        ) {
+            return;
+        }
+        let (mut active, root) = immutable_snapshot_after_rebinding();
+        let inventory = active.native_config_dump_info().unwrap();
+        assert!(crate::native_export_status::ConfigDumpInfoSnapshot::parse(&inventory).is_ok());
+        assert_eq!(
+            active.main_view_mut().native_config_dump_info().unwrap(),
+            inventory
+        );
+        assert_eq!(
+            active.main_view().native_config_dump_info().unwrap(),
+            inventory
+        );
+        let source = root.join("source");
+        let stage = root.join("stage");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&stage).unwrap();
+        let plan = active
+            .prepare_editor_export(
+                &["CommonModule.ФайловаяБазаПроверка".into()],
+                false,
+                &source,
+                &stage,
+                &|_, _, _| {},
+            )
+            .unwrap();
+        assert!(
+            !plan.files.is_empty(),
+            "snapshot supplies selected staged files"
+        );
+        assert!(plan.files.iter().any(|path| path.ends_with("Module.bsl")));
+        assert_eq!(
+            fs::read(root.join("db/1Cv8.1CD")).unwrap(),
+            b"replacement must never be opened"
+        );
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn main_view_reuses_exports_separately_and_invalidates_on_versions_change() {
+        const CHILD: &str = "IBCMD_MAIN_VIEW_CACHE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "stored_objects::tests::main_view_reuses_exports_separately_and_invalidates_on_versions_change", "--nocapture"])
+                .env(CHILD, "1").output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("test result: ok. 1 passed; 0 failed;"),
+                "{stdout}"
+            );
+            return;
+        }
+        use std::io::{Read, Write};
+        let root = std::env::temp_dir().join(format!("main-view-cache-{}", uuid::Uuid::new_v4()));
+        let db = root.join("db");
+        let rows_dir = root.join("rows");
+        fs::create_dir_all(&db).unwrap();
+        fs::create_dir(&rows_dir).unwrap();
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase/tiny.1CD.gz");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(fixture).unwrap())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+        let rows = exclusive(|| {
+            crate::mssql_dump::with_file_db_table(&db, |table| table.rows(&table.names()?))
+        })
+        .unwrap();
+        for (name, bytes) in rows {
+            fs::write(rows_dir.join(format!("{name}__part0.bin")), bytes).unwrap();
+        }
+        let mut config = StoredConfiguration::new(
+            ConfigSource::RowsDir(rows_dir.clone()),
+            crate::platform::parse("8.5.1").unwrap(),
+        );
+        let names = vec!["CommonModule.ФайловаяБазаПроверка".into()];
+        let progress = |_, _, _: &str| {};
+        let first = config
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        // A different native tree request must keep the same owned export cache.
+        config.main_view_mut().children(None).unwrap();
+        let second = config
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "main exports survive between requests"
+        );
+        let active = config.export(&names, &progress).unwrap().remove(0);
+        assert!(
+            !Arc::ptr_eq(&first, &active),
+            "active and main exports cannot share their cache"
+        );
+        let versions_path = rows_dir.join("versions__part0.bin");
+        let stored = fs::read(&versions_path).unwrap();
+        let mut decoded = inflate_raw(&stored).unwrap_or(stored);
+        decoded.push(b' ');
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&decoded).unwrap();
+        fs::write(versions_path, encoder.finish().unwrap()).unwrap();
+        let refreshed = config
+            .main_view_mut()
+            .export(&names, &progress)
+            .unwrap()
+            .remove(0);
+        assert!(
+            !Arc::ptr_eq(&first, &refreshed),
+            "changed versions invalidates the retained main cache"
+        );
+        assert_eq!(first.files, refreshed.files);
+        assert!(!config.main_configuration);
+        eprintln!("retained fixture: {}", root.display());
+    }
+
     #[test]
     fn a_path_names_its_top_level_object() {
         assert_eq!(
@@ -1456,3 +2091,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "stored_objects/descriptor_read_tests.rs"]
+mod descriptor_read_tests;

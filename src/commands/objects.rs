@@ -153,7 +153,7 @@ fn open(args: &ObjectsSourceArgs) -> Result<StoredConfiguration> {
                     user: args.sql_user.as_deref(),
                     password: password.as_deref(),
                     password_env: &args.sql_pwd_env,
-                    trust_server_certificate: true,
+                    trust_server_certificate: false,
                 })?,
                 database: args.database.clone(),
             }
@@ -205,4 +205,29 @@ pub fn run(args: ObjectsArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod certificate_policy_tests {
+    use super::*;
+
+    #[test]
+    fn object_sql_constructor_validates_certificates_without_opening_a_connection() {
+        for sql_auth in [false, true] {
+            let args = ObjectsSourceArgs {
+                rows_dir: None,
+                server: "sql.example.invalid".into(),
+                database: "demo".into(),
+                sql_user: sql_auth.then(|| "fixture-user".into()),
+                sql_pwd: sql_auth.then(|| "fixture-password".into()),
+                sql_pwd_env: "MUST_NOT_READ".into(),
+                platform: Some(crate::platform::parse("8.5.1").unwrap()),
+            };
+            let configuration = open(&args).unwrap();
+            let ConfigSource::Database { sql, .. } = configuration.source() else {
+                panic!("SQL source expected");
+            };
+            assert!(!sql.trust_server_certificate());
+        }
+    }
 }

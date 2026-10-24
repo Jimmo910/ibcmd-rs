@@ -143,11 +143,21 @@ fn every_native_infobase_command_is_served_or_refused_by_name() {
                     ),
                 );
             }
+            NodeKind::ExportStatus => {
+                assert_malformed(&args, "Не указан путь к файлу ConfigDumpInfo.xml");
+            }
+            NodeKind::ExportObjects => {
+                assert_malformed(&args, "Не указано значение параметра: out");
+            }
+            NodeKind::ExportInfo => {
+                args.push("--db-user=sa");
+                assert_exit(&args, FAILED, "не указан пароль пользователя сервера СУБД");
+            }
             NodeKind::Group => {
                 assert_malformed(&args, "Указана неполная команда");
             }
             // served: without its path it asks for one
-            NodeKind::Export | NodeKind::Import | NodeKind::Save => {
+            NodeKind::Export | NodeKind::Import | NodeKind::Save | NodeKind::Load => {
                 assert_malformed(&args, "Не указано значение параметра");
             }
             // served: without its directory it asks for one
@@ -253,7 +263,8 @@ fn unsupported_options_and_malformed_lines_are_refused() {
             &format!("Параметр `{name}` команды `infobase config export --extension`"),
         );
     }
-    for dbms in ["PostgreSQL", "IBMDB2", "OracleDatabase"] {
+    // PostgreSQL is exported (#369); the other servers are refused
+    for dbms in ["IBMDB2", "OracleDatabase"] {
         assert_refused(
             &[
                 "infobase",
@@ -290,14 +301,11 @@ fn unsupported_options_and_malformed_lines_are_refused() {
         FAILED,
         "передайте --db-path",
     );
-    // a file infobase is exported and imported; the other commands refuse it
+    // a file infobase is exported, imported and saved; the other commands
+    // refuse it
     assert_refused(
         &["infobase", "config", "apply", "--db-path=C:\\ib"],
-        "выполняет только config export и config import",
-    );
-    assert_refused(
-        &["infobase", "config", "save", "--db-path=C:\\ib", out.arg()],
-        "выполняет только config export и config import",
+        "выполняет только config export, config import и config save",
     );
     assert_malformed(
         &[
@@ -468,10 +476,9 @@ fn save_starts_in_the_platforms_words_and_stops_at_the_connection() {
         &["infobase", "config", "save", "--db-name=b"],
         "Не указано значение параметра: путь к файлу конфигурации",
     );
-    // load is still refused by name
-    assert_refused(
-        &["infobase", "config", "load", "--db-name=b", "x.cf"],
-        "Команда `infobase config load` не поддерживается",
+    assert_malformed(
+        &["infobase", "config", "load", "--db-name=b"],
+        "Не указано значение параметра: путь к файлу конфигурации",
     );
 }
 
@@ -643,12 +650,16 @@ fn apply_words_and_refusals_are_the_platforms_before_anything_runs() {
             assert!(text(&output.stderr).contains(refused), "{option}");
         }
     }
-    for dbms in ["PostgreSQL", "IBMDB2", "OracleDatabase"] {
+    for dbms in ["IBMDB2", "OracleDatabase"] {
         assert_refused(
             &["infobase", "config", "apply", &format!("--dbms={dbms}")],
             &format!("СУБД `{dbms}` не поддерживается"),
         );
     }
+    assert_refused(
+        &["infobase", "config", "apply", "--dbms=PostgreSQL"],
+        "Команда `infobase config apply` для PostgreSQL не поддерживается",
+    );
     // what the platform accepts is accepted: the short spellings, the
     // session options that need nobody connected, a stray argument; the
     // run stops at the connection (a user without a password)
@@ -803,11 +814,6 @@ fn import_files_checks_the_files_before_the_connection() {
             UNSUPPORTED,
             "частичная загрузка Configuration.xml не поддерживается",
         ),
-        (
-            vec![sparse_dir.as_str(), "Catalogs/X/Ext/ObjectModule.bsl"],
-            UNSUPPORTED,
-            "укажите --partial",
-        ),
     ] {
         let output = assert_exit(&line(&extra), code, needle);
         assert_eq!(
@@ -816,6 +822,19 @@ fn import_files_checks_the_files_before_the_connection() {
             "{extra:?}"
         );
     }
+    // a listed file the directory lacks is skipped under `--partial`: with
+    // nothing left the platform succeeds and writes nothing (8.5.1.1529),
+    // before any connection here
+    let output = assert_exit(
+        &line(&[&sparse_dir, "--partial", "Catalogs/X/Ext/ManagerModule.bsl"]),
+        0,
+        "",
+    );
+    assert_eq!(
+        text(&output.stdout),
+        "[INFO] Импорт файлов конфигурации из XML...\n\
+         [INFO] Импорт файлов конфигурации из XML успешно завершен\n"
+    );
     let report = out.path().join("report.json");
     let report_arg = format!("--report={}", report.display());
     let output = assert_exit(

@@ -92,6 +92,11 @@ const BUILTIN_TYPES: &[(&str, &str)] = &[
         "v8ui:HorizontalAlign",
         "43f9c095-40e8-441a-8fad-20a45798c71b",
     ),
+    // РежимИзмененияРазмера
+    (
+        "v8ui:SizeChangeMode",
+        "7a0135c7-5b77-4de2-839e-25c5e63a2142",
+    ),
     (
         "mxl:SpreadsheetDocument",
         "e603103e-a318-4edc-a014-b1c6cf94d49f",
@@ -131,6 +136,13 @@ const BUILTIN_TYPES: &[(&str, &str)] = &[
     (
         "ent:AccountingRecordType",
         "741ae838-6e42-4ac0-b6a4-17e5604b0669",
+    ),
+    // ВидСчета
+    ("ent:AccountType", "872f7198-7083-4e3e-b57e-a2a9802c769e"),
+    //ВидДвиженияНакопления
+    (
+        "ent:AccumulationRecordType",
+        "5a49abd5-936d-4f46-8499-9cb204efe378",
     ),
     ("ent:ComparisonType", "b1b064f3-ae38-49bf-8c6d-390c65fd94af"),
     ("cfg:ConstantsSet", "dcfc3784-a14f-4786-ac7b-c82db5ba275f"),
@@ -272,21 +284,115 @@ const BUILTIN_TYPES: &[(&str, &str)] = &[
 /// writer puts the element's depth in.
 const BUILTIN_LOCAL_TYPES: &[(&str, &str)] = &[
     ("d0p1:Filter", "4652c4ec-1d1d-4af4-b835-e33fcb43af8c"),
+    // Диаграмма
     ("d0p1:Chart", "3543ef08-3316-4f7e-9447-0cd0a1cbf1d5"),
+    // ДиаграммаГанта
     ("d0p1:GanttChart", "3a6e63bf-16aa-42eb-b48c-2fff9670ad2f"),
+    // Дендрограмма
+    ("d0p1:Dendrogram", "2957f638-fc52-4bbb-9bd5-614550730ca6"),
+    // ТекстовыйДокумент
     ("d0p1:TextDocument", "ebf766b1-f32c-11d3-9851-008048da1252"),
+    // ГеографическаяСхема
     (
         "d0p1:GeographicalSchema",
         "95de81b0-81c3-4936-9dbb-6400e5c90378",
     ),
+    // ГрафическаяСхема
     (
         "d0p1:FlowchartContextType",
         "4af83795-fc2a-48cd-9bea-ce665789a62c",
     ),
+    // ТипЕдиницыИнтервалаВремениАнализаДанных
     (
         "d0p1:DataAnalysisTimeIntervalUnitType",
         "77a01c71-e9b2-4617-af07-c95a4b74548a",
     ),
+    // ВидДанныхАнализа
+    (
+        "d0p1:AnalysisDataType",
+        "0bc96bbe-a6e8-4fdc-aecd-57f493904535",
+    ),
+    // ТипИсточникаДанныхПоискаАссоциаций
+    (
+        "d0p1:AssociationRulesDataSourceType",
+        "050f918e-cda3-4d92-997a-df4a76f00cd1",
+    ),
+    // ТипОтсеченияПравилАссоциации
+    (
+        "d0p1:AssociationRulesPruneType",
+        "f8cdf4bc-4411-4b98-b8a3-d6f8e3ddb1c7",
+    ),
+    // МетодКластеризации
+    (
+        "d0p1:ClusterizationMethod",
+        "df706cce-3392-469c-af4c-cd4a13bf13bb",
+    ),
+    // ТипУпорядочиванияПравилАссоциацииАнализаДанных
+    (
+        "d0p1:DataAnalysisAssociationRulesOrderType",
+        "e838bbb4-8cdd-4b96-8259-66a1c44ca631",
+    ),
+    // ТипКолонкиАнализаДанныхПоискАссоциаций
+    (
+        "d0p1:DataAnalysisColumnTypeAssociationRules",
+        "148a98e5-0ad6-42c9-8133-e5ebbff69734",
+    ),
+    // ТипКолонкиАнализаДанныхКластеризация
+    (
+        "d0p1:DataAnalysisColumnTypeClusterization",
+        "ffdb46a2-3f23-4712-bad7-ad26997fb2d4",
+    ),
+    // ТипКолонкиАнализаДанныхДеревоРешений
+    (
+        "d0p1:DataAnalysisColumnTypeDecisionTree",
+        "5f290fad-aa2a-4245-b200-cd035ab19571",
+    ),
+    // ТипКолонкиАнализаДанныхПоискПоследовательностей
+    (
+        "d0p1:DataAnalysisColumnTypeSequentialPatterns",
+        "7d8b2989-2a0a-4334-afe1-82ceb63cf38a",
+    ),
+    // ТипКолонкиАнализаДанныхОбщаяСтатистика
+    (
+        "d0p1:DataAnalysisColumnTypeSummaryStatistics",
+        "efb63b25-8150-4c82-9687-970924f5f1f8",
+    ),
+    // ТипМерыРасстоянияАнализаДанных
+    (
+        "d0p1:DataAnalysisDistanceMetricType",
+        "0d3438ab-6412-4d39-91a9-a7d4e8418d27",
+    ),
+    // ТипИспользованияЧисловыхЗначенийАнализаДанных
+    (
+        "d0p1:DataAnalysisNumericValueUseType",
+        "2ee0f1c6-3781-421d-b7de-c4c359cb159c",
+    ),
+    // ТипЗаполненияТаблицыРезультатаАнализаДанных
+    (
+        "d0p1:DataAnalysisResultTableFillType",
+        "18ae9d87-950e-44a6-883a-1cd1f63040fb",
+    ),
+    // ТипУпорядочиванияШаблоновПоследовательностейАнализаДанных
+    (
+        "d0p1:DataAnalysisSequentialPatternsOrderType",
+        "6359f32c-4192-46cf-86c0-2f897b70a339",
+    ),
+    // ТипСтандартизацииАнализаДанных
+    (
+        "d0p1:DataAnalysisStandardizationType",
+        "afaa3f6e-29a1-4064-a825-73699c7db53b",
+    ),
+    // ТипУпрощенияДереваРешений
+    (
+        "d0p1:DecisionTreeSimplificationType",
+        "4622a61b-5817-4bf3-bf46-08bed102c02a",
+    ),
+    // ТипКолонкиМоделиПрогноза
+    (
+        "d0p1:PredictionModelColumnType",
+        "d015cb03-c768-4078-bb5d-b9404d99bc4c",
+    ),
+    // УсловноеОформление
     (
         "d0p1:ConditionalAppearance",
         "7dd764b6-b22f-4712-8edc-c0d634340e60",

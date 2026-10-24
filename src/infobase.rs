@@ -9,6 +9,8 @@
 //! The drop-in command line (`crate::dropin`) and the research round trip
 //! (`crate::infobase_oracle`, `platform-oracle` builds only) call these.
 
+pub mod export_commands;
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,9 +24,9 @@ use walkdir::WalkDir;
 use crate::adapters::mssql_legacy::MssqlLegacyAdapter;
 use crate::cli::{
     InfobaseConfigExportArgs, InfobaseConfigFormat, InfobaseConfigImportArgs,
-    InfobaseConfigSaveArgs, InfobaseConfigSourceVersion, InfobaseImportStageMode,
-    InfobaseImportVerify, MssqlDumpConfigArgs, MssqlDumpExtensionArgs, MssqlExtensionImage,
-    MssqlStageSourceObjectsArgs,
+    InfobaseConfigLoadArgs, InfobaseConfigSaveArgs, InfobaseConfigSourceVersion,
+    InfobaseImportStageMode, InfobaseImportVerify, MssqlDumpConfigArgs, MssqlDumpExtensionArgs,
+    MssqlExtensionImage, MssqlStageSourceObjectsArgs,
 };
 use crate::legacy_version::LegacyVersionAxes;
 use crate::platform::PlatformSpec;
@@ -173,9 +175,25 @@ pub(crate) struct ConnectionConfig {
     pub xml_version_given: bool,
     /// The data file of a file infobase (`--db-path`); `None` for a DBMS.
     pub file_infobase: Option<PathBuf>,
+    /// Retained only for this resolve/export operation; clones share one-use state.
+    pub postgres_snapshot: Option<crate::mssql_dump::PostgresExportSnapshot>,
 }
 
 impl ConnectionConfig {
+    /// The PostgreSQL database of a `--dbms=PostgreSQL` connection (#369).
+    pub(crate) fn postgres(&self) -> Result<Option<crate::sql::postgres::PgTarget>> {
+        if !is_postgres(&self.dbms) {
+            return Ok(None);
+        }
+        crate::sql::postgres::PgTarget::new(
+            &self.db_server,
+            &self.db_name,
+            self.db_user.as_deref(),
+            self.db_pwd.as_deref(),
+        )
+        .map(Some)
+    }
+
     pub(crate) fn legacy_source_version(&self) -> Result<InfobaseConfigSourceVersion> {
         self.legacy_adapter.legacy_selector().ok_or_else(|| {
             anyhow!(
@@ -255,7 +273,7 @@ impl InfobaseConfigSaveArgs {
             format: None,
             platform: None,
             source_version: None,
-            db_path: None,
+            db_path: self.db_path.as_deref(),
             dbms: self.dbms.as_deref(),
             db_server: self.db_server.as_deref(),
             db_name: self.db_name.as_deref(),
@@ -274,25 +292,33 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
     use crate::mssql_dump::config_save::{ConfigSaveRequest, SavedConfiguration, save_config};
 
     let config = resolve_connection(args.connection())?;
-    ensure_mssql(&config.dbms)?;
+    if config.file_infobase.is_none() {
+        ensure_mssql(&config.dbms)?;
+    }
     let output = if args.output.is_absolute() {
         args.output.clone()
     } else {
         env::current_dir()?.join(&args.output)
     };
-    let sql = crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
-        sqlcmd: args.sqlcmd.as_deref(),
-        bcp: None,
-        server: &config.db_server,
-        user: config.db_user.as_deref(),
-        password: config.db_pwd.as_deref(),
-        password_env: &args.db_pwd_env,
-        trust_server_certificate: true,
-    })?;
+    // A file infobase answers every read from its 1Cv8.1CD; no login.
+    let sql = if config.file_infobase.is_some() {
+        crate::sql::SqlExec::detached("the rows come from a file infobase")
+    } else {
+        crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
+            sqlcmd: args.sqlcmd.as_deref(),
+            bcp: None,
+            server: &config.db_server,
+            user: config.db_user.as_deref(),
+            password: config.db_pwd.as_deref(),
+            password_env: &args.db_pwd_env,
+            trust_server_certificate: false,
+        })?
+    };
     let save = save_config(&ConfigSaveRequest {
         sql: &sql,
         database: &config.db_name,
         rows_dir: None,
+        file_infobase: config.file_infobase.as_deref(),
         configuration: if args.database_configuration {
             SavedConfiguration::Database
         } else {
@@ -303,7 +329,11 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
     })?;
     Ok(InfobaseConfigSaveReport {
         operation: "infobase config save",
-        backend: "mssql-config-rows",
+        backend: if config.file_infobase.is_some() {
+            "file-infobase-config-rows"
+        } else {
+            "mssql-config-rows"
+        },
         dbms: config.dbms,
         db_server: config.db_server,
         db_name: config.db_name,
@@ -315,11 +345,26 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
 }
 
 pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigExportReport> {
+    export_config_policy(args, false)
+}
+
+pub(crate) fn export_config_native(
+    args: &InfobaseConfigExportArgs,
+) -> Result<InfobaseConfigExportReport> {
+    export_config_policy(args, true)
+}
+
+fn export_config_policy(
+    args: &InfobaseConfigExportArgs,
+    native_versions: bool,
+) -> Result<InfobaseConfigExportReport> {
     let config = resolve_connection(args.connection())?;
-    if config.file_infobase.is_none() {
+    if config.postgres()?.is_some() {
+        if args.extension.is_some() {
+            bail!("the export of extensions from PostgreSQL is not supported yet");
+        }
+    } else if config.file_infobase.is_none() {
         ensure_mssql(&config.dbms)?;
-    } else if args.extension.is_some() {
-        bail!("Выгрузка расширений из файловой информационной базы пока не поддерживается");
     }
     if let Some(extension) = args.extension.as_deref() {
         if args.base.is_some() || args.sync {
@@ -333,7 +378,7 @@ pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigEx
             &args.output_dir,
         );
     }
-    export_config_report(
+    export_config_report_policy(
         &config,
         args.sqlcmd.as_deref(),
         &args.db_pwd_env,
@@ -343,6 +388,7 @@ pub fn export_config(args: &InfobaseConfigExportArgs) -> Result<InfobaseConfigEx
         Vec::new(),
         args.base.as_deref(),
         args.sync,
+        native_versions,
     )
 }
 
@@ -361,15 +407,51 @@ pub(crate) fn export_config_report(
     base: Option<&Path>,
     sync: bool,
 ) -> Result<InfobaseConfigExportReport> {
+    export_config_report_policy(
+        config,
+        sqlcmd,
+        db_pwd_env,
+        output_dir_arg,
+        overwrite,
+        count_exported_files,
+        file_names,
+        base,
+        sync,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_config_report_policy(
+    config: &ConnectionConfig,
+    sqlcmd: Option<&Path>,
+    db_pwd_env: &str,
+    output_dir_arg: &Path,
+    overwrite: bool,
+    count_exported_files: bool,
+    file_names: Vec<String>,
+    base: Option<&Path>,
+    sync: bool,
+    native_versions: bool,
+) -> Result<InfobaseConfigExportReport> {
+    let postgres_snapshot = config
+        .postgres_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.transfer())
+        .transpose()?
+        .flatten();
     let source_version = config.legacy_source_version()?;
     let output_dir = absolute_path(output_dir_arg)?;
     if base.is_some() || sync {
-        crate::mssql_dump::incremental::prepare_output_dir(&output_dir)?;
+        if !native_versions {
+            crate::mssql_dump::incremental::prepare_output_dir(&output_dir)?;
+        }
     } else {
         prepare_output_dir(&output_dir, overwrite)?;
     }
     let mut dump_args = dump_args(
         config,
+        postgres_snapshot,
         sqlcmd,
         db_pwd_env,
         output_dir.clone(),
@@ -378,7 +460,13 @@ pub(crate) fn export_config_report(
     );
     dump_args.base = base.map(Path::to_path_buf);
     dump_args.sync = sync;
-    let dump = crate::mssql_dump::dump_config(&dump_args)?;
+    let dump = crate::mssql_dump::dump_config_with(
+        &dump_args,
+        crate::mssql_dump::DumpHooks {
+            native_versions,
+            ..Default::default()
+        },
+    )?;
 
     let exported_files = if count_exported_files {
         Some(count_files(&output_dir)?)
@@ -390,6 +478,8 @@ pub(crate) fn export_config_report(
         operation: "infobase config export",
         backend: if config.file_infobase.is_some() {
             "file-infobase-direct"
+        } else if is_postgres(&config.dbms) {
+            "postgres-config-direct"
         } else {
             "mssql-config-direct"
         },
@@ -426,38 +516,52 @@ pub(crate) fn export_extension_report(
     output_dir_arg: &Path,
 ) -> Result<InfobaseConfigExportReport> {
     let source_version = config.legacy_source_version()?;
+    if config.file_infobase.is_some()
+        && fs::symlink_metadata(output_dir_arg)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        bail!("refusing to export an extension through an output symlink");
+    }
     let output_dir = absolute_path(output_dir_arg)?;
     if output_dir.exists() {
         prepare_output_dir(&output_dir, false)?;
     }
     // An existing directory is empty by now; the tree replaces it.
-    let dump_args = extension_dump_args(
-        config,
-        sqlcmd,
-        db_pwd_env,
-        extension,
-        output_dir.clone(),
-        output_dir.exists(),
-        source_version,
-    );
-    let dump = crate::mssql_extension_export::dump_extensions(&dump_args)?;
-    let [entry] = dump.extensions.as_slice() else {
-        bail!(
-            "the export of extension {extension:?} produced {} trees, one expected",
-            dump.extensions.len()
+    let (export, backend) = if let Some(path) = config.file_infobase.as_deref() {
+        (
+            crate::file_extension_export::export(path, extension, &output_dir, source_version)?,
+            "file-infobase-extension",
+        )
+    } else {
+        let dump_args = extension_dump_args(
+            config,
+            sqlcmd,
+            db_pwd_env,
+            extension,
+            output_dir.clone(),
+            output_dir.exists(),
+            source_version,
         );
+        let dump = crate::mssql_extension_export::dump_extensions(&dump_args)?;
+        let [entry]: [_; 1] = dump.extensions.try_into().map_err(|entries: Vec<_>| {
+            anyhow!(
+                "the export of extension {extension:?} produced {} trees, one expected",
+                entries.len()
+            )
+        })?;
+        if !entry.complete {
+            bail!(
+                "the export of extension {extension:?} is incomplete ({}); the tree in {} holds what could be written",
+                entry.warnings.join("; "),
+                output_dir.display()
+            );
+        }
+        (entry.export, "mssql-extension-direct")
     };
-    if !entry.complete {
-        bail!(
-            "the export of extension {extension:?} is incomplete ({}); the tree in {} holds what could be written",
-            entry.warnings.join("; "),
-            output_dir.display()
-        );
-    }
 
     Ok(InfobaseConfigExportReport {
         operation: "infobase config export",
-        backend: "mssql-extension-direct",
+        backend,
         format: format_name(config.format),
         source_version: source_version.as_str(),
         dbms: config.dbms.clone(),
@@ -468,8 +572,8 @@ pub(crate) fn export_extension_report(
         native_config: config.native_config.clone(),
         temp_dump_dir: output_dir.clone(),
         output_dir,
-        exported_files: Some(entry.export.files_written),
-        raw_rows: entry.export.storage.physical_entries,
+        exported_files: Some(export.files_written),
+        raw_rows: export.storage.physical_entries,
         metadata_xml_rows: 0,
         module_text_rows: 0,
         source_asset_rows: 0,
@@ -496,7 +600,7 @@ fn extension_dump_args(
         sql_user: config.db_user.clone(),
         sql_pwd: config.db_pwd.clone(),
         sql_pwd_env: db_pwd_env.to_string(),
-        sqlcmd_trust_cert: true,
+        sqlcmd_trust_cert: false,
         database: config.db_name.clone(),
         extension: Some(extension.to_string()),
         all_extensions: false,
@@ -511,6 +615,7 @@ fn extension_dump_args(
 /// The export of the connection's database into `output_dir`.
 fn dump_args(
     config: &ConnectionConfig,
+    postgres_snapshot: Option<crate::mssql_dump::PostgresExportSnapshot>,
     sqlcmd: Option<&Path>,
     db_pwd_env: &str,
     output_dir: PathBuf,
@@ -520,6 +625,9 @@ fn dump_args(
     MssqlDumpConfigArgs {
         rows_dir: None,
         file_infobase: config.file_infobase.clone(),
+        // Checked when the connection is resolved (`resolve_connection_with`).
+        postgres: config.postgres().ok().flatten(),
+        postgres_snapshot,
         model_export: false,
         legacy_export: false,
         sqlcmd: sqlcmd.map(Path::to_path_buf),
@@ -553,10 +661,85 @@ fn dump_args(
     }
 }
 
+impl InfobaseConfigLoadArgs {
+    fn connection(&self) -> ConnectionRequest<'_> {
+        ConnectionRequest {
+            settings: self.settings.as_deref(),
+            native_config: self.native_config.as_deref(),
+            format: None,
+            platform: None,
+            source_version: None,
+            db_path: self.db_path.as_deref(),
+            dbms: self.dbms.as_deref(),
+            db_server: self.db_server.as_deref(),
+            db_name: self.db_name.as_deref(),
+            db_user: self.db_user.as_deref(),
+            db_pwd: self.db_pwd.as_deref(),
+            db_pwd_env: &self.db_pwd_env,
+            // A .cf holds the stored rows: no XML format is read.
+            need: PlatformNeed::Given,
+        }
+    }
+}
+
+/// `infobase config load <file.cf>` (#353): the file's elements staged in
+/// `ConfigSave` for `config apply`, in a file infobase or on PostgreSQL. On
+/// SQL Server `mssql-load-config --script-only` writes the stage's scripts.
+pub fn load_config(args: &InfobaseConfigLoadArgs) -> Result<InfobaseConfigImportReport> {
+    let config = resolve_connection(args.connection())?;
+    let input = absolute_path(&args.input)?;
+    if config.file_infobase.is_some() {
+        return crate::file_infobase::load_cf(&config, &input);
+    }
+    if config.postgres()?.is_some() {
+        return crate::postgres_infobase::load_cf(&config, &input);
+    }
+    ensure_mssql(&config.dbms)?;
+    let sql = crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
+        sqlcmd: args.sqlcmd.as_deref(),
+        bcp: None,
+        server: &config.db_server,
+        user: config.db_user.as_deref(),
+        password: config.db_pwd.as_deref(),
+        password_env: &args.db_pwd_env,
+        trust_server_certificate: true,
+    })?;
+    let loaded = crate::mssql::cf_load_stage::load_into_database(&sql, &config.db_name, &input)?;
+    Ok(InfobaseConfigImportReport {
+        operation: "infobase config load",
+        backend: "mssql-configsave-stage",
+        format: "cf",
+        source_version: None,
+        dbms: config.dbms.clone(),
+        db_server: config.db_server.clone(),
+        db_name: config.db_name.clone(),
+        db_user: config.db_user.clone(),
+        native_config: config.native_config.clone(),
+        source_dir: input,
+        stage_mode: "base-free",
+        stage_mode_reason: format!(
+            "the .cf replaces the main configuration ({} elements, {} rows of Config deleted)",
+            loaded.rows, loaded.deleted
+        ),
+        files: Vec::new(),
+        target_config_rows: -1,
+        staged_rows_before: loaded.config_save_rows_before,
+        staged_rows_after: loaded.config_save_rows_after,
+        scripts: Vec::new(),
+        verification: None,
+        overrides: None,
+        backup: None,
+    })
+}
+
 pub fn import_config(args: &InfobaseConfigImportArgs) -> Result<InfobaseConfigImportReport> {
     let config = resolve_connection(args.connection())?;
     if config.file_infobase.is_some() {
         return crate::file_infobase::import(&config, args);
+    }
+    if config.postgres()?.is_some() {
+        refuse_postgres_files(args)?;
+        return crate::postgres_infobase::import(&config, args);
     }
     ensure_mssql(&config.dbms)?;
 
@@ -671,6 +854,7 @@ fn build_import_stage_args(
         },
         path_prefix: args.path_prefix.clone(),
         files: args.files.clone(),
+        native_files: args.native_files,
         script_output: args.script_output.clone(),
         script_only: false,
         bulk: false,
@@ -722,9 +906,42 @@ pub(crate) fn resolve_connection(request: ConnectionRequest<'_>) -> Result<Conne
     resolve_connection_with(request, &Settings::load)
 }
 
+/// A query route whose resolved backend is not supported by its protocol.
+#[derive(Debug)]
+pub(crate) struct UnsupportedExportQuery(pub String);
+
+impl std::fmt::Display for UnsupportedExportQuery {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for UnsupportedExportQuery {}
+
+/// Resolve settings once and refuse unsupported queries before any platform probe.
+pub(crate) fn resolve_export_query_connection(
+    request: ConnectionRequest<'_>,
+    command: &str,
+) -> Result<ConnectionConfig> {
+    resolve_connection_with_guard(request, &Settings::load, |config| {
+        if is_postgres(&config.dbms) {
+            return Err(UnsupportedExportQuery(crate::dropin::postgres_refusal(command)).into());
+        }
+        Ok(())
+    })
+}
+
 fn resolve_connection_with(
     request: ConnectionRequest<'_>,
     load: SettingsLoader<'_>,
+) -> Result<ConnectionConfig> {
+    resolve_connection_with_guard(request, load, |_| Ok(()))
+}
+
+fn resolve_connection_with_guard(
+    request: ConnectionRequest<'_>,
+    load: SettingsLoader<'_>,
+    backend_guard: impl FnOnce(&ConnectionConfig) -> Result<()>,
 ) -> Result<ConnectionConfig> {
     let settings = match request.settings {
         Some(path) => Some(read_settings(path)?),
@@ -790,6 +1007,12 @@ fn resolve_connection_with(
         None => defaults.get()?.db_user().map(|user| user.value),
     };
     let (db_pwd, password_source) = match db_user {
+        // A PostgreSQL server may log the user in without one (`trust` in
+        // pg_hba.conf); it asks for a password when it wants one
+        // (`sql::postgres`).
+        _ if is_postgres(&dbms) => {
+            resolve_optional_password(request.db_pwd, &settings, request.db_pwd_env, &mut defaults)?
+        }
         Some(_) => resolve_password(request.db_pwd, &settings, request.db_pwd_env, &mut defaults)?,
         None => (None, None),
     };
@@ -806,7 +1029,12 @@ fn resolve_connection_with(
         legacy_adapter,
         xml_version_given,
         file_infobase: None,
+        postgres_snapshot: None,
     };
+    backend_guard(&config)?;
+    // A malformed PostgreSQL server is refused here, before the platform
+    // probe reads the database through `dump_args`.
+    config.postgres()?;
     settle_platform(&mut config, &request, &mut defaults)?;
     Ok(config)
 }
@@ -858,6 +1086,7 @@ fn resolve_file_infobase(
         legacy_adapter,
         xml_version_given,
         file_infobase: Some(data_file),
+        postgres_snapshot: None,
     };
     settle_platform(&mut config, request, defaults)?;
     Ok(config)
@@ -871,6 +1100,7 @@ fn settle_platform(
     request: &ConnectionRequest<'_>,
     defaults: &mut Defaults<'_>,
 ) -> Result<()> {
+    config.postgres_snapshot = None;
     match request.need {
         PlatformNeed::Given => Ok(()),
         PlatformNeed::Export {
@@ -880,8 +1110,26 @@ fn settle_platform(
             incremental,
         } => {
             if config.xml_version_given {
+                // An exact build on the command line spells its own
+                // defaults (`platform::note_export_platform`), as for
+                // `cf export --platform`.
+                let platform = match request.platform {
+                    Some(platform) => Some(platform),
+                    None => config
+                        .legacy_adapter
+                        .version_axes()
+                        .platform_build()
+                        .map(|build| crate::platform::parse(&build.to_string()))
+                        .transpose()?,
+                };
+                if let Some(platform) = platform {
+                    crate::platform::note_export_platform(platform);
+                } else {
+                    crate::platform::clear_export_platform();
+                }
                 return Ok(());
             }
+            let pending_snapshot = std::cell::RefCell::new(None);
             let platform = {
                 let known: &ConnectionConfig = config;
                 let probe = || {
@@ -891,16 +1139,20 @@ fn settle_platform(
                     if !incremental {
                         prepare_output_dir(&absolute_path(output_dir)?, overwrite)?;
                     }
-                    crate::mssql_dump::model_export::configuration_compatibility_8_5_or_later(
-                        &dump_args(
-                            known,
-                            sqlcmd,
-                            request.db_pwd_env,
-                            PathBuf::new(),
-                            Vec::new(),
-                            InfobaseConfigSourceVersion::V2_20,
-                        ),
-                    )
+                    let (compatible, snapshot) =
+                        crate::mssql_dump::model_export::configuration_compatibility_with_snapshot(
+                            &dump_args(
+                                known,
+                                None,
+                                sqlcmd,
+                                request.db_pwd_env,
+                                PathBuf::new(),
+                                Vec::new(),
+                                InfobaseConfigSourceVersion::V2_20,
+                            ),
+                        )?;
+                    *pending_snapshot.borrow_mut() = snapshot;
+                    Ok(compatible)
                 };
                 crate::settings::resolve_platform(
                     None,
@@ -911,7 +1163,9 @@ fn settle_platform(
                     },
                 )?
             };
+            crate::platform::note_export_platform(platform);
             config.legacy_adapter = adapter_for(platform.xml_version())?;
+            config.postgres_snapshot = pending_snapshot.into_inner();
             Ok(())
         }
         PlatformNeed::Import { source_dir } => {
@@ -1089,6 +1343,21 @@ fn resolve_password(
     db_pwd_env: &str,
     defaults: &mut Defaults<'_>,
 ) -> Result<(Option<String>, Option<String>)> {
+    match resolve_optional_password(cli_db_pwd, settings, db_pwd_env, defaults)? {
+        (Some(password), source) => Ok((Some(password), source)),
+        (None, _) => bail!(
+            "не указан пароль пользователя сервера СУБД: передайте --db-pwd (--database-password), -W или переменную окружения {db_pwd_env}"
+        ),
+    }
+}
+
+/// The password from the first place that names one, if any does.
+fn resolve_optional_password(
+    cli_db_pwd: Option<&str>,
+    settings: &Option<Value>,
+    db_pwd_env: &str,
+    defaults: &mut Defaults<'_>,
+) -> Result<(Option<String>, Option<String>)> {
     if let Some(value) = cli_db_pwd.filter(|value| !value.is_empty()) {
         return Ok((Some(value.to_string()), Some("--db-pwd".to_string())));
     }
@@ -1102,9 +1371,26 @@ fn resolve_password(
     if let Some(value) = defaults.get()?.db_password() {
         return Ok((Some(value.value), Some(value.source.to_string())));
     }
-    bail!(
-        "не указан пароль пользователя сервера СУБД: передайте --db-pwd (--database-password), -W или переменную окружения {db_pwd_env}"
-    )
+    Ok((None, None))
+}
+
+/// Whether `dbms` names PostgreSQL, as 1C spells it.
+pub(crate) fn is_postgres(dbms: &str) -> bool {
+    dbms.eq_ignore_ascii_case("PostgreSQL")
+}
+
+/// `import files` on PostgreSQL, the DBMS named by the settings too: the
+/// PostgreSQL import replaces the whole stage, so a file list is refused
+/// rather than ignored.
+fn refuse_postgres_files(args: &InfobaseConfigImportArgs) -> Result<()> {
+    if args.files.is_empty() {
+        return Ok(());
+    }
+    Err(crate::mssql::files_stage::FilesRefused {
+        message: crate::dropin::postgres_refusal("infobase config import files"),
+        unsupported: true,
+    }
+    .into())
 }
 
 pub(crate) fn ensure_mssql(dbms: &str) -> Result<()> {
@@ -1337,6 +1623,19 @@ mod tests {
         assert!(!is_internal_dump_path(Path::new("ConfigDumpInfo.xml")));
     }
 
+    #[test]
+    fn import_files_on_postgres_is_refused_not_widened() {
+        let mut args = import_args();
+        assert!(refuse_postgres_files(&args).is_ok());
+        args.files = vec!["Catalogs/Валюты.xml".to_string()];
+        let error = refuse_postgres_files(&args).unwrap_err();
+        let refused = error
+            .downcast_ref::<crate::mssql::files_stage::FilesRefused>()
+            .unwrap();
+        assert!(refused.unsupported);
+        assert!(refused.message.contains("для PostgreSQL не поддерживается"));
+    }
+
     fn import_args() -> InfobaseConfigImportArgs {
         InfobaseConfigImportArgs {
             db_path: None,
@@ -1360,6 +1659,7 @@ mod tests {
             batch_size: Some(250),
             path_prefix: vec!["Catalogs/Валюты".to_string()],
             files: Vec::new(),
+            native_files: None,
             script_output: Some(PathBuf::from(r"C:\temp\stage.sql")),
             stage_mode: InfobaseImportStageMode::Auto,
             verify: InfobaseImportVerify::Auto,
@@ -1441,6 +1741,233 @@ mod tests {
         }
     }
 
+    fn native_pipeline_refuses_stale_preflight_reference(case: &str, existing: bool) {
+        use std::io::Read;
+        let root = std::env::temp_dir().join(format!("native-selection-{}", uuid::Uuid::new_v4()));
+        let db = root.join("db");
+        fs::create_dir_all(&db).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(fixture.join("tiny.1CD.gz")).unwrap())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+        let mut args = export_args("unused");
+        args.db_path = Some(db);
+        args.dbms = None;
+        args.db_server = None;
+        args.db_name = None;
+        args.source_version = Some(InfobaseConfigSourceVersion::V2_21);
+        args.output_dir = root.join("must-not-be-created");
+        let current = crate::infobase::export_commands::info(&args).unwrap();
+        let mut base = ibcmd_xml::config_dump_info::ConfigDumpInfo::parse(&current).unwrap();
+        // This is the actual export boundary after any earlier preflight.
+        // A freshly loaded reference can now require full export.
+        match case {
+            "empty" => {
+                let mut bytes = Vec::new();
+                flate2::read::GzDecoder::new(fs::File::open(fixture.join("empty.1CD.gz")).unwrap())
+                    .read_to_end(&mut bytes)
+                    .unwrap();
+                fs::write(args.db_path.as_ref().unwrap().join("1Cv8.1CD"), bytes).unwrap();
+            }
+            "rename" => base.entries[0].name.push_str("PreviousLabName"),
+            "body-role" => {
+                let entry = base
+                    .entries
+                    .iter_mut()
+                    .find(|entry| entry.id.ends_with(".0"))
+                    .unwrap();
+                entry.name.push_str("PreviousLabRole");
+            }
+            "removed-part" => {
+                let name = format!("{}.Attribute.RemovedLabPart", base.entries[0].name);
+                base.entries[0]
+                    .children
+                    .push(ibcmd_xml::config_dump_info::Part {
+                        id: "ad2cd611-6109-431f-bf22-0b1a9d5069e5".into(),
+                        name,
+                    });
+            }
+            _ => {
+                let mut removed = base.entries[0].clone();
+                removed.id = "ad2cd611-6109-431f-bf22-0b1a9d5069e5".into();
+                removed.name = "CommonModule.RemovedLabObject".into();
+                removed.children.clear();
+                base.entries.push(removed);
+            }
+        }
+        let reference = root.join("changed-reference.xml");
+        fs::write(&reference, base.to_native_bytes().unwrap()).unwrap();
+        args.base = Some(reference);
+        let tree = |path: &Path| {
+            let mut files = std::collections::BTreeMap::new();
+            if path.exists() {
+                for entry in WalkDir::new(path).into_iter().map(|entry| entry.unwrap()) {
+                    if entry.file_type().is_file() {
+                        files.insert(
+                            entry.path().strip_prefix(path).unwrap().to_owned(),
+                            fs::read(entry.path()).unwrap(),
+                        );
+                    }
+                }
+            }
+            files
+        };
+        if existing {
+            fs::create_dir_all(&args.output_dir).unwrap();
+            for (path, bytes) in tree(&fixture.join("tiny-xml")) {
+                let target = args.output_dir.join(path);
+                fs::create_dir_all(target.parent().unwrap()).unwrap();
+                fs::write(target, bytes).unwrap();
+            }
+            let base_path = args
+                .output_dir
+                .join(crate::mssql_dump::incremental::CONFIG_DUMP_INFO);
+            fs::write(&base_path, base.to_native_bytes().unwrap()).unwrap();
+            args.base = Some(base_path);
+            args.sync = true;
+            fs::write(args.output_dir.join("README.md"), b"keep user bytes").unwrap();
+        }
+        let before = tree(&args.output_dir);
+        let result = super::export_config_native(&args);
+        let error = result.expect_err("native export must refuse a stale-preflight selection");
+        assert!(
+            error
+                .downcast_ref::<crate::mssql_dump::incremental::NativeFullExportRequired>()
+                .is_some(),
+            "unexpected failure: {error:#}"
+        );
+        if existing {
+            assert_eq!(
+                tree(&args.output_dir),
+                before,
+                "refusal must not publish or prune existing output"
+            );
+        } else {
+            assert!(
+                !args.output_dir.exists(),
+                "refusal must precede output creation"
+            );
+        }
+    }
+
+    #[test]
+    fn native_export_pipeline_refuses_stale_preflight_selections() {
+        // The physical offline adapter has process-wide active state. Run these
+        // real pipeline cases in a child isolated from other parallel unit tests.
+        const CHILD: &str = "IBCMD_RS_TEST_NATIVE_SELECTION_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            for case in ["remove", "rename", "removed-part", "body-role", "empty"] {
+                native_pipeline_refuses_stale_preflight_reference(case, false);
+            }
+            native_pipeline_refuses_stale_preflight_reference("remove", true);
+            native_pipeline_refuses_stale_preflight_reference("empty", true);
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "infobase::tests::native_export_pipeline_refuses_stale_preflight_selections",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn dialect_only_export_clears_previous_exact_build_defaults() {
+        const CHILD: &str = "IBCMD_DIALECT_AFTER_BUILD_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "infobase::tests::dialect_only_export_clears_previous_exact_build_defaults",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("test result: ok. 1 passed; 0 failed;"),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        use std::io::Read;
+        let scratch = Scratch::new("dialect-after-build");
+        let db = scratch.0.join("db");
+        fs::create_dir(&db).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/file-infobase/default-button.1CD.gz");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(fixture).unwrap())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+        let settings = scratch.0.join("dialect.json");
+        fs::write(&settings, r#"{"ibcmd-rs":{"source-version":"8.5.1"}}"#).unwrap();
+        let load = settings_in(&scratch.0, &[]);
+        let export = |platform, source_version, settings, output_dir| {
+            let mut args = export_args("unused");
+            args.db_path = Some(db.clone());
+            args.dbms = None;
+            args.db_server = None;
+            args.db_name = None;
+            args.platform = platform;
+            args.source_version = source_version;
+            args.settings = settings;
+            args.output_dir = output_dir;
+            let config = resolve_connection_with(args.connection(), &load).unwrap();
+            export_config_report(
+                &config,
+                None,
+                &args.db_pwd_env,
+                &args.output_dir,
+                false,
+                false,
+                Vec::new(),
+                None,
+                false,
+            )
+            .unwrap();
+            fs::read_to_string(
+                args.output_dir
+                    .join("CommonForms/ДополнительноеОписание/Ext/Form.xml"),
+            )
+            .unwrap()
+        };
+        for mode in 0..2 {
+            let exact = export(
+                Some(crate::platform::parse("8.5.1.1529").unwrap()),
+                None,
+                None,
+                scratch.0.join(format!("exact-{mode}")),
+            );
+            assert!(exact.contains("<ButtonImportance>Main</ButtonImportance>"));
+            let dialect = export(
+                None,
+                (mode == 0).then_some(InfobaseConfigSourceVersion::V2_21),
+                (mode == 1).then(|| settings.clone()),
+                scratch.0.join(format!("dialect-{mode}")),
+            );
+            assert!(
+                !dialect.contains("<ButtonImportance>Main</ButtonImportance>"),
+                "dialect-only export inherited a previous exact build (mode {mode})",
+            );
+            assert!(dialect.contains("<DefaultButton>true</DefaultButton>"));
+        }
+    }
+
     #[test]
     fn a_database_entry_names_the_export_format_above_the_environment() {
         let scratch = Scratch::new("binding");
@@ -1467,6 +1994,100 @@ mod tests {
             config.legacy_source_version().unwrap(),
             InfobaseConfigSourceVersion::V2_20
         );
+    }
+
+    #[test]
+    fn postgres_snapshot_is_consumed_even_when_export_preflight_refuses() {
+        let scratch = Scratch::new("postgres-snapshot-preflight");
+        let load = settings_in(&scratch.0, &[]);
+        let mut args = export_args("synthetic_pg");
+        args.dbms = Some("PostgreSQL".into());
+        args.platform = Some(crate::platform::parse("8.3.27").unwrap());
+        let mut config = resolve_connection_with(args.connection(), &load).unwrap();
+        config.postgres_snapshot = Some(crate::mssql_dump::PostgresExportSnapshot::synthetic(
+            b"previous rows",
+        ));
+        let clone = config.clone();
+        let out = scratch.0.join("occupied-output");
+        fs::create_dir(&out).unwrap();
+        fs::write(out.join("existing"), b"unchanged").unwrap();
+        assert!(
+            export_config_report(
+                &config,
+                None,
+                "UNUSED",
+                &out,
+                false,
+                false,
+                Vec::new(),
+                None,
+                false
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read(out.join("existing")).unwrap(), b"unchanged");
+        assert!(
+            config
+                .postgres_snapshot
+                .as_ref()
+                .unwrap()
+                .transfer()
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            clone
+                .postgres_snapshot
+                .as_ref()
+                .unwrap()
+                .transfer()
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn postgres_snapshot_is_not_retained_when_platform_was_explicit() {
+        let scratch = Scratch::new("postgres-explicit-platform-snapshot");
+        let load = settings_in(&scratch.0, &[]);
+        let mut args = export_args("synthetic_pg");
+        args.dbms = Some("PostgreSQL".into());
+        args.platform = Some(crate::platform::parse("8.3.27").unwrap());
+        let mut config = resolve_connection_with(args.connection(), &load).unwrap();
+        config.postgres_snapshot = Some(crate::mssql_dump::PostgresExportSnapshot::synthetic(
+            b"previous rows",
+        ));
+        let mut defaults = Defaults::new(args.native_config.as_deref(), &load);
+        settle_platform(&mut config, &args.connection(), &mut defaults).unwrap();
+        assert!(config.postgres_snapshot.is_none());
+    }
+
+    #[test]
+    fn a_malformed_postgres_server_is_refused_before_the_platform_probe() {
+        let scratch = Scratch::new("postgres-bad-server");
+        let load = settings_in(&scratch.0, &[]);
+        let mut args = export_args("disposable_pg");
+        args.dbms = Some("PostgreSQL".into());
+        args.db_server = Some("srv other".into());
+        let error = resolve_connection_with(args.connection(), &load).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("unrecognised PostgreSQL server `srv other`"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn postgres_default_user_keeps_an_explicit_password() {
+        let scratch = Scratch::new("postgres-default-password");
+        let load = settings_in(&scratch.0, &[]);
+        let mut args = export_args("disposable_pg");
+        args.dbms = Some("PostgreSQL".into());
+        args.platform = Some(crate::platform::parse("8.3.27").unwrap());
+        args.db_pwd = Some("synthetic-secret".into());
+        let config = resolve_connection_with(args.connection(), &load).unwrap();
+        let target = config.postgres().unwrap().unwrap();
+        assert_eq!(target.user, "postgres");
+        assert_eq!(target.password.as_deref(), Some("synthetic-secret"));
     }
 
     #[test]
@@ -1664,7 +2285,7 @@ mod tests {
         assert_eq!(args.database, "ibcmd_rs_x");
         assert_eq!(args.output_dir, PathBuf::from("out"));
         assert!(args.overwrite);
-        assert!(args.sqlcmd_trust_cert);
+        assert!(!args.sqlcmd_trust_cert);
         assert_eq!(args.platform, None);
     }
 

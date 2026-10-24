@@ -99,22 +99,45 @@ pub(crate) fn localized_element(qname: &str, node: &Brace) -> Result<Element> {
     Ok(element)
 }
 
+/// A decoded value outside its schema's domain cannot be converted by a
+/// permissive fallback without losing its meaning. Keep this distinct from
+/// an unimplemented model layout, which may still have a legacy writer.
+#[derive(Debug)]
+pub(crate) enum UnsupportedDescriptorValue {
+    Boolean(String),
+    Enumeration(i64),
+    NonNumericEnumeration(String),
+}
+impl std::fmt::Display for UnsupportedDescriptorValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Boolean(value) => write!(formatter, "expected 0/1, got {value}"),
+            Self::Enumeration(code) => write!(formatter, "code {code} is not mapped"),
+            Self::NonNumericEnumeration(value) => {
+                write!(formatter, "expected an integer enum code, got {value}")
+            }
+        }
+    }
+}
+impl std::error::Error for UnsupportedDescriptorValue {}
+
 /// `0`/`1` -> `false`/`true`.
 pub(crate) fn bool_text(node: &Brace) -> Result<&'static str> {
-    match atom(node)? {
+    match atom(node).map_err(|_| UnsupportedDescriptorValue::Boolean(short(node)))? {
         "0" => Ok("false"),
         "1" => Ok("true"),
-        other => bail!("expected 0/1, got {other}"),
+        other => Err(UnsupportedDescriptorValue::Boolean(other.to_string()).into()),
     }
 }
 
 /// A stored code -> its XML spelling.
 pub(crate) fn code_text(node: &Brace, table: &[(&'static str, i64)]) -> Result<&'static str> {
-    let code = number(node)?;
+    let code =
+        number(node).map_err(|_| UnsupportedDescriptorValue::NonNumericEnumeration(short(node)))?;
     table
         .iter()
         .find_map(|(name, value)| (*value == code).then_some(*name))
-        .ok_or_else(|| anyhow!("code {code} is not mapped"))
+        .ok_or_else(|| UnsupportedDescriptorValue::Enumeration(code).into())
 }
 
 /// The full name of a referenced object; empty for the nil uuid.

@@ -51,6 +51,7 @@ mod tests {
             server: Some("sql01".to_string()),
             source: "mssql",
             rows_dir: None,
+            db_path: None,
             platform: spec.to_string(),
             xml_version: spec.xml_version().as_str().to_string(),
             platform_source: "test".to_string(),
@@ -58,6 +59,90 @@ mod tests {
             origin: "test".to_string(),
             spec,
         }
+    }
+
+    #[test]
+    fn editor_sql_sessions_validate_server_certificates_for_both_auth_modes() {
+        for login in [
+            Login {
+                auth: Some(AuthMode::Windows),
+                ..Login::default()
+            },
+            Login {
+                auth: Some(AuthMode::Sql),
+                user: Some("fixture-user".into()),
+                password: Some(Secret::new("fixture-password".into())),
+            },
+        ] {
+            let session = Session::open(&entry(false), None, login, &Settings::default()).unwrap();
+            let ConfigSource::Database { sql, .. } = session.configuration.source() else {
+                panic!("SQL session expected");
+            };
+            assert!(!sql.trust_server_certificate());
+        }
+    }
+
+    #[test]
+    fn explicit_auth_does_not_inherit_a_global_sql_user() {
+        let env =
+            |key: &str| (key == crate::settings::ENV_DB_USER).then(|| "global-user".to_string());
+        let settings = Settings::from_sources(&crate::settings::SettingsSources {
+            env: &env,
+            executable: None,
+            current_dir: None,
+            app_data: None,
+            native_config: None,
+        })
+        .unwrap();
+        assert!(settings.db_user().is_some());
+        let legacy = Session::open(
+            &entry(false),
+            None,
+            Login {
+                password: Some(Secret::new("test-password".into())),
+                ..Login::default()
+            },
+            &settings,
+        )
+        .unwrap();
+        assert_eq!(legacy.login.user.as_deref(), Some("global-user"));
+        let windows = Session::open(
+            &entry(false),
+            None,
+            Login {
+                auth: Some(AuthMode::Windows),
+                ..Login::default()
+            },
+            &settings,
+        )
+        .unwrap();
+        assert!(windows.login.user.is_none());
+        assert!(windows.login.password.is_none());
+        assert!(
+            Session::open(
+                &entry(false),
+                None,
+                Login {
+                    auth: Some(AuthMode::Sql),
+                    ..Login::default()
+                },
+                &settings
+            )
+            .is_err()
+        );
+        assert!(
+            Session::open(
+                &entry(false),
+                None,
+                Login {
+                    auth: Some(AuthMode::Windows),
+                    user: Some("unexpected".into()),
+                    ..Login::default()
+                },
+                &settings
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -133,6 +218,8 @@ pub struct Entry {
     pub source: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rows_dir: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db_path: Option<PathBuf>,
     /// The platform (`8.3.27.2214`) and the XML format it reads and writes.
     pub platform: String,
     pub xml_version: String,
@@ -155,6 +242,8 @@ pub struct EntryParams {
     pub name: String,
     pub server: Option<String>,
     pub rows_dir: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db_path: Option<PathBuf>,
     pub platform: Option<String>,
 }
 
@@ -187,12 +276,15 @@ pub fn entries(settings: &Settings, extra: &[EntryParams]) -> Result<Vec<Entry>>
                     id,
                     name: binding.name.clone(),
                     server: binding.server.clone(),
-                    source: if binding.rows_dir.is_some() {
+                    source: if binding.db_path.is_some() {
+                        "file-db"
+                    } else if binding.rows_dir.is_some() {
                         "rows-dir"
                     } else {
                         "mssql"
                     },
                     rows_dir: binding.rows_dir.clone(),
+                    db_path: binding.db_path.clone(),
                     platform: binding.platform.to_string(),
                     xml_version: binding.platform.xml_version().as_str().to_string(),
                     platform_source: format!("{}:{}", file.path.display(), binding.line),
@@ -207,6 +299,20 @@ pub fn entries(settings: &Settings, extra: &[EntryParams]) -> Result<Vec<Entry>>
         let name = params.name.trim();
         if name.is_empty() {
             return Err(anyhow!("an infobase of initialize has an empty name"));
+        }
+        if params.db_path.is_some()
+            && (params.rows_dir.is_some() || params.server.is_some() || name.contains('*'))
+        {
+            return Err(anyhow!(
+                "dbPath cannot be combined with rowsDir, server or a database mask"
+            ));
+        }
+        if params
+            .db_path
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            return Err(anyhow!("dbPath is empty"));
         }
         let server = params
             .server
@@ -234,12 +340,15 @@ pub fn entries(settings: &Settings, extra: &[EntryParams]) -> Result<Vec<Entry>>
                 id,
                 name: name.to_string(),
                 server: server.map(str::to_string),
-                source: if params.rows_dir.is_some() {
+                source: if params.db_path.is_some() {
+                    "file-db"
+                } else if params.rows_dir.is_some() {
                     "rows-dir"
                 } else {
                     "mssql"
                 },
                 rows_dir: params.rows_dir.clone(),
+                db_path: params.db_path.clone(),
                 platform: platform.value.to_string(),
                 xml_version: platform.value.xml_version().as_str().to_string(),
                 platform_source: if params.platform.is_some() {
@@ -259,9 +368,18 @@ pub fn entries(settings: &Settings, extra: &[EntryParams]) -> Result<Vec<Entry>>
         .collect())
 }
 
+/// Explicit editor authentication; absence preserves the legacy settings fallback.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMode {
+    Windows,
+    Sql,
+}
+
 /// A login for a SQL Server infobase.
 #[derive(Clone, Debug, Default)]
 pub struct Login {
+    pub auth: Option<AuthMode>,
     pub user: Option<String>,
     pub password: Option<Secret>,
 }
@@ -286,6 +404,19 @@ impl Session {
         login: Login,
         settings: &Settings,
     ) -> Result<Self> {
+        if entry.db_path.is_some() {
+            if entry.source != "file-db"
+                || entry.rows_dir.is_some()
+                || entry.server.is_some()
+                || entry.mask
+            {
+                return Err(anyhow!(
+                    "dbPath requires source=file-db, no rowsDir/server and a fixed database"
+                ));
+            }
+        } else if entry.source == "file-db" {
+            return Err(anyhow!("file-db requires dbPath"));
+        }
         let database = match (
             entry.mask,
             database.map(str::trim).filter(|name| !name.is_empty()),
@@ -307,6 +438,24 @@ impl Session {
             (_, Some(database)) => database.to_string(),
             (false, None) => entry.name.clone(),
         };
+        if let Some(path) = &entry.db_path {
+            if login.auth.is_some() || login.user.is_some() || login.password.is_some() {
+                return Err(anyhow!("file-db does not accept SQL authentication"));
+            }
+            let path = std::fs::canonicalize(ibcmd_filedb::data_file(path))
+                .with_context(|| format!("dbPath of infobase {} does not exist", entry.id))?;
+            // Validate the actual database, without opening SQL or inheriting its credentials.
+            ibcmd_filedb::FileDb::open(&path).map_err(|error| anyhow!("{error}"))?;
+            let mut entry = entry.clone();
+            entry.db_path = Some(path.clone());
+            return Ok(Self {
+                configuration: StoredConfiguration::new(ConfigSource::FileDb(path), entry.spec),
+                entry,
+                database,
+                server: String::new(),
+                login: Login::default(),
+            });
+        }
         let server = entry
             .server
             .clone()
@@ -318,11 +467,30 @@ impl Session {
             entry.name = database.clone();
             entry.mask = false;
         }
+        if login.auth == Some(AuthMode::Windows)
+            && (login.user.is_some() || login.password.is_some())
+        {
+            return Err(anyhow!(
+                "Windows authentication does not accept user or password"
+            ));
+        }
+        if login.auth == Some(AuthMode::Sql)
+            && login.user.as_deref().is_none_or(|v| v.trim().is_empty())
+        {
+            return Err(anyhow!("SQL authentication requires a user"));
+        }
+        let explicit = login.auth.is_some();
         let login = Login {
-            user: login
-                .user
-                .or_else(|| settings.db_user().map(|user| user.value)),
+            auth: login.auth,
+            user: login.user.or_else(|| {
+                (!explicit)
+                    .then(|| settings.db_user().map(|user| user.value))
+                    .flatten()
+            }),
             password: login.password.or_else(|| {
+                if explicit {
+                    return None;
+                }
                 std::env::var(ENV_DB_PASSWORD)
                     .ok()
                     .filter(|value| !value.is_empty())
@@ -348,7 +516,7 @@ impl Session {
                     user: login.user.as_deref(),
                     password: login.password.as_ref().map(Secret::expose),
                     password_env: ENV_DB_PASSWORD,
-                    trust_server_certificate: true,
+                    trust_server_certificate: false,
                 })?,
                 database: database.clone(),
             },
@@ -360,5 +528,23 @@ impl Session {
             server,
             login,
         })
+    }
+}
+
+#[cfg(test)]
+mod file_source_contract_tests {
+    use super::*;
+
+    #[test]
+    fn conflicting_file_sources_fail_before_opening_a_database() {
+        for extra in [
+            r#"{"name":"demo","dbPath":"missing/1Cv8.1CD","rowsDir":"missing/rows"}"#,
+            r#"{"name":"demo","dbPath":"missing/1Cv8.1CD","server":"sql01"}"#,
+            r#"{"name":"demo_*","dbPath":"missing/1Cv8.1CD"}"#,
+        ] {
+            let params: EntryParams = serde_json::from_str(extra).unwrap();
+            let error = entries(&Settings::default(), &[params]).unwrap_err();
+            assert!(error.to_string().contains("dbPath"), "{error:#}");
+        }
     }
 }

@@ -189,6 +189,26 @@ jobs:
           python scripts/audit_release.py --binary $binary --sbom $sbom --archive $archive --checksum "$archive.sha256"
           if ($LASTEXITCODE -ne 0) { throw 'Release audit failed' }
 
+      - name: Install Node.js for Windows VSIX
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Package Windows VSIX with the release binary
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        working-directory: editors/vscode
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'Locked npm installation failed' }
+          npm run bundle
+          if ($LASTEXITCODE -ne 0) { throw 'Extension bundle failed' }
+          python scripts/package.py --target win32-x64 --binary ../../target/${{ matrix.target }}/release/ibcmd-rs.exe --out ../../target/release-artifacts/ibcmd-rs-$env:RELEASE_VERSION-win32-x64.vsix
+          if ($LASTEXITCODE -ne 0) { throw 'VSIX packaging failed' }
+
       - name: Upload Linux ABI evidence
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
@@ -206,6 +226,8 @@ jobs:
             target/release-artifacts/*.zip
             target/release-artifacts/*.zip.sha256
             target/release-artifacts/*.sbom.cdx.json
+            target/release-artifacts/*.vsix
+            target/release-artifacts/*.vsix.sha256
           if-no-files-found: error
           retention-days: 30
 

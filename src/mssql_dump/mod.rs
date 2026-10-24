@@ -15,6 +15,7 @@ use ibcmd_core::characteristics::Characteristics;
 use ibcmd_core::diagnostic::{MetadataSourceFailureClass, ObjectPath};
 use ibcmd_core::family::FamilyId;
 use ibcmd_core::storage::StorageImage;
+use ibcmd_schema::metadata_storage_facts::DataProcessorRevision16Layout;
 use ibcmd_schema::{
     GeneratedMetadataReferenceOwnerKind, parse_generated_metadata_reference_owner,
     parse_task_data_lock_control_mode_slot, parse_task_full_text_search_slot,
@@ -970,17 +971,26 @@ mod characteristics {
 mod additional_indexes;
 pub mod cas;
 mod command_interface;
+pub use config_dump_info::read_config_dump_info;
+pub(crate) use config_dump_info::read_config_dump_info_with_sql;
 mod config_dump_info;
 mod config_rows;
 pub mod config_save;
 mod configuration_properties_evidence;
 mod dcs;
+mod dcs_2_21;
+pub(crate) use dcs_2_21::{with_8_5_picture_values, with_stored_picture_values};
 mod dynamic_generation;
+mod empty_configuration;
 pub(crate) mod extension;
 pub(crate) mod extension_types;
 mod fetch;
 mod file_infobase;
-pub(crate) use file_infobase::{FileInfobaseConfig, file_infobase_config};
+mod postgres_infobase;
+pub(crate) use file_infobase::{
+    FileInfobaseConfig, file_extension_base_provider, file_infobase_config, file_infobase_effective,
+};
+pub use postgres_infobase::PostgresExportSnapshot;
 mod form;
 mod form_body;
 mod form_extension;
@@ -994,6 +1004,7 @@ pub(crate) use form::load_8_5_1::{
 };
 pub(crate) use refs::constant_row_always_used;
 pub(crate) use source_assets::declare_palette_namespace_beside_style;
+mod eds_export;
 mod forms;
 pub mod help_audit;
 pub mod incremental;
@@ -1200,6 +1211,7 @@ const CHART_TYPE_UUID: &str = "3543ef08-3316-4f7e-9447-0cd0a1cbf1d5";
 /// `<Settings>` block. The id had no entry at all, so neither element was
 /// written on any of them.
 pub(super) const GANTT_CHART_TYPE_UUID: &str = "3a6e63bf-16aa-42eb-b48c-2fff9670ad2f";
+/// Русское имя — `ДиаграммаГанта`.
 pub(super) const GANTT_CHART_TYPE_REFERENCE: &str = "d5p1:GanttChart";
 /// The data-analysis time-interval unit. Named by every form attribute of the
 /// eight stand corpora that declares it -- 7 of them, all in ERP UH 3.2.12.6
@@ -1209,6 +1221,7 @@ pub(super) const GANTT_CHART_TYPE_REFERENCE: &str = "d5p1:GanttChart";
 /// all, so the element was written on none of them. The QName occurs nowhere
 /// else in the eight native trees.
 const DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_UUID: &str = "77a01c71-e9b2-4617-af07-c95a4b74548a";
+/// Русское имя — `ТипЕдиницыИнтервалаВремениАнализаДанных`.
 const DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_REFERENCE: &str =
     "d5p1:DataAnalysisTimeIntervalUnitType";
 const REPORT_BUILDER_TYPE_UUID: &str = "0dda99d9-ae9f-43d2-b7ac-44f3fb0d4059";
@@ -1248,15 +1261,46 @@ const DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE: &str =
 /// table answers every reader for them, and the per-shape tables below keep
 /// only the names whose spelling really does depend on the document.
 const ROOT_BOUND_PLATFORM_TYPE_REFERENCES: &[(&str, &str)] = &[
+    // КонстантыНабор
     (CONSTANTS_SET_TYPE_UUID, "cfg:ConstantsSet"),
+    // ОписаниеТипов
     (TYPE_DESCRIPTION_TYPE_UUID, "v8:TypeDescription"),
+    // Картинка
     ("e6f51714-91cb-4dce-94fe-90ae3e3e1ad1", "v8ui:Picture"),
+    // ОтчетОбъект
     ("1dd6fdb9-553d-40d4-b2d1-c7fc31f497bb", "cfg:ReportObject"),
+    // ВертикальноеПоложение
     ("52616226-8ccf-4d1d-a3da-827eeb4f9cf9", "v8ui:VerticalAlign"),
     // Named by `DataProcessors/УниверсальныйОбменДаннымиXML` in ух, ут, до and
     // БСП демо and by `Reports/ПланПоказателей` in ух -- five records of one
     // type id, one spelling, in two different owner families.
     (REPORT_BUILDER_TYPE_UUID, "cfg:ReportBuilder"),
+    // The `ent:` and `v8ui:` namespaces are bound at the same roots as `cfg:`,
+    // so these names carry no inline declaration either.
+    // ДинамическийСписок
+    ("65abad24-838b-4987-8b35-ed9e2bd4d9c8", "cfg:DynamicList"),
+    // ВидДвиженияНакопления
+    (
+        "5a49abd5-936d-4f46-8499-9cb204efe378",
+        "ent:AccumulationRecordType",
+    ),
+    // ВидСчета
+    ("872f7198-7083-4e3e-b57e-a2a9802c769e", "ent:AccountType"),
+    // ВидДвиженияБухгалтерии
+    (
+        "741ae838-6e42-4ac0-b6a4-17e5604b0669",
+        "ent:AccountingRecordType",
+    ),
+    // ГоризонтальноеПоложение
+    (
+        "43f9c095-40e8-441a-8fad-20a45798c71b",
+        "v8ui:HorizontalAlign",
+    ),
+    // РежимИзмененияРазмера
+    (
+        "7a0135c7-5b77-4de2-839e-25c5e63a2142",
+        "v8ui:SizeChangeMode",
+    ),
 ];
 // Platform type IDs used by serialized Form type patterns. Only the names whose
 // prefix the form document itself fixes stay here: the `d5p1:` names by the
@@ -1264,37 +1308,48 @@ const ROOT_BOUND_PLATFORM_TYPE_REFERENCES: &[(&str, &str)] = &[
 // writer knows how to spell (`form_metadata_type_xml_namespace_attr`). Names
 // bound at the root live in `ROOT_BOUND_PLATFORM_TYPE_REFERENCES`.
 const FORM_BUILTIN_TYPE_REFERENCES: &[(&str, &str)] = &[
+    // КомпоновщикНастроекКомпоновкиДанных
     (
         DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID,
         DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME,
     ),
+    // ФорматированныйДокумент
     (
         "151f8778-e2d0-496a-9f02-d9ffd93b57ec",
         "fd:FormattedDocument",
     ),
+    // ТекстовыйДокумент
     ("ebf766b1-f32c-11d3-9851-008048da1252", "d5p1:TextDocument"),
+    // Диаграмма
     (CHART_TYPE_UUID, "d5p1:Chart"),
+    // ДиаграммаГанта
     (GANTT_CHART_TYPE_UUID, GANTT_CHART_TYPE_REFERENCE),
+    // ТипЕдиницыИнтервалаВремениАнализаДанных
     (
         DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_UUID,
         DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_REFERENCE,
     ),
+    // ГрафическаяСхема
     (
         "4af83795-fc2a-48cd-9bea-ce665789a62c",
         "d5p1:FlowchartContextType",
     ),
+    // ДокументPDF
     (
         "48510817-200c-48c2-9973-06cf90840514",
         PDF_DOCUMENT_TYPE_REFERENCE,
     ),
+    // ГеографическаяСхема
     (
         "95de81b0-81c3-4936-9dbb-6400e5c90378",
         GEOGRAPHICAL_SCHEMA_TYPE_REFERENCE,
     ),
+    // Планировщик
     (PLANNER_TYPE_UUID, PLANNER_TYPE_REFERENCE),
 ];
 // Both carry their namespace inline on the emitted `<v8:Type>` element; see
 // `form_metadata_type_xml_namespace_attr`.
+/// Русские имена — `ДокументPDF` и `ГеографическаяСхема`.
 const PDF_DOCUMENT_TYPE_REFERENCE: &str = "pdfdoc:PDFDocument";
 const GEOGRAPHICAL_SCHEMA_TYPE_REFERENCE: &str = "d5p1:GeographicalSchema";
 /// The planner. Named by the five graphical-planner attributes of
@@ -1302,6 +1357,7 @@ const GEOGRAPHICAL_SCHEMA_TYPE_REFERENCE: &str = "d5p1:GeographicalSchema";
 /// each stores this type id and the platform writes this QName both in the
 /// attribute's `<v8:Type>` and in the `xsi:type` of its `<Settings>` block.
 const PLANNER_TYPE_UUID: &str = "43dc7f37-5b1d-42a7-8f28-f545080d0255";
+/// Русское имя — `Планировщик`.
 const PLANNER_TYPE_REFERENCE: &str = "pl:Planner";
 // Platform types serialized in DataProcessor Attribute patterns. Only the one
 // name whose prefix the metadata-root document fixes stays here: `Chart` at
@@ -1418,6 +1474,38 @@ pub struct MssqlDumpConfigReport {
     /// What `--base` and `--sync` did (absent without them).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub incremental: Option<incremental::IncrementalExportSummary>,
+}
+
+impl MssqlDumpConfigReport {
+    /// Required before a selected file map can authorize publication or removals.
+    /// Observational exports may retain their diagnostics without passing this gate.
+    pub(crate) fn ensure_selected_complete(&self) -> Result<()> {
+        anyhow::ensure!(
+            !self.tables.is_empty(),
+            "selected export has no completeness inventory"
+        );
+        for table in &self.tables {
+            let metadata = &table.metadata_root_inventory;
+            anyhow::ensure!(
+                metadata.candidate_set_complete
+                    && metadata.missing == 0
+                    && metadata.expected == metadata.emitted,
+                "selected metadata conversion is incomplete: {} of {} descriptors missing",
+                metadata.missing,
+                metadata.expected
+            );
+            let assets = &table.source_assets;
+            // A scoped inventory proves this selection, not the rest of CONFIG.
+            anyhow::ensure!(
+                assets.status == SourceAssetCompletenessStatus::Complete,
+                "selected source asset conversion is incomplete: {} opaque, {} missing; candidate set complete={}",
+                assets.opaque,
+                assets.missing,
+                assets.candidate_set_complete
+            );
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2066,7 +2154,10 @@ pub(crate) fn dump_config_with_sql(
     dump_config_with(
         args,
         DumpHooks {
+            rows_snapshot: None,
             sql: sql_override,
+            object_recursion: None,
+            native_versions: false,
             sink: None,
         },
     )
@@ -2077,10 +2168,17 @@ pub(crate) fn dump_config_with_sql(
 /// default is the command line's export.
 #[derive(Default)]
 pub(crate) struct DumpHooks {
+    /// Capability-checked immutable Config rows, through the existing offline reader.
+    pub(crate) rows_snapshot: Option<Arc<BTreeMap<String, Arc<Vec<u8>>>>>,
     /// The database handle to read with, whose connections the caller keeps
     /// between runs, instead of one built from the arguments' login. Not
     /// used with `--rows-dir`.
     pub(crate) sql: Option<crate::sql::SqlExec>,
+    /// Native objects supplies explicit recursion; None retains the custom
+    /// --object contract (owned descendants, Configuration itself only).
+    pub(crate) object_recursion: Option<bool>,
+    /// Native incremental export compares stored versions across XML headers.
+    pub(crate) native_versions: bool,
     /// Where the files go instead of `output_dir`: nothing is written to the
     /// disk -- no folder prepared, no manifest, no raw rows -- and
     /// `output_dir` only names the files the sink receives.
@@ -2094,12 +2192,25 @@ pub(crate) struct DumpHooks {
 pub(crate) struct ConfigTable<'a> {
     sql: &'a crate::sql::SqlExec,
     database: &'a str,
+    main_configuration: bool,
 }
 
 impl<'a> ConfigTable<'a> {
     /// The table a running export reads: its folder active, its view begun.
     pub(crate) fn active(sql: &'a crate::sql::SqlExec, database: &'a str) -> Self {
-        Self { sql, database }
+        Self {
+            sql,
+            database,
+            main_configuration: false,
+        }
+    }
+
+    pub(crate) fn main(sql: &'a crate::sql::SqlExec, database: &'a str) -> Self {
+        Self {
+            sql,
+            database,
+            main_configuration: true,
+        }
     }
 
     /// Every published row name. Installs the table's view for the reads
@@ -2113,7 +2224,7 @@ impl<'a> ConfigTable<'a> {
             table,
             &BTreeSet::new(),
             headers,
-            false,
+            self.main_configuration,
         )?;
         Ok(headers.into_iter().map(|header| header.file_name).collect())
     }
@@ -2146,6 +2257,237 @@ pub(crate) fn with_rows_dir_table<T>(
     read(&ConfigTable::active(&sql, ""))
 }
 
+/// Runs a bounded immutable snapshot through the same offline Config table reader.
+pub(crate) fn with_memory_rows_table<T>(
+    rows: &BTreeMap<String, Arc<Vec<u8>>>,
+    read: impl FnOnce(&ConfigTable<'_>) -> Result<T>,
+) -> Result<T> {
+    let _active = offline_rows::activate_rows(offline_rows::OfflineRows::from_memory(
+        rows.iter()
+            .map(|(name, bytes)| (name.clone(), bytes.clone())),
+    ))?;
+    let _views = dynamic_generation::StorageViewScope::begin("");
+    let sql = crate::sql::SqlExec::detached("immutable rows answer every read");
+    read(&ConfigTable::active(&sql, ""))
+}
+
+pub(crate) use file_infobase::FileDbReadScope;
+
+#[cfg(test)]
+pub(crate) fn file_db_read_scope_active() -> bool {
+    file_infobase::read_scope_active()
+}
+
+#[cfg(test)]
+pub(crate) fn file_db_fresh_load_count() -> usize {
+    file_infobase::fresh_load_count()
+}
+
+/// Reads a real file infobase through the same effective CONFIG/CONFIGSAVE view as export.
+pub(crate) fn with_file_db_table<T>(
+    path: &Path,
+    read: impl FnOnce(&ConfigTable<'_>) -> Result<T>,
+) -> Result<T> {
+    let _active = offline_rows::activate_shared(file_infobase::read_rows(path)?)?;
+    let _views = dynamic_generation::StorageViewScope::begin("");
+    let sql = crate::sql::SqlExec::detached("a file infobase answers every read itself");
+    read(&ConfigTable::active(&sql, ""))
+}
+
+/// Snapshot the same effective file database view as export, without reopening a path.
+pub(crate) fn file_db_rows_from_reader(
+    db: &mut ibcmd_filedb::FileDb,
+) -> Result<BTreeMap<String, Arc<Vec<u8>>>> {
+    effective_file_db_snapshot(file_infobase::load_from_reader(db)?)
+}
+
+fn effective_file_db_snapshot(
+    rows: offline_rows::OfflineRows,
+) -> Result<BTreeMap<String, Arc<Vec<u8>>>> {
+    crate::stored_objects::exclusive(|| {
+        let _active = offline_rows::activate_rows(rows)?;
+        let _views = dynamic_generation::StorageViewScope::begin("");
+        let sql = crate::sql::SqlExec::detached("a descriptor snapshot answers every read itself");
+        let table = ConfigTable::active(&sql, "");
+        let names = table.names()?;
+        Ok(table
+            .rows(&names)?
+            .into_iter()
+            .map(|(name, bytes)| (name, Arc::new(bytes)))
+            .collect())
+    })
+}
+
+#[cfg(test)]
+mod descriptor_snapshot_tests {
+    use super::*;
+    fn snapshot(rows: BTreeMap<String, Arc<Vec<u8>>>) -> BTreeMap<String, Arc<Vec<u8>>> {
+        #[cfg(unix)]
+        {
+            use std::{fs, io::Read};
+            struct Scratch(std::path::PathBuf);
+            impl Drop for Scratch {
+                fn drop(&mut self) {
+                    if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                        let _ = fs::remove_dir_all(&self.0);
+                    }
+                }
+            }
+            let path = std::env::temp_dir()
+                .join(format!("descriptor-generation-{}", uuid::Uuid::new_v4()));
+            fs::create_dir(&path).unwrap();
+            let scratch = Scratch(path);
+            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/file-infobase/tiny.1CD.gz");
+            let mut bytes = Vec::new();
+            flate2::read::GzDecoder::new(fs::File::open(fixture).unwrap())
+                .read_to_end(&mut bytes)
+                .unwrap();
+            fs::write(scratch.0.join("1Cv8.1CD"), bytes).unwrap();
+            let records = rows
+                .into_iter()
+                .map(|(file_name, bytes)| ibcmd_filedb::ConfigRow {
+                    file_name,
+                    part_no: 0,
+                    creation: ibcmd_filedb::Timestamp::now_utc(),
+                    modified: ibcmd_filedb::Timestamp::now_utc(),
+                    attributes: 0,
+                    data_size: bytes.len() as u64,
+                    binary: bytes.as_ref().clone(),
+                })
+                .collect::<Vec<_>>();
+            ibcmd_filedb::replace_config_table(&scratch.0, "CONFIG", &records).unwrap();
+            ibcmd_filedb::replace_config_table(&scratch.0, "CONFIGSAVE", &[]).unwrap();
+            let descriptor = fs::File::open(scratch.0.join("1Cv8.1CD")).unwrap();
+            let mut db = ibcmd_filedb::FileDb::from_file(descriptor).unwrap();
+            assert!(db.config_headers("CONFIGSAVE").unwrap().is_empty());
+            let descriptor = file_db_rows_from_reader(&mut db).unwrap();
+            drop(db);
+            crate::stored_objects::exclusive(|| -> Result<BTreeMap<String, Arc<Vec<u8>>>> {
+                let read = || -> Result<BTreeMap<String, Arc<Vec<u8>>>> {
+                    with_file_db_table(&scratch.0, |table| {
+                        let names = table.names()?;
+                        Ok(table
+                            .rows(&names)?
+                            .into_iter()
+                            .map(|(name, bytes)| (name, Arc::new(bytes)))
+                            .collect())
+                    })
+                };
+                let fresh = read()?;
+                assert_eq!(descriptor, fresh, "descriptor and path readers must agree");
+                let scope = FileDbReadScope::begin(&scratch.0)?;
+                let scoped = read()?;
+                assert_eq!(
+                    fresh, scoped,
+                    "raw-row reuse must preserve the active-generation view"
+                );
+                drop(scope);
+                Ok(scoped)
+            })
+            .unwrap()
+        }
+        #[cfg(not(unix))]
+        {
+            effective_file_db_snapshot(offline_rows::OfflineRows::from_memory(rows)).unwrap()
+        }
+    }
+    #[test]
+    fn snapshot_uses_active_generation_and_preserves_no_marker_semantics() {
+        // Table views are process-global; isolate this canonical-reader fixture
+        // from legacy SQL mocks rather than sharing their mutable state.
+        const CHILD: &str = "IBCMD_DESCRIPTOR_SNAPSHOT_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mssql_dump::descriptor_snapshot_tests::snapshot_uses_active_generation_and_preserves_no_marker_semantics", "--nocapture"])
+                .env(CHILD, "1").output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("test result: ok. 1 passed; 0 failed;"),
+                "{stdout}"
+            );
+            return;
+        }
+        let generation = "b627e390-8fad-4a95-afe6-674f54813188";
+        let base = "a627e390-8fad-4a95-afe6-674f54813188";
+        let versions = |generation: &str, names: &[&str]| {
+            let mut text = format!("{{1,{},\"\",{generation}", names.len());
+            for name in names {
+                text.push_str(&format!(",\"{name}\",{base}"));
+            }
+            text.push('}');
+            use std::io::Write;
+            let mut encoder =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(text.as_bytes()).unwrap();
+            Arc::new(encoder.finish().unwrap())
+        };
+        let mut rows = BTreeMap::from([
+            ("a".to_owned(), Arc::new(b"old".to_vec())),
+            (
+                format!("a_dynupdate_{generation}"),
+                Arc::new(b"active".to_vec()),
+            ),
+            ("gone".to_owned(), Arc::new(b"obsolete".to_vec())),
+            ("versions".to_owned(), versions(base, &["a", "gone"])),
+            (
+                format!("versions_dynupdate_{generation}"),
+                versions(generation, &["a"]),
+            ),
+        ]);
+        let without_marker =
+            effective_file_db_snapshot(offline_rows::OfflineRows::from_memory(rows.clone()))
+                .unwrap();
+        assert_eq!(
+            without_marker, rows,
+            "no marker must preserve all raw names"
+        );
+        rows.insert(
+            "DynamicallyUpdated".into(),
+            Arc::new(format!("{{1,1,{generation}}}").into_bytes()),
+        );
+        let effective =
+            effective_file_db_snapshot(offline_rows::OfflineRows::from_memory(rows.clone()))
+                .unwrap();
+        assert_eq!(effective["a"].as_slice(), b"active");
+        assert_eq!(
+            effective["versions"],
+            rows[&format!("versions_dynupdate_{generation}")]
+        );
+        assert_eq!(
+            effective.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["DynamicallyUpdated", "a", "versions"]
+        );
+        // The measured file-db writer refuses names longer than 43 chars;
+        // generation aliases exceed that even with a one-letter stem. Do not
+        // weaken that guard or manufacture an invalid index for this reader test.
+        // Test the descriptor loader's empty CONFIGSAVE route independently,
+        // with/no marker, and the alias read policy above with exact raw rows.
+        #[cfg(unix)]
+        {
+            let mut plain = rows
+                .into_iter()
+                .filter(|(name, _)| !name.contains("_dynupdate_"))
+                .collect::<BTreeMap<_, _>>();
+            for marker in [true, false] {
+                if !marker {
+                    plain.remove("DynamicallyUpdated");
+                }
+                let expected = effective_file_db_snapshot(offline_rows::OfflineRows::from_memory(
+                    plain.clone(),
+                ))
+                .unwrap();
+                assert_eq!(snapshot(plain.clone()), expected);
+            }
+        }
+    }
+}
+
 /// Runs `read` on the Config table of `database`; the view it installs ends
 /// with it.
 pub(crate) fn with_database_table<T>(
@@ -2157,11 +2499,54 @@ pub(crate) fn with_database_table<T>(
     read(&ConfigTable::active(sql, database))
 }
 
+/// Main CONFIG + completed CONFIGSAVE table view through the existing read-only overlay.
+pub(crate) fn with_main_database_table<T>(
+    sql: &crate::sql::SqlExec,
+    database: &str,
+    read: impl FnOnce(&ConfigTable<'_>) -> Result<T>,
+) -> Result<T> {
+    let _views = dynamic_generation::StorageViewScope::begin(database);
+    read(&ConfigTable::main(sql, database))
+}
+
 /// [`dump_config`] with the caller's [`DumpHooks`]: the same export, the
 /// same arguments.
 pub(crate) fn dump_config_with(
     args: &MssqlDumpConfigArgs,
     hooks: DumpHooks,
+) -> Result<MssqlDumpConfigReport> {
+    dump_config_with_options(args, hooks, None, None)
+}
+
+/// Validate an editor's selected map without changing the renderer that the
+/// same selection uses for observational reads. The extra indexes prove values
+/// and completeness; their presence alone does not enable another writer.
+/// SQL main readers previously converted the whole overlay, so their original
+/// writer eligibility remains unfiltered even when conversion is now selected.
+pub(crate) fn dump_config_with_selected_validation(
+    args: &MssqlDumpConfigArgs,
+    hooks: DumpHooks,
+    originally_unfiltered: bool,
+) -> Result<MssqlDumpConfigReport> {
+    dump_config_with_options(args, hooks, Some(originally_unfiltered), None)
+}
+
+/// Point reads validate only the descriptor actually returned, on the same raw
+/// row bytes as its writer. Asset/child completeness stays diagnostic here.
+pub(crate) fn dump_config_with_descriptor_validation(
+    args: &MssqlDumpConfigArgs,
+    hooks: DumpHooks,
+    path: &str,
+    originally_unfiltered: bool,
+) -> Result<MssqlDumpConfigReport> {
+    dump_config_with_options(args, hooks, Some(originally_unfiltered), Some(path))
+}
+
+fn dump_config_with_options(
+    args: &MssqlDumpConfigArgs,
+    hooks: DumpHooks,
+    editor_writer_scope: Option<bool>,
+    requested_descriptor: Option<&str>,
 ) -> Result<MssqlDumpConfigReport> {
     let password_marker = if args.sql_user.is_none() {
         password_source_marker(PASSWORD_SOURCE_NONE)
@@ -2176,7 +2561,7 @@ pub(crate) fn dump_config_with(
         &args.database,
         args.runtime_journal.as_deref(),
     )?;
-    match dump_config_inner(args, hooks) {
+    match dump_config_inner(args, hooks, editor_writer_scope, requested_descriptor) {
         Ok(report) => {
             subprocess_journal.finish_passed()?;
             Ok(report)
@@ -2192,9 +2577,69 @@ pub(crate) fn dump_config_with(
     }
 }
 
+/// Export and its compatibility probe share a validating TLS policy. Explicit
+/// caller-owned SqlExec hooks retain their own policy; no connection is opened here.
+fn sql_for_export(
+    args: &MssqlDumpConfigArgs,
+    password: Option<&str>,
+) -> Result<crate::sql::SqlExec> {
+    crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
+        sqlcmd: args.sqlcmd.as_deref(),
+        bcp: args.bcp_executable.as_deref(),
+        server: &args.server,
+        user: args.sql_user.as_deref(),
+        password,
+        password_env: &args.sql_pwd_env,
+        trust_server_certificate: false,
+    })
+}
+
+#[cfg(test)]
+mod export_tls_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn export_sql_constructor_validates_certificates_for_built_in_and_external_backends() {
+        for external in [false, true] {
+            let mut argv = vec![
+                "ibcmd-rs",
+                "mssql-dump-config",
+                "--server",
+                "sql.example.invalid",
+                "--database",
+                "demo",
+                "--sql-user",
+                "fixture-user",
+                "--sql-pwd",
+                "fixture-password",
+                "--output-dir",
+                "unused",
+            ];
+            if external {
+                argv.extend(["--sqlcmd", "sqlcmd"]);
+            }
+            let crate::cli::Commands::MssqlDumpConfig(args) =
+                crate::cli::Cli::try_parse_from(argv).unwrap().command
+            else {
+                panic!("export args expected");
+            };
+            let sql = sql_for_export(&args, args.sql_pwd.as_deref()).unwrap();
+            assert!(
+                !sql.trust_server_certificate(),
+                "export/probe must validate certificates"
+            );
+            assert_eq!(sql.tools().is_some(), external);
+            assert_eq!(sql.user(), Some("fixture-user"));
+        }
+    }
+}
+
 fn dump_config_inner(
     args: &MssqlDumpConfigArgs,
     hooks: DumpHooks,
+    editor_writer_scope: Option<bool>,
+    requested_descriptor: Option<&str>,
 ) -> Result<MssqlDumpConfigReport> {
     // Lab aid: `IBCMD_RS_EXTENSION_MODE=1` runs this export as an extension
     // export's converters run (rows written by `IBCMD_RS_EXTENSION_NORMALIZED_ROWS_OUT`),
@@ -2205,28 +2650,49 @@ fn dump_config_inner(
         .transpose()?;
     // `--rows-dir`: every Config read of this run comes from the folder and
     // no query reaches a server.
-    let _offline_rows = match (&args.rows_dir, &args.file_infobase) {
-        (Some(dir), _) => {
-            if args.include_config_save {
-                bail!("--rows-dir reads the Config table only; drop --include-config-save");
+    let _offline_rows = if let Some(rows) = &hooks.rows_snapshot {
+        Some(offline_rows::activate_rows(
+            offline_rows::OfflineRows::from_memory(
+                rows.iter()
+                    .map(|(name, bytes)| (name.clone(), bytes.clone())),
+            ),
+        )?)
+    } else {
+        match (&args.rows_dir, &args.file_infobase) {
+            (Some(dir), _) => {
+                if args.include_config_save {
+                    bail!("--rows-dir reads the Config table only; drop --include-config-save");
+                }
+                Some(offline_rows::activate(dir)?)
             }
-            Some(offline_rows::activate(dir)?)
-        }
-        // `--file-infobase` (#373): the file infobase's rows, its completed
-        // ConfigSave stage folded in, answer every read the same way.
-        (None, Some(path)) => {
-            if args.include_config_save {
-                bail!(
-                    "--file-infobase publishes the main configuration; drop --include-config-save"
-                );
+            // `--file-infobase` (#373): the file infobase's rows, its completed
+            // ConfigSave stage folded in, answer every read the same way.
+            (None, Some(path)) => {
+                if args.include_config_save {
+                    bail!(
+                        "--file-infobase publishes the main configuration; drop --include-config-save"
+                    );
+                }
+                Some(offline_rows::activate_shared(file_infobase::read_rows(
+                    path,
+                )?)?)
             }
-            Some(offline_rows::activate_rows(file_infobase::load(path)?)?)
-        }
-        (None, None) => {
-            if args.database.trim().is_empty() {
-                bail!("--database is required unless --rows-dir or --file-infobase is given");
+            // PostgreSQL rows are retained by the resolving operation and consumed once.
+            (None, None) if args.postgres.is_some() => {
+                if args.include_config_save {
+                    bail!("a PostgreSQL export publishes the main configuration");
+                }
+                let target = args.postgres.as_ref().expect("checked above");
+                Some(offline_rows::activate_shared(
+                    postgres_infobase::load_published(target, args.postgres_snapshot.as_ref())?,
+                )?)
             }
-            None
+            (None, None) => {
+                if args.database.trim().is_empty() {
+                    bail!("--database is required unless --rows-dir or --file-infobase is given");
+                }
+                None
+            }
         }
     };
     let legacy_adapter = MssqlLegacyAdapter::from_legacy_selector(args.source_version);
@@ -2260,7 +2726,14 @@ fn dump_config_inner(
     let write_binary_rows = to_disk && args.write_binary_rows && !args.no_binary_rows;
     // `--base`/`--sync` (#362), read before anything is written: the base may
     // be the folder's own ConfigDumpInfo.xml.
-    let incremental = incremental::IncrementalExport::load(args.base.as_deref(), args.sync)?;
+    let incremental =
+        incremental::IncrementalExport::load(args.base.as_deref(), args.sync)?.map(|plan| {
+            if hooks.native_versions {
+                plan.use_native_versions()
+            } else {
+                plan
+            }
+        });
     if incremental.is_some() {
         if !to_disk {
             bail!("--base and --sync update an output folder; an export into memory has none");
@@ -2279,7 +2752,9 @@ fn dump_config_inner(
                  --file-name, --file-name-list, --object, --include-config-save or --overwrite"
             );
         }
-        incremental::prepare_output_dir(&args.output_dir)?;
+        if !hooks.native_versions {
+            incremental::prepare_output_dir(&args.output_dir)?;
+        }
     } else if to_disk {
         prepare_output_dir(&args.output_dir, args.overwrite)?;
     }
@@ -2303,27 +2778,27 @@ fn dump_config_inner(
         crate::sql::SqlExec::detached("--rows-dir reads every row from its folder")
     } else if args.file_infobase.is_some() {
         crate::sql::SqlExec::detached("--file-infobase reads every row from the file infobase")
+    } else if args.postgres.is_some() {
+        crate::sql::SqlExec::detached("every row was read from the PostgreSQL database")
     } else if let Some(sql) = hooks.sql.clone() {
         sql
     } else {
-        crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
-            sqlcmd: args.sqlcmd.as_deref(),
-            bcp: args.bcp_executable.as_deref(),
-            server: &args.server,
-            user: args.sql_user.as_deref(),
-            password: password.as_deref(),
-            password_env: &args.sql_pwd_env,
-            trust_server_certificate: true,
-        })?
+        sql_for_export(args, password.as_deref())?
     };
 
     // `--object`: the rows of the named objects, as the editor server
     // selects them (`crate::stored_objects`), read through the view just
     // begun.
     if !args.objects.is_empty() {
-        selected_file_names.extend(crate::stored_objects::stored_rows_of(
-            &ConfigTable::active(&sql, &args.database),
+        let table = if hooks.object_recursion.is_some() && args.main_configuration {
+            ConfigTable::main(&sql, &args.database)
+        } else {
+            ConfigTable::active(&sql, &args.database)
+        };
+        selected_file_names.extend(crate::stored_objects::stored_rows_selected(
+            &table,
             &args.objects,
+            hooks.object_recursion,
         )?);
     }
 
@@ -2360,6 +2835,9 @@ fn dump_config_inner(
             incremental
                 .as_ref()
                 .filter(|_| role == MssqlConfigurationTableRole::Current),
+            hooks.object_recursion.is_some() && !args.objects.is_empty(),
+            editor_writer_scope,
+            requested_descriptor,
         )?;
         let mut dumped = dumped;
         if dumped.incremental.is_some() {
@@ -2624,6 +3102,9 @@ pub(crate) fn export_staged_state(
             Some(sink),
             // The state is the rows of the memory, not a database's tables.
             false,
+            None,
+            false,
+            None,
             None,
         )
     };
@@ -3299,6 +3780,7 @@ fn dump_table_rows_eager(
     )
 }
 
+#[derive(Default)]
 struct DumpedTable {
     rows: Vec<MssqlDumpRowManifest>,
     failed_rows: Vec<FailedDumpRow>,
@@ -3334,6 +3816,8 @@ struct DumpedRow {
 struct DumpRowContext<'a> {
     /// `--model-export`: descriptors of the modelled kinds go through it.
     model_export: Option<&'a model_export::ModelExport>,
+    /// ExternalDataSource root/child rows, which carry their own owner chain.
+    eds_export: Option<&'a eds_export::EdsExport>,
     output_dir: &'a Path,
     /// Every file of the row goes through it.
     output: &'a OutputWriter,
@@ -3344,6 +3828,8 @@ struct DumpRowContext<'a> {
     extract_module_text: bool,
     extract_metadata_xml: bool,
     collect_all_source_asset_diagnostics: bool,
+    selected_metadata_validator: Option<&'a model_export::ModelExport>,
+    requested_descriptor: Option<(&'a str, &'a model_export::ModelExport)>,
     refused_output_paths: &'a ReferenceOutputCollisions,
     module_text_paths: &'a BTreeMap<String, PathBuf>,
     source_assets: &'a BTreeMap<String, SourceAsset>,
@@ -3356,6 +3842,9 @@ struct DumpRowContext<'a> {
     metadata_command_facts: &'a Arc<BTreeMap<String, MetadataCommandReference>>,
     type_index: &'a BTreeMap<String, String>,
     type_index_collisions: &'a BTreeSet<String>,
+    /// Type ids the object carries from outside its configuration, see
+    /// MetadataTypeIndexes::foreign.
+    foreign_type_ids: &'a BTreeSet<String>,
     moxel_generated_types: &'a BTreeMap<String, String>,
     dcs_type_index: &'a DcsTypeIndex,
     object_refs: &'a BTreeMap<String, String>,
@@ -3570,6 +4059,9 @@ fn dump_table_rows_with_options_mode(
         .iter()
         .map(|row| (row.file_name.as_str(), row))
         .collect::<BTreeMap<_, _>>();
+    let eds_export = extract_metadata_xml
+        .then(|| eds_export::build(metadata_texts, source_version.as_str()))
+        .flatten();
     let refs_for_standalone =
         extract_metadata_xml || needs_standalone_refs || needs_source_layout_refs;
     let (
@@ -3690,6 +4182,7 @@ fn dump_table_rows_with_options_mode(
         references: type_index,
         reference_collisions: type_index_collisions,
         dcs: dcs_type_index,
+        foreign: foreign_type_ids,
     } = metadata_type_indexes;
     let moxel_generated_types =
         build_moxel_generated_type_index(&type_index, &type_index_collisions);
@@ -4056,6 +4549,7 @@ fn dump_table_rows_with_options_mode(
     let context = DumpRowContext {
         output: &output,
         model_export: None,
+        eds_export: eds_export.as_ref(),
         type_set_leaves: &type_set_leaves,
         output_dir,
         table,
@@ -4065,6 +4559,8 @@ fn dump_table_rows_with_options_mode(
         extract_module_text,
         extract_metadata_xml,
         collect_all_source_asset_diagnostics,
+        selected_metadata_validator: None,
+        requested_descriptor: None,
         refused_output_paths: &reference_collisions,
         module_text_paths: &module_text_paths,
         source_assets: &source_assets,
@@ -4074,6 +4570,7 @@ fn dump_table_rows_with_options_mode(
         metadata_command_facts: &metadata_refs,
         type_index: &type_index,
         type_index_collisions: &type_index_collisions,
+        foreign_type_ids: &foreign_type_ids,
         moxel_generated_types: &moxel_generated_types,
         dcs_type_index: &dcs_type_index,
         object_refs: &object_refs,
@@ -4371,6 +4868,9 @@ fn dump_table_rows_streamed(
     sink: Option<Arc<dyn FileSink>>,
     main_configuration: bool,
     incremental: Option<&incremental::IncrementalExport>,
+    selected_object_export: bool,
+    editor_writer_scope: Option<bool>,
+    requested_descriptor: Option<&str>,
 ) -> Result<DumpedTable> {
     let table = inventory_plan.role().sql_name();
     let generate_config_dump_info = inventory_plan.config_dump_info_eligible();
@@ -4405,20 +4905,90 @@ fn dump_table_rows_streamed(
     // Everything below reads the configuration an active dynamic generation
     // publishes; without one this leaves the headers and every later query
     // exactly as they were.
-    let headers = install_storage_overlay(
-        sql,
-        database,
-        table,
-        selected_file_names,
-        headers,
-        main_configuration,
-    )?;
+    let headers = if selected_object_export && main_configuration {
+        headers
+    } else {
+        install_storage_overlay(
+            sql,
+            database,
+            table,
+            selected_file_names,
+            headers,
+            main_configuration,
+        )?
+    };
     let fetch_headers_ms = elapsed_ms(headers_started);
     let mut timings = MssqlDumpTimingReport {
         fetch_headers_ms,
         fetch_headers_sqlcmd_ms: fetch_headers_ms,
         ..MssqlDumpTimingReport::default()
     };
+    // An infobase right after `infobase create`: no row at all (#469). The
+    // platform exports the default configuration it makes up for it.
+    if headers.is_empty()
+        && main_configuration
+        && generate_config_dump_info
+        && extract_metadata_xml
+        && selected_file_names.is_empty()
+    {
+        // Empty storage still owns native full-export validation. A reference
+        // containing removed rows must refuse before publishing defaults.
+        let selection = incremental
+            .map(|plan| {
+                plan.select_for_export(
+                    &BTreeMap::new(),
+                    Some(&incremental::ConfigurationNames::default()),
+                    source_version,
+                )
+            })
+            .transpose()?;
+        if incremental.is_some_and(|plan| plan.is_native()) {
+            incremental::prepare_output_dir(output_dir)?;
+        }
+        let output = match sink {
+            Some(sink) => OutputWriter::from_env_to_sink(sink),
+            None => OutputWriter::from_env().with_existing_folder(output_dir),
+        };
+        let output = if incremental.is_some() {
+            output.recording_written()
+        } else {
+            output
+        };
+        empty_configuration::write(&output, output_dir, source_version)?;
+        let (written, written_paths) = output.finish_with_written()?;
+        timings.add_output_write(&written);
+        let incremental = incremental
+            .map(|plan| {
+                plan.finish(
+                    output_dir,
+                    &written_paths,
+                    selection
+                        .as_ref()
+                        .expect("incremental selection prepared above"),
+                )
+            })
+            .transpose()?;
+        let mut source_assets = SourceAssetCompletenessReport::default();
+        source_assets.finish_inventory(source_asset_scope, true, 0);
+        let metadata_root_inventory = RootMetadataInventoryReport {
+            scope: inventory_scope,
+            candidate_set_complete: true,
+            ..RootMetadataInventoryReport::default()
+        };
+        return Ok(DumpedTable {
+            rows: Vec::new(),
+            failed_rows: Vec::new(),
+            binary_bytes: 0,
+            inflated_rows: 0,
+            module_text_rows: 0,
+            metadata_xml_rows: 0,
+            source_asset_rows: 0,
+            source_assets,
+            metadata_root_inventory,
+            timings,
+            incremental,
+        });
+    }
     let prepare_started = Instant::now();
     let prepare_cpu = process_cpu_ms();
     let mut file_names = headers
@@ -4514,7 +5084,9 @@ fn dump_table_rows_streamed(
     } else {
         None
     };
-    let broad_metadata_indexes_without_command_refs = selected_file_names.is_empty()
+    // Selected native exports validate descriptor values against the model's
+    // root/owned identities even when only one object will be converted.
+    let natural_broad_metadata_indexes = selected_file_names.is_empty()
         || selected_configuration_index_needs
             .is_some_and(SourceReferenceIndexNeeds::needs_broad_metadata_without_command_refs)
         || selected_metadata_index_needs
@@ -4527,9 +5099,14 @@ fn dump_table_rows_streamed(
                 &file_names,
                 &selected_metadata_texts,
             ));
+    let broad_metadata_indexes_without_command_refs =
+        selected_object_export || requested_descriptor.is_some() || natural_broad_metadata_indexes;
     let mut selected_configuration_body_rows = Vec::new();
-    if !broad_metadata_indexes_without_command_refs
-        && extract_metadata_xml
+    if !(if editor_writer_scope.is_some() {
+        natural_broad_metadata_indexes
+    } else {
+        broad_metadata_indexes_without_command_refs
+    }) && extract_metadata_xml
         && selected_configuration_index_needs
             .is_some_and(|needs| needs.command_refs || needs.metadata_refs)
     {
@@ -4549,6 +5126,12 @@ fn dump_table_rows_streamed(
     if selected_command_interface_refs.is_none() {
         broad_metadata_indexes = true;
     }
+    let model_writer_enabled = model_export
+        && editor_writer_scope.is_none_or(|originally_unfiltered| {
+            originally_unfiltered
+                || natural_broad_metadata_indexes
+                || selected_command_interface_refs.is_none()
+        });
     if broad_metadata_indexes && !selected_file_names.is_empty() {
         let metadata_fetch_started = Instant::now();
         metadata_rows = fetch_metadata_rows(sql, database, table)?;
@@ -4813,13 +5396,17 @@ fn dump_table_rows_streamed(
     // a run that fetched part of it stays legacy.
     let plan_started = Instant::now();
     let plan_cpu = process_cpu_ms();
-    let model_plan = (model_export && extract_metadata_xml && broad_metadata_indexes).then(|| {
-        model_export::ModelPlan::new(&metadata_rows, &index_metadata_texts, source_version)
-    });
+    let model_plan = ((model_export || selected_object_export || requested_descriptor.is_some())
+        && extract_metadata_xml
+        && broad_metadata_indexes)
+        .then(|| {
+            model_export::ModelPlan::new(&metadata_rows, &index_metadata_texts, source_version)
+        });
     // The shadow check runs the legacy converters too, so it keeps what
     // they read.
     let modelled = |kinds: &[&str]| {
-        !model_export::shadow()
+        model_writer_enabled
+            && !model_export::shadow()
             && model_plan
                 .as_ref()
                 .is_some_and(|plan| plan.models_kinds(kinds, &index_metadata_texts))
@@ -4856,6 +5443,9 @@ fn dump_table_rows_streamed(
         .iter()
         .map(|row| (row.file_name.as_str(), row))
         .collect::<BTreeMap<_, _>>();
+    let eds_export = extract_metadata_xml
+        .then(|| eds_export::build(&index_metadata_texts, source_version.as_str()))
+        .flatten();
     let index_part_started = Instant::now();
     let index_part_cpu = process_cpu_ms();
     let recalculation_refs = if extract_metadata_xml && !skip_recalculation_refs {
@@ -4917,6 +5507,7 @@ fn dump_table_rows_streamed(
         references: type_index,
         reference_collisions: type_index_collisions,
         dcs: dcs_type_index,
+        foreign: _,
     } = metadata_type_indexes;
     let moxel_generated_types =
         build_moxel_generated_type_index(&type_index, &type_index_collisions);
@@ -5231,7 +5822,11 @@ fn dump_table_rows_streamed(
         .map(|row| (row.file_name.as_str(), row))
         .collect::<BTreeMap<_, _>>();
     let source_asset_discovery_misses = source_asset_discovery_misses(
-        source_asset_metadata_texts,
+        if selected_object_export {
+            selected_metadata_texts
+        } else {
+            source_asset_metadata_texts
+        },
         &file_names.iter().map(String::as_str).collect(),
         &write_rows_by_file_name,
         &command_refs,
@@ -5460,6 +6055,19 @@ fn dump_table_rows_streamed(
     // claims its path alone is still produced.
     let mut source_assets = source_assets;
     let mut source_asset_diagnostics = source_asset_diagnostics;
+    if selected_object_export {
+        // Broad indexes supply references, not extra selected candidates.
+        source_assets.retain(|name, _| file_names.contains(name));
+        source_asset_diagnostics.retain(|name, _| {
+            file_names.contains(name)
+                && !name.strip_suffix(".0").is_some_and(|descriptor| {
+                    model_plan
+                        .as_ref()
+                        .is_some_and(|plan| plan.is_unowned_common_form(descriptor))
+                })
+        });
+    }
+
     for (file_name, message) in
         colliding_source_asset_paths(&source_assets, &source_asset_diagnostics)
     {
@@ -5488,6 +6096,57 @@ fn dump_table_rows_streamed(
         "prepare.reference_indexes",
         reference_indexes_cpu,
     );
+    // Native export info/status need the same inventory and writer as a full
+    // export, but never fetch or convert the body batches below.
+    if sink.as_ref().is_some_and(|sink| sink.inventory_only()) {
+        let blob = fetch_binary_rows(
+            sql,
+            database,
+            table,
+            &BTreeSet::from([STAGE_INVENTORY_ROW.to_owned()]),
+            false,
+        )?
+        .into_iter()
+        .find(|row| row.file_name == STAGE_INVENTORY_ROW && row.part_no == 0)
+        .ok_or_else(|| anyhow!("full Config export has no versions row"))?;
+        let output = OutputWriter::from_env_to_sink(sink.unwrap());
+        write_config_dump_info(
+            &output,
+            output_dir,
+            source_version,
+            &blob.binary,
+            VersionsBlobOrigin::MssqlConfigTable,
+            ConfigDumpInfoPartialInventoryPolicy::Fail,
+            ConfigDumpInfoInventory {
+                file_names: &file_names,
+                metadata_texts: &index_metadata_texts,
+                object_refs: &object_refs,
+                form_refs: &form_refs,
+                template_refs: &template_refs,
+                subsystem_refs: &subsystem_refs,
+                module_text_paths: &module_text_paths,
+                source_assets: &source_assets,
+                emitted_source_asset_paths: &BTreeMap::new(),
+                configuration_module_groups: &configuration_module_groups,
+            },
+        )?;
+        output.finish()?;
+        timings.prepare_indexes_ms = elapsed_ms(prepare_started);
+        return Ok(DumpedTable {
+            rows: Vec::new(),
+            failed_rows: Vec::new(),
+            binary_bytes: 0,
+            inflated_rows: 0,
+            module_text_rows: 0,
+            metadata_xml_rows: 0,
+            source_asset_rows: 0,
+            source_assets: SourceAssetCompletenessReport::default(),
+            metadata_root_inventory: RootMetadataInventoryReport::default(),
+            timings,
+            incremental: None,
+        });
+    }
+
     // `--model-export`: the descriptors of the modelled kinds are decoded
     // from their rows; names come from an index of the whole row set, so a
     // run that fetched only part of it keeps the legacy converters.
@@ -5581,9 +6240,23 @@ fn dump_table_rows_streamed(
                 let parts = child_reference_names(&inventory, &rows, &version_ids)
                     .ok()
                     .flatten()?;
+                let rows = if plan.is_native() {
+                    config_dump_info::current_versioned_names(
+                        &inventory,
+                        plan.base_row_ids().filter(|id| current.contains_key(*id)),
+                        &rows,
+                    )
+                    .ok()?
+                } else {
+                    rows
+                };
                 Some(incremental::ConfigurationNames { rows, parts })
             });
-            let selection = plan.select(&current, names.as_ref(), source_version);
+            let selection = plan.select_for_export(&current, names.as_ref(), source_version)?;
+            // Native refusal must precede even creating the output directory.
+            if plan.is_native() {
+                incremental::prepare_output_dir(output_dir)?;
+            }
             early_versions_blob = Some(blob);
             detail_ms(&mut timings, "incremental_selection", started);
             Some(selection)
@@ -5604,6 +6277,9 @@ fn dump_table_rows_streamed(
         && selection
             .as_ref()
             .is_none_or(|selection| selection.unchanged.is_empty());
+    // This path indexes no foreign references: every type it sees belongs to
+    // the configuration being written.
+    let foreign_type_ids = BTreeSet::new();
 
     // The files go to writer threads of their own, so a worker converting a
     // row does not wait on the disk (`IBCMD_RS_OUTPUT_WRITERS`). With a sink
@@ -5619,7 +6295,8 @@ fn dump_table_rows_streamed(
     };
     let context = DumpRowContext {
         output: &output,
-        model_export: model.as_ref(),
+        model_export: model.as_ref().filter(|_| model_writer_enabled),
+        eds_export: eds_export.as_ref(),
         type_set_leaves: &type_set_leaves,
         output_dir,
         table,
@@ -5629,6 +6306,8 @@ fn dump_table_rows_streamed(
         extract_module_text,
         extract_metadata_xml,
         collect_all_source_asset_diagnostics,
+        selected_metadata_validator: model.as_ref().filter(|_| selected_object_export),
+        requested_descriptor: requested_descriptor.zip(model.as_ref()),
         refused_output_paths: &reference_collisions,
         module_text_paths: &module_text_paths,
         source_assets: &source_assets,
@@ -5638,6 +6317,7 @@ fn dump_table_rows_streamed(
         metadata_command_facts: &metadata_refs,
         type_index: &type_index,
         type_index_collisions: &type_index_collisions,
+        foreign_type_ids: &foreign_type_ids,
         moxel_generated_types: &moxel_generated_types,
         dcs_type_index: &dcs_type_index,
         object_refs: &object_refs,
@@ -5774,6 +6454,24 @@ fn dump_table_rows_streamed(
         }
         Ok(())
     })?;
+    // Native object selection must also cover nested descriptors, which the
+    // top-level root inventory intentionally does not count. Diagnostics for
+    // module/body/service rows are not descriptor-conversion failures.
+    if selected_object_export
+        && let Some((_, diagnostic)) = metadata_extraction_diagnostics.iter().find(|(name, _)| {
+            selected_metadata_texts.iter().any(|row| {
+                row.file_name == **name
+                    && ((row.header.is_some() && row.kind.is_some())
+                        || is_configuration_metadata_row(row))
+            })
+        })
+    {
+        bail!(
+            "selected metadata conversion is incomplete: {} ({})",
+            diagnostic.family,
+            diagnostic.code
+        );
+    }
     for (source_row_id, reason) in &source_asset_discovery_misses {
         source_asset_completeness.record_affected_reason(source_asset_audit_entry(
             table,
@@ -6646,89 +7344,6 @@ fn dump_table_row_bytes(
         None
     };
 
-    let mut module_text_rows = 0;
-    let module_text_relative = if context.extract_module_text {
-        let started = Instant::now();
-        let module_text = match unpack_module_blob_text(&bytes) {
-            Ok(text) => Some(text),
-            Err(_) if let Some(body) = parsed_form_body.as_ref() => {
-                form_body_module_text_bytes(body)
-            }
-            Err(_) if context.module_text_paths.contains_key(file_name) => {
-                unpack_form_body_module_text(&bytes)
-                    .or_else(|| unpack_plain_text_module_body(&bytes))
-            }
-            Err(_) => None,
-        };
-        match module_text {
-            Some(_)
-                if context
-                    .refused_output_paths
-                    .module_text
-                    .contains_key(file_name) =>
-            {
-                // Two rows resolved to the identical canonical module path
-                // (`colliding_reference_output_paths`); the platform writes
-                // neither, and picking a winner would be nondeterministic
-                // between runs of this same binary. Disclosed as an opaque
-                // entry in the top-level export report, not a written file.
-                timings.module_text_cpu_ms += elapsed_ms(started);
-                None
-            }
-            Some(text) => {
-                let relative = match context.module_text_paths.get(file_name).cloned() {
-                    Some(relative) => Some(relative),
-                    // No canonical owner path. `write_binary_rows` is this
-                    // pipeline's existing signal for "raw/debug MSSQL storage
-                    // dump" (see `needs_source_layout_refs` above): that mode
-                    // keeps the historical `{table}_module_text/*.bsl`
-                    // fallback for forensic inspection. A strict source
-                    // export (`write_binary_rows == false`, i.e. `cf export`
-                    // and `infobase config export`) never takes it: the
-                    // platform does not have this path at all -- confirmed by
-                    // its absence from every native reference tree -- so
-                    // writing it here was always a debug-tool convenience
-                    // leaking into the parity-graded output, not a real
-                    // export path. Fail closed instead and disclose through
-                    // the opaque entry, matching the "not emitted" reasoning
-                    // recorded for the owning object's own metadata XML.
-                    None if context.write_binary_rows => Some(
-                        PathBuf::from(format!("{}_module_text", context.table))
-                            .join(format!("{safe_name}.bsl")),
-                    ),
-                    None => None,
-                };
-                match relative {
-                    Some(relative) => {
-                        let path = context.output_dir.join(&relative);
-                        if let Some(parent) = path.parent() {
-                            context.output.create_dir_all(parent).with_context(|| {
-                                format!("failed to create {}", parent.display())
-                            })?;
-                        }
-                        context
-                            .output
-                            .write(&path, text)
-                            .with_context(|| format!("failed to write {}", path.display()))?;
-                        module_text_rows = 1;
-                        timings.module_text_cpu_ms += elapsed_ms(started);
-                        Some(relative.to_string_lossy().replace('\\', "/"))
-                    }
-                    None => {
-                        timings.module_text_cpu_ms += elapsed_ms(started);
-                        None
-                    }
-                }
-            }
-            None => {
-                timings.module_text_cpu_ms += elapsed_ms(started);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
     let mut metadata_xml_rows = 0;
     let mut metadata_xml_diagnostic = None;
     let mut model_row = false;
@@ -6754,7 +7369,42 @@ fn dump_table_row_bytes(
                 context.type_set_leaves,
             )
         };
-        let extracted = if context
+        if let Some(validator) = context.selected_metadata_validator {
+            validator
+                .validate_descriptor_values(file_name, bytes)
+                .context("selected metadata conversion is incomplete")?;
+        }
+        let modelled = context
+            .metadata_texts_by_file_name
+            .get(file_name)
+            .and_then(|row| {
+                context
+                    .selected_metadata_validator
+                    .or(context.model_export)
+                    .and_then(|model| model.export_row(row, bytes))
+            });
+        if context.selected_metadata_validator.is_some()
+            && let Some(Err(error)) = &modelled
+            && error.is::<crate::metadata_model::export::values::UnsupportedDescriptorValue>()
+        {
+            return Err(anyhow!(
+                "selected metadata conversion is incomplete: {error}"
+            ));
+        }
+        // Choosing the legacy writer does not disable semantic validation.
+        let modelled = context.model_export.and(modelled);
+        let extracted = if let Some(eds) = context.eds_export
+            && let Some(row) = context.metadata_texts_by_file_name.get(file_name)
+            && let Some(result) = eds.export_row(file_name, row)
+        {
+            result.map_err(|_message| {
+                MetadataSourceExtractionDiagnostic::legacy_option_none(
+                    MetadataSourceFailureClass::Unknown,
+                    "ExternalDataSource",
+                    "eds_export_failed",
+                )
+            })
+        } else if context
             .refused_output_paths
             .metadata_xml
             .contains_key(file_name)
@@ -6771,17 +7421,14 @@ fn dump_table_row_bytes(
                 "output_path_collision",
             ))
         } else if let Some(row) = context.metadata_texts_by_file_name.get(file_name)
-            && let Some(modelled) = context
-                .model_export
-                .and_then(|model| model.export_row(row, bytes))
-                .and_then(|result| match result {
-                    Ok(extracted) => Some(extracted),
-                    Err(error) => {
-                        model_export::report_fallback(file_name, &error);
-                        timings.model_fallback_rows += 1;
-                        None
-                    }
-                })
+            && let Some(modelled) = modelled.and_then(|result| match result {
+                Ok(extracted) => Some(extracted),
+                Err(error) => {
+                    model_export::report_fallback(file_name, &error);
+                    timings.model_fallback_rows += 1;
+                    None
+                }
+            })
         {
             timings.model_metadata_xml_rows += 1;
             timings.model_metadata_xml_convert_us += micros(started);
@@ -6834,6 +7481,13 @@ fn dump_table_row_bytes(
         timings.metadata_xml_convert_us += micros(started).saturating_sub(shadow_us);
         match extracted {
             Ok(extracted) => {
+                if let Some((requested, validator)) = context.requested_descriptor
+                    && extracted.relative_path == Path::new(requested)
+                {
+                    // The bytes are this converter's input, never a second source
+                    // read after returning an Arc from the observational cache.
+                    validator.validate_descriptor_values(file_name, bytes)?;
+                }
                 let path = context.output_dir.join(&extracted.relative_path);
                 if let Some(parent) = path.parent() {
                     context
@@ -6881,6 +7535,7 @@ fn dump_table_row_bytes(
                 };
                 let written = write_source_asset(
                     context,
+                    file_name,
                     asset,
                     &bytes,
                     parsed_form_body.as_ref(),
@@ -6977,6 +7632,89 @@ fn dump_table_row_bytes(
             }
             None => {
                 timings.source_asset_cpu_ms += elapsed_ms(started);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut module_text_rows = 0;
+    let module_text_relative = if context.extract_module_text {
+        let started = Instant::now();
+        let module_text = match unpack_module_blob_text(&bytes) {
+            Ok(text) => Some(text),
+            Err(_) if let Some(body) = parsed_form_body.as_ref() => {
+                form_body_module_text_bytes(body)
+            }
+            Err(_) if context.module_text_paths.contains_key(file_name) => {
+                unpack_form_body_module_text(&bytes)
+                    .or_else(|| unpack_plain_text_module_body(&bytes))
+            }
+            Err(_) => None,
+        };
+        match module_text {
+            Some(_)
+                if context
+                    .refused_output_paths
+                    .module_text
+                    .contains_key(file_name) =>
+            {
+                // Two rows resolved to the identical canonical module path
+                // (`colliding_reference_output_paths`); the platform writes
+                // neither, and picking a winner would be nondeterministic
+                // between runs of this same binary. Disclosed as an opaque
+                // entry in the top-level export report, not a written file.
+                timings.module_text_cpu_ms += elapsed_ms(started);
+                None
+            }
+            Some(text) => {
+                let relative = match context.module_text_paths.get(file_name).cloned() {
+                    Some(relative) => Some(relative),
+                    // No canonical owner path. `write_binary_rows` is this
+                    // pipeline's existing signal for "raw/debug MSSQL storage
+                    // dump" (see `needs_source_layout_refs` above): that mode
+                    // keeps the historical `{table}_module_text/*.bsl`
+                    // fallback for forensic inspection. A strict source
+                    // export (`write_binary_rows == false`, i.e. `cf export`
+                    // and `infobase config export`) never takes it: the
+                    // platform does not have this path at all -- confirmed by
+                    // its absence from every native reference tree -- so
+                    // writing it here was always a debug-tool convenience
+                    // leaking into the parity-graded output, not a real
+                    // export path. Fail closed instead and disclose through
+                    // the opaque entry, matching the "not emitted" reasoning
+                    // recorded for the owning object's own metadata XML.
+                    None if context.write_binary_rows => Some(
+                        PathBuf::from(format!("{}_module_text", context.table))
+                            .join(format!("{safe_name}.bsl")),
+                    ),
+                    None => None,
+                };
+                match relative {
+                    Some(relative) => {
+                        let path = context.output_dir.join(&relative);
+                        if let Some(parent) = path.parent() {
+                            context.output.create_dir_all(parent).with_context(|| {
+                                format!("failed to create {}", parent.display())
+                            })?;
+                        }
+                        context
+                            .output
+                            .write(&path, text)
+                            .with_context(|| format!("failed to write {}", path.display()))?;
+                        module_text_rows = 1;
+                        timings.module_text_cpu_ms += elapsed_ms(started);
+                        Some(relative.to_string_lossy().replace('\\', "/"))
+                    }
+                    None => {
+                        timings.module_text_cpu_ms += elapsed_ms(started);
+                        None
+                    }
+                }
+            }
+            None => {
+                timings.module_text_cpu_ms += elapsed_ms(started);
                 None
             }
         }
@@ -10921,7 +11659,7 @@ struct MetadataStandardAttribute {
 
 struct TaskAddressingAttribute {
     child: MetadataChildObject,
-    addressing_dimension: String,
+    addressing_dimension: Option<String>,
 }
 
 struct SettingsStorageProperties {
@@ -11146,6 +11884,12 @@ struct ConstantProperties {
     choice_history_on_input: &'static str,
     data_lock_control_mode: &'static str,
     multi_line: bool,
+    /// Slots 5 and 17 of the constant's own code-27 detail record. The writer
+    /// spelled both as `false` for every constant; the matrix row
+    /// `КнстРеквизитОтрицательные` stores slot 5 `1` and
+    /// `КнстРеквизитРасшрПравка` slot 17 `1`, and the platform writes both.
+    mark_negatives: bool,
+    extended_edit: bool,
     choice_folders_and_items: &'static str,
     quick_choice: &'static str,
     data_history: &'static str,
@@ -11584,6 +12328,11 @@ struct MetadataTypeIndexes {
     references: BTreeMap<String, String>,
     reference_collisions: BTreeSet<String>,
     dcs: DcsTypeIndex,
+    /// Type ids that came from outside the exported configuration (copyinfo
+    /// of an external object). The form exporter writes a <UseAlways> path
+    /// through such a type as the raw <attribute id>/<code> pair, the way
+    /// the platform does: no configuration is there to name it.
+    foreign: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -12030,6 +12779,7 @@ struct RawGeneratedTypeSlot {
 #[derive(Clone, Copy)]
 enum RawGeneratedTypeCondition {
     HeaderIndex(usize),
+    FieldCount(usize),
     FieldPrefix(usize, &'static str),
     FieldUuid(usize),
     FieldUuidRange(usize, usize),
@@ -12047,6 +12797,7 @@ impl RawGeneratedTypeSchema {
         self.object_codes.contains(&object_code)
             && self.conditions.iter().all(|condition| match *condition {
                 RawGeneratedTypeCondition::HeaderIndex(expected) => header_index == Some(expected),
+                RawGeneratedTypeCondition::FieldCount(expected) => fields.len() == expected,
                 RawGeneratedTypeCondition::FieldPrefix(index, prefix) => {
                     field_starts_with(fields.get(index), prefix)
                 }
@@ -12197,6 +12948,25 @@ const RAW_GENERATED_TYPE_SCHEMAS: &[RawGeneratedTypeSchema] = &[
             },
             RawGeneratedTypeSlot {
                 field_index: 7,
+                generated_type: "DataProcessorManager",
+            },
+        ],
+    },
+    // Revision 16 shares its discriminator with Constant. The schema owns
+    // both its complete shape and the generated type pair positions.
+    RawGeneratedTypeSchema {
+        object_codes: &[DataProcessorRevision16Layout::OBJECT_CODE],
+        conditions: &[
+            RawGeneratedTypeCondition::HeaderIndex(DataProcessorRevision16Layout::HEADER_INDEX),
+            RawGeneratedTypeCondition::FieldCount(DataProcessorRevision16Layout::FIELD_COUNT),
+        ],
+        slots: &[
+            RawGeneratedTypeSlot {
+                field_index: DataProcessorRevision16Layout::OBJECT_TYPE_ID,
+                generated_type: "DataProcessorObject",
+            },
+            RawGeneratedTypeSlot {
+                field_index: DataProcessorRevision16Layout::MANAGER_TYPE_ID,
                 generated_type: "DataProcessorManager",
             },
         ],
@@ -12585,6 +13355,7 @@ fn respell_any_ib_ref_by_compatibility(
     if compatibility_mode_spells_any_ref(
         configuration_compatibility_mode_from_texts(texts, source_version).as_deref(),
     ) {
+        let foreign_before = std::mem::take(&mut indexes.foreign);
         merge_foreign_type_references(
             indexes,
             &ForeignReferences {
@@ -12596,6 +13367,7 @@ fn respell_any_ib_ref_by_compatibility(
                 )],
             },
         );
+        indexes.foreign = foreign_before;
     }
 }
 
@@ -12605,12 +13377,16 @@ fn merge_foreign_type_references(indexes: &mut MetadataTypeIndexes, foreign: &Fo
         if indexes.references.contains_key(&type_id) {
             continue;
         }
-        indexes
-            .references
-            .insert(type_id.clone(), reference.clone());
+        // Both spellings: a form attribute may carry the id or, in an object
+        // rebuilt from its own XML, the name the reference table resolved to.
+        indexes.foreign.insert(type_id.clone());
+        indexes.foreign.insert(reference.clone());
         // "TypeSet" names a platform type set the foreign context spells
         // differently from the built-in table (`AnyIBRef` → `AnyRef`).
         if category == "TypeSet" {
+            indexes
+                .references
+                .insert(type_id.clone(), reference.clone());
             indexes.dcs.insert(
                 type_id,
                 DcsTypeResolution::TypeSet {
@@ -12619,16 +13395,16 @@ fn merge_foreign_type_references(indexes: &mut MetadataTypeIndexes, foreign: &Fo
             );
             continue;
         }
-        let resolution = match generated_type_dcs_policy(Some(category)) {
-            GeneratedTypeDcsPolicy::KeepId => DcsTypeResolution::KeepId,
-            GeneratedTypeDcsPolicy::Type => DcsTypeResolution::Type {
-                qname: reference.clone(),
-            },
-            GeneratedTypeDcsPolicy::TypeSet => DcsTypeResolution::TypeSet {
-                qname: reference.clone(),
-            },
-        };
-        indexes.dcs.entry(type_id).or_insert(resolution);
+        // A configuration object the configuration being written does not
+        // define: its name lives only in the object's own `copyinfo`, and the
+        // platform writes such a reference as `<v8:TypeId>`, never by name.
+        // Naming it here made `cf export` of an external object disagree with
+        // the platform on every configuration reference it carries, and made
+        // the base-free compiler's own re-export disagree with its input tree.
+        indexes
+            .dcs
+            .entry(type_id)
+            .or_insert(DcsTypeResolution::KeepId);
     }
 }
 
@@ -14174,9 +14950,9 @@ fn parse_subsystem_properties_from_text(
         parse_command_group_picture_value(fields.get(5)?, object_refs)?;
     let picture_transparent_pixel = parse_metadata_picture_transparent_pixel(fields.get(5)?);
     Some(SubsystemProperties {
-        include_help_in_contents: parse_1c_bool_field(fields.get(2).copied()).unwrap_or(false),
-        include_in_command_interface: parse_1c_bool_field(fields.get(4).copied()).unwrap_or(true),
-        use_one_command: parse_1c_bool_field(fields.get(8).copied()).unwrap_or(false),
+        include_help_in_contents: parse_1c_bool_field_or_default(fields.get(2).copied(), false)?,
+        include_in_command_interface: parse_1c_bool_field_or_default(fields.get(4).copied(), true)?,
+        use_one_command: parse_1c_bool_field_or_default(fields.get(8).copied(), false)?,
         explanation: fields
             .get(6)
             .map(|field| parse_1c_synonyms(field))
@@ -14729,34 +15505,30 @@ fn parse_exchange_plan_child_objects(
         .collect::<Option<Vec<_>>>();
     let mut child_objects = child_objects?;
 
-    let generic_sections = parse_attribute_tabular_section_child_objects(
-        "ExchangePlan",
-        owner_name,
-        text,
-        uuid,
-        None,
-        type_index,
-        object_refs,
-        object_refs,
-        form_refs,
-    )
-    .into_iter()
-    .filter(|child| child.tag == "TabularSection")
-    .collect::<Vec<_>>();
-    let sections = parse_strict_tabular_sections(
+    // ExchangePlan tabular sections use the same code-11 envelope and nested
+    // attribute group as the other chart-like owners; the shared reader keeps
+    // the nested attributes on the same path as ChartOfAccounts.
+    let mut section_generated_ids = BTreeSet::new();
+    let mut section_child_ids = BTreeSet::new();
+    let sections = parse_cct_tabular_sections_indexed(
         &collections[2],
-        modern_layout,
         "ExchangePlan",
         owner_name,
-        CATALOG_TABULAR_ATTRIBUTE_GROUP_UUID,
-        generic_sections,
         type_index,
         object_refs,
+        object_refs,
         form_refs,
-        &mut child_uuids,
-        &mut root_names,
-    );
-    let sections = sections?;
+        &mut section_generated_ids,
+        &mut section_child_ids,
+    )
+    .ok()?;
+    if section_generated_ids
+        .iter()
+        .chain(section_child_ids.iter())
+        .any(|uuid| !child_uuids.insert(uuid.to_ascii_lowercase()))
+    {
+        return None;
+    }
     child_objects.extend(sections);
     Some((child_objects, emit_empty_child_objects))
 }
@@ -14902,7 +15674,7 @@ fn parse_strict_tabular_sections(
     }
 
     let mut sections = Vec::with_capacity(values.len());
-    for value in values {
+    for (section_index, value) in values.iter().enumerate() {
         let item = split_information_register_braced_fields(value)?;
         if item.len() != 3 || item.get(1)?.trim() != "1" {
             return None;
@@ -14942,9 +15714,10 @@ fn parse_strict_tabular_sections(
         let raw_header = parse_strict_code11_tabular_section_header(&section_fields)?;
         let key = raw_header.uuid.to_ascii_lowercase();
         let mut section = sections_by_uuid.remove(&key)?;
-        if !strict_metadata_headers_match(&section.header, &raw_header)
-            || !strict_metadata_child_identity_is_unique(&section, child_uuids, root_names)
-        {
+        if !strict_metadata_headers_match(&section.header, &raw_header) {
+            return None;
+        }
+        if !strict_metadata_child_identity_is_unique(&section, child_uuids, root_names) {
             return None;
         }
 
@@ -14981,13 +15754,17 @@ fn parse_strict_tabular_sections(
                     ),
                     _ => None,
                 }?;
-                strict_metadata_child_identity_is_unique(&child, child_uuids, &mut nested_names)
-                    .then_some(child)
+                if !strict_metadata_child_identity_is_unique(&child, child_uuids, &mut nested_names)
+                {
+                    return None;
+                }
+                Some(child)
             })
             .collect::<Option<Vec<_>>>()?;
         sections.push(section);
     }
-    sections_by_uuid.is_empty().then_some(sections)
+    let result = sections_by_uuid.is_empty().then_some(sections);
+    result
 }
 
 fn parse_strict_code11_tabular_section_header(fields: &[&str]) -> Option<MetadataHeader> {
@@ -16563,12 +17340,14 @@ fn parse_information_register_owner_fields<'a>(
     // Older owners stop before the slots later versions append: version 30
     // lacks the last two data-history slots, version 29 all three, version
     // 27 also both totals-slice flags. Two 8.3.27 corpora dump the missing
-    // ones as `false`, `false`, `DontUse`, `false`, `false`.
-    let missing = match (owner.len(), owner.first()?.trim()) {
-        (39, "33") => 0,
-        (37, "30") => 2,
-        (36, "29") => 3,
-        (34, "27") => 5,
+    // ones as `false`, `false`, `DontUse`, `false`, `false`. Version 32 has
+    // the 37 fields of version 30: ЗУП 3.1.18 stores 73 registers that way and
+    // 8.3.27.2214 dumps them with the same two missing slots.
+    let missing = match (owner.len(), owner.first()?.trim().parse::<u32>().ok()?) {
+        (39, 33) => 0,
+        (37, 30 | 32) => 2,
+        (36, 29) => 3,
+        (34, 27) => 5,
         _ => return None,
     };
     let generated_type_ids = owner[1..15]
@@ -19831,6 +20610,7 @@ fn parse_attribute_tabular_section_child_objects_with_declared_failure(
                 type_index,
                 object_refs,
                 metadata_object_refs,
+                form_refs,
             )
         } else if tag == "Attribute" {
             parse_metadata_child_properties(
@@ -20447,15 +21227,27 @@ fn apply_data_processor_settings_composer_types_inner(
     for child in child_objects {
         let uuid = child.header.uuid.to_ascii_lowercase();
         if expected_attributes.contains(&uuid) {
-            if child.tag != "Attribute"
-                || !child.value_types.is_empty()
-                || !matched_attributes.insert(uuid)
-            {
+            if child.tag != "Attribute" || !matched_attributes.insert(uuid) {
                 return false;
             }
-            child.value_types.push(ConstantValueType::Reference {
+            let composer_type = ConstantValueType::Reference {
                 reference: DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME.to_string(),
-            });
+            };
+            // The generic reader leaves this attribute without types, may
+            // already spell the composer, or may know only the platform
+            // identifier. All three describe the same attribute, so the check
+            // is on the outcome: exactly one composer type and nothing else.
+            let already_composed = child.value_types == [composer_type.clone()]
+                || matches!(
+                    child.value_types.as_slice(),
+                    [ConstantValueType::TypeId { type_id }]
+                        if type_id.eq_ignore_ascii_case(DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID)
+                );
+            if !child.value_types.is_empty() && !already_composed {
+                return false;
+            }
+            child.value_types.clear();
+            child.value_types.push(composer_type);
         }
         if !apply_data_processor_settings_composer_types_inner(
             &mut child.child_objects,
@@ -20601,6 +21393,11 @@ fn parse_exact_tabular_section_standard_attributes_presence(
                 // writes the same single `<xr:StandardAttribute
                 // name="LineNumber">` the other families write.
                 "ChartOfCalculationTypes" => "-100",
+                // A chart of accounts writes the `LineNumber` standard
+                // attribute with `-16`; all seven sections of the matrix
+                // chart carry it and export the same single
+                // `<xr:StandardAttribute name="LineNumber">`.
+                "ChartOfAccounts" => "-16",
                 _ => return None,
             };
             let payload = split_information_register_braced_fields(payload)?;
@@ -20737,9 +21534,11 @@ fn tabular_section_envelope_spec(owner_kind: &str) -> Option<(u32, bool, bool)> 
         // ERP УХ 3.2.12.6 `ChartsOfCalculationTypes/Начисления` (7) and
         // `.../Удержания` (3) carry `{1,<nine-field payload>,5}` and their
         // native XML writes `<LineNumberLength>5` and no `<Use>`.
-        OWNER_KIND_BUSINESS_PROCESS | "ExchangePlan" | "Task" | "ChartOfCalculationTypes" => {
-            (1, false, true)
-        }
+        OWNER_KIND_BUSINESS_PROCESS
+        | "ExchangePlan"
+        | "Task"
+        | "ChartOfCalculationTypes"
+        | "ChartOfAccounts" => (1, false, true),
         "Report" | "DataProcessor" => (0, false, false),
         _ => return None,
     })
@@ -21206,13 +22005,8 @@ fn parse_calculation_register_dimension_reference(
     if information_register_uuid_is_zero(&uuid) {
         return Some(String::new());
     }
-    let schedule = calculation_schedule?;
     let reference = unique_case_insensitive_object_reference(&uuid, object_refs)?.to_string();
-    let schedule_parts = schedule.schedule.as_deref()?.split('.').collect::<Vec<_>>();
     let parts = reference.split('.').collect::<Vec<_>>();
-    let ["InformationRegister", schedule_owner] = schedule_parts.as_slice() else {
-        return None;
-    };
     let [
         "InformationRegister",
         candidate_owner,
@@ -21222,7 +22016,24 @@ fn parse_calculation_register_dimension_reference(
     else {
         return None;
     };
-    (!dimension.is_empty() && candidate_owner == schedule_owner).then_some(reference)
+    if dimension.is_empty() {
+        return None;
+    }
+    // The register's own `<Schedule>` may be empty while a child still names
+    // a schedule dimension (the matrix does exactly that); only a present
+    // schedule constrains the owner.
+    if let Some(schedule) = calculation_schedule
+        && let Some(schedule_reference) = schedule.schedule.as_deref()
+    {
+        let schedule_parts = schedule_reference.split('.').collect::<Vec<_>>();
+        let ["InformationRegister", schedule_owner] = schedule_parts.as_slice() else {
+            return None;
+        };
+        if candidate_owner != schedule_owner {
+            return None;
+        }
+    }
+    Some(reference)
 }
 
 fn parse_register_common_child_value_types(
@@ -22590,7 +23401,7 @@ fn parse_catalog_child_properties(
     let min_value = parse_information_register_bound(payload.get(8)?)?;
     let max_value = parse_information_register_bound(payload.get(9)?)?;
     let choice_folders_and_items = catalog_choice_folders_and_items_xml(payload.get(10)?.trim())?;
-    let choice_form = parse_catalog_child_choice_form(payload.get(11)?, value_types, form_refs)?;
+    let choice_form = parse_catalog_child_choice_form(payload.get(11)?, form_refs)?;
     let quick_choice = catalog_quick_choice_xml(payload.get(12)?.trim())?;
     let fill_checking = match payload.get(13)?.trim() {
         "0" => "DontCheck",
@@ -22952,7 +23763,7 @@ fn parse_document_child_properties(
     let min_value = parse_information_register_bound(payload.get(8)?)?;
     let max_value = parse_information_register_bound(payload.get(9)?)?;
     let choice_folders_and_items = catalog_choice_folders_and_items_xml(payload.get(10)?.trim())?;
-    let choice_form = parse_document_child_choice_form(payload.get(11)?, value_types, form_refs)?;
+    let choice_form = parse_document_child_choice_form(payload.get(11)?, form_refs)?;
     let quick_choice = catalog_quick_choice_xml(payload.get(12)?.trim())?;
     let fill_checking = match payload.get(13)?.trim() {
         "0" => "DontCheck",
@@ -23173,7 +23984,6 @@ fn document_attribute_collection_is_closed(
 
 fn parse_document_child_choice_form(
     value: &str,
-    value_types: &[ConstantValueType],
     form_refs: &BTreeMap<String, FormSourceReference>,
 ) -> Option<MetadataChoiceForm> {
     let uuid = parse_uuid_field(value.trim())?;
@@ -23181,27 +23991,9 @@ fn parse_document_child_choice_form(
         return Some(MetadataChoiceForm::Empty);
     }
     let reference = information_register_form_reference(&uuid, form_refs)?;
-    let (form_owner_reference, form_name) = reference.split_once(".Form.")?;
-    if form_name.is_empty() || form_name.contains('.') {
-        return None;
-    }
-    (value_types
-        .iter()
-        .filter(|value_type| {
-            matches!(
-                value_type,
-                ConstantValueType::Reference { reference }
-                    if parse_generated_metadata_reference_owner(reference).is_some_and(|owner| {
-                        matches!(
-                            owner.kind(),
-                            GeneratedMetadataReferenceOwnerKind::Catalog
-                                | GeneratedMetadataReferenceOwnerKind::Document
-                        ) && owner.owner_reference() == form_owner_reference
-                    })
-            )
-        })
-        .count()
-        == 1)
+    // Same platform rule as the catalog reader: a form of another object is a
+    // valid choice form (matrix: a string attribute names a document form).
+    information_register_form_reference_is_valid(&reference)
         .then_some(MetadataChoiceForm::Reference(reference))
 }
 
@@ -23447,43 +24239,18 @@ fn parse_metadata_child_localized_value(value: &str) -> Option<Vec<(String, Stri
 
 fn parse_catalog_child_choice_form(
     value: &str,
-    value_types: &[ConstantValueType],
     form_refs: &BTreeMap<String, FormSourceReference>,
 ) -> Option<MetadataChoiceForm> {
     let uuid = parse_uuid_field(value.trim())?;
-    let choice_form = if information_register_uuid_is_zero(&uuid) {
-        MetadataChoiceForm::Empty
-    } else {
-        MetadataChoiceForm::Reference(information_register_form_reference(&uuid, form_refs)?)
-    };
-    let MetadataChoiceForm::Reference(reference) = &choice_form else {
-        return Some(choice_form);
-    };
-    let owner_name = catalog_choice_form_owner_name(reference)?;
-    (value_types
-        .iter()
-        .filter(|value_type| {
-            matches!(
-                value_type,
-                ConstantValueType::Reference { reference }
-                    if parse_generated_metadata_reference_owner(reference).is_some_and(|owner| {
-                        owner.kind() == GeneratedMetadataReferenceOwnerKind::Catalog
-                            && owner.name() == owner_name
-                    })
-            )
-        })
-        .count()
-        == 1)
-        .then_some(choice_form)
-}
-
-fn catalog_choice_form_owner_name(reference: &str) -> Option<&str> {
-    let (owner_name, form_name) = reference.strip_prefix("Catalog.")?.split_once(".Form.")?;
-    (!owner_name.is_empty()
-        && !owner_name.contains('.')
-        && !form_name.is_empty()
-        && !form_name.contains('.'))
-    .then_some(owner_name)
+    if information_register_uuid_is_zero(&uuid) {
+        return Some(MetadataChoiceForm::Empty);
+    }
+    let reference = information_register_form_reference(&uuid, form_refs)?;
+    // The platform accepts a form of another metadata object here: the matrix
+    // stores `Document.Документ1.Form.ФормаВыбора` on a string attribute of a
+    // catalog and a document, and native 8.3.27.2214 writes it unchanged.
+    information_register_form_reference_is_valid(&reference)
+        .then_some(MetadataChoiceForm::Reference(reference))
 }
 
 fn parse_catalog_choice_parameter_links(
@@ -24747,15 +25514,8 @@ fn parse_chart_of_accounts_properties_from_text(
     };
     // Collection 0 is the owner's own command collection -- the same
     // `0df30176-…` marker `COMMAND_COLLECTION_LIST_MARKERS` already measures
-    // as "ChartOfAccounts" -- and collection 1 holds its templates. Both were
-    // required empty, which sent every chart of accounts that owns a command
-    // or a template to the default-list-form fallback, a file without
-    // `<InternalInfo>` and without almost every property. Collection 2 stays
-    // required-empty: it is empty on all four charts of the stand and no
-    // observation names it.
-    if !collections[2].is_empty() {
-        return StrictMetadataRoot::Invalid;
-    }
+    // as "ChartOfAccounts" -- collection 1 holds its templates, and collection
+    // 2 holds its tabular sections.
 
     // A known full record requires complete properties and child ownership.
     parse_chart_of_accounts_properties(
@@ -24871,6 +25631,30 @@ fn parse_chart_of_accounts_properties(
             )
         })
         .collect::<BTreeMap<_, _>>();
+    // The platform writes the chart's tabular sections after its attributes
+    // and before the accounting/ext-dimension flags.
+    let mut section_generated_ids = BTreeSet::new();
+    let mut section_child_ids = BTreeSet::new();
+    let tabular_sections = parse_cct_tabular_sections_indexed(
+        collections.get(2)?,
+        "ChartOfAccounts",
+        &header.name,
+        type_index,
+        object_refs,
+        metadata_object_refs,
+        form_refs,
+        &mut section_generated_ids,
+        &mut section_child_ids,
+    )
+    .ok()?;
+    if section_generated_ids
+        .iter()
+        .chain(section_child_ids.iter())
+        .any(|uuid| !all_uuids.insert(uuid.to_ascii_lowercase()))
+    {
+        return None;
+    }
+    child_objects.extend(tabular_sections);
     let mut accounting_flag_names = BTreeSet::new();
     child_objects.extend(parse_chart_of_accounts_child_collection(
         collections.get(5)?,
@@ -26193,6 +26977,7 @@ fn parse_chart_of_characteristic_types_properties_from_text(
         type_index,
         object_refs,
         metadata_object_refs,
+        form_refs,
         &mut child_ids,
     )
     .map_err(|failure| {
@@ -26210,6 +26995,7 @@ fn parse_chart_of_characteristic_types_properties_from_text(
         type_index,
         object_refs,
         metadata_object_refs,
+        form_refs,
         &mut generated_ids,
         &mut child_ids,
     )
@@ -26793,6 +27579,7 @@ fn parse_cct_direct_attributes_indexed(
     type_index: &BTreeMap<String, String>,
     object_refs: &BTreeMap<String, String>,
     metadata_object_refs: &BTreeMap<String, String>,
+    form_refs: &BTreeMap<String, FormSourceReference>,
     child_ids: &mut BTreeSet<String>,
 ) -> Result<Vec<MetadataChildObject>, OwnerCollectionItemFailure> {
     let mut names = BTreeSet::new();
@@ -26816,6 +27603,7 @@ fn parse_cct_direct_attributes_indexed(
             type_index,
             object_refs,
             metadata_object_refs,
+            form_refs,
             &mut parsed_child_ids,
         )
         .ok_or_else(|| failure(owner_graph::OwnerGraphOwnedChildReason::HeaderMismatch))?;
@@ -26849,6 +27637,7 @@ fn parse_cct_attribute(
     type_index: &BTreeMap<String, String>,
     object_refs: &BTreeMap<String, String>,
     metadata_object_refs: &BTreeMap<String, String>,
+    form_refs: &BTreeMap<String, FormSourceReference>,
     child_ids: &mut BTreeSet<String>,
 ) -> Option<MetadataChildObject> {
     let item = split_information_register_braced_fields(value)?;
@@ -26877,6 +27666,7 @@ fn parse_cct_attribute(
         Some((owner_kind, owner_name, object_refs)),
         type_index,
         metadata_object_refs,
+        form_refs,
     )?;
     Some(MetadataChildObject {
         tag: "Attribute",
@@ -26915,6 +27705,7 @@ fn parse_cct_attribute_properties(
     owner_scope: Option<(&str, &str, &BTreeMap<String, String>)>,
     type_index: &BTreeMap<String, String>,
     metadata_object_refs: &BTreeMap<String, String>,
+    form_refs: &BTreeMap<String, FormSourceReference>,
 ) -> Option<MetadataChildProperties> {
     if payload.len() != 23 || payload.first()?.trim() != "27" {
         return None;
@@ -26966,9 +27757,15 @@ fn parse_cct_attribute_properties(
         )?),
         (false, None) => return None,
     };
-    if !information_register_uuid_is_zero(&choice_form_uuid) {
-        return None;
-    }
+    let choice_form = if information_register_uuid_is_zero(&choice_form_uuid) {
+        MetadataChoiceForm::Empty
+    } else {
+        let reference = information_register_form_reference(&choice_form_uuid, form_refs)?;
+        if !information_register_form_reference_is_valid(&reference) {
+            return None;
+        }
+        MetadataChoiceForm::Reference(reference)
+    };
     let fill_value =
         parse_information_register_fill_value(payload.get(19)?, type_index, metadata_object_refs)?;
     let fill_from_filling_value = information_register_bool(payload.get(20)?)?;
@@ -27014,7 +27811,7 @@ fn parse_cct_attribute_properties(
         self_close_empty_choice_parameter_refs: false,
         quick_choice: Some(catalog_quick_choice_xml(payload.get(12)?.trim())?),
         create_on_input: Some(catalog_create_on_input_xml(payload.get(21)?.trim())?),
-        choice_form: Some(MetadataChoiceForm::Empty),
+        choice_form: Some(choice_form),
         link_by_type_empty,
         link_by_type: resolved_link_by_type,
         choice_history_on_input: Some(catalog_choice_history_on_input_xml(
@@ -27050,6 +27847,7 @@ fn parse_business_process_child_properties(
     type_index: &BTreeMap<String, String>,
     object_refs: &BTreeMap<String, String>,
     metadata_object_refs: &BTreeMap<String, String>,
+    form_refs: &BTreeMap<String, FormSourceReference>,
 ) -> Option<MetadataChildProperties> {
     let mut layouts =
         metadata_object_field_candidates_around_header(text, marker_start, child_uuid)
@@ -27079,6 +27877,7 @@ fn parse_business_process_child_properties(
         )),
         type_index,
         metadata_object_refs,
+        form_refs,
     )
 }
 
@@ -27089,6 +27888,7 @@ fn parse_cct_tabular_sections_indexed(
     type_index: &BTreeMap<String, String>,
     object_refs: &BTreeMap<String, String>,
     metadata_object_refs: &BTreeMap<String, String>,
+    form_refs: &BTreeMap<String, FormSourceReference>,
     generated_ids: &mut BTreeSet<String>,
     child_ids: &mut BTreeSet<String>,
 ) -> Result<Vec<MetadataChildObject>, OwnerCollectionItemFailure> {
@@ -27228,6 +28028,7 @@ fn parse_cct_tabular_sections_indexed(
                 type_index,
                 object_refs,
                 metadata_object_refs,
+                form_refs,
                 &mut parsed_ids,
             )
             .ok_or_else(|| {
@@ -30958,6 +31759,7 @@ fn parse_task_properties_from_text(
         type_index,
         object_refs,
         metadata_object_refs,
+        form_refs,
         &mut section_generated_ids,
         &mut section_child_ids,
     )
@@ -30994,7 +31796,10 @@ fn parse_task_properties_from_text(
     let main_addressing_attribute =
         parse_task_member_reference(fields.get(26)?, object_refs, &addressing_references)?;
     if addressing.is_none()
-        && (main_addressing_attribute.is_some() || !addressing_attributes.is_empty())
+        && (main_addressing_attribute.is_some()
+            || addressing_attributes
+                .iter()
+                .any(|attribute| attribute.addressing_dimension.is_some()))
     {
         return None;
     }
@@ -31397,10 +32202,11 @@ fn parse_task_addressing_attributes(
                 metadata_object_refs,
                 form_refs,
             )?;
-            let addressing_dimension = addressing_dimension?;
             if !seen_uuids.insert(child.header.uuid.to_ascii_lowercase())
                 || !seen_names.insert(child.header.name.to_lowercase())
-                || !seen_dimensions.insert(addressing_dimension.to_lowercase())
+                || addressing_dimension
+                    .as_ref()
+                    .is_some_and(|dimension| !seen_dimensions.insert(dimension.to_lowercase()))
             {
                 return None;
             }
@@ -31491,8 +32297,14 @@ fn parse_task_wrapped_child(
     )?);
 
     let addressing_dimension = if addressing {
-        let uuid = parse_information_register_non_zero_uuid(wrapper.get(3)?)?;
-        Some(resolve_exchange_plan_index_reference(&uuid, object_refs)?)
+        let uuid = parse_information_register_uuid(wrapper.get(3)?)?;
+        if information_register_uuid_is_zero(&uuid) {
+            // The platform writes an empty `<AddressingDimension/>` for a
+            // task addressing attribute whose root has no `Addressing`.
+            None
+        } else {
+            Some(resolve_exchange_plan_index_reference(&uuid, object_refs)?)
+        }
     } else {
         None
     };
@@ -31529,7 +32341,11 @@ fn validate_task_addressing_dimensions(
     attributes: &[TaskAddressingAttribute],
 ) -> bool {
     let Some(addressing) = addressing else {
-        return attributes.is_empty();
+        // A task without `<Addressing>` still lists its addressing attributes;
+        // the platform writes each with an empty `<AddressingDimension/>`.
+        return attributes
+            .iter()
+            .all(|attribute| attribute.addressing_dimension.is_none());
     };
     let Some(register_name) = addressing.strip_prefix("InformationRegister.") else {
         return false;
@@ -31541,8 +32357,12 @@ fn validate_task_addressing_dimensions(
     attributes.iter().all(|attribute| {
         attribute
             .addressing_dimension
-            .strip_prefix(&prefix)
-            .is_some_and(|name| !name.is_empty() && !name.contains('.'))
+            .as_deref()
+            .is_none_or(|dimension| {
+                dimension
+                    .strip_prefix(&prefix)
+                    .is_some_and(|name| !name.is_empty() && !name.contains('.'))
+            })
     })
 }
 
@@ -33263,6 +34083,12 @@ fn parse_1c_bool_field(value: Option<&str>) -> Option<bool> {
     parse_1c_bool_flag(value?.trim())
 }
 
+// An absent legacy field can have a documented default. A present value
+// outside the Boolean domain is a conversion refusal, never that default.
+fn parse_1c_bool_field_or_default(value: Option<&str>, default: bool) -> Option<bool> {
+    value.map_or(Some(default), |value| parse_1c_bool_field(Some(value)))
+}
+
 fn braced_field_has_entries(field: Option<&str>) -> bool {
     split_1c_braced_fields(field.unwrap_or("{0}"), 0)
         .and_then(|fields| fields.first().map(|value| value.trim() != "0"))
@@ -33409,6 +34235,8 @@ fn parse_constant_properties_from_text(
     // `ChoiceFoldersAndItems` in `uh` `ГруппаОтчетовКИК` (slot 10 `"1"`) and
     // `QuickChoice` in `uh` `ПериодичностьОтчетностиМСФО` (slot 12 `"0"`).
     let multi_line = parse_1c_bool_flag(constant_detail_fields.get(7)?.trim())?;
+    let mark_negatives = parse_1c_bool_flag(constant_detail_fields.get(5)?.trim())?;
+    let extended_edit = parse_1c_bool_flag(constant_detail_fields.get(17)?.trim())?;
     let choice_folders_and_items =
         catalog_choice_folders_and_items_xml(constant_detail_fields.get(10)?.trim())?;
     let quick_choice = catalog_quick_choice_xml(constant_detail_fields.get(12)?.trim())?;
@@ -33475,6 +34303,8 @@ fn parse_constant_properties_from_text(
     );
 
     Some(ConstantProperties {
+        mark_negatives,
+        extended_edit,
         generated_types,
         value_types,
         tooltip,
@@ -35289,26 +36119,51 @@ fn is_http_service_url_template_text(value: &str) -> bool {
 }
 
 fn http_service_method_from_code(value: &str) -> Option<&'static str> {
+    // The platform's closed HTTPMethod enum, in its own ordinal order: the
+    // matrix stores every member and native 8.3.27.2214 writes it back.
     match value {
+        "0" => Some("CONNECT"),
+        "1" => Some("COPY"),
         "2" => Some("DELETE"),
         "3" => Some("GET"),
-        // Measured on the БСП 8.5 extension ServiceDesk (`сд_МобильноеAPI`).
+        "4" => Some("HEAD"),
+        "5" => Some("LOCK"),
+        "6" => Some("MERGE"),
+        "7" => Some("MKCOL"),
+        "8" => Some("MOVE"),
+        "9" => Some("OPTIONS"),
         "10" => Some("PATCH"),
         "11" => Some("POST"),
+        "12" => Some("PROPFIND"),
+        "13" => Some("PROPPATCH"),
         "14" => Some("PUT"),
+        "15" => Some("TRACE"),
+        "16" => Some("UNLOCK"),
+        "1000" => Some("Any"),
         _ => None,
     }
 }
 
 fn canonical_http_service_method_name(value: &str) -> Option<&'static str> {
     match value {
+        "Any" => Some("Any"),
+        "CONNECT" => Some("CONNECT"),
+        "COPY" => Some("COPY"),
         "DELETE" => Some("DELETE"),
         "GET" => Some("GET"),
         "HEAD" => Some("HEAD"),
+        "LOCK" => Some("LOCK"),
+        "MERGE" => Some("MERGE"),
+        "MKCOL" => Some("MKCOL"),
+        "MOVE" => Some("MOVE"),
         "OPTIONS" => Some("OPTIONS"),
         "PATCH" => Some("PATCH"),
         "POST" => Some("POST"),
+        "PROPFIND" => Some("PROPFIND"),
+        "PROPPATCH" => Some("PROPPATCH"),
         "PUT" => Some("PUT"),
+        "TRACE" => Some("TRACE"),
+        "UNLOCK" => Some("UNLOCK"),
         _ => None,
     }
 }
@@ -35608,33 +36463,24 @@ fn parse_common_command_properties_from_text(
     let (picture_ref, picture_load_transparent) =
         parse_common_command_picture_value(fields.get(1)?, object_refs)?;
     let picture_transparent_pixel = parse_metadata_picture_transparent_pixel(fields.get(1)?);
-    let representation = common_command_representation_xml(fields.get(2)?.trim().parse().ok()?);
+    let representation = common_command_representation_xml(fields.get(2)?.trim().parse().ok()?)?;
     let tooltip = parse_1c_synonyms(fields.get(3).copied().unwrap_or("{0}"));
     let shortcut = fields
         .get(5)
         .and_then(|field| parse_common_command_shortcut_value(field));
-    let include_help_in_contents = fields
-        .get(6)
-        .and_then(|field| parse_1c_bool_flag(field.trim()))
-        .unwrap_or(false);
+    let include_help_in_contents = parse_1c_bool_field_or_default(fields.get(6).copied(), false)?;
     let group = fields
         .get(7)
         .and_then(|field| parse_common_command_group_value(field, object_refs));
     let command_parameter_types = parse_common_command_parameter_types(fields.get(8)?, type_index);
     let parameter_use_mode =
-        common_command_parameter_use_mode_xml(fields.get(11)?.trim().parse().ok()?);
-    let modifies_data = fields
-        .get(10)
-        .and_then(|field| parse_1c_bool_flag(field.trim()))
-        .unwrap_or(false);
+        common_command_parameter_use_mode_xml(fields.get(11)?.trim().parse().ok()?)?;
+    let modifies_data = parse_1c_bool_field_or_default(fields.get(10).copied(), false)?;
     // Confirmed against the native export of a record that omits this slot
     // (`CommonCommands/ВвестиЗначенияКритериевОценкиАльтернатив.xml`, ERP
-    // УХ 3.2.12.6): the platform still writes `Auto`, and the renderer
-    // below already collapses every observed value to that same constant,
-    // so an absent slot is read as the same "no override" case a present
-    // `0` already is -- not guessed, since the two are indistinguishable
-    // in the one place this value is used. A *present* slot that fails to
-    // parse still fails closed via `?`.
+    // УХ 3.2.12.6): the platform still writes `Auto`. Keep that default only
+    // for an absent slot; present values must belong to the model's shared
+    // enum domain, including on the older command layout.
     let on_main_server_unavailable_behavior_value = match fields.get(12) {
         Some(field) => field.trim().parse::<u8>().ok()?,
         None => 0,
@@ -35642,7 +36488,7 @@ fn parse_common_command_properties_from_text(
     let on_main_server_unavailable_behavior =
         common_command_on_main_server_unavailable_behavior_xml(
             on_main_server_unavailable_behavior_value,
-        );
+        )?;
 
     Some(CommonCommandProperties {
         representation,
@@ -36180,19 +37026,22 @@ fn command_group_representation_xml(value: u8) -> &'static str {
     }
 }
 
-fn common_command_representation_xml(value: u8) -> &'static str {
-    command_group_representation_xml(value)
+fn common_command_representation_xml(value: u8) -> Option<&'static str> {
+    crate::metadata_model::common::REPRESENTATIONS
+        .iter()
+        .find_map(|(name, code)| (*code == i64::from(value)).then_some(*name))
 }
 
-fn common_command_parameter_use_mode_xml(value: u8) -> &'static str {
-    match value {
-        1 => "Multiple",
-        _ => "Single",
-    }
+fn common_command_parameter_use_mode_xml(value: u8) -> Option<&'static str> {
+    crate::metadata_model::common::PARAMETER_USE_MODES
+        .iter()
+        .find_map(|(name, code)| (*code == i64::from(value)).then_some(*name))
 }
 
-fn common_command_on_main_server_unavailable_behavior_xml(_value: u8) -> &'static str {
-    "Auto"
+fn common_command_on_main_server_unavailable_behavior_xml(value: u8) -> Option<&'static str> {
+    crate::metadata_model::common::MAIN_SERVER_UNAVAILABLE_BEHAVIORS
+        .iter()
+        .find_map(|(name, code)| (*code == i64::from(value)).then_some(*name))
 }
 
 fn command_group_category_xml(value: u8) -> &'static str {
@@ -37129,11 +37978,8 @@ fn parse_form_metadata_type_pattern(
                 )
             })
             .or_else(|| {
-                let element = split_1c_braced_fields(field, 0)?;
-                (element.first()?.trim() == r##""#""## && element.len() >= 2)
-                    .then(|| parse_uuid_field(element.get(1)?.trim()))
-                    .flatten()
-                    .map(|type_id| ConstantValueType::TypeId { type_id })
+                let type_id = metadata_type_pattern_field_type_id(field)?;
+                (!type_id.is_empty()).then_some(ConstantValueType::TypeId { type_id })
             })
         })
         .collect()
@@ -37153,6 +37999,10 @@ fn parse_metadata_type_pattern_with_builtin(
         .skip(1)
         .map(|field| {
             parse_metadata_type_pattern_element_with_builtin(field, type_index, builtin_reference)
+                .or_else(|| {
+                    let type_id = metadata_type_pattern_field_type_id(field)?;
+                    (!type_id.is_empty()).then_some(ConstantValueType::TypeId { type_id })
+                })
         })
         .collect()
 }
@@ -37237,8 +38087,10 @@ fn parse_metadata_type_pattern_element_with_builtin(
                 .cloned()
                 .or_else(|| builtin_reference(&type_id).map(ToOwned::to_owned))
             else {
-                // A type of the extended configuration, which an extension
-                // does not hold: the platform prints its identifier.
+                // A type the configuration index and the builtin table both
+                // miss: the platform prints its identifier. The substitution
+                // belongs to the pattern reader, not to this leaf, so a
+                // column- or form-scoped table still gets its turn first.
                 return extension::active()
                     .is_some()
                     .then_some(ConstantValueType::TypeId { type_id });
@@ -37354,6 +38206,9 @@ pub(super) fn builtin_type_reference(type_id: &str) -> Option<&'static str> {
                     .find_map(|(candidate, reference)| {
                         (*candidate == type_id).then_some(*reference)
                     })
+            })
+            .or_else(|| {
+                ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_reference(type_id)
             }),
     }
 }
@@ -41398,14 +42253,22 @@ fn push_task_addressing_attribute_xml(
         &child.value_types,
         type_set_leaves,
     );
+    let addressing_dimension = attribute.addressing_dimension.as_deref().unwrap_or("");
+    let addressing_dimension_xml = if addressing_dimension.is_empty() {
+        "<AddressingDimension/>".to_string()
+    } else {
+        format!(
+            "<AddressingDimension>{}</AddressingDimension>",
+            escape_xml_element_text(addressing_dimension)
+        )
+    };
     xml.push_str(&format!(
         "\t\t\t\t\t<Indexing>{indexing}</Indexing>\r\n\
-\t\t\t\t\t<AddressingDimension>{}</AddressingDimension>\r\n\
+\t\t\t\t\t{addressing_dimension_xml}\r\n\
 \t\t\t\t\t<FullTextSearch>{full_text_search}</FullTextSearch>\r\n\
 \t\t\t\t\t<DataHistory>{data_history}</DataHistory>\r\n\
 \t\t\t\t</Properties>\r\n\
 \t\t\t</AddressingAttribute>\r\n",
-        escape_xml_element_text(&attribute.addressing_dimension),
     ));
 }
 
@@ -43231,7 +44094,8 @@ fn format_common_command_parameter_type_xml_with_indent(
     }
     xml.push_str(&format!("{indent}<CommandParameterType>\r\n"));
     for value_type in types {
-        let tag_name = match value_type {
+        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 2);
+        let tag_name = match &value_type {
             ConstantValueType::ReferenceTypeSet { .. } => "TypeSet",
             // A type identifier the configuration resolves to no name is
             // echoed verbatim, exactly as a form pattern echoes one. Evidence:
@@ -43242,9 +44106,10 @@ fn format_common_command_parameter_type_xml_with_indent(
             ConstantValueType::TypeId { .. } => "TypeId",
             _ => "Type",
         };
+        let namespace_attr = metadata_type_xml_namespace_attr(&value_type);
         xml.push_str(&format!(
-            "{indent}\t<v8:{tag_name}>{}</v8:{tag_name}>\r\n",
-            escape_xml_text(&metadata_type_xml_name(value_type))
+            "{indent}\t<v8:{tag_name}{namespace_attr}>{}</v8:{tag_name}>\r\n",
+            escape_xml_text(&metadata_type_xml_name(&value_type))
         ));
     }
     xml.push_str(&format!("{indent}</CommandParameterType>\r\n"));
@@ -43487,11 +44352,17 @@ fn format_event_subscription_source_xml(
     let mut xml = format_full_metadata_source_xml("EventSubscription", header, source_version);
     let mut insert = String::from("\t\t\t<Source>\r\n");
     let source_types = sorted_event_subscription_source_types(&event_subscription.source_types);
+    let type_indent = "\t\t\t\t";
     for source_type in source_types {
-        let reference = metadata_type_xml_name(source_type);
-        let tag = event_subscription_source_type_tag(&reference);
+        let source_type = scoped_value_type(source_type, type_indent.matches('\t').count() + 1);
+        let reference = metadata_type_xml_name(&source_type);
+        let tag = match &source_type {
+            ConstantValueType::TypeId { .. } => metadata_type_xml_tag(&source_type),
+            _ => event_subscription_source_type_tag(&reference),
+        };
+        let namespace_attr = metadata_type_xml_namespace_attr(&source_type);
         insert.push_str(&format!(
-            "\t\t\t\t<v8:{tag}>{}</v8:{tag}>\r\n",
+            "{type_indent}<v8:{tag}{namespace_attr}>{}</v8:{tag}>\r\n",
             escape_xml_element_text(&reference)
         ));
     }
@@ -43663,10 +44534,10 @@ fn format_constant_source_xml(
     push_localized_property(&mut insert, "\t\t\t", "EditFormat", &constant.edit_format);
     push_localized_property(&mut insert, "\t\t\t", "ToolTip", &constant.tooltip);
     insert.push_str(&format!(
-        "\t\t\t<MarkNegatives>false</MarkNegatives>\r\n\
+        "\t\t\t<MarkNegatives>{}</MarkNegatives>\r\n\
 \t\t\t{}\r\n\
 \t\t\t<MultiLine>{}</MultiLine>\r\n\
-\t\t\t<ExtendedEdit>false</ExtendedEdit>\r\n\
+\t\t\t<ExtendedEdit>{}</ExtendedEdit>\r\n\
 \t\t\t{}\r\n\
 \t\t\t{}\r\n\
 \t\t\t<FillChecking>{}</FillChecking>\r\n\
@@ -43681,8 +44552,10 @@ fn format_constant_source_xml(
 \t\t\t<DataHistory>{}</DataHistory>\r\n\
 \t\t\t<UpdateDataHistoryImmediatelyAfterWrite>false</UpdateDataHistoryImmediatelyAfterWrite>\r\n\
 \t\t\t<ExecuteAfterWriteDataHistoryVersionProcessing>false</ExecuteAfterWriteDataHistoryVersionProcessing>\r\n",
+        xml_bool(constant.mark_negatives),
         format_simple_property_xml("Mask", &constant.mask),
         xml_bool(constant.multi_line),
+        xml_bool(constant.extended_edit),
         format_constant_bound_xml("MinValue", constant.min_value.as_deref()),
         format_constant_bound_xml("MaxValue", constant.max_value.as_deref()),
         constant.fill_checking,
@@ -45324,7 +46197,9 @@ fn push_http_service_url_template_xml(
 \t\t\t\t</Properties>\r\n",
         escape_xml_element_text(&template.template)
     ));
-    if !template.methods.is_empty() {
+    if template.methods.is_empty() {
+        xml.push_str("\t\t\t\t<ChildObjects/>\r\n");
+    } else {
         xml.push_str("\t\t\t\t<ChildObjects>\r\n");
         for method in &template.methods {
             push_http_service_method_xml(xml, method);
@@ -45512,10 +46387,16 @@ fn push_integration_service_channel_xml(
             escape_xml_element_text(&channel.header.comment)
         ));
     }
+    if channel.external_name.is_empty() {
+        xml.push_str("\t\t\t\t\t<ExternalIntegrationServiceChannelName/>\r\n");
+    } else {
+        xml.push_str(&format!(
+            "\t\t\t\t\t<ExternalIntegrationServiceChannelName>{}</ExternalIntegrationServiceChannelName>\r\n",
+            escape_xml_element_text(&channel.external_name)
+        ));
+    }
     xml.push_str(&format!(
-        "\t\t\t\t\t<ExternalIntegrationServiceChannelName>{}</ExternalIntegrationServiceChannelName>\r\n\
-\t\t\t\t\t<MessageDirection>{}</MessageDirection>\r\n",
-        escape_xml_element_text(&channel.external_name),
+        "\t\t\t\t\t<MessageDirection>{}</MessageDirection>\r\n",
         channel.message_direction
     ));
     if channel.receive_message_processing.is_empty() {
@@ -45550,11 +46431,12 @@ fn format_form_metadata_types_xml_with_indent(
     let nested2 = format!("{nested}\t");
     let mut xml = format!("{indent}<Type>\r\n");
     for value_type in value_types {
-        let tag_name = form_metadata_type_xml_tag(value_type);
-        let namespace_attr = form_metadata_type_xml_namespace_attr(value_type);
+        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 2);
+        let tag_name = form_metadata_type_xml_tag(&value_type);
+        let namespace_attr = form_metadata_type_xml_namespace_attr(&value_type);
         xml.push_str(&format!(
             "{nested}<v8:{tag_name}{namespace_attr}>{}</v8:{tag_name}>\r\n",
-            metadata_type_xml_name(value_type)
+            metadata_type_xml_name(&value_type)
         ));
     }
 
@@ -45629,11 +46511,12 @@ fn format_type_description_value_types_xml(
         // and its namespace declarations just like the attribute's own Type.
         // The generic table omits the txtedt declaration, which would leave a
         // `d5p1:TextDocument` value with an unbound prefix.
-        let tag_name = form_metadata_type_xml_tag(value_type);
-        let namespace_attr = form_metadata_type_xml_namespace_attr(value_type);
+        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 1);
+        let tag_name = form_metadata_type_xml_tag(&value_type);
+        let namespace_attr = form_metadata_type_xml_namespace_attr(&value_type);
         xml.push_str(&format!(
             "{indent}<v8:{tag_name}{namespace_attr}>{}</v8:{tag_name}>\r\n",
-            metadata_type_xml_name(value_type)
+            metadata_type_xml_name(&value_type)
         ));
     }
     if let Some(number) = value_types.iter().find_map(|value_type| match value_type {
@@ -45699,11 +46582,12 @@ fn format_metadata_types_xml_with_indent(
     let nested2 = format!("{nested}\t");
     let mut xml = format!("{indent}<Type>\r\n");
     for value_type in value_types {
-        let tag_name = metadata_type_xml_tag(value_type);
-        let namespace_attr = metadata_type_xml_namespace_attr(value_type);
+        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 2);
+        let tag_name = metadata_type_xml_tag(&value_type);
+        let namespace_attr = metadata_type_xml_namespace_attr(&value_type);
         xml.push_str(&format!(
             "{nested}<v8:{tag_name}{namespace_attr}>{}</v8:{tag_name}>\r\n",
-            metadata_type_xml_name(value_type)
+            metadata_type_xml_name(&value_type)
         ));
     }
 
@@ -45798,6 +46682,35 @@ fn metadata_type_xml_tag(value_type: &ConstantValueType) -> &'static str {
     }
 }
 
+/// A generated prefix records the declaration element's 1-based depth.
+/// Rebase schema-known generated names to that depth; canonical names keep
+/// their own prefix and namespace.
+fn scoped_type_reference(reference: &str, depth: usize) -> std::borrow::Cow<'_, str> {
+    let Some((prefix, local)) = reference.split_once(':') else {
+        return std::borrow::Cow::Borrowed(reference);
+    };
+    let generated = ibcmd_schema::metadata_storage_facts::generated_type_prefix(prefix)
+        && ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_namespace_uri_ignoring_prefix(reference).is_some();
+    let target_prefix = format!("d{depth}p1");
+    if generated && prefix != target_prefix {
+        std::borrow::Cow::Owned(format!("{target_prefix}:{local}"))
+    } else {
+        std::borrow::Cow::Borrowed(reference)
+    }
+}
+
+fn scoped_value_type(value_type: &ConstantValueType, depth: usize) -> ConstantValueType {
+    match value_type {
+        ConstantValueType::Reference { reference } => ConstantValueType::Reference {
+            reference: scoped_type_reference(reference, depth).into_owned(),
+        },
+        ConstantValueType::ReferenceTypeSet { reference } => ConstantValueType::ReferenceTypeSet {
+            reference: scoped_type_reference(reference, depth).into_owned(),
+        },
+        other => other.clone(),
+    }
+}
+
 fn form_metadata_type_xml_tag(value_type: &ConstantValueType) -> &'static str {
     match value_type {
         ConstantValueType::Reference { reference } => form_reference_type_tag(reference),
@@ -45820,96 +46733,45 @@ fn metadata_type_xml_name(value_type: &ConstantValueType) -> String {
     }
 }
 
-fn metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> &'static str {
+fn metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> String {
     match value_type {
         ConstantValueType::Reference { reference }
         | ConstantValueType::ReferenceTypeSet { reference }
             if reference == DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME =>
         {
-            DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE
+            DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE.to_owned()
         }
         ConstantValueType::Reference { reference }
         | ConstantValueType::ReferenceTypeSet { reference }
             if reference.starts_with("mxl:") =>
         {
-            r#" xmlns:mxl="http://v8.1c.ru/8.2/data/spreadsheet""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "d7p1:Chart" =>
-        {
-            r#" xmlns:d7p1="http://v8.1c.ru/8.2/data/chart""#
+            r#" xmlns:mxl="http://v8.1c.ru/8.2/data/spreadsheet""#.to_owned()
         }
         ConstantValueType::Reference { reference }
         | ConstantValueType::ReferenceTypeSet { reference } => {
-            ibcmd_xml::metadata::data_processor_builtin_type_namespace_attribute(reference)
-                .unwrap_or_default()
+            ibcmd_xml::metadata::data_processor_builtin_type_namespace_attribute_for_qname(
+                reference,
+            )
+            .unwrap_or_default()
         }
-        _ => "",
+        _ => String::new(),
     }
 }
 
-fn form_metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> &'static str {
-    match value_type {
+/// The inline binding a form body needs. SettingsComposer is root-bound;
+/// ConditionalAppearance retains its measured spelling. Other bindings use
+/// the shared XML renderer after the QName has been set from its depth.
+
+fn form_metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> String {
+    let reference = match value_type {
         ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME =>
-        {
-            ""
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "fd:FormattedDocument" =>
-        {
-            r#" xmlns:fd="http://v8.1c.ru/8.2/data/formatted-document""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "d5p1:TextDocument" =>
-        {
-            r#" xmlns:d5p1="http://v8.1c.ru/8.1/data/txtedt""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "d7p1:ConditionalAppearance" =>
-        {
-            r#" xmlns:d7p1="http://v8.1c.ru/8.3/data/entext""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "d5p1:Chart" || reference == GANTT_CHART_TYPE_REFERENCE =>
-        {
-            r#" xmlns:d5p1="http://v8.1c.ru/8.2/data/chart""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == "d5p1:FlowchartContextType" =>
-        {
-            r#" xmlns:d5p1="http://v8.1c.ru/8.2/data/graphscheme""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_REFERENCE =>
-        {
-            r#" xmlns:d5p1="http://v8.1c.ru/8.2/data/data-analysis""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == PDF_DOCUMENT_TYPE_REFERENCE =>
-        {
-            r#" xmlns:pdfdoc="http://v8.1c.ru/8.3/data/pdf""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == PLANNER_TYPE_REFERENCE =>
-        {
-            r#" xmlns:pl="http://v8.1c.ru/8.3/data/planner""#
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == GEOGRAPHICAL_SCHEMA_TYPE_REFERENCE =>
-        {
-            r#" xmlns:d5p1="http://v8.1c.ru/8.2/data/geo""#
+        | ConstantValueType::ReferenceTypeSet { reference } => reference.as_str(),
+        _ => "",
+    };
+    match reference {
+        DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME => String::new(),
+        "d7p1:ConditionalAppearance" => {
+            r#" xmlns:d7p1="http://v8.1c.ru/8.3/data/entext""#.to_owned()
         }
         _ => metadata_type_xml_namespace_attr(value_type),
     }
@@ -45942,7 +46804,9 @@ fn format_constant_type_xml(value_type: &ConstantValueType) -> String {
 }
 
 fn format_constant_type_member_xml(value_type: &ConstantValueType) -> String {
-    match value_type {
+    // MetaDataObject / Constant / Properties / Type / v8:Type.
+    let value_type = scoped_value_type(value_type, 5);
+    match &value_type {
         ConstantValueType::Boolean => "\t\t\t\t<v8:Type>xs:boolean</v8:Type>\r\n".to_string(),
         ConstantValueType::String {
             length,
@@ -45992,14 +46856,14 @@ fn format_constant_type_member_xml(value_type: &ConstantValueType) -> String {
         ),
         ConstantValueType::Reference { reference, .. } => {
             let tag = constant_reference_type_tag(reference);
-            let namespace_attr = metadata_type_xml_namespace_attr(value_type);
+            let namespace_attr = metadata_type_xml_namespace_attr(&value_type);
             format!(
                 "\t\t\t\t<v8:{tag}{namespace_attr}>{}</v8:{tag}>\r\n",
                 escape_xml_text(reference)
             )
         }
         ConstantValueType::ReferenceTypeSet { reference, .. } => {
-            let namespace_attr = metadata_type_xml_namespace_attr(value_type);
+            let namespace_attr = metadata_type_xml_namespace_attr(&value_type);
             format!(
                 "\t\t\t\t<v8:TypeSet{namespace_attr}>{}</v8:TypeSet>\r\n",
                 escape_xml_text(reference)

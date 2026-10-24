@@ -157,3 +157,90 @@ pub(crate) fn restore(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Some(SourceTree::new(entries).map_err(EdtError::source)?))
 }
+
+#[cfg(test)]
+mod module_scaffold_tests {
+    use super::*;
+    use morph1c_core::ir::{FormBody, MetadataObject, NamedFormBody, ObjectKind, Uuid};
+
+    #[test]
+    fn module_scaffold_raw_edits_remain_visible_even_with_forged_generated_hashes() {
+        let text = "#Область Current\n\n#КонецОбласти";
+        let mut config = Configuration::new();
+        let mut object = MetadataObject::new(ObjectKind::new("CommonForm"), "F", Uuid([0x37; 16]));
+        object.form_bodies.push(NamedFormBody {
+            name: "F".into(),
+            body: FormBody {
+                source_module_scaffold_edt_lf: true,
+                ..FormBody::new()
+            },
+            ordinary_body: None,
+            module: Some(text.into()),
+            help: vec![],
+            help_resources: vec![],
+        });
+        config.objects.push(object);
+        let options = ConversionOptions {
+            edt_version: "2025.2.3".into(),
+            xml_dialect: "2.21".into(),
+            runtime_version: Some("8.5.1".into()),
+        };
+        let entry = |path, bytes: Vec<u8>| {
+            SourceEntry::from_bytes(SourcePath::new(path).unwrap(), bytes).unwrap()
+        };
+        let path = "src/CommonForms/F/Module.bsl";
+        let original =
+            SourceTree::new(vec![entry("Configuration.xml", b"<native/>".to_vec())]).unwrap();
+        let generated = SourceTree::new(vec![entry(path, text.as_bytes().to_vec())]).unwrap();
+        let retained = retain(&original, generated, &options, &config).unwrap();
+        assert_eq!(
+            restore(&retained, &options, &config).unwrap(),
+            Some(original)
+        );
+        let mut lexical_only = config.clone();
+        lexical_only.objects[0].form_bodies[0]
+            .body
+            .source_module_scaffold_edt_lf = false;
+        assert_eq!(
+            semantic_digest(&lexical_only).unwrap(),
+            semantic_digest(&config).unwrap()
+        );
+        for edited in [
+            text.replace('\n', "\r\n"),
+            text.replace("Current", "Edited"),
+            format!("{text}\n// current code edit"),
+        ] {
+            let mut current = config.clone();
+            current.objects[0].form_bodies[0].module = Some(edited.clone());
+            assert_ne!(
+                semantic_digest(&current).unwrap(),
+                semantic_digest(&config).unwrap()
+            );
+            let mut manifest: serde_json::Value = serde_json::from_slice(
+                retained
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.path().as_str() == MANIFEST)
+                    .unwrap()
+                    .bytes(),
+            )
+            .unwrap();
+            manifest["generated"][path] = serde_json::json!(digest(edited.as_bytes()));
+            let mut entries = retained
+                .entries()
+                .iter()
+                .filter(|entry| ![path, MANIFEST].contains(&entry.path().as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            entries.push(entry(path, edited.into_bytes()));
+            entries.push(entry(MANIFEST, serde_json::to_vec(&manifest).unwrap()));
+            let forged = SourceTree::new(entries).unwrap();
+            assert!(
+                restore(&forged, &options, &current)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("stale provenance")
+            );
+        }
+    }
+}

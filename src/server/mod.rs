@@ -20,6 +20,7 @@
 //! its next step (`crate::cancel`) and a queued one before it starts. stdout
 //! carries the protocol only; the engine's own diagnostics go to stderr.
 
+mod apply;
 pub mod infobases;
 pub mod rpc;
 
@@ -43,7 +44,7 @@ use rpc::{RpcError, codes};
 /// served when its major is this one and its minor is not above this one
 /// (see `initialize`); the editor extension and the executable are released
 /// together, so the check catches a mismatched pair.
-pub const PROTOCOL_VERSION: (u32, u32) = (1, 0);
+pub const PROTOCOL_VERSION: (u32, u32) = (1, 4);
 
 /// The methods a client may call.
 pub const METHODS: &[&str] = &[
@@ -54,9 +55,13 @@ pub const METHODS: &[&str] = &[
     "tree/children",
     "objects/status",
     "objects/export",
+    "objects/exportPlan",
     "objects/import",
+    "objects/import/prepare",
     "source/read",
     "config/pending",
+    "config/apply",
+    "config/apply/prepare",
 ];
 
 /// The stack of the worker thread: the export walks deeply nested sources
@@ -259,6 +264,8 @@ fn work(
         settings: Settings::default(),
         entries: Vec::new(),
         sessions: HashMap::new(),
+        import_plans: HashMap::new(),
+        connection_epoch: 0,
     };
     for job in queue {
         let outcome = if job.cancel.load(Ordering::SeqCst) {
@@ -295,6 +302,18 @@ fn cancelled() -> RpcError {
 /// An operation's failure as an answer: a cancellation, an unknown object,
 /// or the failure with its causes.
 fn failure(error: anyhow::Error) -> RpcError {
+    // This state takes precedence over cancellation and never exposes paths.
+    if error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<ibcmd_filedb::Error>(),
+            Some(ibcmd_filedb::Error::Published { .. })
+        )
+    }) {
+        return RpcError::new(
+            codes::IMPORT_PUBLISHED_RECOVERY_REQUIRED,
+            "Database changes were published; backup update failed. Inspect recovery before retrying",
+        );
+    }
     if crate::cancel::is_cancelled(&error) {
         return cancelled();
     }
@@ -333,6 +352,7 @@ struct InitializeParams {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ConnectParams {
+    auth: Option<infobases::AuthMode>,
     infobase: String,
     database: Option<String>,
     user: Option<String>,
@@ -350,6 +370,8 @@ struct InfobaseParams {
 struct ChildrenParams {
     infobase: String,
     node: Option<String>,
+    #[serde(default)]
+    main_configuration: bool,
 }
 
 #[derive(Deserialize)]
@@ -358,6 +380,7 @@ struct StatusParams {
     infobase: String,
     source_dir: PathBuf,
     objects: Option<Vec<String>>,
+    version_baseline_dir: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -370,10 +393,28 @@ struct ExportParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ExportPlanParams {
+    infobase: String,
+    #[serde(default)]
+    objects: Vec<String>,
+    #[serde(default)]
+    changed: bool,
+    source_dir: PathBuf,
+    target_dir: PathBuf,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ImportParams {
     infobase: String,
     source_dir: PathBuf,
+    #[serde(default)]
     objects: Vec<String>,
+    #[serde(default)]
+    files: Vec<String>,
+    #[serde(default)]
+    changed: bool,
+    plan: Option<String>,
     #[serde(default)]
     confirm: bool,
     verify: Option<bool>,
@@ -394,6 +435,8 @@ struct State {
     entries: Vec<Entry>,
     /// Open infobases by id.
     sessions: HashMap<String, Session>,
+    import_plans: HashMap<String, (String, u64, crate::file_import::Plan)>,
+    connection_epoch: u64,
 }
 
 impl State {
@@ -415,6 +458,7 @@ impl State {
             "shutdown" => {
                 self.shutdown.store(true, Ordering::SeqCst);
                 self.sessions.clear();
+                self.import_plans.clear();
                 Ok(Value::Null)
             }
             "infobases/list" => self.list(),
@@ -422,9 +466,13 @@ impl State {
             "tree/children" => self.children(parse(params)?),
             "objects/status" => self.status(id, parse(params)?),
             "objects/export" => self.export(id, parse(params)?),
+            "objects/exportPlan" => self.export_plan(id, parse(params)?),
             "objects/import" => self.import(parse(params)?),
+            "objects/import/prepare" => self.prepare_import(parse(params)?),
             "source/read" => self.read(parse(params)?),
             "config/pending" => self.pending(parse(params)?),
+            "config/apply" => self.apply_config(parse(params)?),
+            "config/apply/prepare" => self.prepare_apply(parse(params)?),
             other => Err(RpcError::new(
                 codes::METHOD_NOT_FOUND,
                 format!("no method {other}"),
@@ -543,7 +591,15 @@ impl State {
 
     fn connect(&mut self, params: ConnectParams) -> Result<Value, RpcError> {
         let entry = self.entry(&params.infobase)?.clone();
+        if params.auth == Some(infobases::AuthMode::Windows)
+            && (params.user.is_some() || params.password.is_some())
+        {
+            return Err(RpcError::invalid_params(
+                "Windows authentication does not accept user or password",
+            ));
+        }
         let login = Login {
+            auth: params.auth,
             user: params.user.filter(|user| !user.trim().is_empty()),
             password: params.password.map(Secret::new),
         };
@@ -564,16 +620,23 @@ impl State {
             // A database of a mask: listed from now on under its own id.
             self.entries.push(session.entry.clone());
         }
+        self.connection_epoch = self.connection_epoch.wrapping_add(1);
+        self.import_plans.clear();
         self.sessions.insert(id, session);
         Ok(result)
     }
 
     fn children(&mut self, params: ChildrenParams) -> Result<Value, RpcError> {
         let session = self.session(&params.infobase)?;
-        let nodes = session
-            .configuration
-            .children(params.node.as_deref())
-            .map_err(failure)?;
+        let nodes = if params.main_configuration {
+            session
+                .configuration
+                .main_view_mut()
+                .children(params.node.as_deref())
+        } else {
+            session.configuration.children(params.node.as_deref())
+        }
+        .map_err(failure)?;
         Ok(json!({ "nodes": nodes }))
     }
 
@@ -591,11 +654,43 @@ impl State {
     fn status(&mut self, id: &Value, params: StatusParams) -> Result<Value, RpcError> {
         let progress = self.progress(id);
         let session = self.session(&params.infobase)?;
+        if let Some(baseline) = params.version_baseline_dir {
+            return serde_json::to_value(
+                session
+                    .configuration
+                    .status_with_versions(
+                        params.objects.as_deref(),
+                        &params.source_dir,
+                        &baseline,
+                        &progress,
+                    )
+                    .map_err(failure)?,
+            )
+            .map_err(|error| failure(error.into()));
+        }
         let statuses = session
             .configuration
             .status(params.objects.as_deref(), &params.source_dir, &progress)
             .map_err(failure)?;
         Ok(json!({ "objects": statuses }))
+    }
+
+    fn export_plan(&mut self, id: &Value, params: ExportPlanParams) -> Result<Value, RpcError> {
+        let progress = self.progress(id);
+        let session = self.session(&params.infobase)?;
+        serde_json::to_value(
+            session
+                .configuration
+                .prepare_editor_export(
+                    &params.objects,
+                    params.changed,
+                    &params.source_dir,
+                    &params.target_dir,
+                    &progress,
+                )
+                .map_err(failure)?,
+        )
+        .map_err(|error| failure(error.into()))
     }
 
     fn export(&mut self, id: &Value, params: ExportParams) -> Result<Value, RpcError> {
@@ -641,6 +736,7 @@ impl State {
             "path": path,
             "object": exported.object.full_name,
             "version": exported.version,
+            "files": exported.files.keys().collect::<Vec<_>>(),
             "exists": false,
         });
         if let Some(bytes) = exported.files.get(&path) {
@@ -659,7 +755,69 @@ impl State {
         Ok(result)
     }
 
+    fn prepare_import(&mut self, params: ImportParams) -> Result<Value, RpcError> {
+        let session = self.session(&params.infobase)?;
+        let ConfigSource::FileDb(target) = session.configuration.source() else {
+            return Err(RpcError::invalid_params(
+                "safe preflight currently requires a file-db connection",
+            ));
+        };
+        let plan = crate::file_import::prepare(
+            target,
+            &params.source_dir,
+            &crate::file_import::Selection {
+                files: params.files,
+                objects: params.objects,
+                changed: params.changed,
+            },
+            session.configuration.platform(),
+        )
+        .map_err(failure)?;
+        let token = uuid::Uuid::new_v4().to_string();
+        let result = json!({"plan": token, "preflight": plan.summary()});
+        // One pending confirmation per connection, bounded across the window.
+        self.import_plans
+            .retain(|_, (id, _, _)| id != &params.infobase);
+        if self.import_plans.len() >= 4 {
+            self.import_plans.clear();
+        }
+        self.import_plans
+            .insert(token, (params.infobase, self.connection_epoch, plan));
+        Ok(result)
+    }
+
     fn import(&mut self, params: ImportParams) -> Result<Value, RpcError> {
+        if let Some(token) = &params.plan {
+            if !params.confirm {
+                return Err(RpcError::new(
+                    codes::CONFIRMATION_REQUIRED,
+                    "confirm the prepared file import before publication",
+                ));
+            }
+            let (id, epoch, plan) = self.import_plans.remove(token).ok_or_else(|| {
+                RpcError::invalid_params("import preflight expired; prepare again")
+            })?;
+            if id != params.infobase || epoch != self.connection_epoch {
+                return Err(RpcError::invalid_params(
+                    "connection changed since preflight; prepare again",
+                ));
+            }
+            let session = self.session(&params.infobase)?;
+            let ConfigSource::FileDb(target) = session.configuration.source() else {
+                return Err(RpcError::invalid_params(
+                    "connection changed since preflight",
+                ));
+            };
+            let report = plan.publish(target).map_err(failure)?;
+            return Ok(
+                json!({"report": {"backend":"file-db-partial-configsave", "stagedRows":report.rows_after, "backup":report.backup}}),
+            );
+        }
+        if !params.files.is_empty() || params.changed {
+            return Err(RpcError::invalid_params(
+                "files/changed import requires objects/import/prepare",
+            ));
+        }
         if params.objects.is_empty() {
             return Err(RpcError::invalid_params("objects is empty"));
         }
@@ -674,6 +832,9 @@ impl State {
         }
         let session = self.session(&params.infobase)?;
         if let ConfigSource::RowsDir(_) = session.configuration.source() {
+            return Err(offline("objects/import", session));
+        }
+        if matches!(session.configuration.source(), ConfigSource::FileDb(_)) {
             return Err(offline("objects/import", session));
         }
         if !params.confirm {
@@ -702,6 +863,7 @@ impl State {
             source_version: Some(platform.xml_version()),
             path_prefix: prefixes,
             files: Vec::new(),
+            native_files: None,
             script_output: Some(
                 std::env::temp_dir()
                     .join("ibcmd-rs-serve")
@@ -724,6 +886,16 @@ impl State {
 
     fn pending(&mut self, params: InfobaseParams) -> Result<Value, RpcError> {
         let session = self.session(&params.infobase)?;
+        if let ConfigSource::FileDb(path) = session.configuration.source() {
+            let mut db = ibcmd_filedb::FileDb::open(path).map_err(|e| failure(e.into()))?;
+            let rows = db
+                .config_headers("CONFIGSAVE")
+                .map_err(|e| failure(e.into()))?;
+            return Ok(
+                json!({"pending": !rows.is_empty(), "stagedRows": rows.len(),
+                "conclusive": true, "needsRestructuring": null}),
+            );
+        }
         let ConfigSource::Database { sql, database } = session.configuration.source() else {
             return Err(offline("config/pending", session));
         };
@@ -752,6 +924,7 @@ fn offline(method: &str, session: &Session) -> RpcError {
                 .unwrap_or_default()
         }
         ConfigSource::Database { .. } => String::new(),
+        ConfigSource::FileDb(_) => format!("{method} is not yet available for file-db"),
     };
     RpcError::new(codes::NOT_SUPPORTED_OFFLINE, reason)
 }
@@ -764,6 +937,12 @@ fn opened_message(session: &Session) -> String {
             dir.display(),
             session.entry.platform
         ),
+        ConfigSource::FileDb(path) => format!(
+            "infobase {}: file database {} (platform {})",
+            session.entry.id,
+            path.display(),
+            session.entry.platform
+        ),
         ConfigSource::Database { database, .. } => format!(
             "infobase {}: database {database} on {} as {} (platform {})",
             session.entry.id,
@@ -771,5 +950,31 @@ fn opened_message(session: &Session) -> String {
             session.login.user.as_deref().unwrap_or("the Windows login"),
             session.entry.platform
         ),
+    }
+}
+
+#[cfg(test)]
+mod import_error_tests {
+    use super::*;
+    #[test]
+    fn source_cancel_and_published_recovery_have_distinct_safe_codes() {
+        let cancelled_source =
+            crate::mssql_source_change::SourceChangeError::Cancelled(crate::cancel::Cancelled);
+        assert_eq!(
+            failure(anyhow::Error::from(cancelled_source).context("source capture")).code,
+            codes::REQUEST_CANCELLED
+        );
+        assert_eq!(
+            failure(anyhow::anyhow!("ordinary I/O error")).code,
+            codes::OPERATION_FAILED
+        );
+        let error = ibcmd_filedb::Error::Published {
+            recovery: "/private/path-sentinel".into(),
+            error: std::io::Error::other("private-user-sentinel"),
+        };
+        let response = failure(anyhow::Error::from(error).context("import"));
+        assert_eq!(response.code, codes::IMPORT_PUBLISHED_RECOVERY_REQUIRED);
+        assert!(!response.message.contains("sentinel"));
+        assert!(response.message.contains("published"));
     }
 }

@@ -51,7 +51,12 @@ pub(crate) fn check_layout(table: &Table) -> Result<()> {
             .iter()
             .zip(LAYOUT)
             .all(|(f, (name, kind, len))| {
-                f.name == name && f.kind == kind && f.length == len && !f.nullable
+                f.name == name
+                    && f.kind == kind
+                    && f.length == len
+                    && f.precision == 0
+                    && !f.nullable
+                    && f.case_insensitive == (name == "FILENAME")
             });
     if !same {
         return Err(Error::Refused(format!(
@@ -101,6 +106,15 @@ pub(crate) fn read_records(
     table: &Table,
     with_binary: bool,
 ) -> Result<Vec<RawRecord>> {
+    read_records_bounded(pager, table, with_binary, u64::MAX)
+}
+
+pub(crate) fn read_records_bounded(
+    pager: &mut Pager<'_>,
+    table: &Table,
+    with_binary: bool,
+    max_retained_bytes: u64,
+) -> Result<Vec<RawRecord>> {
     check_layout(table)?;
     debug_assert_eq!(table.record_size(), RECORD);
     let records = Object::open(pager, table.records_page)?.read_all(pager)?;
@@ -117,15 +131,35 @@ pub(crate) fn read_records(
         Vec::new()
     };
     let mut out = Vec::new();
+    let mut remaining_bytes = max_retained_bytes;
     for (number, rec) in records.as_chunks::<RECORD>().0.iter().enumerate().skip(1) {
-        if rec[0] != 0 {
-            continue;
+        pager.check_read()?;
+        match rec[0] {
+            0 => {}
+            1 => continue,
+            flag => {
+                return Err(corrupt(format!(
+                    "Таблица {}: неизвестный флаг записи {number}: {flag:#x}",
+                    table.name
+                )));
+            }
         }
         let file_name = decode_var_string(&rec[NAME..CREATION], 128)?;
         let block = u32::from_le_bytes(rec[BINARY..BINARY + 4].try_into().unwrap());
         let len = u32::from_le_bytes(rec[BINARY + 4..BINARY + 8].try_into().unwrap());
+        // Charge the declared value BEFORE allocating/copying its chain. Aliased
+        // records consume the budget again even when their blob pointer repeats.
+        pager.materialize_record(if with_binary { len as u64 } else { 0 })?;
         let binary = if with_binary && block != 0 {
-            blob::read_chain(&blob_object, block, Some(len as u64))?
+            remaining_bytes = remaining_bytes.checked_sub(u64::from(len)).ok_or_else(|| {
+                Error::Refused(format!(
+                    "{}: retained binary exceeds its read budget",
+                    table.name
+                ))
+            })?;
+            blob::read_chain_checked(&blob_object, block, Some(len as u64), &|| {
+                pager.check_read()
+            })?
         } else if with_binary && len != 0 {
             return Err(corrupt(format!(
                 "Строка {file_name}: длина {len} без первого блока"
@@ -133,11 +167,13 @@ pub(crate) fn read_records(
         } else {
             Vec::new()
         };
+        let part_no = u32::try_from(unpack_decimal(&rec[PARTNO..RECORD], 10)?)
+            .map_err(|_| corrupt(format!("Строка {file_name}: PARTNO вне диапазона u32")))?;
         out.push(RawRecord {
             number: number as u32,
             row: ConfigRow {
                 file_name,
-                part_no: unpack_decimal(&rec[PARTNO..RECORD], 10)? as u32,
+                part_no,
                 creation: Timestamp(rec[CREATION..MODIFIED].try_into().unwrap()),
                 modified: Timestamp(rec[MODIFIED..ATTRIBUTES].try_into().unwrap()),
                 attributes: unpack_decimal(&rec[ATTRIBUTES..DATASIZE], 5)? as u32,
@@ -268,4 +304,306 @@ pub(crate) fn reindex(
     let content = index::rebuild(&old, pager.page_size(), entries)?;
     index_object.rewrite(pager, &content)?;
     pager.flush_header()
+}
+
+#[cfg(all(test, unix))]
+mod read_budget_tests {
+    use super::*;
+    use crate::{FileDb, ReadLimits};
+    use std::{
+        fs,
+        io::Read,
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+    };
+
+    struct Fixture {
+        root: PathBuf,
+        file: PathBuf,
+    }
+    impl std::ops::Deref for Fixture {
+        type Target = std::path::Path;
+        fn deref(&self) -> &Self::Target {
+            &self.file
+        }
+    }
+    impl AsRef<std::path::Path> for Fixture {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.file
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                let _ = fs::remove_dir_all(&self.root);
+            }
+        }
+    }
+
+    fn reserve_fixture_directory(mut candidate: impl FnMut() -> PathBuf) -> Fixture {
+        for _ in 0..128 {
+            let root = candidate();
+            match fs::create_dir(&root) {
+                Ok(()) => {
+                    return Fixture {
+                        file: root.join("1Cv8.1CD"),
+                        root,
+                    };
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("cannot reserve test fixture directory: {error}"),
+            }
+        }
+        panic!("test fixture directory collision retry limit");
+    }
+
+    #[test]
+    fn fixture_reservation_retries_collision_without_adopting_existing_directory() {
+        let first = fresh_fixture();
+        fs::write(&first.file, b"existing fixture").unwrap();
+        let mut attempts = 0;
+        let second = reserve_fixture_directory(|| {
+            attempts += 1;
+            if attempts == 1 {
+                first.root.clone()
+            } else {
+                first.root.join("retry")
+            }
+        });
+        assert_eq!(attempts, 2);
+        assert_ne!(first.root, second.root);
+        assert_eq!(fs::read(&first.file).unwrap(), b"existing fixture");
+        assert!(!second.file.exists());
+    }
+
+    fn fresh_fixture() -> Fixture {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        reserve_fixture_directory(|| {
+            std::env::temp_dir().join(format!(
+                "ibcmd-budget-{}-{stamp}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ))
+        })
+    }
+
+    // This deliberately malformed fixture repeats one blob pointer in two live
+    // records. Its physical file size does not bound cloned row materialization.
+    fn aliased_fixture() -> (Fixture, u64) {
+        let path = fresh_fixture();
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/file-infobase/tiny.1CD.gz");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(fixture).unwrap())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        fs::write(&path, bytes).unwrap();
+        let db = FileDb::open(&path).unwrap();
+        let table = db.table("CONFIG").unwrap().clone();
+        drop(db);
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let mut pager = Pager::new(file).unwrap();
+        let mut object = Object::open(&mut pager, table.records_page).unwrap();
+        let mut records = object.read_all(&mut pager).unwrap();
+        let source = records
+            .as_chunks::<RECORD>()
+            .0
+            .iter()
+            .skip(1)
+            .find(|r| {
+                r[0] == 0 && u32::from_le_bytes(r[BINARY + 4..BINARY + 8].try_into().unwrap()) > 0
+            })
+            .unwrap()
+            .to_vec();
+        let size = u32::from_le_bytes(source[BINARY + 4..BINARY + 8].try_into().unwrap()) as u64;
+        assert!(records.len() >= 3 * RECORD);
+        for (index, record) in records
+            .as_chunks_mut::<RECORD>()
+            .0
+            .iter_mut()
+            .enumerate()
+            .skip(1)
+        {
+            if index <= 2 {
+                record.copy_from_slice(&source);
+            } else {
+                record[0] = 1;
+            }
+        }
+        object.rewrite(&mut pager, &records).unwrap();
+        drop(pager);
+        (path, size)
+    }
+    fn limits(bytes: u64, records: usize) -> ReadLimits {
+        ReadLimits {
+            max_records: records,
+            max_binary_bytes: bytes,
+            max_object_bytes: 256 * 1024 * 1024,
+        }
+    }
+    #[test]
+    fn aliases_are_charged_before_second_blob_allocation() {
+        let (path, size) = aliased_fixture();
+        let original = fs::read(&path).unwrap();
+        let rows = FileDb::open(&path).unwrap().config_rows("CONFIG").unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].binary, rows[1].binary);
+        let mut reader = FileDb::from_file_with_limits(
+            fs::File::open(&path).unwrap(),
+            limits(size, 100_000),
+            || Ok(()),
+        )
+        .unwrap();
+        assert!(
+            reader
+                .config_rows("CONFIG")
+                .unwrap_err()
+                .to_string()
+                .contains("binary materialization limit")
+        );
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+    #[test]
+    fn reader_limits_and_cancellation_cover_initialization_and_records() {
+        let (path, _) = aliased_fixture();
+        let tables = FileDb::open(&path).unwrap().tables().count();
+        let mut budget = limits(u64::MAX, tables + 1);
+        let mut reader =
+            FileDb::from_file_with_limits(fs::File::open(&path).unwrap(), budget, || Ok(()))
+                .unwrap();
+        assert!(
+            reader
+                .config_rows("CONFIG")
+                .unwrap_err()
+                .to_string()
+                .contains("record limit")
+        );
+        drop(reader);
+        budget.max_object_bytes = 0;
+        let error =
+            FileDb::from_file_with_limits(fs::File::open(&path).unwrap(), budget, || Ok(()))
+                .err()
+                .unwrap();
+        assert!(error.to_string().contains("object materialization limit"));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let check = cancelled.clone();
+        let mut reader = FileDb::from_file_with_limits(
+            fs::File::open(&path).unwrap(),
+            limits(u64::MAX, 100),
+            move || {
+                if check.load(Ordering::SeqCst) {
+                    Err(crate::Error::Refused("cancelled".into()))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap();
+        cancelled.store(true, Ordering::SeqCst);
+        assert!(
+            reader
+                .config_rows("CONFIG")
+                .unwrap_err()
+                .to_string()
+                .contains("cancelled")
+        );
+    }
+    // Find the single-descriptor threshold rather than encoding incidental FAT,
+    // descriptor-parser or metadata bookkeeping constants into this regression.
+    fn initialization_budget(path: &std::path::Path) -> u64 {
+        let mut low = 0;
+        let mut high = limits(u64::MAX, 100_000).max_object_bytes;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let mut budget = limits(u64::MAX, 100_000);
+            budget.max_object_bytes = middle;
+            match FileDb::from_file_with_limits(fs::File::open(path).unwrap(), budget, || Ok(())) {
+                Ok(_) => high = middle,
+                Err(error) => {
+                    assert!(
+                        error.to_string().contains("object materialization limit"),
+                        "{error}"
+                    );
+                    low = middle + 1;
+                }
+            }
+        }
+        low
+    }
+    #[test]
+    fn descriptor_aliases_consume_cumulative_budget_during_initialization() {
+        let (path, _) = aliased_fixture();
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let mut pager = Pager::new(file).unwrap();
+        let mut root = Object::open(&mut pager, 2).unwrap();
+        let data = root.read_all(&mut pager).unwrap();
+        let old_head = crate::blob::read_chain(&data, 1, None).unwrap();
+        let first = u32::from_le_bytes(old_head[36..40].try_into().unwrap());
+        let descriptor = crate::blob::read_chain(&data, first, None).unwrap();
+        let mut head = old_head[..36].to_vec();
+        head[32..36].copy_from_slice(&1u32.to_le_bytes());
+        head.extend_from_slice(&2u32.to_le_bytes());
+        let (control, refs) =
+            crate::blob::build(&[&head, &descriptor], data.len() / crate::blob::BLOCK).unwrap();
+        assert_eq!(refs[1].0, 2);
+        root.rewrite(&mut pager, &control).unwrap();
+        drop(pager);
+        let mut budget = limits(u64::MAX, 100_000);
+        let slack = descriptor.len() as u64 / 2;
+        assert!(
+            slack > 4,
+            "slack covers the extra root pointer, not a second descriptor"
+        );
+        budget.max_object_bytes = initialization_budget(&path) + slack;
+        // Passing non-aliased control at the EXACT budget used below. Without
+        // this, a low budget could fail on common root/FAT overhead instead.
+        let reader =
+            FileDb::from_file_with_limits(fs::File::open(&path).unwrap(), budget, || Ok(()))
+                .unwrap();
+        assert_eq!(reader.tables().count(), 1);
+        drop(reader);
+
+        head[32..36].copy_from_slice(&2u32.to_le_bytes());
+        head.extend_from_slice(&2u32.to_le_bytes());
+        let (aliased, refs) =
+            crate::blob::build(&[&head, &descriptor], data.len() / crate::blob::BLOCK).unwrap();
+        assert_eq!(refs[1].0, 2);
+        assert_eq!(
+            control.len(),
+            aliased.len(),
+            "same root-object extent and FAT allocation"
+        );
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let mut pager = Pager::new(file).unwrap();
+        Object::open(&mut pager, 2)
+            .unwrap()
+            .rewrite(&mut pager, &aliased)
+            .unwrap();
+        drop(pager);
+        assert_eq!(FileDb::open(&path).unwrap().tables().count(), 1);
+        let error =
+            FileDb::from_file_with_limits(fs::File::open(&path).unwrap(), budget, || Ok(()))
+                .err()
+                .unwrap();
+        assert!(error.to_string().contains("object materialization limit"));
+    }
 }

@@ -14,6 +14,7 @@ members = [
     "crates/ibcmd-edt",
     "crates/ibcmd-number-format",
     "crates/ibcmd-filedb",
+    "crates/ibcmd-postgres",
 ]
 resolver = "3"
 exclude = ["crates/ibcmd-edt/vendor/morph1c"]
@@ -27,6 +28,7 @@ mssql-live-tests = []
 research-corpus-tests = []
 
 [dependencies]
+rmcp = { version = "=3.6.0", default-features = false, features = ["server", "transport-io"] }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 flate2 = "1.1"
@@ -35,7 +37,7 @@ flate2 = "1.1"
 # Browser lookups for `host\instance`. Windows logins (SSPI) are added below.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tiberius = { version = "0.13", default-features = false, features = ["tds73", "rustls", "sql-browser-tokio"] }
-tokio = { version = "1", default-features = false, features = ["rt", "net", "time"] }
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "sync", "macros", "rt-multi-thread"] }
 tokio-util = { version = "0.7", default-features = false, features = ["compat"] }
 ibcmd-core = { path = "crates/ibcmd-core" }
 ibcmd-cf = { path = "crates/ibcmd-cf" }
@@ -44,6 +46,7 @@ ibcmd-v8 = { path = "crates/ibcmd-v8" }
 ibcmd-xml = { path = "crates/ibcmd-xml" }
 ibcmd-edt = { path = "crates/ibcmd-edt" }
 ibcmd-filedb = { path = "crates/ibcmd-filedb" }
+ibcmd-postgres = { path = "crates/ibcmd-postgres" }
 # The process allocator, installed in main.rs.
 mimalloc = "0.1.52"
 quick-xml = "0.38"
@@ -60,6 +63,9 @@ walkdir = "2.5"
 # src/settings.rs; the maintained successor of serde_yaml.
 yaml_serde = "0.10"
 
+[dev-dependencies]
+rmcp = { version = "=3.6.0", default-features = false, features = ["client", "transport-child-process"] }
+
 [target.'cfg(unix)'.dependencies]
 # Original source directory-relative NOFOLLOW reads; same pinned fs package.
 rustix = { version = "1.1.5", features = ["fs"] }
@@ -67,7 +73,7 @@ rustix = { version = "1.1.5", features = ["fs"] }
 [target.'cfg(windows)'.dependencies]
 # Integrated (Windows) logins to SQL Server through SSPI.
 tiberius = { version = "0.13", default-features = false, features = ["winauth"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_SystemInformation"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_SystemInformation"] }
 
 # Fast rebuilds while iterating on a compiler against the lab corpora:
 # `cargo build --profile iter` -> target/iter/ibcmd-rs.exe.

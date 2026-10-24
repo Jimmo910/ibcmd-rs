@@ -59,6 +59,7 @@ use crate::ConvertError;
 
 mod mobile_signature;
 use mobile_signature::ConvertedSignatureFrame;
+mod parent_distribution;
 
 /// The root object's kind (the only kind this pass touches).
 const CONFIGURATION_KIND: &str = "Configuration";
@@ -195,6 +196,26 @@ pub fn attach_config_ext(
     // BOM/CRLF не трогаются — это не модуль). Файл отсутствует → честно нет (no-op).
     for entry in CONFIG_BLOB_SLOTS {
         let path = dir.join(blob_file_name(format, entry));
+        let distribution = dir.join(parent_distribution::EDT_FILE);
+        if format == Format::Edt && entry.0 == "ParentConfigurations" && distribution.is_file() {
+            // EDT 2026.1 keeps the supplier list as a model beside the
+            // descriptor; both spellings at once would be two sources.
+            if path.is_file() {
+                return Err(read_err(
+                    entry.0,
+                    "both ParentConfigurations.bin and Configuration.distr are present".into(),
+                ));
+            }
+            let bytes = parent_distribution::bin_from_distr(&read_bytes(&distribution)?)
+                .map_err(|reason| read_err(entry.0, reason))?;
+            obj.config_blobs.push(ConfigBlob {
+                slot: entry.0.to_string(),
+                bytes,
+                mobile_signature_lexical: None,
+                edt_distribution: true,
+            });
+            continue;
+        }
         if !path.is_file() {
             if format == Format::Edt
                 && entry.0 == "MobileClientSignature"
@@ -265,6 +286,7 @@ pub fn attach_config_ext(
             slot: entry.0.to_string(),
             bytes,
             mobile_signature_lexical: lexical,
+            edt_distribution: false,
         });
     }
 
@@ -585,6 +607,19 @@ pub fn write_config_ext(
         } else {
             std::borrow::Cow::Borrowed(blob.bytes.as_slice())
         };
+        if format == Format::Edt && blob.edt_distribution {
+            let distr = parent_distribution::distr_from_bin(&bytes)
+                .map_err(|reason| write_err(obj, reason))?
+                .ok_or_else(|| {
+                    write_err(
+                        obj,
+                        "ParentConfigurations read from Configuration.distr no longer has a                          witnessed Configuration.distr spelling"
+                            .into(),
+                    )
+                })?;
+            crate::form_write::write_file(&dir.join(parent_distribution::EDT_FILE), &distr)?;
+            continue;
+        }
         crate::form_write::write_file(&dir.join(blob_file_name(format, entry)), &bytes)?;
         if format == Format::Edt && blob.slot == "MobileClientSignature" {
             if let Some(canonical) = canonical_empty_mobile_signature(&blob.bytes, Format::Designer)
@@ -1226,6 +1261,7 @@ mod tests {
             slot: "StandaloneConfigurationContent".into(),
             bytes: vec![1, 2, 3],
             mobile_signature_lexical: None,
+            edt_distribution: false,
         });
         let err = write_config_ext(Format::Designer, Path::new("/nope/Configuration.xml"), &obj)
             .unwrap_err();

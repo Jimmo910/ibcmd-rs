@@ -3864,6 +3864,14 @@ fn native_form_attribute_use_always(
     let mut paths = Vec::with_capacity(fields.len());
     for field in fields {
         let field = field.trim();
+        // `44/-8`: the pair the platform writes when it cannot name the path
+        // through the attribute's type (`form_use_always_numeric_path` in the
+        // exporter). The id is the attribute's own, so the record carries the
+        // bare code as its one segment.
+        if let Some(entry) = form_use_always_numeric_field(field, &attribute.id) {
+            paths.push(entry);
+            continue;
+        }
         let resolved = data_paths
             .resolve(field)
             .ok_or_else(|| anyhow!("<UseAlways> names {field}, which the writer cannot place"))?;
@@ -3969,6 +3977,27 @@ fn target_always_used_constants() -> Vec<String> {
 
 /// Whether one resolved segment of a `<UseAlways>` path takes a shape the
 /// corpus showed: `{0,<uuid>}` or a bare negative standard-attribute code.
+/// `<attribute id>/<code>` -- the pair the platform writes for a `<UseAlways>`
+/// path it cannot name through the attribute's type, with the attribute's own
+/// id in front. The id has to be the attribute's; the code is a signed integer.
+///
+/// Evidence: `Обработка все типы`, `tests/fixtures/external/all_types`,
+/// attributes `Реквизит43` (`id=44`) and `Реквизит44` (`id=45`), both of a
+/// `ДокументОбъект` type: the platform writes `<Field>44/-8</Field>` and
+/// `<Field>45/-8</Field>` in its own dump of the object.
+fn form_use_always_numeric_field(field: &str, attribute_id: &str) -> Option<String> {
+    let (id, code) = field.split_once('/')?;
+    if id.trim() != attribute_id {
+        return None;
+    }
+    let code = code.trim();
+    let digits = code.strip_prefix('-').unwrap_or(code);
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("{{1,{{{code}}}}}"))
+}
+
 fn form_use_always_segment_is_measured(segment: &str) -> bool {
     if form_attribute_save_segment_uuid(segment).is_some() {
         return true;

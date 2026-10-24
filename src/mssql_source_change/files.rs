@@ -21,6 +21,8 @@ struct Stamp {
     identity: FileIdentity,
     length: u64,
     modified: SystemTime,
+    #[cfg(windows)]
+    created: SystemTime,
     #[cfg(unix)]
     changed: (i64, i64),
 }
@@ -80,6 +82,8 @@ fn stamp(file: &File, regular: bool) -> Result<Stamp, SourceChangeError> {
             identity,
             length: metadata.len(),
             modified: metadata.modified().map_err(io)?,
+            #[cfg(windows)]
+            created: metadata.created().map_err(io)?,
             #[cfg(unix)]
             changed,
         })
@@ -224,12 +228,17 @@ impl RootAnchor {
         #[cfg(any(unix, windows))]
         {
             let original = stamp(&file, true)?;
+            let ancestors = parents
+                .iter()
+                .map(|parent| stamp(parent, false))
+                .collect::<Result<Vec<_>, _>>()?;
             Ok(OriginalFile {
                 root: self.clone(),
                 relative: relative.to_owned(),
                 file: Mutex::new(file),
                 original,
-                _parents: parents,
+                parents,
+                ancestors,
             })
         }
     }
@@ -268,10 +277,48 @@ pub(super) struct OriginalFile {
     file: Mutex<File>,
     original: Stamp,
     // Ancestors are retained while this original can be consumed.
-    _parents: Vec<File>,
+    parents: Vec<File>,
+    ancestors: Vec<Stamp>,
+}
+
+/// Detached cache evidence; selected OriginalSource capabilities still retain handles.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct OriginalFileWitness {
+    file: Stamp,
+    ancestors: Vec<Stamp>,
 }
 
 impl OriginalFile {
+    pub(super) fn witness(&self) -> OriginalFileWitness {
+        OriginalFileWitness {
+            file: self.original.clone(),
+            ancestors: self.ancestors.clone(),
+        }
+    }
+
+    pub(super) fn require_witness(
+        &self,
+        expected: &OriginalFileWitness,
+    ) -> Result<(), SourceChangeError> {
+        if self.witness() != *expected {
+            return Err(SourceChangeError::FileChangedDuringRead(
+                self.relative.clone(),
+            ));
+        }
+        self.require_ancestors()
+    }
+
+    fn require_ancestors(&self) -> Result<(), SourceChangeError> {
+        for (parent, expected) in self.parents.iter().zip(&self.ancestors) {
+            if stamp(parent, false)? != *expected {
+                return Err(SourceChangeError::FileChangedDuringRead(
+                    self.relative.clone(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn identity(&self) -> FileIdentity {
         self.original.identity
     }
@@ -305,7 +352,9 @@ impl OriginalFile {
         retain: bool,
         mut external_hash: Option<&mut Sha256>,
     ) -> Result<([u8; 32], Option<Arc<Vec<u8>>>), SourceChangeError> {
+        crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
         self.root.require_path()?;
+        self.require_ancestors()?;
         let mut file = self.file.lock().map_err(io)?;
         if stamp(&file, true)? != self.original {
             return Err(SourceChangeError::FileChangedDuringRead(
@@ -326,6 +375,7 @@ impl OriginalFile {
         let mut hash = Sha256::new();
         let mut buffer = [0_u8; 64 * 1024];
         loop {
+            crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
             let count = file.read(&mut buffer).map_err(io)?;
             if count == 0 {
                 break;
@@ -352,6 +402,7 @@ impl OriginalFile {
             ));
         }
         drop(file);
+        self.require_ancestors()?;
         self.require_name()?;
         Ok((hash.finalize().into(), bytes.map(Arc::new)))
     }
@@ -360,7 +411,7 @@ impl OriginalFile {
         // Current name/ancestor inspection is separate from reading the held
         // original; a matching replacement's bytes cannot adopt its identity.
         let current = self.root.open_file(&self.relative)?;
-        if current.original != self.original {
+        if current.witness() != self.witness() {
             return Err(SourceChangeError::FileChangedDuringRead(
                 self.relative.clone(),
             ));

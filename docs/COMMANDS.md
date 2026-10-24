@@ -182,20 +182,27 @@ ibcmd infobase config import files --base-dir=<каталог> [--partial] [--no
 — к форме `Catalogs/Товары/Forms/ФормаЭлемента.xml`), файлы корневого `Ext` —
 к конфигурации. Что записывается:
 
-- файл описания объекта — строка описания;
+- файл описания объекта загружает объект целиком, как штатная загрузка: его
+  описание и все его файлы, которые есть в каталоге, вместе с вложенными
+  объектами (`Catalogs/Валюты.xml` — модули, справку и формы справочника;
+  правка неперечисленного модуля тоже попадает в загрузку);
 - модуль, форма (`Form.xml` или `Form/Module.bsl`), макет, справка, права
   роли, предопределённые данные и другие файлы `Ext` — строка, которая из них
   собирается. Описание объекта при этом остаётся строкой базы (штатная
-  загрузка перезаписывает и его).
+  загрузка перезаписывает его теми же байтами).
+
+Как ведёт себя штатный `ibcmd` 8.5.1.1529 в каждом случае, записано в
+[docs/import/import-files.md](import/import-files.md).
 
 Объект собирается из строк базы и файлов каталога, поэтому:
 
 | Параметр, условие | Как обрабатывается |
 |---|---|
 | `--base-dir=<каталог>` | Обязателен. Файл вне каталога (в том числе через `..`) не загружается, код −1. |
-| `--partial` | В каталоге только часть файлов конфигурации. Достаточно перечисленных файлов и файлов описания их объектов (для модуля формы — `Forms/<форма>.xml`, сам `Form.xml` не нужен). Без `--partial` каталог должен быть полной выгрузкой: если в нём нет `Configuration.xml`, отказ с кодом 1 (что делает штатный `ibcmd` с таким каталогом без `--partial`, не измерено). |
+| `--partial` | «Разрешить частичный набор файлов объектов метаданных». Файл из списка, которого нет в каталоге, пропускается (если не осталось ни одного — успех, ConfigSave не меняется); тела объекта, загружаемого целиком, которых нет в каталоге, остаются строками базы. Без `--partial` штатный `ibcmd` такие строки удаляет; ibcmd-rs удалять не умеет и отказывает (код 1), если в базе есть такое тело. Каталог может быть неполным и без `--partial`; достаточно перечисленных файлов и файлов описания их объектов (для модуля формы — `Forms/<форма>.xml`, сам `Form.xml` не нужен). |
 | `--no-check` | Не проверять перед записью. По умолчанию, как у обычной загрузки, утилита выгружает моделью конфигурацию, какой она станет, и сравнивает с каталогом перечисленные файлы (только их); расхождение отменяет загрузку, код −1. `--no-verify` ibcmd-rs делает то же, `--verify` подтверждает проверку. |
-| файла нет в каталоге | Отказ, код 1: удаление файлов и объектов частичной загрузкой пока не переносится. |
+| файла нет в каталоге | С `--partial` пропускается, как у штатного `ibcmd`. Без него отказ, код 1: штатный удалил бы строку файла, удаление частичной загрузкой пока не переносится. |
+| в ConfigSave уже есть подготовленная загрузка | Отказ, код 1: штатный `ibcmd` добавляет к ней загружаемые файлы, а ibcmd-rs записывает ConfigSave заново. Примените загрузку (`config apply`) или загрузите каталог целиком. |
 | `Configuration.xml` в списке | Отказ, код 1: штатный `ibcmd` в этом случае загружает конфигурацию целиком; загрузите каталог командой `infobase config import`. |
 | новый объект (его нет в базе) | Отказ, код 1: для него нужен `Configuration.xml`. |
 | нет файла описания объекта или файл не относится ни к одному объекту (`ConfigDumpInfo.xml`) | Отказ, код 1, до подключения к базе. |
@@ -205,14 +212,14 @@ ibcmd infobase config import files --base-dir=<каталог> [--partial] [--no
 Сообщения — как у штатного `ibcmd`: `[INFO] Импорт файлов конфигурации из
 XML...`, `[INFO] Импорт файлов конфигурации из XML успешно завершен`, при
 ошибке строки `[ERROR] Загрузка невозможна: …` и `[ERROR] Импорт файлов
-конфигурации из XML завершен с ошибкой`. Справки штатного `ibcmd` по
-`--base-dir`, `--partial` и `--no-check` в проекте нет; их смысл здесь взят
-из лабораторных запусков штатной команды (`docs/apply/native-apply-trace.md`,
-`docs/apply/restructuring.md`). Проверено без базы: тест
-`tests/import_files.rs` загружает правку модуля и описания из `.cf`
-платформы (`--script-only` по строкам из каталога, см.
-`mssql-stage-source-objects --file`) и выгружает результат; на SQL Server и
-штатным `config apply` эта команда пока не проверялась.
+конфигурации из XML завершен с ошибкой`. Смысл параметров снят со штатного
+`ibcmd` 8.5.1.1529 ([docs/import/import-files.md](import/import-files.md)).
+Проверено без базы: тест `tests/import_files.rs` загружает правку модуля и
+описания из `.cf` платформы (`--script-only` по строкам из каталога, см.
+`mssql-stage-source-objects --file`) и выгружает результат. На SQL Server
+(БСП 8.5, две базы из одного `.cf`) выгрузка того, что подготовили штатный
+`import files` и ibcmd-rs, совпадает во всех 9 156 файлах для модуля и для
+описания справочника.
 
 ### Сохранение конфигурации в файл .cf
 
@@ -253,12 +260,26 @@ infobase config repair`), если в конфигурации нет строк
 load`) и совпадение её выгрузки с выгрузкой исходной базы. Сохранение
 расширения (`--extension`) не поддерживается (код 1).
 
+### Загрузка конфигурации из файла .cf
+
+```
+ibcmd infobase config load [параметры] <файл.cf>
+```
+
+Элементы файла записываются как есть в подготовку загрузки (ConfigSave):
+по строке на элемент, с теми же сжатыми байтами, плюс строка `deleted` со
+списком строк Config, которых в файле нет. Применяет загрузку штатный
+`config apply`. Работает для файловой базы (`--db-path`), PostgreSQL и
+SQL Server. Проверено на SQL Server 2025: `.cf` БСП, загруженный поверх
+маленькой конфигурации и применённый штатным `config apply` 8.5.1, штатный
+`config export` выгружает тождественно исходникам БСП.
+
 ### Подключение к базе
 
 | Параметр | Что задаёт |
 |---|---|
-| `--db-path=<каталог>`, `--database-path` | Файловая информационная база: каталог с `1Cv8.1CD` (или сам файл). Только для `config export` и `config import`; вместе с `--dbms`, `--db-server`, `--db-name` не указывается. См. [Файловые базы](#файловые-базы). |
-| `--dbms=MSSQLServer` | Тип СУБД. Из серверных поддерживается только `MSSQLServer`. |
+| `--db-path=<каталог>`, `--database-path` | Файловая информационная база: каталог с `1Cv8.1CD` (или сам файл). Для `config export`, `config import`, `config save` и `config load`; вместе с `--dbms`, `--db-server`, `--db-name` не указывается. См. [Файловые базы](#файловые-базы). |
+| `--dbms=MSSQLServer` | Тип СУБД: `MSSQLServer`; для `config export`, `config import` и `config load` также `PostgreSQL` (см. [PostgreSQL](#postgresql)). |
 | `--db-server=<сервер>`, `--database-server` | Сервер: `server`, `server\instance`, `server/instance` (как пишет штатный `ibcmd`), `server,port`. По умолчанию — из настроек, иначе `localhost`. |
 | `--db-name=<база>`, `--database-name` | Имя базы данных. |
 | `--db-user=<логин>`, `--database-user` | Логин SQL Server. Без него — вход Windows. |
@@ -273,6 +294,34 @@ load`) и совпадение её выгрузки с выгрузкой ис�
 Оба написания имён (`--db-server` и `--database-server`) и обе формы значения
 (`--x=значение` и `--x значение`) равноправны.
 
+### PostgreSQL
+
+`config export`, `config import` и `config load` работают с базой на PostgreSQL через свой
+клиент, без платформы и без библиотек PostgreSQL:
+
+```
+ibcmd infobase config export --dbms=PostgreSQL --db-server=pg01 --db-name=demo --db-user=postgres /srv/export/demo
+ibcmd infobase config import --dbms=PostgreSQL --db-server=pg01 --db-name=demo --db-user=postgres /srv/export/demo
+```
+
+- `--db-server`: `host`, `host:port` или `host port=N` (порт по умолчанию 5432).
+- Пароль (`--db-pwd`, `IBCMD_DB_PSW`) нужен, только если его спрашивает сервер:
+  поддерживаются вход без пароля, cleartext, MD5 и SCRAM-SHA-256. TLS нет.
+- Выгружается таблица `config` с законченной подготовкой из `configsave`,
+  как для SQL Server.
+- Загрузка подготавливает в `configsave` всю конфигурацию, как штатная
+  загрузка: строки, собранные из XML, или строки базы с перенесёнными
+  правками дерева, и строку `deleted`. Запись идёт одной транзакцией.
+  Сеансы базы при этом не проверяются и база не блокируется: подготовка
+  строится по `config` до записи в `configsave`, поэтому на время загрузки
+  с базой никто не должен работать и никакая другая операция с
+  конфигурацией (загрузка, применение, обновление) не должна выполняться.
+  Применяет загрузку штатный `ibcmd infobase config apply`. Перед записью
+  подготовка проверяется выгрузкой (`--no-verify` отключает проверку).
+- `--base`/`--sync` работают, как для SQL Server. Расширения, `import files`
+  и остальные команды на PostgreSQL не поддерживаются. Формат и замеры:
+  [docs/evidence/postgres-storage-20261022.md](evidence/postgres-storage-20261022.md).
+
 ### Файловые базы
 
 `--db-path` указывает файловую базу формата 8.3.8 (`1Cv8.1CD`): платформа и
@@ -280,8 +329,14 @@ load`) и совпадение её выгрузки с выгрузкой ис�
 
 ```
 ibcmd infobase config export --db-path=/srv/ib/demo /srv/export/demo
+ibcmd infobase config export --db-path=/srv/ib/demo --extension=МоёРасширение /srv/export/extension
 ibcmd infobase config import --db-path=/srv/ib/demo /srv/export/demo
+ibcmd infobase config save --db-path=/srv/ib/demo /srv/export/demo.cf
 ```
+
+- **Сохранение в .cf** (`config save`) пишет строки, которые публикует
+  выгрузка: `CONFIG` с законченной подготовкой из `CONFIGSAVE`; с `--db` —
+  один `CONFIG`. Базу не изменяет.
 
 - **Выгрузка** читает таблицу `CONFIG`, а законченную подготовку загрузки в
   `CONFIGSAVE` публикует вместо строк с теми же именами — как для SQL Server.
@@ -296,12 +351,20 @@ ibcmd infobase config import --db-path=/srv/ib/demo /srv/export/demo
   проверяется выгрузкой (ключ `--no-verify` отключает проверку).
 - База должна быть закрыта: открытую платформой или сервером `ibsrv` базу
   загрузка не трогает и сразу отказывает. Пока идёт загрузка (от чтения базы
-  до записи), платформа базу не откроет. Запись идёт в копию файла с теми же
-  правами и владельцем; прежний файл остаётся рядом как
-  `1Cv8.1CD.ibcmd-rs.bak` (хранится одна, последняя копия). Если рядом
-  остался `1Cv8.1CD.ibcmd-rs.tmp` прерванной записи, загрузка отказывает,
-  пока его не удалят. Файл, принадлежащий другому пользователю, загружается
-  только от его имени.
+  до записи), платформа базу не откроет. Запись идёт в копию файла; на Unix
+  сохраняются права, владелец и группа. На Windows данные копируются только
+  при совпадении владельца, группы и списка разрешений DACL; различие
+  останавливает запись до копирования. SACL и метки безопасности эта проверка
+  не охватывает. Прежний файл остаётся рядом как
+  `1Cv8.1CD.ibcmd-rs.bak` (хранится одна, последняя копия). Остатки
+  `1Cv8.1CD.ibcmd-rs.tmp` или `1Cv8.1CD.ibcmd-rs.bak.new` останавливают
+  следующую загрузку. Не удаляйте их вслепую: остановите работающую запись,
+  проверьте identity каталога и файлов и сохраните нужные поколения для
+  восстановления. Если публикация базы прошла, а обновление backup завершилось
+  ошибкой, новая база уже записана, прежний `.bak` сохранён, а `.bak.new`
+  содержит базу до записи; ошибка требует проверки восстановления до повтора,
+  а не означает отмену или отсутствие изменений. Если сохранить владельца
+  и права нельзя, загрузка отказывает.
 - Загрузка пишет базы с локалью `en_US_POSIX` и `ru_RU` (так их создаёт
   `ibcmd infobase create` в английском и русском окружении): ключи индекса
   зависят от локали, другие не измерены, и такую базу загрузка не трогает.
@@ -311,7 +374,14 @@ ibcmd infobase config import --db-path=/srv/ib/demo /srv/export/demo
   обновление штатной платформой.
 - Имена строк вне проверенного набора символов (`0-9 A-Z a-z - . / _`, длина
   до 43) загрузка не пишет, а отказывает: ключ индекса таких имён не измерен.
-- Применение, сохранение (`config save`), `import files` и расширения
+- **Расширение** выгружается по имени через `--extension`: измерен профиль
+  8.3.27.2214 / XML 2.20. Читается активный CAS-образ или подготовленная
+  стадия выбранного расширения; остальные расширения в дерево не попадают.
+  Платформа не запускается, база не меняется. Неизвестный профиль реестра,
+  повреждённый CAS, неполная стадия и next-generation реестр отклоняются до
+  публикации результата. `--base`, `--sync` и экспорт всех расширений этим
+  маршрутом не поддерживаются.
+- Применение, сохранение (`config save`), `import files` и загрузку расширений
   файловой базы пока выполняет штатный `ibcmd` (ibcmd-rs отказывает с кодом 1).
 - Версию платформы файловой базы можно задать в настройках записью базы без
   сервера, где имя — маска пути к каталогу базы.
@@ -331,6 +401,20 @@ ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 ^
 
 Если логин указан, а пароля нет нигде, утилита отказывает с подсказкой.
 
+Полная запись файловой базы поддерживается на Unix и Windows. На Unix
+временный файл, резервные копии, публикация и очистка привязаны к дескриптору
+родительского каталога. На Windows открытые дескрипторы предков блокируют их
+переименование и удаление; reparse points отклоняются, идентичность файла
+проверяется по открытому дескриптору. Частичная загрузка `import files` пока
+требует Unix. Другие ОС отказывают до записи; выгрузка остаётся доступной.
+Замена предка после проверки не перенаправляет операции в подставной каталог.
+На Unix advisory lock не защищает от процесса того же UID, меняющего
+конечные имена файлов без соблюдения блокировки:
+проверка identity и rename не являются одной операцией filesystem CAS.
+После переименования предка путь в отчёте/recovery error может устареть;
+восстановление должно проверить identity каталога и файлов, а не доверять
+новому содержимому прежнего абсолютного пути.
+
 ### Параметры выгрузки
 
 | Параметр | Что задаёт |
@@ -339,20 +423,19 @@ ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 ^
 | `--threads=<n>`, `-T <n>` | Число потоков выгрузки: по умолчанию — число ядер, но не больше 16; явно — до 64. |
 | `--force` | Принимается. Непустой каталог, как и у штатного `ibcmd`, не перезаписывается (кроме выгрузки с `--base` или `--sync`). |
 | `--ignore-unresolved-refs` | Принимается для совместимости. |
-| `--base=<файл>`, `-b <файл>` | `ConfigDumpInfo.xml` предыдущей выгрузки: выгружаются только объекты, версия (`configVersion`) которых отличается от указанной в файле, и `ConfigDumpInfo.xml` всей конфигурации (если что-то переименовано — вся конфигурация). Каталог может содержать предыдущую выгрузку, файлы остальных объектов не записываются. Подробности — [ниже](#инкрементальная-выгрузка---base---sync). |
-| `--sync` | Синхронизировать каталог с конфигурацией: после выгрузки удалить файлы, которых нет в полной выгрузке (удалённых и переименованных объектов, исчезнувших модулей и форм). Без `--base` выгружается вся конфигурация. |
+| `--base=<файл>`, `-b <файл>` | Только изменённые/новые строки и ConfigDumpInfo. При отсутствии изменений ничего не записывается; удаление/переименование требует полной выгрузки (rc255). |
+| `--sync` | Обновить существующую выгрузку по её ConfigDumpInfo. Удаление/переименование требует полной выгрузки (rc255). Вместе с `--base` не допускается (rc2). |
 
-### Инкрементальная выгрузка (`--base`, `--sync`)
+### Инкрементальная выгрузка custom API (`--base`, `--sync`)
 
 ```
-ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 --db-name=MyBase ^
+ibcmd-rs infobase-config-export --dbms=MSSQLServer --db-server=sql01 --db-name=MyBase ^
   --base=C:\export\MyBase\ConfigDumpInfo.xml --sync C:\export\MyBase
 ```
 
-Что изменилось, утилита определяет по версиям строк конфигурации, как
-задача [#362](https://github.com/Untru/ibcmd-rs/issues/362) описывает штатные
-параметры (вывод и поведение штатного `ibcmd` с `--base` и `--sync` в
-репозитории пока не сняты): строка `versions` таблицы Config хранит версию
+Следующие правила сохраняют контракт custom API `infobase-config-export` и
+`mssql-dump-config`. Native CLI отличается: см. Native export queries (#362)
+ниже. Что изменилось, утилита определяет по версиям строк конфигурации: строка `versions` таблицы Config хранит версию
 каждой строки конфигурации, а `ConfigDumpInfo.xml` выгрузки перечисляет их
 (`<Metadata name="…" id="…" configVersion="…">`; вложенные `<Metadata>` —
 реквизиты и команды объекта — отдельных версий не имеют).
@@ -414,19 +497,19 @@ ibcmd infobase config export --dbms=MSSQLServer --db-server=sql01 --db-name=MyBa
 - режимы `server`, `eventlog`, `config`, `extension`, `mobile-app`,
   `mobile-client`, `session`, `lock`, `binary-data-storage`;
 - команды `infobase create`, `dump`, `restore`, `clear`, `replicate`;
-- `infobase config check`, `load`, `reset`, `repair`,
+- `infobase config check`, `reset`, `repair`,
   `support`, `data-separation`, `extension`, `generation-id`, `sign`;
-- `infobase config export info|status|objects|all-extensions`,
-  `infobase config import all-extensions` (вывод `export info`,
-  `status` и `objects` штатного `ibcmd` пока не снят, поэтому они не
-  повторяются);
+- `infobase config export all-extensions` и
+  `infobase config import all-extensions`;
 - параметры выгрузки `--file`, `--archive`, а также `--base` и `--sync`
   вместе с `--extension`; загрузки `--out`, `--extension` (и у
-  `import files`); применения
+  `import files` и `config load`); применения
   `--extension`, `--sqlcmd`; сохранения `--extension`;
   общие `--pid`, `--remote`;
-- применение, сохранение, `import files` и расширения файловых баз
-  (`--db-path`); СУБД кроме `MSSQLServer`.
+- применение и загрузка расширений файловых баз (`--db-path`);
+  частичная загрузка `import files` из файловой базы на Windows;
+  СУБД кроме `MSSQLServer` и `PostgreSQL` (у PostgreSQL поддержаны
+  `config export`, `config import` и `config load`).
 
 ### Вывод и коды возврата
 
@@ -911,6 +994,16 @@ ibcmd-rs convert edt-project returned-xml --source-format edt --target-format xm
 указанием пути. Подробнее: [границы адаптера](edt/morph1c-adoption.md) и
 [лабораторная сверка](edt/oracle.md).
 
+Сведения о поставке (`Ext/ParentConfigurations.bin`) EDT 2026.1 хранит в
+проекте как `src/Configuration/Configuration.distr`. При EDT → XML такой файл
+становится `ParentConfigurations.bin` с элементами в порядке `.distr`, как в
+экспорте самого EDT. Порядок исходной выгрузки EDT не хранит, поэтому от
+штатного файла результат отличается только порядком элементов. При обратном
+проходе снова пишется `.distr`. Принимаются конфигурации без поставщика и с
+одним поставщиком, а также режимы объектов, встреченные в настоящих проектах;
+файл другого вида отклоняется. Из XML конвертер по-прежнему пишет
+`ParentConfigurations.bin`.
+
 ### Расширения конфигурации
 
 | Команда | Что делает |
@@ -1019,3 +1112,36 @@ ibcmd-rs convert edt-project returned-xml --source-format edt --target-format xm
 |---|---|
 | `module-blob-pack` | Собрать хранимое тело общего модуля из текста BSL. |
 | `versions-blob-patch` | Поправить строку `versions` таблицы Config под записанные изменения. |
+
+
+### Native export queries (#362)
+
+`ibcmd-rs infobase config export info [--out=<directory>]` reads the published
+main configuration through the same filedb/SQL view as full export. Stdout is
+ConfigDumpInfo XML without a BOM; `--out` requires an existing directory and
+writes BOM-prefixed `ConfigDumpInfo.xml` there. Inventory generation skips the
+object-body conversion batches; preparing its shared indexes may read bodies.
+
+`... export status --base=<ConfigDumpInfo.xml> [--out=<file>] [--short]`
+compares stored versions, independently of the custom editor's byte-diff status.
+Unchanged stdout is empty. Changed entries are `added: <name>` or
+`modified: <name>` (`A:` / `M:` with `--short`). A removed or renamed reference
+requires `modified: all`. Output files contain a UTF-8 BOM, even with no changes.
+
+`... export objects --out=<directory> [--recursive] <full-names...>` exports
+only selected descriptors and their own bodies. Owned forms/templates and the
+Configuration's top-level children are included with `--recursive`.
+ConfigDumpInfo is not included. Output paths containing links/reparse points
+are rejected; unknown objects are resolved before any output files are written.
+Extensions and archives remain explicitly unsupported on these new commands.
+
+Native 8.5.1.1592 measurements supersede the earlier unmeasured drop-in claims
+above: `--base` and `--sync` are mutually exclusive (rc2). Unchanged `--base`
+creates no output directory; unchanged `--sync` preserves file mtimes. Native
+`--sync` requires an existing export directory and reads its ConfigDumpInfo.
+Both forms refuse deletion/rename with rc255 and require a full export.
+The custom `infobase-config-export` / `mssql-dump-config` API retains its
+existing combined base+sync and full-fallback/pruning behavior.
+
+Own minimal native snapshots and exact expected bytes are in
+`tests/fixtures/native-export-commands/manifest.json`. They contain no ERP data.

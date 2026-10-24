@@ -315,14 +315,14 @@ fn serve_speaks_the_protocol_and_its_lifecycle() {
     assert_eq!(server.error("initialize", json!({})), -32602);
     let refused = server.call("initialize", json!({"protocolVersion": "2.0"}));
     assert_eq!(refused["error"]["code"], -32010);
-    assert_eq!(refused["error"]["data"]["serverProtocolVersion"], "1.0");
+    assert_eq!(refused["error"]["data"]["serverProtocolVersion"], "1.4");
     assert_eq!(
-        server.error("initialize", json!({"protocolVersion": "1.1"})),
+        server.error("initialize", json!({"protocolVersion": "1.5"})),
         -32010
     );
 
     let initialized = server.ok("initialize", corpus.initialize_params());
-    assert_eq!(initialized["protocolVersion"], "1.0");
+    assert_eq!(initialized["protocolVersion"], "1.4");
     assert_eq!(initialized["serverInfo"]["name"], "ibcmd-rs");
     assert_eq!(
         initialized["serverInfo"]["version"],
@@ -334,6 +334,7 @@ fn serve_speaks_the_protocol_and_its_lifecycle() {
         "tree/children",
         "objects/status",
         "objects/export",
+        "objects/exportPlan",
         "objects/import",
         "source/read",
         "config/pending",
@@ -434,6 +435,47 @@ fn serve_speaks_the_protocol_and_its_lifecycle() {
     let mut server = Server::start(&corpus);
     server.ok("initialize", corpus.initialize_params());
     assert_eq!(server.finish(false), 1);
+}
+
+#[test]
+fn windows_auth_rejects_supplied_credentials_before_user_normalization() {
+    let corpus = Corpus::new("windows-auth");
+    let mut server = Server::start(&corpus);
+    server.ok("initialize", corpus.initialize_params());
+    for credentials in [
+        json!({"user": ""}),
+        json!({"user": " \t "}),
+        json!({"user": "reader"}),
+        json!({"password": ""}),
+        json!({"password": "synthetic-test-password"}),
+    ] {
+        let mut params = credentials;
+        params["infobase"] = json!("ep");
+        params["auth"] = json!("windows");
+        let response = server.call("infobases/connect", params);
+        assert_eq!(response["error"]["code"], -32602);
+        assert_eq!(
+            response["error"]["message"],
+            "Windows authentication does not accept user or password"
+        );
+    }
+    // Rows fixtures verify the protocol contract, not a live Windows/SQL login.
+    for params in [
+        json!({"infobase": "ep", "auth": "windows"}),
+        json!({"infobase": "ep", "user": " "}),
+        json!({"infobase": "ep", "auth": "sql", "user": "reader"}),
+    ] {
+        server.ok("infobases/connect", params);
+    }
+    assert_eq!(
+        server.error(
+            "infobases/connect",
+            json!({"infobase": "ep", "auth": "sql", "user": " "})
+        ),
+        -32602
+    );
+    server.ok("shutdown", Value::Null);
+    assert_eq!(server.finish(true), 0);
 }
 
 #[test]
@@ -539,6 +581,12 @@ fn serve_exports_objects_as_the_command_line_does() {
             let read = server.ok("source/read", json!({"infobase": id, "path": path}));
             assert_eq!(read["exists"], true, "{id}: {path}");
             assert_eq!(read["path"], json!(path));
+            // Состав файлов принадлежит той же выгрузке, что и прочитанные байты.
+            let files = read["files"].as_array().expect("состав файлов объекта");
+            assert!(files.contains(&json!(path)));
+            for file in files {
+                assert!(expected.contains_key(file.as_str().unwrap()));
+            }
             assert!(content(&read) == *bytes, "{id}: source/read {path}");
         }
         let missing = server.ok(
@@ -921,4 +969,326 @@ fn serve_rereads_an_object_when_versions_changes() {
 
     assert_eq!(server.ok("shutdown", Value::Null), Value::Null);
     assert_eq!(server.finish(true), 0);
+}
+
+#[cfg(unix)]
+fn file_import_corpus(tag: &str) -> (Corpus, PathBuf, PathBuf) {
+    let corpus = Corpus::new(tag);
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase");
+    let db = corpus.root.join("file-db");
+    fs::create_dir_all(&db).unwrap();
+    let mut bytes = Vec::new();
+    flate2::read::GzDecoder::new(fs::File::open(fixtures.join("tiny.1CD.gz")).unwrap())
+        .read_to_end(&mut bytes)
+        .unwrap();
+    fs::write(db.join("1Cv8.1CD"), bytes).unwrap();
+    fs::write(
+        &corpus.settings,
+        "[[database]]\nname='demo'\nplatform='8.5.1'\ndb-path='file-db'\n",
+    )
+    .unwrap();
+    let tree = corpus.root.join("file-source");
+    for (path, bytes) in common::files(&fixtures.join("tiny-xml")) {
+        let target = tree.join(path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, bytes).unwrap();
+    }
+    let module = tree.join("CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl");
+    let mut bytes = fs::read(&module).unwrap();
+    bytes.extend(b"\r\n// RPC selected edit\r\n");
+    fs::write(module, bytes).unwrap();
+    (corpus, db, tree)
+}
+#[cfg(unix)]
+#[test]
+fn file_import_rpc_requires_confirmation_and_consumes_one_opaque_plan() {
+    let (corpus, db, tree) = file_import_corpus("file-import-confirm");
+    let before = fs::read(db.join("1Cv8.1CD")).unwrap();
+    let mut server = Server::start(&corpus);
+    server.ok("initialize", corpus.initialize_params());
+    let prepared = server.ok(
+        "objects/import/prepare",
+        json!({"infobase":"demo","sourceDir":tree,"objects":["CommonModule.ФайловаяБазаПроверка"]}),
+    );
+    assert_eq!(prepared["preflight"]["ready"], true);
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+    assert_eq!(
+        server.error(
+            "objects/import",
+            json!({"infobase":"demo","sourceDir":tree,"plan":prepared["plan"]})
+        ),
+        -32015
+    );
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+    let result = server.ok(
+        "objects/import",
+        json!({"infobase":"demo","sourceDir":tree,"plan":prepared["plan"],"confirm":true}),
+    );
+    assert_eq!(result["report"]["backend"], "file-db-partial-configsave");
+    assert_eq!(fs::read(ibcmd_filedb::backup_file(&db)).unwrap(), before);
+    assert_eq!(
+        server.error(
+            "objects/import",
+            json!({"infobase":"demo","sourceDir":tree,"plan":prepared["plan"],"confirm":true})
+        ),
+        -32602
+    );
+    server.ok("shutdown", Value::Null);
+    assert_eq!(server.finish(true), 0);
+}
+#[cfg(unix)]
+#[test]
+fn reconnect_invalidates_file_import_plans_before_writes() {
+    let (corpus, db, tree) = file_import_corpus("file-import-reconnect");
+    let before = fs::read(db.join("1Cv8.1CD")).unwrap();
+    let mut server = Server::start(&corpus);
+    server.ok("initialize", corpus.initialize_params());
+    let prepared = server.ok(
+        "objects/import/prepare",
+        json!({"infobase":"demo","sourceDir":tree,"changed":true}),
+    );
+    server.ok("infobases/connect", json!({"infobase":"demo"}));
+    assert_eq!(
+        server.error(
+            "objects/import",
+            json!({"infobase":"demo","sourceDir":tree,"plan":prepared["plan"],"confirm":true})
+        ),
+        -32602
+    );
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+    assert!(!ibcmd_filedb::backup_file(&db).exists());
+    server.ok("shutdown", Value::Null);
+    assert_eq!(server.finish(true), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn cancelled_import_prepare_returns_request_cancelled_without_writes() {
+    let (corpus, db, tree) = file_import_corpus("file-import-cancel");
+    let before = fs::read(db.join("1Cv8.1CD")).unwrap();
+    let mut server = Server::start(&corpus);
+    server.ok("initialize", corpus.initialize_params());
+    let mut frames = Vec::new();
+    // Keep prepare queued while the protocol reader consumes cancellation.
+    for id in [3001, 3002] {
+        frames.extend(Server::frame(&json!({"jsonrpc":"2.0","id":id,"method":"objects/status","params":{"infobase":"demo","sourceDir":tree}})));
+    }
+    frames.extend(Server::frame(&json!({"jsonrpc":"2.0","id":3003,"method":"objects/import/prepare","params":{"infobase":"demo","sourceDir":tree,"objects":["CommonModule.ФайловаяБазаПроверка"]}})));
+    frames.extend(Server::frame(
+        &json!({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":3003}}),
+    ));
+    server.write_raw(&frames);
+    for id in [3001, 3002] {
+        assert!(server.response(&json!(id)).get("result").is_some());
+    }
+    let cancelled = server.response(&json!(3003));
+    assert_eq!(cancelled["error"]["code"], -32800, "{cancelled}");
+    assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
+    assert!(!ibcmd_filedb::backup_file(&db).exists());
+    server.ok("shutdown", Value::Null);
+    assert_eq!(server.finish(true), 0);
+}
+
+#[test]
+fn editor_apply_requires_consent_and_leaves_file_db_to_client() {
+    let corpus = Corpus::new("apply-contract");
+    let db = corpus.root.join("disposable/1Cv8.1CD");
+    fs::create_dir_all(db.parent().unwrap()).unwrap();
+    let input = fs::File::open(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase/tiny.1CD.gz"),
+    )
+    .unwrap();
+    let mut decoder = flate2::read::GzDecoder::new(input);
+    let mut output = fs::File::create(&db).unwrap();
+    std::io::copy(&mut decoder, &mut output).unwrap();
+    drop(output);
+    // Exercise a lexical alias on every host; Windows TEMP may also use an
+    // 8.3 short-name alias which Session::open resolves to its canonical path.
+    let db = corpus.root.join("disposable/../disposable/1Cv8.1CD");
+    let before = fs::read(&db).unwrap();
+    let mut params = corpus.initialize_params();
+    params["infobases"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"apply-file", "dbPath":db, "platform":"8.5.1"}));
+    let mut server = Server::start(&corpus);
+    let initialized = server.ok("initialize", params);
+    assert!(
+        initialized["capabilities"]["methods"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("config/apply"))
+    );
+    server.ok("infobases/connect", json!({"infobase":"apply-file"}));
+    let plan = server.ok("config/apply/prepare", json!({"infobase":"apply-file"}));
+    assert_eq!(plan["backend"], "external-native");
+    assert_eq!(plan["modes"], json!(["exclusive"]));
+    let canonical_db = fs::canonicalize(&db).unwrap();
+    assert_eq!(plan["dbPath"], json!(canonical_db.parent().unwrap()));
+    let planned_db = Path::new(plan["dbPath"].as_str().unwrap()).join("1Cv8.1CD");
+    assert_eq!(fs::canonicalize(planned_db).unwrap(), canonical_db);
+    let pending = server.ok("config/pending", json!({"infobase":"apply-file"}));
+    assert_eq!(pending["conclusive"], true);
+    assert_eq!(pending["pending"], false);
+    let mut apply = json!({"infobase":"apply-file", "mode":"exclusive", "recoveryDir":corpus.root.join("recovery")});
+    assert_eq!(server.error("config/apply", apply.clone()), -32015);
+    apply["confirm"] = json!(true);
+    assert_eq!(server.error("config/apply", apply.clone()), -32013);
+    apply["mode"] = json!("dynamic");
+    assert_eq!(server.error("config/apply", apply), -32602);
+    assert_eq!(
+        fs::read(&db).unwrap(),
+        before,
+        "preflight/refusals must not change database bytes"
+    );
+    server.ok("shutdown", json!({}));
+    assert_eq!(server.finish(true), 0);
+}
+
+#[path = "common/selected_export_fixture.rs"]
+mod selected_export_fixture;
+
+#[test]
+fn rpc_incomplete_selected_exports_refuse_before_any_plan_or_workspace_write() {
+    let mut failures = Vec::new();
+    for asset in [false, true] {
+        let corpus = Corpus::new("incomplete-export");
+        let db = corpus.root.join("incomplete.1CD");
+        let mut bytes = Vec::new();
+        flate2::read::GzDecoder::new(
+            fs::File::open(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/file-infobase/tiny.1CD.gz"),
+            )
+            .unwrap(),
+        )
+        .read_to_end(&mut bytes)
+        .unwrap();
+        fs::write(&db, bytes).unwrap();
+        if asset {
+            selected_export_fixture::install_unadmitted_form_asset(&db, true);
+        } else {
+            selected_export_fixture::install_unadmitted_common_module_descriptor(&db);
+        }
+        let name = if asset {
+            "CommonForm.OpaqueForm"
+        } else {
+            "CommonModule.ФайловаяБазаПроверка"
+        };
+        let source = corpus.root.join("source");
+        fs::create_dir(&source).unwrap();
+        for path in if asset {
+            vec![
+                "CommonForms/OpaqueForm.xml",
+                "CommonForms/OpaqueForm/Ext/Form.xml",
+            ]
+        } else {
+            vec![
+                "CommonModules/ФайловаяБазаПроверка.xml",
+                "CommonModules/ФайловаяБазаПроверка/Ext/Module.bsl",
+            ]
+        } {
+            let target = source.join(path);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(target, b"keep selected local bytes").unwrap();
+        }
+        let mut config = ibcmd_rs::stored_objects::StoredConfiguration::new(
+            ibcmd_rs::stored_objects::ConfigSource::FileDb(db.clone()),
+            ibcmd_rs::platform::parse("8.5.1").unwrap(),
+        );
+        fs::write(
+            source.join("ConfigDumpInfo.xml"),
+            config.native_config_dump_info().unwrap(),
+        )
+        .unwrap();
+        let before = common::files(&source);
+        let database = fs::read(&db).unwrap();
+        let mut server = Server::start(&corpus);
+        let mut params = corpus.initialize_params();
+        params["protocolVersion"] = json!("1.4");
+        params["infobases"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":"incomplete", "dbPath":db, "platform":"8.5.1"}));
+        server.ok("initialize", params);
+        // Repeat on one session so maps cached by the first call cannot authorize
+        // another publication; RPC errors must never contain a publishable result.
+        for attempt in 0..2 {
+            for method in ["objects/exportPlan", "objects/export"] {
+                let stage = corpus.root.join(format!("stage-{attempt}"));
+                fs::create_dir_all(&stage).unwrap();
+                let target = if method == "objects/exportPlan" {
+                    &stage
+                } else {
+                    &source
+                };
+                let response=server.call(method,json!({"infobase":"incomplete", "objects":[name], "sourceDir":source,"targetDir":target}));
+                let preserved =
+                    common::files(&source) == before && common::files(&stage).is_empty();
+                eprintln!(
+                    "RPC {method} asset={asset} attempt={attempt}: error={}, preserved={preserved}",
+                    response.get("error").is_some()
+                );
+                if response.get("error").is_none() || response.get("result").is_some() || !preserved
+                {
+                    failures.push(format!("{method} asset={asset} attempt={attempt}, preserved={preserved}: {response}"));
+                }
+            }
+        }
+        assert_eq!(fs::read(&db).unwrap(), database);
+        server.ok("shutdown", Value::Null);
+        assert_eq!(server.finish(true), 0);
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[path = "common/mcp_export_fixture.rs"]
+mod read_fixture;
+#[test]
+fn source_read_refuses_only_requested_invalid_descriptor_cold_and_cached() {
+    use read_fixture::{Case, Scenario};
+    let mut failures = Vec::new();
+    for (rows, scenario) in [
+        (false, Scenario::NestedInvalid),
+        (true, Scenario::NestedInvalid),
+        (false, Scenario::LegacyNestedInvalid),
+        (true, Scenario::LegacyNestedInvalid),
+    ] {
+        let case = Case::new(scenario, rows);
+        let before = case.input();
+        let corpus = Corpus {
+            root: case.root.clone(),
+            settings: case.settings.clone(),
+        };
+        let mut server = Server::start(&corpus);
+        server.ok(
+            "initialize",
+            json!({"protocolVersion":"1.4", "workspaceFolder":case.root}),
+        );
+        for _ in 0..2 {
+            let response = server.call(
+                "source/read",
+                json!({"infobase":"demo","path":"Catalogs/CorpusList/Forms/ListForm.xml"}),
+            );
+            if response.get("error").is_none() {
+                failures.push(format!("rows={rows}: {response}"));
+            }
+            for path in [
+                "Catalogs/CorpusList.xml",
+                "Catalogs/CorpusList/Forms/ListForm/Ext/Form/Module.bsl",
+                "Catalogs/CorpusList/Forms/ListForm/Ext/Form.xml",
+            ] {
+                let valid = server.ok("source/read", json!({"infobase":"demo","path":path}));
+                assert_eq!(valid["exists"], true, "{path}");
+            }
+            let missing = server.ok("source/read", json!({"infobase":"demo","path":"Catalogs/CorpusList/Forms/ListForm/Ext/nonexistent.txt"}));
+            assert_eq!(missing["exists"], false);
+        }
+        server.finish(true);
+        assert_eq!(case.input(), before);
+    }
+    assert!(
+        failures.is_empty(),
+        "RPC returned guessed descriptor: {failures:?}"
+    );
 }

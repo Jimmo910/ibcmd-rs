@@ -19,22 +19,29 @@ mod blob;
 mod config;
 mod descr;
 mod error;
+mod extensions;
 pub mod index;
 mod lock;
 mod object;
 mod pager;
+mod read_limits;
 mod record;
+#[cfg(windows)]
+mod windows_security;
+mod write_paths;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom};
+use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 pub use config::ConfigRow;
 pub use descr::{Field, FieldKind, Table};
 pub use error::{Error, Result};
+pub use extensions::ExtensionRegistryRow;
 pub use index::Collation;
+pub use read_limits::ReadLimits;
 pub use record::Timestamp;
 
 use lock::Mode;
@@ -98,6 +105,7 @@ pub struct FileDb {
     pager: Pager<'static>,
     locale: String,
     tables: BTreeMap<String, Table>,
+    metadata: fs::Metadata,
 }
 
 impl FileDb {
@@ -105,12 +113,55 @@ impl FileDb {
     pub fn open(db_path: &Path) -> Result<FileDb> {
         let path = existing_data_file(db_path)?;
         let file = lock::open_locked(&path, Mode::Read)?;
+        Self::from_locked_file(file)
+    }
+
+    /// Reads the caller's exact descriptor, without reopening its pathname.
+    /// On Unix acquires the same read lock as open(). Other OSes are refused
+    /// until descriptor sharing/identity has been measured.
+    pub fn from_file(file: File) -> Result<FileDb> {
+        lock::lock_read_descriptor(&file)?;
+        Self::from_locked_file(file)
+    }
+
+    /// Metadata of the descriptor consumed by the reader, for target identity checks.
+    pub fn metadata(&self) -> &fs::Metadata {
+        &self.metadata
+    }
+
+    /// Read an exact descriptor under cumulative materialization limits. The
+    /// callback runs before metadata/object/row reads and within long blob walks.
+    pub fn from_file_with_limits(
+        file: File,
+        limits: ReadLimits,
+        check: impl Fn() -> Result<()> + Send + Sync + 'static,
+    ) -> Result<FileDb> {
+        check()?;
+        lock::lock_read_descriptor(&file)?;
+        Self::from_locked_file_budget(file, Some(read_limits::ReadBudget::new(limits, check)))
+    }
+
+    fn from_locked_file(file: File) -> Result<FileDb> {
+        Self::from_locked_file_budget(file, None)
+    }
+    fn from_locked_file_budget(
+        file: File,
+        budget: Option<read_limits::ReadBudget>,
+    ) -> Result<FileDb> {
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(Error::Refused(
+                "file database descriptor is not a regular file".into(),
+            ));
+        }
         let mut pager = Pager::new(file)?;
+        pager.set_read_budget(budget);
         let (locale, tables) = descr::read_tables(&mut pager)?;
         Ok(FileDb {
             pager,
             locale,
             tables,
+            metadata,
         })
     }
 
@@ -135,6 +186,12 @@ impl FileDb {
         self.tables.values()
     }
 
+    /// The measured 8.3.27 extension registry, with next-generation states
+    /// rejected before any image is selected.
+    pub fn extension_registry(&mut self) -> Result<Vec<ExtensionRegistryRow>> {
+        extensions::read_registry(&mut self.pager, &self.tables)
+    }
+
     pub fn table(&self, name: &str) -> Option<&Table> {
         self.tables.get(name)
     }
@@ -143,6 +200,35 @@ impl FileDb {
     /// order. Parts of one row are separate values with the same name.
     pub fn config_rows(&mut self, table: &str) -> Result<Vec<ConfigRow>> {
         read_rows(&mut self.pager, &self.tables, table, true)
+    }
+
+    /// Refuses oversized physical objects before allocating their contents.
+    /// Free records and unused blob blocks count toward the physical budget.
+    /// The same limit separately bounds retained binary values, including
+    /// repeated references to a shared blob chain.
+    pub fn config_rows_bounded(
+        &mut self,
+        name: &str,
+        max_bytes: u64,
+        max_rows: usize,
+    ) -> Result<Vec<ConfigRow>> {
+        let table = config_table(&self.tables, name)?;
+        let records = object::Object::open(&mut self.pager, table.records_page)?;
+        let blobs = object::Object::open(&mut self.pager, table.blob_page)?;
+        let row_budget = max_rows
+            .saturating_add(1)
+            .saturating_mul(table.record_size()) as u64;
+        if records.len > row_budget || records.len.saturating_add(blobs.len) > max_bytes {
+            return Err(Error::Refused(format!(
+                "{name}: physical extension storage exceeds its read budget"
+            )));
+        }
+        Ok(
+            config::read_records_bounded(&mut self.pager, &table, true, max_bytes)?
+                .into_iter()
+                .map(|record| record.row)
+                .collect(),
+        )
     }
 
     /// Row headers without the binary data.
@@ -193,7 +279,15 @@ fn index_entries(
     let table = config_table(tables, table)?;
     let object = object::Object::open(pager, table.index_page)?;
     let data = object.read_all(pager)?;
-    index::read_entries(&data, pager.page_size())
+    index::read_entries_checked(&data, pager.page_size(), &mut |key_len| {
+        pager.check_read()?;
+        if key_len != 0 {
+            pager.materialize_record(0)?;
+            pager
+                .materialize_object((key_len * 2 + std::mem::size_of::<(u32, Vec<u8>)>()) as u64)?;
+        }
+        Ok(())
+    })
 }
 
 fn verify_index(
@@ -260,6 +354,8 @@ pub struct WriteSession {
     locale: String,
     collation: Collation,
     tables: BTreeMap<String, Table>,
+    read_budget: Option<read_limits::ReadBudget>,
+    paths: write_paths::WritePaths,
 }
 
 /// Locks the infobase for a write and checks it can be written: the
@@ -267,10 +363,41 @@ pub struct WriteSession {
 /// indexes of its configuration tables -- keys the platform wrote -- are the
 /// keys this crate would write.
 pub fn open_for_write(db_path: &Path) -> Result<WriteSession> {
+    open_for_write_budget(db_path, None, &mut |_| Ok(()))
+}
+
+/// Bounded write-session preflight. The identity guard receives the actual
+/// locked descriptor BEFORE parsing any database descriptors. The budget is
+/// cumulative across metadata, indexes, repeated row reads and copy verification.
+pub fn open_for_write_with_limits(
+    db_path: &Path,
+    limits: ReadLimits,
+    check: impl Fn() -> Result<()> + Send + Sync + 'static,
+    guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
+) -> Result<WriteSession> {
+    check()?;
+    open_for_write_budget(
+        db_path,
+        Some(read_limits::ReadBudget::new(limits, check)),
+        guard,
+    )
+}
+
+fn open_for_write_budget(
+    db_path: &Path,
+    read_budget: Option<read_limits::ReadBudget>,
+    guard: &mut dyn FnMut(&fs::Metadata) -> Result<()>,
+) -> Result<WriteSession> {
     let path = existing_data_file(db_path)?;
-    let file = lock::open_locked(&path, Mode::Write)?;
+    let paths = write_paths::WritePaths::open(&path)?;
+    let file = paths.open_locked(&path)?;
+    guard(&file.metadata()?)?;
+    if let Some(budget) = &read_budget {
+        budget.check()?;
+    }
     let (locale, tables) = {
         let mut pager = Pager::new(&file)?;
+        pager.set_read_budget(read_budget.clone());
         let (locale, tables) = descr::read_tables(&mut pager)?;
         let collation = known_collation(&locale)?;
         for table in CONFIG_TABLES {
@@ -299,10 +426,40 @@ pub fn open_for_write(db_path: &Path) -> Result<WriteSession> {
         locale,
         collation,
         tables,
+        read_budget,
+        paths,
     })
 }
 
 impl WriteSession {
+    fn pager<'a>(&self, file: &'a File) -> Result<Pager<'a>> {
+        self.check_read()?;
+        let mut pager = Pager::new(file)?;
+        pager.set_read_budget(self.read_budget.clone());
+        Ok(pager)
+    }
+    fn check_read(&self) -> Result<()> {
+        self.read_budget
+            .as_ref()
+            .map_or(Ok(()), |budget| budget.check())
+    }
+    fn copy_checked(&self, source: &mut impl Read, target: &mut impl Write) -> Result<()> {
+        let mut buffer = vec![0; 1 << 20];
+        loop {
+            self.check_read()?;
+            let count = source.read(&mut buffer)?;
+            if count == 0 {
+                return Ok(());
+            }
+            target.write_all(&buffer[..count])?;
+        }
+    }
+
+    /// Metadata from the descriptor holding this write lock.
+    pub fn metadata(&self) -> std::io::Result<fs::Metadata> {
+        self.file.metadata()
+    }
+
     pub fn locale(&self) -> &str {
         &self.locale
     }
@@ -313,14 +470,53 @@ impl WriteSession {
 
     /// Rows of a configuration table, read through the locked descriptor.
     pub fn config_rows(&mut self, table: &str) -> Result<Vec<ConfigRow>> {
-        let mut pager = Pager::new(&self.file)?;
+        let mut pager = self.pager(&self.file)?;
         read_rows(&mut pager, &self.tables, table, true)
     }
 
     /// Row headers of a configuration table, without the binary data.
     pub fn config_headers(&mut self, table: &str) -> Result<Vec<ConfigRow>> {
-        let mut pager = Pager::new(&self.file)?;
+        let mut pager = self.pager(&self.file)?;
         read_rows(&mut pager, &self.tables, table, false)
+    }
+
+    /// Digest of the locked data file including its filesystem identity.
+    /// A preflight revalidation fingerprint under the advisory lock. This is
+    /// not an atomic filesystem CAS against noncooperating leaf-entry writers.
+    pub fn snapshot(&self) -> Result<String> {
+        #[cfg(not(unix))]
+        {
+            Err(Error::Refused(
+                "file import CAS identity is not supported on this OS".into(),
+            ))
+        }
+        #[cfg(unix)]
+        {
+            use sha2::{Digest, Sha256};
+            use std::os::unix::fs::MetadataExt;
+            self.check_binding()?;
+            let mut hash = Sha256::new();
+            let metadata = self.file.metadata()?;
+            hash.update(metadata.dev().to_le_bytes());
+            hash.update(metadata.ino().to_le_bytes());
+            let mut file = &self.file;
+            file.seek(SeekFrom::Start(0))?;
+            let mut buffer = vec![0; 1 << 20];
+            loop {
+                self.check_read()?;
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hash.update(&buffer[..n]);
+            }
+            self.check_binding()?;
+            Ok(format!("{:x}", hash.finalize()))
+        }
+    }
+
+    fn check_binding(&self) -> Result<()> {
+        self.paths.require_binding(&self.path, &self.file)
     }
 
     /// Replaces every row of a configuration table and ends the session.
@@ -333,6 +529,29 @@ impl WriteSession {
     /// rename the copy over the data file. A failure before the rename leaves
     /// the infobase untouched.
     pub fn replace(self, table: &str, rows: &[ConfigRow]) -> Result<ReplaceReport> {
+        self.replace_checked(table, rows, || Ok(()))
+    }
+
+    /// As replace, with a caller publication check before work and after verification.
+    /// A rejected final check leaves the original data file in place.
+    pub fn replace_checked(
+        self,
+        table: &str,
+        rows: &[ConfigRow],
+        mut check: impl FnMut() -> Result<()>,
+    ) -> Result<ReplaceReport> {
+        self.replace_guarded(table, rows, |_| check())
+    }
+
+    /// Supplies the actual locked descriptor metadata at both publication gates.
+    pub fn replace_guarded(
+        self,
+        table: &str,
+        rows: &[ConfigRow],
+        mut check: impl FnMut(&fs::Metadata) -> Result<()>,
+    ) -> Result<ReplaceReport> {
+        check(&self.file.metadata()?)?;
+        self.check_binding()?;
         if !CONFIG_TABLES.contains(&table) {
             return Err(Error::Refused(format!(
                 "Запись таблицы {table} не поддерживается"
@@ -341,12 +560,7 @@ impl WriteSession {
         let target = config_table(&self.tables, table)?;
         let work = sibling(&self.path, WORK_SUFFIX);
         let backup = sibling(&self.path, BACKUP_SUFFIX);
-        let mut copy = match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&work)
-        {
+        let mut copy = match self.paths.create_new(&work, true) {
             Ok(file) => file,
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
                 return Err(Error::Refused(format!(
@@ -362,33 +576,69 @@ impl WriteSession {
             Ok(report) => report,
             Err(err) => {
                 drop(copy);
-                let _ = fs::remove_file(&work);
+                let _ = self.paths.remove(&work);
                 return Err(err);
             }
         };
+        #[cfg(not(any(unix, windows)))]
         drop(copy);
-        let WriteSession { path, file, .. } = self;
-        // Windows cannot replace a file that is open; the exclusive handle goes
-        // first there. On Unix the lock is held across the rename.
+        // Prepare recovery data without replacing an existing backup. Rejection
+        // or interruption before the final check preserves both published files.
+        let backup_work = sibling(&self.path, ".ibcmd-rs.bak.new");
+        let prepare_backup = || -> Result<Option<File>> {
+            self.check_binding()?;
+            prepare_backup_file(
+                &self.paths,
+                &self.file,
+                &backup_work,
+                || self.paths.hard_link(&self.path, &backup_work),
+                |out| {
+                    let mut original = &self.file;
+                    original.seek(SeekFrom::Start(0))?;
+                    self.copy_checked(&mut original, out)
+                },
+            )
+        };
+        let backup_copy = match prepare_backup() {
+            Ok(file) => file,
+            Err(error) => {
+                let _ = self.paths.remove(&work);
+                return Err(error);
+            }
+        };
+        if let Err(error) = check(&self.file.metadata()?).and_then(|()| {
+            self.check_binding()?;
+            #[cfg(any(unix, windows))]
+            self.paths.require_leaf(&work, &copy)?;
+            require_owner_and_mode(&self.file, &copy)?;
+            if let Some(backup_copy) = &backup_copy {
+                self.paths.require_leaf(&backup_work, backup_copy)?;
+                require_owner_and_mode(&self.file, backup_copy)?;
+            } else {
+                self.paths.require_leaf(&backup_work, &self.file)?;
+            }
+            Ok(())
+        }) {
+            let _ = self.paths.remove(&work);
+            let _ = self.paths.remove(&backup_work);
+            return Err(error);
+        }
+        // Publish the database FIRST. Until this succeeds the previous backup
+        // is untouched. A later backup rename failure retains .bak.new (the
+        // complete pre-write database) and the previous .bak; no rollback can
+        // destroy the only recovery generation.
+        let WriteSession {
+            path, file, paths, ..
+        } = self;
         #[cfg(windows)]
         drop(file);
-        if let Err(err) = fs::rename(&work, &path) {
-            let _ = fs::remove_file(&work);
-            return Err(Error::Io(err));
-        }
+        // On error, RAII keeps the original descriptor locked until return.
+        publish_files(&paths, &work, &path, &backup_work, &backup, |a, b| {
+            paths.rename(a, b)
+        })?;
+        paths.sync();
         #[cfg(unix)]
-        {
-            if let Some(dir) = path.parent()
-                && let Ok(d) = File::open(if dir.as_os_str().is_empty() {
-                    Path::new(".")
-                } else {
-                    dir
-                })
-            {
-                let _ = d.sync_all();
-            }
-            drop(file);
-        }
+        drop(file);
         Ok(report)
     }
 
@@ -401,12 +651,12 @@ impl WriteSession {
     ) -> Result<ReplaceReport> {
         let mut original = &self.file;
         original.seek(SeekFrom::Start(0))?;
-        std::io::copy(&mut original, copy)?;
         keep_owner_and_mode(&self.file, copy, &self.path)?;
+        self.copy_checked(&mut original, copy)?;
 
         // The table's pages are its own: nothing else would change with them.
         let (pages_before, rows_before, others) = {
-            let mut pager = Pager::new(&self.file)?;
+            let mut pager = self.pager(&self.file)?;
             // Owner of every page, as an index into `names`: a few bytes a page
             // whatever the size of the infobase.
             let mut names = vec![
@@ -447,7 +697,7 @@ impl WriteSession {
             (pager.page_count(), rows_before, others)
         };
 
-        let mut pager = Pager::new(&*copy)?;
+        let mut pager = self.pager(&*copy)?;
         let written_pages = config::replace(&mut pager, target, rows, self.collation)?;
         pager.sync()?;
         let pages_after = pager.page_count();
@@ -459,7 +709,7 @@ impl WriteSession {
         }
 
         // Every page the write did not own is the original's, byte for byte.
-        let mut before = Pager::new(&self.file)?;
+        let mut before = self.pager(&self.file)?;
         let mut a = vec![0u8; pager.page_size()];
         let mut b = vec![0u8; pager.page_size()];
         for page in 1..pages_before {
@@ -488,14 +738,6 @@ impl WriteSession {
         verify_index(&mut pager, &tables, &target.name, self.collation)?;
         drop(pager);
 
-        let _ = fs::remove_file(backup);
-        if fs::hard_link(&self.path, backup).is_err() {
-            let mut original = &self.file;
-            original.seek(SeekFrom::Start(0))?;
-            let mut out = File::create(backup)?;
-            std::io::copy(&mut original.take(u64::MAX), &mut out)?;
-            out.sync_all()?;
-        }
         Ok(ReplaceReport {
             table: target.name.clone(),
             rows_before,
@@ -508,12 +750,78 @@ impl WriteSession {
     }
 }
 
-/// The new data file gets the original's permissions and, on Unix, its owner
-/// and group; a write that cannot keep them is refused (a server running as
-/// the owner would lose access to the infobase).
+// A failed fallback copy must not leave this attempt's partial recovery
+// file behind. create_new establishes ownership: a pre-existing file is NEVER
+// removed, truncated or overwritten. The injected operations keep fault tests
+// on the same path as production, including filesystems without hard links.
+fn prepare_backup_file(
+    paths: &write_paths::WritePaths,
+    original: &File,
+    path: &Path,
+    hard_link: impl FnOnce() -> std::io::Result<()>,
+    copy: impl FnOnce(&mut File) -> Result<()>,
+) -> Result<Option<File>> {
+    if hard_link().is_ok() {
+        paths.require_leaf(path, original)?;
+        return Ok(None);
+    }
+    let mut out = match paths.create_new(path, false) {
+        Ok(out) => out,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(Error::Refused(format!(
+                "pre-existing backup work file {}; inspect interrupted publication before retrying",
+                path.display()
+            )));
+        }
+        Err(error) => return Err(Error::Io(error)),
+    };
+    let result = keep_owner_and_mode(original, &out, path)
+        .and_then(|()| copy(&mut out))
+        .and_then(|()| require_owner_and_mode(original, &out))
+        .and_then(|()| Ok(out.sync_all()?));
+    match result {
+        Ok(()) => Ok(Some(out)),
+        Err(error) => {
+            drop(out);
+            let _ = paths.remove(path);
+            Err(error)
+        }
+    }
+}
+
+// Two-step publication deliberately has a recoverable partial-success state:
+// if updating backup fails, the new database is published and the old database
+// remains in backup_work. Never silently discard either backup generation.
+fn publish_files(
+    paths: &write_paths::WritePaths,
+    work: &Path,
+    path: &Path,
+    backup_work: &Path,
+    backup: &Path,
+    mut rename: impl FnMut(&Path, &Path) -> std::io::Result<()>,
+) -> Result<()> {
+    if let Err(error) = rename(work, path) {
+        let _ = paths.remove(work);
+        let _ = paths.remove(backup_work);
+        return Err(Error::Io(error));
+    }
+    if let Err(error) = rename(backup_work, backup) {
+        return Err(Error::Published {
+            recovery: backup_work.to_path_buf(),
+            error,
+        });
+    }
+    Ok(())
+}
+
+/// Before copying content, set the Unix owner/group/mode or require an already
+/// matching Windows owner/group/DACL. Windows ACL differences are refused,
+/// not rewritten; its readonly attribute is copied separately. SACL, auditing
+/// and mandatory labels are outside this check's scope.
 fn keep_owner_and_mode(original: &File, copy: &File, path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    windows_security::require_same(original, copy)?;
     let metadata = original.metadata()?;
-    copy.set_permissions(metadata.permissions())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -530,8 +838,34 @@ fn keep_owner_and_mode(original: &File, copy: &File, path: &Path) -> Result<()> 
             )));
         }
     }
+    copy.set_permissions(metadata.permissions())?;
     #[cfg(not(unix))]
     let _ = path;
+    require_owner_and_mode(original, copy)
+}
+
+// Recheck the held source/work descriptors without changing their security.
+fn require_owner_and_mode(original: &File, copy: &File) -> Result<()> {
+    #[cfg(windows)]
+    windows_security::require_same(original, copy)?;
+    let original = original.metadata()?;
+    let copy = copy.metadata()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if (original.uid(), original.gid(), original.mode())
+            != (copy.uid(), copy.gid(), copy.mode())
+        {
+            return Err(Error::Refused(
+                "file owner/group/mode changed before publication".into(),
+            ));
+        }
+    }
+    if original.permissions().readonly() != copy.permissions().readonly() {
+        return Err(Error::Refused(
+            "file readonly attribute changed before publication".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -556,4 +890,118 @@ pub fn rebuild_config_index_in_place(db_path: &Path, table: &str) -> Result<()> 
     let t = config_table(&tables, table)?;
     config::reindex(&mut pager, &t, known_collation(&locale)?)?;
     pager.sync()
+}
+
+#[cfg(all(test, unix))]
+mod publication_tests {
+    use super::*;
+    #[test]
+    fn failed_backup_copy_cleans_only_owned_file_and_allows_retry() {
+        for cancelled in [false, true] {
+            let dir = std::env::temp_dir().join(format!(
+                "filedb-backup-copy-{}-{cancelled}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir(&dir).unwrap();
+            let data = dir.join("data");
+            let backup = dir.join("backup");
+            let pending = dir.join("pending");
+            fs::write(&data, b"original database A").unwrap();
+            fs::write(&backup, b"older backup B").unwrap();
+            let original = File::open(&data).unwrap();
+            let paths = write_paths::WritePaths::open(&data).unwrap();
+            let no_link = || Err(std::io::Error::other("injected hard-link unavailable"));
+            let error = prepare_backup_file(&paths, &original, &pending, no_link, |out| {
+                out.write_all(b"partial")?;
+                if cancelled {
+                    Err(Error::Refused("injected cancellation".into()))
+                } else {
+                    Err(Error::Io(std::io::Error::other("injected copy EIO")))
+                }
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains("injected"));
+            assert!(!pending.exists());
+            assert_eq!(fs::read(&data).unwrap(), b"original database A");
+            assert_eq!(fs::read(&backup).unwrap(), b"older backup B");
+            prepare_backup_file(&paths, &original, &pending, no_link, |out| {
+                Ok(out.write_all(b"original database A")?)
+            })
+            .unwrap();
+            assert_eq!(fs::read(&pending).unwrap(), b"original database A");
+            let error = prepare_backup_file(&paths, &original, &pending, no_link, |_| {
+                panic!("must not touch pre-existing file")
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains("pre-existing backup work file"));
+            assert_eq!(fs::read(&pending).unwrap(), b"original database A");
+            let work = dir.join("work");
+            fs::write(&work, b"new database C").unwrap();
+            drop(original);
+            publish_files(&paths, &work, &data, &pending, &backup, |a, b| {
+                fs::rename(a, b)
+            })
+            .unwrap();
+            assert_eq!(fs::read(&data).unwrap(), b"new database C");
+            assert_eq!(fs::read(&backup).unwrap(), b"original database A");
+            assert!(!pending.exists());
+            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                fs::remove_dir_all(dir).unwrap();
+            }
+        }
+    }
+    #[test]
+    fn each_publication_failure_preserves_both_backup_generations() {
+        for fail_at in 1..=2 {
+            let dir = std::env::temp_dir().join(format!(
+                "filedb-publish-{}-{fail_at}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir(&dir).unwrap();
+            let data = dir.join("data");
+            let work = dir.join("work");
+            let backup = dir.join("backup");
+            let pending = dir.join("pending");
+            fs::write(&data, b"A").unwrap();
+            fs::write(&backup, b"B").unwrap();
+            fs::write(&work, b"C").unwrap();
+            fs::write(&pending, b"A").unwrap();
+            let paths = write_paths::WritePaths::open(&data).unwrap();
+            let mut step = 0;
+            let error = publish_files(&paths, &work, &data, &pending, &backup, |a, b| {
+                step += 1;
+                if step == fail_at {
+                    Err(std::io::Error::other("injected EIO"))
+                } else {
+                    fs::rename(a, b)
+                }
+            })
+            .unwrap_err();
+            assert_eq!(fs::read(&backup).unwrap(), b"B");
+            if fail_at == 1 {
+                assert_eq!(fs::read(&data).unwrap(), b"A");
+                assert!(!pending.exists());
+                assert!(!work.exists());
+            } else {
+                assert_eq!(fs::read(&data).unwrap(), b"C");
+                assert_eq!(fs::read(&pending).unwrap(), b"A");
+                assert!(matches!(error, Error::Published { .. }));
+                assert!(error.to_string().contains("database was published"));
+                assert!(!work.exists());
+                // No rollback is attempted: even an unavailable filesystem
+                // cannot erase recovery A or the previous generation B.
+            }
+            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                fs::remove_dir_all(dir).unwrap();
+            }
+        }
+    }
 }

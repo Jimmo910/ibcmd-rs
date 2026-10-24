@@ -82,18 +82,118 @@ pub use utility_objects::{
     register_settings_storage_codec,
 };
 pub use websocket_client::validate_websocket_client_headers_namespaces;
+/// Namespaces whose declaration carries a *generated* prefix, which is the
+/// 1-based depth of the element holding the declaration: `d7p1` at a metadata
+/// root (`<MetaDataObject>/<DataProcessor>/<ChildObjects>/<Attribute>/
+/// <Properties>/<Type>/<v8:Type>`) and `d5p1` in a form body
+/// (`<Form>/<Attributes>/<Attribute>/<Type>/<v8:Type>`). Each row is
+/// `(namespace URI, root declaration, form declaration)`; both declarations
+/// differ only in those two prefix letters.
+const GENERATED_TYPE_NAMESPACES: &[(&str, &str, &str)] = &[
+    // Диаграмма, ДиаграммаГанта, Дендрограмма
+    (
+        "http://v8.1c.ru/8.2/data/chart",
+        r#" xmlns:d7p1="http://v8.1c.ru/8.2/data/chart""#,
+        r#" xmlns:d5p1="http://v8.1c.ru/8.2/data/chart""#,
+    ),
+    (
+        "http://v8.1c.ru/8.2/misc",
+        r#" xmlns:d7p1="http://v8.1c.ru/8.2/misc""#,
+        r#" xmlns:d5p1="http://v8.1c.ru/8.2/misc""#,
+    ),
+    // ГрафическаяСхема
+    (
+        "http://v8.1c.ru/8.2/data/graphscheme",
+        r#" xmlns:d7p1="http://v8.1c.ru/8.2/data/graphscheme""#,
+        r#" xmlns:d5p1="http://v8.1c.ru/8.2/data/graphscheme""#,
+    ),
+    // ВидДанныхАнализа и 17 перечислений анализа данных
+    // (МетодКластеризации, ТипЕдиницыИнтервалаВремениАнализаДанных, ...);
+    // полный список -- в DATA_PROCESSOR_TYPES.
+    (
+        "http://v8.1c.ru/8.2/data/data-analysis",
+        r#" xmlns:d7p1="http://v8.1c.ru/8.2/data/data-analysis""#,
+        r#" xmlns:d5p1="http://v8.1c.ru/8.2/data/data-analysis""#,
+    ),
+    // ГеографическаяСхема
+    (
+        "http://v8.1c.ru/8.2/data/geo",
+        r#" xmlns:d7p1="http://v8.1c.ru/8.2/data/geo""#,
+        r#" xmlns:d5p1="http://v8.1c.ru/8.2/data/geo""#,
+    ),
+    // ТекстовыйДокумент
+    (
+        "http://v8.1c.ru/8.1/data/txtedt",
+        r#" xmlns:d7p1="http://v8.1c.ru/8.1/data/txtedt""#,
+        r#" xmlns:d5p1="http://v8.1c.ru/8.1/data/txtedt""#,
+    ),
+];
+
+/// Namespaces the platform names with a canonical prefix, which is the same in
+/// every document, so neither form nor root scope changes the declaration.
+const CANONICAL_TYPE_NAMESPACES: &[(&str, &str)] = &[
+    // ФорматированныйДокумент
+    (
+        "http://v8.1c.ru/8.2/data/formatted-document",
+        r#" xmlns:fd="http://v8.1c.ru/8.2/data/formatted-document""#,
+    ),
+    // ДокументPDF
+    (
+        "http://v8.1c.ru/8.3/data/pdf",
+        r#" xmlns:pdfdoc="http://v8.1c.ru/8.3/data/pdf""#,
+    ),
+    // Планировщик
+    (
+        "http://v8.1c.ru/8.3/data/planner",
+        r#" xmlns:pl="http://v8.1c.ru/8.3/data/planner""#,
+    ),
+];
+
+fn type_namespace_attribute(uri: &str, form_scoped: bool) -> Option<&'static str> {
+    GENERATED_TYPE_NAMESPACES
+        .iter()
+        .find_map(|(candidate, root, form)| {
+            (*candidate == uri).then_some(if form_scoped { *form } else { *root })
+        })
+        .or_else(|| {
+            CANONICAL_TYPE_NAMESPACES
+                .iter()
+                .find_map(|(candidate, attribute)| (*candidate == uri).then_some(*attribute))
+        })
+}
+
 /// Emits the namespace declaration for a schema-known processor value type.
 pub fn data_processor_builtin_type_namespace_attribute(reference: &str) -> Option<&'static str> {
-    match ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_namespace_uri(
-        reference,
-    )? {
-        "http://v8.1c.ru/8.2/data/chart" => Some(r#" xmlns:d7p1="http://v8.1c.ru/8.2/data/chart""#),
-        "http://v8.1c.ru/8.2/misc" => Some(r#" xmlns:d7p1="http://v8.1c.ru/8.2/misc""#),
-        "http://v8.1c.ru/8.2/data/graphscheme" => {
-            Some(r#" xmlns:d7p1="http://v8.1c.ru/8.2/data/graphscheme""#)
-        }
-        _ => None,
-    }
+    type_namespace_attribute(
+        ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_namespace_uri(reference)?,
+        false,
+    )
+}
+
+/// Emits the same declaration for a form body, where a generated prefix is
+/// fixed at the depth of the `<v8:Type>` element carrying it -- 5 in a form
+/// (`<Form>/<Attributes>/<Attribute>/<Type>/<v8:Type>`), hence `d5p1`. The
+/// canonical prefixes (`fd`, `pdfdoc`, `pl`) are the same in both documents and
+/// are kept as they are.
+pub fn form_data_processor_builtin_type_namespace_attribute(
+    reference: &str,
+) -> Option<&'static str> {
+    type_namespace_attribute(
+        ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_namespace_uri_ignoring_prefix(
+            reference,
+        )?,
+        true,
+    )
+}
+
+/// Declares a schema-known processor type using the supplied QName prefix.
+/// Generated d<N>p1 prefixes can name the declaring element at any depth.
+pub fn data_processor_builtin_type_namespace_attribute_for_qname(
+    reference: &str,
+) -> Option<String> {
+    let namespace = ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_namespace_uri_ignoring_prefix(reference)?;
+    let (prefix, _) = reference.split_once(':')?;
+    Some(format!(" xmlns:{prefix}=\"{namespace}\""))
 }
 
 /// A FilterCriterion with an empty type pattern keeps the Type property as
