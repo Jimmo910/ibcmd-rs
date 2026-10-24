@@ -1248,8 +1248,13 @@ mod read_fixture;
 fn source_read_refuses_only_requested_invalid_descriptor_cold_and_cached() {
     use read_fixture::{Case, Scenario};
     let mut failures = Vec::new();
-    for rows in [false, true] {
-        let case = Case::new(Scenario::NestedInvalid, rows);
+    for (rows, scenario) in [
+        (false, Scenario::NestedInvalid),
+        (true, Scenario::NestedInvalid),
+        (false, Scenario::LegacyNestedInvalid),
+        (true, Scenario::LegacyNestedInvalid),
+    ] {
+        let case = Case::new(scenario, rows);
         let before = case.input();
         let corpus = Corpus {
             root: case.root.clone(),

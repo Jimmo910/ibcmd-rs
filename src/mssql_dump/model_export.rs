@@ -548,14 +548,19 @@ impl ModelExport {
             return Ok(());
         };
         let result = (|| {
-            let text = inflate_raw_deflate(stored)?;
-            let tree = parse_row(&text)?;
+            let text = String::from_utf8(inflate_raw_deflate(stored)?)?;
+            // Legacy readers apply these native-evidenced upgrades before
+            // conversion. Validate the same stored values in that admitted
+            // layout too, without changing the raw model writer's coverage.
+            let text = upgrade::upgrade_record_by_shape(&text, file_name).unwrap_or(text);
+            let text = upgrade::upgrade_metadata_record(kind, &text).unwrap_or(text);
+            let tree = parse_row(text.as_bytes())?;
             decode_object(kind, &tree, &self.context)
         })();
         if let Err(error) = result
             && error.is::<crate::metadata_model::export::values::UnsupportedDescriptorValue>()
         {
-            return Err(error).context("requested descriptor has an unsupported value");
+            return Err(error).context("stored descriptor has an unsupported value");
         }
         Ok(())
     }

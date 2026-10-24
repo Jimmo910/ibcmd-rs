@@ -802,8 +802,10 @@ async fn real_mcp_export_rejects_incomplete_maps_without_returning_partial_files
             Scenario::InvalidDescriptor,
             Scenario::OpaqueForm,
             Scenario::NestedInvalid,
+            Scenario::LegacyNestedInvalid,
             Scenario::LegacyCommand,
             Scenario::CommonForm,
+            Scenario::LegacyNestedValid,
         ] {
             let case = Case::new(scenario, rows_dir);
             let before = case.input();
@@ -817,7 +819,10 @@ async fn real_mcp_export_rejects_incomplete_maps_without_returning_partial_files
             let response = call(&client, "export", json!({"objects":[case.object]})).await;
             if matches!(
                 scenario,
-                Scenario::InvalidDescriptor | Scenario::OpaqueForm | Scenario::NestedInvalid
+                Scenario::InvalidDescriptor
+                    | Scenario::OpaqueForm
+                    | Scenario::NestedInvalid
+                    | Scenario::LegacyNestedInvalid
             ) {
                 assert_eq!(
                     response.is_error,
@@ -835,6 +840,11 @@ async fn real_mcp_export_rejects_incomplete_maps_without_returning_partial_files
                 assert!(!files.is_empty());
                 if matches!(scenario, Scenario::CommonForm) {
                     assert!(files.contains_key("CommonForms/OpaqueForm/Ext/Form.xml"));
+                }
+                if matches!(scenario, Scenario::LegacyNestedValid) {
+                    let path = "Catalogs/CorpusList/Forms/ListForm.xml";
+                    let read = value(&call(&client, "read", json!({"path":path})).await);
+                    assert_eq!(read["file"]["content"], files[path]["content"]);
                 }
             }
             if matches!(scenario, Scenario::InvalidDescriptor | Scenario::OpaqueForm) {
@@ -862,8 +872,13 @@ async fn real_mcp_export_rejects_incomplete_maps_without_returning_partial_files
 #[tokio::test]
 async fn real_mcp_read_refuses_only_the_requested_invalid_descriptor() {
     use export_fixture::{Case, Scenario};
-    for rows_dir in [false, true] {
-        let case = Case::new(Scenario::NestedInvalid, rows_dir);
+    for (rows_dir, scenario) in [
+        (false, Scenario::NestedInvalid),
+        (true, Scenario::NestedInvalid),
+        (false, Scenario::LegacyNestedInvalid),
+        (true, Scenario::LegacyNestedInvalid),
+    ] {
+        let case = Case::new(scenario, rows_dir);
         let before = case.input();
         let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
         command

@@ -13,6 +13,8 @@ pub enum Scenario {
     InvalidDescriptor,
     OpaqueForm,
     NestedInvalid,
+    LegacyNestedInvalid,
+    LegacyNestedValid,
     LegacyCommand,
     CommonForm,
 }
@@ -93,7 +95,9 @@ impl Case {
             Scenario::LegacyCommand => {
                 selected::install_legacy_fallback_object(&database, true, None)
             }
-            Scenario::NestedInvalid => {
+            Scenario::NestedInvalid
+            | Scenario::LegacyNestedInvalid
+            | Scenario::LegacyNestedValid => {
                 let recorded = root.join("recorded.1CD");
                 fs::write(
                     &recorded,
@@ -153,7 +157,7 @@ impl Case {
             "db-path='db'"
         };
         fs::write(&settings,format!("[[database]]\nname='demo'\nplatform='8.5.1'\n{backend}\nagent-write=false\n[mcp]\ndatabase='demo'\nsource-root='source'\n")).unwrap();
-        Self {
+        let case = Self {
             root,
             database,
             rows,
@@ -161,7 +165,18 @@ impl Case {
             settings,
             object,
             rows_dir,
+        };
+        if matches!(
+            scenario,
+            Scenario::LegacyNestedInvalid | Scenario::LegacyNestedValid
+        ) {
+            case.legacy_form(if matches!(scenario, Scenario::LegacyNestedValid) {
+                Brace::flag(false)
+            } else {
+                Brace::num(99)
+            });
         }
+        case
     }
     pub fn input(&self) -> BTreeMap<String, Vec<u8>> {
         tree(&self.root)
@@ -170,13 +185,26 @@ impl Case {
 
 impl Case {
     pub fn nested_value(&self, value: ibcmd_rs::metadata_model::brace::Brace) {
+        self.nested_record(value, false);
+    }
+    /// Exact inverse of the documented five-member Form12 -> Form13 retag.
+    pub fn legacy_form(&self, value: ibcmd_rs::metadata_model::brace::Brace) {
+        self.nested_record(value, true);
+    }
+    fn nested_record(&self, value: ibcmd_rs::metadata_model::brace::Brace, old: bool) {
         selected::mutate_descriptor(
             &self.database,
             "c099c30b-8a08-45b0-be7d-9594366e78a5",
             |row| {
-                row.as_list_mut().unwrap()[1].as_list_mut().unwrap()[1]
+                let fields = row.as_list_mut().unwrap()[1].as_list_mut().unwrap()[1]
                     .as_list_mut()
-                    .unwrap()[2] = value;
+                    .unwrap();
+                if old {
+                    assert_eq!(fields.len(), 5);
+                    assert_eq!(fields[0].as_atom(), Some("13"));
+                    fields[0] = ibcmd_rs::metadata_model::brace::Brace::num(12);
+                }
+                fields[2] = value;
             },
         );
         let mut db = ibcmd_filedb::FileDb::open(&self.database).unwrap();

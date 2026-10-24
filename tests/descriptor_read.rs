@@ -135,3 +135,88 @@ fn requested_descriptor_proof_is_invalidated_with_versions() {
         assert_ne!(last.version, first_version);
     }
 }
+
+#[test]
+fn documented_form12_keeps_valid_bytes_and_refuses_present_invalid_values() {
+    let mut failures = Vec::new();
+    for rows in [false, true] {
+        for value in [
+            Brace::flag(false),
+            Brace::flag(true),
+            Brace::num(99),
+            Brace::atom("unknown"),
+            Brace::str("unknown"),
+            Brace::list(vec![Brace::num(99)]),
+        ] {
+            let c = Case::new(Scenario::NestedInvalid, rows);
+            c.legacy_form(value.clone());
+            let before = c.input();
+            let valid = matches!(value.as_atom(), Some("0" | "1"));
+            let expected = config(&c)
+                .export(&[c.object.clone()], &|_, _, _| {})
+                .unwrap()[0]
+                .files
+                .clone();
+            if valid {
+                let current = Case::new(Scenario::NestedInvalid, rows);
+                current.nested_value(value.clone());
+                let canonical = config(&current)
+                    .export(&[current.object.clone()], &|_, _, _| {})
+                    .unwrap();
+                assert_eq!(
+                    expected, canonical[0].files,
+                    "documented12->13 must preserve the entire tree"
+                );
+            }
+            for warm in [false, true] {
+                let mut view = config(&c);
+                if warm {
+                    view.export(&["Catalog.CorpusList".into()], &|_, _, _| {})
+                        .unwrap();
+                }
+                for repeat in 0..2 {
+                    let result = view.read_file(DESCRIPTOR);
+                    if valid {
+                        let (map, path) = result.unwrap();
+                        assert_eq!(map.files[&path], expected[DESCRIPTOR]);
+                    } else if result.is_ok() {
+                        failures.push(format!(
+                            "read rows={rows} value={value:?} warm={warm} repeat={repeat}"
+                        ));
+                    }
+                    let (map, path) = view.read_file(MODULE).unwrap();
+                    assert_eq!(map.files[&path], expected[MODULE]);
+                }
+                let result = view.export_complete(&[c.object.clone()], &|_, _, _| {});
+                if valid {
+                    assert_eq!(result.unwrap()[0].files, expected);
+                } else if result.is_ok() {
+                    failures.push(format!("export rows={rows} value={value:?} warm={warm}"));
+                }
+            }
+            assert_eq!(c.input(), before);
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "documented legacy shape bypassed typed validation: {failures:?}"
+    );
+}
+#[test]
+fn documented_form12_also_validates_with_legacy_writer() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "documented_form12_keeps_valid_bytes_and_refuses_present_invalid_values",
+            "--nocapture",
+        ])
+        .env("IBCMD_RS_LEGACY_EXPORT", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

@@ -84,3 +84,6 @@ mod profile_process;
 mod rac_process;
 
 pub mod mcp;
+
+#[cfg(test)]
+mod test_process;

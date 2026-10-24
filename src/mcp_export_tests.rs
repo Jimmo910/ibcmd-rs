@@ -24,12 +24,18 @@ fn config(c: &Case) -> stored_objects::StoredConfiguration {
 }
 #[test]
 fn actual_mcp_export_payload_refuses_loss_in_selected_data() {
+    if crate::test_process::isolated_engine_test(
+        "mcp::export_completeness_tests::actual_mcp_export_payload_refuses_loss_in_selected_data",
+    ) {
+        return;
+    }
     let mut failures = Vec::new();
     for rows_dir in [false, true] {
         for scenario in [
             Scenario::InvalidDescriptor,
             Scenario::OpaqueForm,
             Scenario::NestedInvalid,
+            Scenario::LegacyNestedInvalid,
         ] {
             let c = Case::new(scenario, rows_dir);
             let before = c.input();
@@ -59,12 +65,18 @@ fn actual_mcp_export_payload_refuses_loss_in_selected_data() {
 }
 #[test]
 fn mcp_payload_keeps_supported_selection_and_legacy_or_common_form_controls() {
+    if crate::test_process::isolated_engine_test(
+        "mcp::export_completeness_tests::mcp_payload_keeps_supported_selection_and_legacy_or_common_form_controls",
+    ) {
+        return;
+    }
     for rows_dir in [false, true] {
         for scenario in [
             Scenario::InvalidDescriptor,
             Scenario::OpaqueForm,
             Scenario::LegacyCommand,
             Scenario::CommonForm,
+            Scenario::LegacyNestedValid,
         ] {
             let c = Case::new(scenario, rows_dir);
             let before = c.input();
@@ -74,10 +86,19 @@ fn mcp_payload_keeps_supported_selection_and_legacy_or_common_form_controls() {
             } else {
                 c.object.clone()
             };
+            let expected = view.export(&[name.clone()], &|_, _, _| {}).unwrap();
             let result = export_payload(&mut view, &[name.clone()]).unwrap();
             assert_eq!(result["objects"][0]["object"], name);
             let files = result["objects"][0]["files"].as_object().unwrap();
             assert!(!files.is_empty());
+            assert_eq!(files.len(), expected[0].files.len());
+            for (path, bytes) in &expected[0].files {
+                assert_eq!(
+                    files[path]["content"].as_str().unwrap().as_bytes(),
+                    bytes,
+                    "{path}"
+                );
+            }
             if name == "Language.English" {
                 assert_eq!(files.len(), 1);
                 assert_eq!(
@@ -101,6 +122,11 @@ fn mcp_payload_keeps_supported_selection_and_legacy_or_common_form_controls() {
 
 #[test]
 fn mcp_payload_retains_existing_home_page_configuration_bytes() {
+    if crate::test_process::isolated_engine_test(
+        "mcp::export_completeness_tests::mcp_payload_retains_existing_home_page_configuration_bytes",
+    ) {
+        return;
+    }
     let root =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/external/home_page/one_column");
     let cf = root.join("input.cf");

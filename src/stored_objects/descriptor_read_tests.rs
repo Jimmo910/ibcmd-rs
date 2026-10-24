@@ -5,6 +5,11 @@ mod fixture;
 use fixture::{Case, Scenario};
 #[test]
 fn changed_versions_during_descriptor_conversion_refuse_then_retry_fresh() {
+    if crate::test_process::isolated_engine_test(
+        "stored_objects::descriptor_read_tests::changed_versions_during_descriptor_conversion_refuse_then_retry_fresh",
+    ) {
+        return;
+    }
     const PATH: &str = "Catalogs/CorpusList/Forms/ListForm.xml";
     for rows_dir in [false, true] {
         let case = Case::new(Scenario::NestedInvalid, rows_dir);

@@ -7319,6 +7319,11 @@ fn dump_table_row_bytes(
                 context.type_set_leaves,
             )
         };
+        if let Some(validator) = context.selected_metadata_validator {
+            validator
+                .validate_descriptor_values(file_name, bytes)
+                .context("selected metadata conversion is incomplete")?;
+        }
         let modelled = context
             .metadata_texts_by_file_name
             .get(file_name)
