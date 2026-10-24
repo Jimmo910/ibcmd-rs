@@ -23,6 +23,9 @@ previous Language change in effective rows, prepares a different module change,
 and requires the previous language payload to remain byte-identical. Another
 removes an actual existing baseline module (retaining its artifact outside the source) and adds an unsupported new body; both must refuse. This pure planner test is not adapter/no-publication evidence.
 Existing FileDb partial/reference/stale/cancellation tests remain unchanged.
-Tests are source-only and unrun until a Cargo slot is granted. A current-master
-cleanup unit has removal assertions while its runtime scratch honors KEEP1;
+The original e6150297 checkpoint passed the two neutral planner unit tests,
+14 unchanged FileDb integration tests and six source admission tests. The
+corrected 59a4a8f4/c9a229fa pair differs only by an unused import deletion and
+passed a library check. A cleanup unit has removal assertions while its runtime
+scratch honors KEEP1;
 any failure/pre-existing label requires a base/head reproduction, not a waiver.

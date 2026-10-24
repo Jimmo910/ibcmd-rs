@@ -66,4 +66,40 @@ cannot raise them. It reuses HeldSourceRoot and the existing files selector,
 retains immutable selected bytes and validates changed-mode CDI syntax. Actual
 CDI/target ownership comparison, reference checks, compiler verification,
 identity/readset capture and transaction execution remain separate pending work.
-Source tests are initially source-only and unrun until a Cargo slot is granted.
+Source admission tests passed on e6150297 (6 tests); the corrected c9a229fa
+checkpoint differs only by removal of an unused neutral-planner import and passed
+a library check. These results do not validate the later physical readset model.
+
+## Physical readset model (synthetic verification only)
+
+The SQL-owned readset module has no SQL I/O or mutation API. Its builder admits
+bounded physical CONFIG/CONFIGSAVE parts with actual identity, a schema digest,
+complete canonical opaque headers and immutable blob bytes. Duplicate parts,
+gaps, inconsistent/truncated sizes and resource/cancellation failures invalidate
+the model; an admission failure poisons the entire builder. Local plan binding
+covers every identity/schema/key/part/header/size/blob, including unrelated rows.
+A pure selected-stage merge retains every unselected part and header and refuses
+new stored names. This is row arithmetic only: Rust construction/digest comparison
+does not prove coherent SQL acquisition, compiler authority or atomic CAS. Those
+remain required adapter/transaction gates and no RPC SQL route is enabled.
+
+Defaults for this model are 100,000 physical parts, 16 MiB per part, 64 MiB total
+payload, 8 MiB metadata and 128 UTF-16 name units. All checks remain operator-side.
+The source admission/readset integration passed all 14 tests on the c9a229fa
+checkpoint plus the readset source hashes recorded in the external verification
+receipt. The subsequent library check exited 0; its 98 root warnings are outside
+the changed SQL files. Earlier neutral-planner and FileDb regression results
+remain attributed to their own recorded earlier heads.
+
+The model repeats the complete stored row size on every physical part, matching
+`CONFIG_ROW_PART_BYTES` / `write_bulk_stage_rows_in_parts` and the documented
+platform import convention in `docs/import/patch-mode.md` section 7. This is
+source evidence for the representation, not a fresh SQL measurement: acquisition
+must still reject an unexpected measured layout before compiling or publishing.
+Selection merging removes all prior parts for the replaced names, including a
+stale multipart tail, while preserving CONFIG and every unselected saved header.
+An individually admissible replacement is refused if the complete merged readset
+would exceed its limits. Cancellation is checked for merge name/key traversal.
+Independent scoped static review approved this model. The 14 integration tests
+and library check passed; actual SQL acquisition/publication and native acceptance
+remain pending. No runtime database command was performed by these tests.
