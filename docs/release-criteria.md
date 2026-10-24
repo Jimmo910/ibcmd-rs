@@ -19,22 +19,24 @@ The matrix fetches the locked dependency set once and then sets
 `CARGO_NET_OFFLINE=true` for compilation, tests, release build, and SBOM
 generation. It runs:
 
-1. `cargo check --locked --workspace --all-targets --no-default-features`;
-2. all tests in the standalone workspace crates;
-3. all root integration targets (`--test '*'`) with default features disabled;
-4. every unit test of the root library (`--lib`), and on Windows clippy of the
+1. all tests in the standalone workspace crates;
+2. all root integration targets (`--test '*'`) with default features disabled;
+3. every unit test of the root library (`--lib`), and on Windows clippy of the
    standalone crates;
-5. clean-environment XML to CF, CF to XML, same-profile, and cross-profile
+4. clean-environment XML to CF, CF to XML, same-profile, and cross-profile
    conversion for the registered Format15/Format16 and XCF 2.20/2.21 routes;
-6. malformed/truncated input and unknown-profile cases, which must fail before
+5. malformed/truncated input and unknown-profile cases, which must fail before
    publication;
-7. the evidence-derived compatibility matrix and bootstrap manifest checks;
-8. the default `LossPolicy::Error` downgrade case, which must report the exact
+6. the evidence-derived compatibility matrix and bootstrap manifest checks;
+7. the default `LossPolicy::Error` downgrade case, which must report the exact
    loss and block publication;
-9. a release-binary boundary audit with an empty child-process `PATH` and all
+8. a release-binary boundary audit with an empty child-process `PATH` and all
    known 1C/Java discovery variables removed.
 
-The root library's unit tests run in full on every target; the research
+On a pull request the matrix skips the steps the changed files cannot
+affect (`scripts/ci_scope.py`, see `docs/testing.md`); the job always runs,
+so the four required checks always report. The root library's unit tests
+run in full on every target; the research
 probes and the live database tests are behind the `research-corpus-tests` and
 `mssql-live-tests` features, which these gates never enable.
 
@@ -85,7 +87,9 @@ The offline and release matrices cover these targets:
 | `aarch64-unknown-linux-gnu` | Ubuntu 22.04 ARM64 |
 | `x86_64-pc-windows-msvc` | Windows x64 |
 | `aarch64-apple-darwin` | macOS 15 ARM64 |
-| `x86_64-apple-darwin` | macOS 15 Intel |
+
+`x86_64-apple-darwin` (macOS Intel) is no longer built or tested after
+v0.4.1; v0.4.1 and older releases keep their Intel archives.
 
 Linux binaries are built and executed on Ubuntu 22.04. Before packaging,
 `scripts/audit_linux_abi.py` verifies ELF64 architecture and rejects GLIBC
@@ -157,7 +161,6 @@ From a checkout with the locked crates already fetched:
 ```powershell
 $env:CARGO_NET_OFFLINE = "true"
 cargo fmt --all --check
-cargo check --locked --workspace --all-targets --no-default-features
 cargo test --locked --workspace --exclude ibcmd-rs
 cargo test --locked -p ibcmd-rs --test '*' --no-default-features
 cargo test --locked -p ibcmd-rs --lib --no-default-features

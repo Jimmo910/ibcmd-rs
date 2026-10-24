@@ -22,6 +22,7 @@ env:
   CARGO_TERM_COLOR: always
   OPENSPEC_TELEMETRY: "0"
   RUST_VERSION: "1.95.0"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   gate:
@@ -111,9 +112,6 @@ jobs:
             binary: ibcmd-rs
           - os: macos-15
             target: aarch64-apple-darwin
-            binary: ibcmd-rs
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
             binary: ibcmd-rs
     steps:
       - name: Checkout complete history
