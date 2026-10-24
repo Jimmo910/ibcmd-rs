@@ -74,14 +74,22 @@ The shorthand combining CF prefix and 7505-byte length is not a full hash.
   provenance; source-only observer tests are not an accepted SQL profile.
 - Source freeze/exclusivity receipt and window, precise baseline hashes, and
   current sole-operator lease after the preceding operator phase releases.
-- Proof of the supplied dedicated non-pooled connection/provider capabilities.
+- Proof of the supplied dedicated non-pooled capture connection/provider
+  capabilities. This does not bind #380 Rust `serve` settings/authentication.
+- Independently verified current #380 product binary/settings/auth mechanism
+  binding (reference only, no values), and its actual Windows seven-RPC probe
+  passing with zero skipped cases; neither is established by this packet.
 
 No concrete SQL target or credential is recorded in this packet. Authentication
-reference is a mechanism only: the sole operator supplies an already-open,
+reference for the #359 capture package is a mechanism only: the sole operator
+supplies an already-open,
 dedicated NON-POOLED `System.Data.Common.DbConnection` using their existing
 integrated/token/secure authentication mechanism. No credential or connection
 string is read, copied into a plan, printed or supplied as a CLI argument. The
 package changes no login, privileges, network, encryption or trust settings.
+This connection is not an inferred Rust `serve` settings/auth binding for #380.
+Sharing a public seed does not share target identity, authentication authority,
+product settings or a runtime acceptance result between the two probes.
 
 ## Exact first offline action
 
