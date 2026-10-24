@@ -59,7 +59,9 @@ class ScopeTests(unittest.TestCase):
     def test_reference_lookup_finds_a_cited_document(self):
         # profiles cite evidence documents; a real lookup against the tree.
         self.assertTrue(ci_scope.referenced("docs/HISTORY.md"))
-        self.assertFalse(ci_scope.referenced("docs/no-such-document-for-ci-scope.md"))
+        # Built at run time: a literal path here would be a reference itself.
+        missing = "docs/" + "no-such-document-for-ci-scope.md"
+        self.assertFalse(ci_scope.referenced(missing))
 
 
 if __name__ == "__main__":
