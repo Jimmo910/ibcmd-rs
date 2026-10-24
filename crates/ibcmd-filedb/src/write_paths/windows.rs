@@ -1,5 +1,7 @@
 //! Windows anchors directory names by denying DELETE access for each ancestor.
 //! Leaf operations stay inside that held chain; identity never falls back to paths.
+mod snapshot;
+
 use crate::{Error, Result};
 use std::os::windows::fs::OpenOptionsExt;
 use std::{
@@ -130,6 +132,10 @@ impl Custody {
         }
         Ok(())
     }
+    pub(super) fn snapshot_identity(&self, path: &Path, file: &File) -> Result<[u8; 12]> {
+        snapshot::identity(&self.checked(path)?, file)
+    }
+
     fn plain_leaf(&self, path: &Path, missing_ok: bool) -> std::io::Result<PathBuf> {
         let path = self.checked(path)?;
         match metadata_handle(
