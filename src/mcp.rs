@@ -309,21 +309,7 @@ impl Bound {
                     !args.objects.is_empty() && args.objects.len() <= MAX_OBJECTS,
                     "select 1..32 objects"
                 );
-                let objects = config.export(&args.objects, &|_, _, _| {})?;
-                let mut used = 0usize;
-                let mut output = Vec::new();
-                for object in objects {
-                    let mut files = BTreeMap::new();
-                    for (path, bytes) in &object.files {
-                        crate::cancel::check()?;
-                        used = used.checked_add(bytes.len()).context("output limit")?;
-                        ensure!(used <= MAX_RESULT / 2, "output_limit: select fewer objects");
-                        let value = encoded(bytes)?;
-                        files.insert(path.clone(), value);
-                    }
-                    output.push(json!({"object":object.object.full_name,"version":object.version,"files":files}));
-                }
-                json!({"objects":output})
+                export_payload(&mut config, &args.objects)?
             }
             _ => bail!("unknown tool"),
         };
@@ -817,6 +803,30 @@ fn validate_relative(path: &str) -> Result<()> {
     );
     Ok(())
 }
+// Shared by the MCP export arm and portable semantic tests; authorization and
+// immutable snapshots remain at the surrounding capability boundary.
+fn export_payload(
+    config: &mut stored_objects::StoredConfiguration,
+    objects: &[String],
+) -> Result<Value> {
+    let objects = config.export_complete(objects, &|_, _, _| {})?;
+    let mut used = 0usize;
+    let mut output = Vec::new();
+    for object in objects {
+        let mut files = BTreeMap::new();
+        for (path, bytes) in &object.files {
+            crate::cancel::check()?;
+            used = used.checked_add(bytes.len()).context("output limit")?;
+            ensure!(used <= MAX_RESULT / 2, "output_limit: select fewer objects");
+            let value = encoded(bytes)?;
+            files.insert(path.clone(), value);
+        }
+        output
+            .push(json!({"object":object.object.full_name,"version":object.version,"files":files}));
+    }
+    Ok(json!({"objects":output}))
+}
+
 fn encoded(bytes: &[u8]) -> Result<Value> {
     ensure!(
         bytes.len() <= MAX_RESULT / 2,
@@ -1280,3 +1290,7 @@ mod import_boundary_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "mcp_export_tests.rs"]
+mod export_completeness_tests;

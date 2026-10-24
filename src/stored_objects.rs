@@ -1290,7 +1290,9 @@ impl StoredConfiguration {
         })
     }
 
-    /// What the export writes for the objects, in memory.
+    /// Diagnostic conversion of selected objects in memory. Unsupported descriptors
+    /// or assets may be withheld while usable files are returned successfully.
+    /// Complete-result consumers must use [`Self::export_complete`] instead.
     pub fn export(
         &mut self,
         names: &[String],
@@ -1298,6 +1300,18 @@ impl StoredConfiguration {
     ) -> Result<Vec<Arc<ObjectFiles>>> {
         let _engine = engine();
         self.export_unlocked(names, progress)
+    }
+
+    /// Convert selected objects in memory, requiring semantic and descriptor/asset
+    /// completeness checks before returning any file maps. Diagnostic cache entries
+    /// are revalidated; the existing storage view and renderer are retained.
+    pub fn export_complete(
+        &mut self,
+        names: &[String],
+        progress: Progress<'_>,
+    ) -> Result<Vec<Arc<ObjectFiles>>> {
+        let _engine = engine();
+        self.export_checked_unlocked(names, progress, true)
     }
 
     /// The export of the object a file belongs to, and the file's path as

@@ -791,3 +791,70 @@ async fn real_mcp_import_cancellation_before_publication_preserves_target() {
     assert!(!ibcmd_filedb::backup_file(&db).exists());
     client.cancel().await.unwrap();
 }
+
+#[path = "common/mcp_export_fixture.rs"]
+mod export_fixture;
+#[tokio::test]
+async fn real_mcp_export_rejects_incomplete_maps_without_returning_partial_files() {
+    use export_fixture::{Case, Scenario};
+    for rows_dir in [false, true] {
+        for scenario in [
+            Scenario::InvalidDescriptor,
+            Scenario::OpaqueForm,
+            Scenario::NestedInvalid,
+            Scenario::LegacyCommand,
+            Scenario::CommonForm,
+        ] {
+            let case = Case::new(scenario, rows_dir);
+            let before = case.input();
+            let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
+            command
+                .arg("mcp")
+                .arg("--settings")
+                .arg(&case.settings)
+                .stderr(Stdio::piped());
+            let client = ().serve(TokioChildProcess::new(command).unwrap()).await.unwrap();
+            let response = call(&client, "export", json!({"objects":[case.object]})).await;
+            if matches!(
+                scenario,
+                Scenario::InvalidDescriptor | Scenario::OpaqueForm | Scenario::NestedInvalid
+            ) {
+                assert_eq!(
+                    response.is_error,
+                    Some(true),
+                    "{scenario:?}, rows_dir={rows_dir}: {response:?}"
+                );
+                for content in &response.content {
+                    let text = &content.as_text().unwrap().text;
+                    assert!(!text.contains("\"files\""));
+                    assert!(!text.contains("KeepMe"));
+                }
+            } else {
+                let payload = value(&response);
+                let files = payload["objects"][0]["files"].as_object().unwrap();
+                assert!(!files.is_empty());
+                if matches!(scenario, Scenario::CommonForm) {
+                    assert!(files.contains_key("CommonForms/OpaqueForm/Ext/Form.xml"));
+                }
+            }
+            if matches!(scenario, Scenario::InvalidDescriptor | Scenario::OpaqueForm) {
+                let good =
+                    value(&call(&client, "export", json!({"objects":["Language.English"]})).await);
+                assert_eq!(
+                    good["objects"][0]["files"]["Languages/English.xml"]["content"],
+                    fs::read_to_string(
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .join("tests/fixtures/file-infobase/tiny-xml/Languages/English.xml")
+                    )
+                    .unwrap()
+                );
+            }
+            assert_eq!(
+                case.input(),
+                before,
+                "MCP export must not modify DB, rows, source or sentinels"
+            );
+            client.cancel().await.unwrap();
+        }
+    }
+}

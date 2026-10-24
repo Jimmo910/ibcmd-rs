@@ -1,3 +1,7 @@
+// Let shared integration-fixture helpers use the same crate path in unit tests.
+#[cfg(test)]
+extern crate self as ibcmd_rs;
+
 pub mod adapters;
 pub mod apply_check;
 pub mod cancel;
