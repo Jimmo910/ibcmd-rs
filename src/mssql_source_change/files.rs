@@ -271,18 +271,21 @@ fn open_windows(path: &Path, directory: bool) -> Result<File, SourceChangeError>
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY,
-        FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
+        FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
     };
     let mut options = fs::OpenOptions::new();
-    if directory {
-        // Zero-access metadata queries do not participate in deny-delete
-        // sharing (MS-FSA 2.1.5.1.2.1). Keep the existing sharing restrictions.
+    let sharing = if directory {
+        // LIST makes deny-delete sharing effective. Rename opens its destination
+        // parent with add-child/write access (MS-FSA FileRenameInformation), so
+        // permit WRITE sharing while still excluding DELETE sharing.
         options.access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES);
+        FILE_SHARE_READ | FILE_SHARE_WRITE
     } else {
         options.read(true);
-    }
+        FILE_SHARE_READ
+    };
     options
-        .share_mode(FILE_SHARE_READ)
+        .share_mode(sharing)
         .custom_flags(
             FILE_FLAG_OPEN_REPARSE_POINT
                 | if directory {
