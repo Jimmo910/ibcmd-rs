@@ -63,3 +63,54 @@ No script removes artifacts, drops databases, or alters originals.
 No live SQL, VM, TDS, authentication, native platform or editor-host acceptance
 is established by these portable controls. Existing merged #484 evidence remains
 separate. No issue closure or full CI is implied.
+
+
+## Local-only first operator package
+
+`readonly_probe.py` prints a **synthetic**, non-executed JSON plan for the pinned
+published candidate `2aff32c79d0b9fbe45d513693b27e52fc47457de`. It neither spawns
+`serve` nor connects to a database. `executed=false`, `syntheticExample=true` and
+`liveAcceptance=false` must remain visible when sharing its output. Its sample
+hashes are intentionally fake; they must never be used as an actual build receipt.
+
+First operator action is a metadata/lease review, before starting any child:
+confirm one already owned disposable public-tiny SQL target, no concurrent
+operator, exact source/reference digests, CONFIG/CONFIGSAVE fingerprints and
+pending-stage markers, private settings identity, and an immutable clean build
+receipt for this exact binary. Current CLI `--version` reports package version;
+it does not attest git SHA. The separate receipt must bind source/tree/lockfile,
+Rust 1.95.0, reviewed build command and binary hash. No build or operator execution
+is granted by this plan. Missing actual receipt/metadata means STOP.
+
+After that separate operator grant, substitute lease-bound private values into
+exactly seven read-only JSON-RPC requests: initialize 1.4, active/main tree,
+active status without a baseline, main status with the reference, a cancelled
+native status, and a retired-generation native status. Resolve the exact target
+from initialize against the private settings/lease; never pick the first entry,
+expand a wildcard, or discover unrelated databases. Never put passwords in
+frames, argv or public receipts. Require matching 1.4 handshake and capabilities.
+
+The proposed collector budget is 180 seconds wall, 20 seconds/request, seven
+requests, 1 MiB stdout, 16 KiB stderr, 8 KiB/frame header and 64 notifications.
+On error/cap/timeout: no success publication, close input and reap only the owned
+child with bounded terminate/kill handling; no broad process kill, automatic
+retry or artifact purge. Pure decoder/error controls are tested, but **there is
+no actual process runner here**: timeout/reaping behavior itself is not proven.
+The public error projection drops raw message/data/stderr; retain raw local
+receipts privately and never publish them through an error path.
+
+The added-object transition helper verifies only independently recorded known
+inventories: active remains old during stage, main gains exactly the expected
+object, apply preserves main and brings active to it. Incomplete recording falls
+back to active. It is not an execution of T-SQL, a staged-added-object adapter
+fixture, or physical SQL stage/apply evidence. Existing Rust refusal controls
+cover missing versions, commit/new markers and rename/delete fullRequired;
+unknown-role coverage remains the conservative client boundary.
+
+The first read-only probe needs no stage/apply consent because it performs no
+write; future mutation is owned by SQL primary with a separate reviewed preview,
+lease and explicit consent. The full `verify_capture.py` stage/apply schema still
+expects its earlier embeddedCommit field. Do not fabricate that value from
+`--version`: a separately reviewed build-receipt schema integration is required
+before using it for an actual current-binary full transcript. This package and
+its synthetic output do not silently upgrade that schema or prove live SQL.

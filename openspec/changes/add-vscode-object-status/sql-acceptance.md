@@ -35,7 +35,7 @@ Passing synthetic transcripts is contract preparation, never live acceptance.
 
 1. Obtain an exclusive bounded operator lease for ONE newly owned disposable SQL
    database. Record lease id, start/expiry, operator, immutable public fixture
-   identity, exact source HEAD and binary SHA-256/embedded commit, platform build,
+   identity, exact source HEAD and binary SHA-256 bound by an immutable clean build receipt, platform build,
    DB identity digest and chosen active/main mode. Credentials and host/database
    names remain in the private lab; publish only sanitized identities and counts.
 2. Use a fresh external run directory. Hash the public source/reference trees and
@@ -68,7 +68,7 @@ Passing synthetic transcripts is contract preparation, never live acceptance.
 - [x] Current #380 comments and merged #484 coverage limits inspected.
 - [x] Isolated worktree pinned to master `6ca6ade04ceee151f056e29acb5cd6deaaa9fbc4`.
 - [x] Initial Rust contract suite at `42f703dd`: 2 passed under bounded jobs=2 grant; log `logs/issue-380-sql-contract-42f703dd.log`.
-- [ ] Revised discriminating stage/refusal controls compiled/executed under the next bounded grant.
+- [x] Revised discriminating stage/refusal controls at `2aff32c7`: 2 passed, 0 failed, 0 ignored; log `logs/issue-380-sql-contract-2aff32c7.log`; full slot released.
 - [x] Offline transcript verifier: 29 synthetic controls passed (Python unittest).
 - [x] Initial independent review: verifier token/parameter findings corrected; 11 rejection controls fail the prior verifier and pass now.
 - [x] Actual pure client adapter: 6 tests pass, including equal-current-bytes both.
@@ -94,3 +94,24 @@ ignore and native Windows smoke require separate transport/platform evidence.
 Synthetic Python results: 29 passed. Client adapter source SHA-256:
 `63c42026d2e0465825d1b7f471b614d228f4d46b75d6a06f0b8997ddcb36ef6b`.
 All local fixtures were retained; no old fixture or receipt was purged.
+
+## First read-only operator package (local follow-up)
+
+`readonly_probe.py` pins candidate `2aff32c7` / API base `6ca6ade0`, protocol
+1.4, exact read-only request sequence, required private DB metadata, output/frame
+caps and owned-child termination requirements. It prints a clearly synthetic,
+non-executed plan; no VM/SSH/SQL/native/host/Cargo process is started. The code
+checks framing/privacy and claimed inventory transitions only. It is not a
+collector or proof of process timeout/reaping, live TDS, RPC or physical staging.
+
+Current CLI source has package-version output, not embedded git identity.
+Before any actual probe, an operator must independently verify an immutable
+build receipt, binary hash, clean source/lockfile hashes and pinned toolchain.
+The legacy full transcript verifier's embeddedCommit schema is not silently
+reinterpreted; adapting that schema to real build receipts needs separate review.
+
+Read-only preparation adds no mutation consent: stage/apply stays with SQL
+primary. No target creation/drop, stage/apply, preview, authentication or access
+change is executed by this package. See scripts/status-lab/README.md for the
+first operator action and exact exclusions. Synthetic output is retained at
+`logs/issue-380-readonly-probe-synthetic-plan.json`, never as live evidence.
