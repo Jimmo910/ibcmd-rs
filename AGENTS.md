@@ -39,8 +39,8 @@ cargo build --locked --profile iter                                      # binar
 
 ## The loop
 
-1. Take one issue. Set its board status first (see Tracking). Work on a branch
-   `agent/issue-<N>-<slug>` in your own worktree.
+1. Take one Ready issue with `/claim` and wait for the bot confirmation (see
+   Tracking). Work on `feature/issue-<N>-<slug>` in your own worktree.
 2. New capability (command, format, route, gate): write the OpenSpec change
    first (skill `openspec-change`). Bug: write the failing test first and see
    it fail for the right reason.
@@ -96,14 +96,36 @@ cargo build --locked --profile iter                                      # binar
 
 ## Tracking
 
-The working board is https://github.com/users/Untru/projects/9 (editing it
-needs `gh auth refresh -s project`). Before taking an issue or dispatching an
-implementer, set its Status to In progress and record the owner and current
-scope in Agent. Update the board at every state transition and read the
-values back. Local plans and status labels do not replace project fields.
-Reviewable PRs go to In review; Done only after the acceptance criteria hold.
-A draft PR does not complete its issues. Do not mark future work started
-because it has a proposed owner.
+The working board is https://github.com/users/Untru/projects/9. Anyone who
+can comment on a public issue may claim it without repository Collaboration
+or Project write access:
+
+- Comment `/claim` on an unassigned Ready issue. Wait for the bot's final
+  success reply and verify Assignees / In progress before starting work or
+  dispatching an implementer. A pending receipt is not approval to start.
+- The assigned contributor comments `/review #PR` for their open non-Draft
+  PR targeting master and explicitly referencing the issue. The bot records
+  the PR in Agent and moves the card to In review; this does not run Codex
+  Review. Request that separately with `@codex review` on the PR.
+- Only the assigned contributor can `/unclaim`; it removes their assignment
+  and returns the card to Ready. Never take over another contributor's issue.
+- Work through a fork and pull request when repository write access is absent.
+  Keep a concrete human operator responsible for agent work.
+
+The bot updates and reads back Assignees, Status and its own `Claim bot:`
+Agent line; preserve all other owners' Agent lines. A failed or unfinished
+command may have partially applied: inspect the current assignment and send
+one new command to reconcile your own work. Never rerun an old command to
+restore state. If the bot is unavailable or the issue is not Ready, ask the
+maintainer to triage it; do not grant yourself access or start silently.
+Setup, refusals and recovery: [issue self-service](docs/issue-self-service.md).
+
+Maintainers triage new issues into Ready, reconcile unexpected interference,
+and mark Done only after acceptance evidence. A draft PR does not complete
+its issues. Local plans and labels do not replace Project fields. Read back
+manual board transitions and do not mark future work started because it has
+a proposed owner. Direct Project editing requires Project write access; it
+is not required for the public comment commands.
 
 ## Releases
 

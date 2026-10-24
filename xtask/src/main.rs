@@ -229,6 +229,7 @@ fn ci_steps(root: &Path) -> Vec<Step> {
         "edt_warm_context_test",
         "edt_release_audit_test",
         "linux_abi_test",
+        "test_issue_claim_bot",
     ] {
         let path = format!("tests/scripts/{script}.py");
         steps.push(Step::new(format!("python {script}"), python, &[path.as_str()]).needs_program());
