@@ -100,7 +100,8 @@ impl SourceAdmission {
         self.selected.get(path).map(|bytes| bytes.as_slice())
     }
 
-    /// Revalidates original bytes, file/ancestor witnesses and the full census.
+    /// Revalidates original bytes, file/ancestor witnesses and the file census.
+    /// Empty-directory membership is not yet part of this witness.
     /// This must precede the guarded SQL publication boundary, never follow it.
     pub fn revalidate(&self) -> Result<()> {
         self.source.require_unchanged().map_err(Into::into)

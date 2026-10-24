@@ -142,3 +142,12 @@ Recognized graph candidates and key-anchored header UUIDs establish no independe
 owner identity. Full parent, body role, raw profile, versions, projection and owner
 completeness remain Unsupported; the diagnostic consumer still refuses authority.
 No observer result can reach a SQL writer or change final source/cancel guards.
+
+### Directory membership dependency
+
+The current `source_census` binding hashes existing file observations. Bounded
+traversal and ancestor custody do not extend it to all directory membership or
+empty-directory changes. Passive observations do not fill that gap. Strict
+all-entry claims require the separately owned source-census donor, pinned review
+and actual consumer negative controls before integration; this adapter remains
+diagnostic-only while that dependency is pending.

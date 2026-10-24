@@ -168,3 +168,15 @@ See [compiler-worker-contract.md](compiler-worker-contract.md) for the proposed
 fresh-process boundary and source API evidence. The existing metadata compiler
 is once per process; successful isolated tests do not establish a production
 supervisor. No worker command, transport or SQL publication route is added.
+
+## Source membership limitation
+
+Current source admission and diagnostic final validation use a file census,
+bounded traversal and file/ancestor custody. They do not prove complete directory
+membership/type stability; an empty directory added after capture can be missed.
+A separately owned shared correction and reviewed consumer integration are
+required before claiming strict all-entry source stability. This is a confirmed
+witness limitation, not evidence of a compiled SQL publication exploit. SQL
+authority remains unavailable; no existing source digest is promoted to that
+missing proof. The 36aeffdd focused runtime receipt remains valid for its tested
+file/budget/diagnostic cases and does not cover this new negative control.

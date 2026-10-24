@@ -30,9 +30,18 @@ may avoid this compiler; that does not establish reusable metadata compilation.
 The parent retains the original source custody and a coherent SQL snapshot.
 Before dispatch it captures, bounds and hashes all needed source files, including
 compiler metadata rather than only selected module bytes. Capture uses the
-existing anchored census, alias/symlink checks, entry/depth/byte limits and typed
+existing anchored file census, alias/symlink checks, entry/depth/byte limits and typed
 cancellation. It revalidates the original source after capture. A path supplied to
 the child is never permission to reopen a mutable operator source tree.
+
+The current HeldSourceRoot witness is a file census with bounded traversal and
+file/ancestor custody. It does not yet certify all directory membership/types:
+an added empty directory may remain unnoticed. The directory-census correction
+is a separate shared dependency. Until reviewed integration and negative controls,
+no current source digest or final validation proves complete all-entry stability.
+A future worker input adapter requiring that property must refuse; diagnostic
+results remain non-publishable. Snapshot materialization cannot repair missing
+original-tree membership evidence by hashing only the files it copied.
 
 The worker receives only an immutable source snapshot, packed input rows,
 selection and fixed platform/export profile, plus versioned binding data. It
@@ -155,7 +164,8 @@ unknown transport outcomes remain the transaction adapter's responsibility.
 | Control | Required result |
 | --- | --- |
 | Two sequential metadata requests; first fails after base installation | Separate fresh processes; no reset or stale base reuse. |
-| Source edit/add/rename, same-byte replacement, ancestor/root rebind | Parent refuses via original witnesses before result admission. |
+| Source file edit/add/rename, same-byte replacement, ancestor/root rebind | Parent refuses via original witnesses before result admission. |
+| Empty-directory addition/removal or directory/type replacement after capture | Strict membership/type witness must refuse; current file-only census does not establish this gate. |
 | Executable replacement or wrong build/features/profile | Refuse before trusting response; self-report cannot repair binding. |
 | Stale/replayed nonce, changed target epoch, unbound selection | Refuse; no automatic replay. |
 | Length overflow, cumulative budget exhaustion, extra/truncated response | Bounded refusal before result admission; no SQL writes. |
