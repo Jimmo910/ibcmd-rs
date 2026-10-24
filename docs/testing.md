@@ -15,7 +15,7 @@ commands on both Windows and Linux:
 cargo check --locked --workspace --exclude ibcmd-rs --all-targets
 cargo clippy --locked --workspace --exclude ibcmd-rs --all-targets -- -D warnings
 cargo test --locked --workspace --exclude ibcmd-rs
-cargo test --locked -p ibcmd-rs --test portable_root_smoke
+cargo test --locked -p ibcmd-rs --test integration portable_root_smoke::
 ```
 
 The root smoke test covers public, platform-free root APIs against a temporary
@@ -41,6 +41,28 @@ ignored tests. Two failures are `module_blob` serialization assertions; the
 other 177 are `mssql_dump` reverse-engineering assertions. The same 179
 failures remain visible legacy debt and are not relabeled as portable, live, or
 research merely to make CI green.
+
+## Root integration suites
+
+`tests/integration.rs` builds the root package's integration suites as
+modules of one test binary, so the large root library is linked once rather
+than once per suite. A test there is named `<suite>::<test>`:
+
+```text
+cargo test --locked -p ibcmd-rs --test '*' --no-default-features            # every root suite
+cargo test --locked -p ibcmd-rs --test integration cf_export:: --no-default-features
+cargo test --locked -p ibcmd-rs --test integration cf_export::clean_room_cf_exports_known_families_with_an_empty_path -- --exact
+```
+
+The suites of that binary run in parallel in one process, so none of them may
+change process-wide state, and scratch directories need names of their own
+(`common::temp_dir` refuses a tag that two suites use). A suite that runs
+process-global engine operations in the test process (cancellation scopes,
+offline rows, the offline compile, stored-object views) or needs its own
+`main` keeps a `[[test]]` target of its own in `Cargo.toml` and runs with
+`--test <suite>`. The manifest sets `autotests = false`; the test
+`every_suite_file_is_built` fails when a `tests/<suite>.rs` file is built by
+no target or by two.
 
 ## Research corpus suite
 

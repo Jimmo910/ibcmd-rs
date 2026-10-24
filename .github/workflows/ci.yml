@@ -106,16 +106,16 @@ jobs:
         run: cargo test --locked --workspace --exclude ibcmd-rs
 
       - name: Test portable root smoke
-        run: cargo test --locked -p ibcmd-rs --test portable_root_smoke
+        run: cargo test --locked -p ibcmd-rs --test integration portable_root_smoke::
 
       - name: Audit release-shaped platform boundary
-        run: cargo test --locked -p ibcmd-rs --test platform_oracle_boundary --no-default-features
+        run: cargo test --locked -p ibcmd-rs --test integration platform_oracle_boundary:: --no-default-features
 
       - name: Test CF corruption and property corpus
-        run: cargo test --locked -p ibcmd-rs --test cf_corruption
+        run: cargo test --locked -p ibcmd-rs --test integration cf_corruption::
 
       - name: Test XML dialect corpus
-        run: cargo test --locked -p ibcmd-rs --test xml_profiles
+        run: cargo test --locked -p ibcmd-rs --test integration xml_profiles::
 
       # The root library's unit tests (the converters and the load/export
       # engines) build their paths portably, so they run on every OS.
@@ -125,7 +125,7 @@ jobs:
       # Native XML tree -> `cf bootstrap --base-free` -> CF -> XML tree over
       # the three retained 8.3.27.2214 corpora (Untru/ibcmd-rs#351).
       - name: Test the XML to CF round trip
-        run: cargo test --locked -p ibcmd-rs --test cf_native_roundtrip --no-default-features
+        run: cargo test --locked -p ibcmd-rs --test integration cf_native_roundtrip:: --no-default-features
 
   legacy-windows:
     name: Legacy Root (Windows)
