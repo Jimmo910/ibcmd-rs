@@ -94,6 +94,15 @@ fn stamp(file: &File, regular: bool) -> Result<Stamp, SourceChangeError> {
     }
 }
 
+/// Detached directory provenance. No timestamp or retained handle participates.
+/// The chain commits to spelling and ancestry; it is not an atomic census.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct DirectoryWitness {
+    root: FileIdentity,
+    directory: FileIdentity,
+    chain_sha256: [u8; 32],
+}
+
 #[derive(Debug)]
 pub(super) struct RootAnchor {
     pub(super) path: PathBuf,
@@ -177,6 +186,154 @@ impl RootAnchor {
             return Err(SourceChangeError::HeldRootChanged);
         }
         Ok(())
+    }
+
+    /// Capture only directory identity, leaving no handles in the result.
+    /// Exact spelling comes from the caller's bounded filesystem enumeration.
+    pub(super) fn directory_witness(
+        self: &Arc<Self>,
+        exact_relative: &str,
+    ) -> Result<DirectoryWitness, SourceChangeError> {
+        #[cfg(not(any(unix, windows)))]
+        return Err(io(format!(
+            "directory witnesses are unavailable on this host: {exact_relative:?}"
+        )));
+        #[cfg(any(unix, windows))]
+        {
+            crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
+            let relative = Path::new(exact_relative);
+            if path_to_slash(relative)? != exact_relative {
+                return Err(io("directory source spelling is not canonical"));
+            }
+            self.require_path()?;
+            crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
+
+            // Fixed-width framing keeps paths, identity words and the final
+            // component count unambiguous. This domain is separate from files.
+            let mut hash = Sha256::new();
+            hash.update(b"ibcmd-source-directory-witness-v1\0Directory\0");
+            hash.update(self.identity.0.to_le_bytes());
+            hash.update(self.identity.1.to_le_bytes());
+            let path_bytes = u64::try_from(exact_relative.len()).map_err(io)?;
+            hash.update(path_bytes.to_le_bytes());
+            hash.update(exact_relative.as_bytes());
+            let mut count = 0_u64;
+            let mut chain = Vec::<(File, FileIdentity)>::new();
+            #[cfg(windows)]
+            let mut path = self.path.clone();
+            for component in relative.components() {
+                crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
+                let Component::Normal(name) = component else {
+                    return Err(io("invalid anchored directory path"));
+                };
+                count = count
+                    .checked_add(1)
+                    .ok_or_else(|| io("directory depth overflow"))?;
+                chain.try_reserve(1).map_err(io)?;
+                #[cfg(unix)]
+                let parent = chain.last().map_or(&self.file, |(file, _)| file);
+                #[cfg(windows)]
+                path.push(name);
+                let (file, identity) = self.witness_directory_component(
+                    #[cfg(unix)]
+                    parent,
+                    #[cfg(unix)]
+                    name,
+                    #[cfg(windows)]
+                    &path,
+                )?;
+                hash.update(identity.0.to_le_bytes());
+                hash.update(identity.1.to_le_bytes());
+                chain.push((file, identity));
+            }
+            let directory = chain.last().ok_or_else(|| io("empty directory path"))?.1;
+            hash.update(count.to_le_bytes());
+            let chain_sha256 = hash.finalize().into();
+
+            // Keep the first handles live while revalidating every named edge
+            // from the original root. Only one second-walk parent is retained.
+            crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
+            self.require_path()?;
+            let mut current = None::<File>;
+            #[cfg(windows)]
+            let mut path = self.path.clone();
+            for (component, (held, expected)) in relative.components().zip(&chain) {
+                crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
+                if stamp(held, false)?.identity != *expected {
+                    return Err(SourceChangeError::FileChangedDuringRead(
+                        exact_relative.to_owned(),
+                    ));
+                }
+                let Component::Normal(name) = component else {
+                    return Err(io("invalid anchored directory path"));
+                };
+                #[cfg(unix)]
+                let parent = current.as_ref().unwrap_or(&self.file);
+                #[cfg(windows)]
+                path.push(name);
+                let (file, identity) = self.witness_directory_component(
+                    #[cfg(unix)]
+                    parent,
+                    #[cfg(unix)]
+                    name,
+                    #[cfg(windows)]
+                    &path,
+                )?;
+                if identity != *expected {
+                    return Err(SourceChangeError::FileChangedDuringRead(
+                        exact_relative.to_owned(),
+                    ));
+                }
+                current = Some(file);
+            }
+            for (held, expected) in &chain {
+                crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
+                if stamp(held, false)?.identity != *expected {
+                    return Err(SourceChangeError::FileChangedDuringRead(
+                        exact_relative.to_owned(),
+                    ));
+                }
+            }
+            crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
+            self.require_path()?;
+            crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
+            Ok(DirectoryWitness {
+                root: self.identity,
+                directory,
+                chain_sha256,
+            })
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    fn witness_directory_component(
+        &self,
+        #[cfg(unix)] parent: &File,
+        #[cfg(unix)] name: &std::ffi::OsStr,
+        #[cfg(windows)] path: &Path,
+    ) -> Result<(File, FileIdentity), SourceChangeError> {
+        crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
+        #[cfg(unix)]
+        let file = {
+            use rustix::fs::{Mode, OFlags, openat};
+            File::from(
+                openat(
+                    parent,
+                    name,
+                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .map_err(io)?,
+            )
+        };
+        #[cfg(windows)]
+        let file = open_windows(path, true)?;
+        crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
+        let identity = stamp(&file, false)?.identity;
+        #[cfg(windows)]
+        windows_profile::same_volume(self.identity, identity)?;
+        crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
+        Ok((file, identity))
     }
 
     pub(super) fn open_file(

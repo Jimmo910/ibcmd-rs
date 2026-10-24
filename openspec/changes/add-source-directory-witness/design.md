@@ -29,7 +29,7 @@ Root and member identities compare exactly. Ancestry and spelling equality is a 
 Input must be a nonempty lexical canonical `/` relative path. Reject absolute, parent/current, repeated separator, non-Unicode, Windows alias/reserved spelling and normalizer-changing inputs before opening any member. The exact spelling is supplied by the census's enumeration and included verbatim in the commitment; this seam does not independently claim a HANDLE-derived canonical name or a raw operator-path policy.
 
 ## Traversal and final name checks
-Check typed cancellation at entry, before every component open/type/identity checkpoint, before name revalidation and before return. `Cancelled` remains `SourceChangeError::Cancelled`. Call root/path revalidation without replacing the retained original root.
+Check typed cancellation at entry, before every member-component open/type/identity checkpoint, before name revalidation and before return. `Cancelled` remains `SourceChangeError::Cancelled`. Call root/path revalidation without replacing the retained original root.
 
 On Unix, every component is opened relative to the SAME retained `self.file` (then its opened child), with directory, read-only, NOFOLLOW and CLOEXEC flags. No fresh absolute RootAnchor substitutes for this descriptor-relative member walk.
 
