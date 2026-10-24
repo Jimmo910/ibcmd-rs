@@ -594,6 +594,11 @@ struct SourceSnapshot {
     files: BTreeMap<String, Vec<u8>>,
     #[cfg(unix)]
     stamps: BTreeMap<String, FileStamp>,
+    /// The entry names of every directory: a file added or renamed within one
+    /// tick of the file system's coarse timestamp clock leaves the
+    /// directory's stamp unchanged.
+    #[cfg(unix)]
+    listings: BTreeMap<String, Vec<String>>,
 }
 #[cfg(unix)]
 #[derive(PartialEq, Eq)]
@@ -625,6 +630,7 @@ impl SourceSnapshot {
         let mut snapshot = Self {
             files: BTreeMap::new(),
             stamps: BTreeMap::new(),
+            listings: BTreeMap::new(),
         };
         walk_source(root, "", 0, &mut snapshot, &mut 0, &mut 0)?;
         snapshot.validate(root)?;
@@ -642,6 +648,12 @@ impl SourceSnapshot {
                 FileStamp::of(&file.metadata()?) == *stamp,
                 "source census changed; retry required"
             );
+            if let Some(names) = self.listings.get(path) {
+                ensure!(
+                    directory_names(&file)? == *names,
+                    "source census changed; retry required"
+                );
+            }
         }
         Ok(())
     }
@@ -719,7 +731,26 @@ fn walk_source(
         "source directory changed during enumeration"
     );
     snapshot.stamps.insert(prefix.to_string(), before);
+    snapshot
+        .listings
+        .insert(prefix.to_string(), directory_names(directory)?);
     Ok(())
+}
+
+/// The sorted entry names of `directory`, without `.` and `..`.
+#[cfg(unix)]
+fn directory_names(directory: &fs::File) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    for entry in rustix::fs::Dir::read_from(directory)? {
+        crate::cancel::check()?;
+        let entry = entry?;
+        let name = entry.file_name().to_str()?;
+        if name != "." && name != ".." {
+            names.push(name.to_string());
+        }
+    }
+    names.sort();
+    Ok(names)
 }
 
 fn read_bounded_data(mut file: &fs::File, limit: usize) -> Result<Vec<u8>> {
