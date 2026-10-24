@@ -927,6 +927,8 @@ fn windows_plan_committed_recovery_error_retains_original() {
             "publish-recovery" => {
                 let measured_code = measured_backup_replacement_denial(&case);
                 let plan = prepare(&case, MODULE);
+                // Publication reports use the canonical consumed target namespace.
+                let expected_recovery = sibling(&plan.summary().target, ".ibcmd-rs.bak.new");
                 let before = bytes(&case.db());
                 let previous = backup(&case.db());
                 let config = rows(&case.db(), "CONFIG");
@@ -954,7 +956,7 @@ fn windows_plan_committed_recovery_error_retains_original() {
                         _ => None,
                     })
                     .expect("must reach committed Error::Published, not an earlier refusal");
-                assert_eq!(recovery, sibling(&case.db(), ".ibcmd-rs.bak.new"));
+                assert_eq!(recovery, expected_recovery);
                 assert_eq!(fs::read(&recovery).unwrap(), before);
                 assert_eq!(backup(&case.db()), previous);
                 assert_ne!(
