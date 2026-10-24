@@ -1,17 +1,22 @@
 ## ADDED Requirements
 
 ### Requirement: Public self-service ownership
-The bot SHALL accept a new `/claim` only for an open unlocked unassigned Ready issue in the configured project, assigning only the verified command author, setting In progress and recording its own Agent line while preserving other owners' text under the confirmed single writer protocol. A sole existing owner MAY use a new command to reconcile their own partial claim; In review SHALL NOT be demoted by `/claim`.
+The bot SHALL accept a new `/claim` only for an open unlocked unassigned Backlog or Ready issue in the configured project, assigning only the verified command author, setting In progress and recording its own Agent line while preserving other owners' text under the confirmed single writer protocol. A sole existing owner MAY use a new command to reconcile their own partial claim; In review SHALL NOT be demoted by `/claim`.
 
 #### Scenario: External contributor takes a task
-- **GIVEN** a human commenter without collaborator access and a free Ready issue
+- **GIVEN** a human commenter without collaborator access and a free Backlog or Ready issue
 - **WHEN** the commenter submits `/claim`
 - **THEN** assignment and both project fields are read back before a successful receipt is published.
+
+#### Scenario: Partial Backlog assignment
+- **GIVEN** a Backlog claim assigned its author but the status write failed
+- **WHEN** the same sole owner submits a fresh `/claim`
+- **THEN** In progress and the bot Agent line are verified without a manual Ready transition.
 
 #### Scenario: Task is not available
 - **GIVEN** another assignee, an unavailable issue state or an unknown/missing project profile
 - **WHEN** `/claim` is submitted
-- **THEN** it is refused without an Assignees/Status/Agent mutation.
+- **THEN** it is refused without an Assignees/Status/Agent mutation; an In review refusal names review only for that actual state, while other unavailable statuses explain the Backlog/Ready requirement.
 
 ### Requirement: Owner-only release and review
 The bot SHALL permit only the verified sole owner to release a task or request review of their own open non-Draft PR in the same repository targeting master and explicitly referencing the issue. It SHALL NOT close issues, merge PRs or grant access.

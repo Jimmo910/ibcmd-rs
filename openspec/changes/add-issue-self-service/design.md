@@ -2,7 +2,7 @@
 
 ## Decisions
 
-Only open, unlocked, unassigned Ready issues already in Untru/ibcmd-rs Project 9 admit a new claimant. The command author is the only assignable person. Existing ownership cannot be displaced. A sole assigned owner can release or request review of their own open non-Draft master-targeting PR with an explicit reference to the issue. Ready is a triage decision; no command closes an issue or grants permissions.
+Only open, unlocked, unassigned Backlog or Ready issues already in Untru/ibcmd-rs Project 9 admit a new claimant. The command author is the only assignable person. Existing ownership cannot be displaced. A sole assigned owner can release or request review of their own open non-Draft master-targeting PR with an explicit reference to the issue. Backlog claims do not require a prior Ready transition. A sole owner can reconcile a partial Backlog claim with a fresh command; no command closes an issue or grants permissions.
 
 `issue_comment: created` runs trusted default-branch code. Pull-request checks run the same offline tests without secrets or write permissions. The comment is JSON data from the event file and is re-read from the repository API; shell/code interpolation, fork checkout, arbitrary URLs and user-selected tokens/project IDs are excluded. Only repository API operations use GITHUB_TOKEN; only fixed Project GraphQL requests use PROJECT_TOKEN. Missing or denied credentials refuse before Assignees/Status/Agent writes.
 

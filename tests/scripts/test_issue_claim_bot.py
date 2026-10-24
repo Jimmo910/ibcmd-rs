@@ -105,9 +105,54 @@ class Commands(unittest.TestCase):
             self.assertEqual(f.messages[-1][0], "success")
         self.assertEqual(len(f.stored), 3)
 
+    def test_backlog_contributor_cycle_preserves_other_agent_lines(self):
+        f = Fake(state=initial(status="Backlog"))
+        for body, comment, status, owners, pr in [("/claim",100,"In progress",("outsider",),None), ("/review #123",101,"In review",("outsider",),123), ("/unclaim",102,"Ready",(),None)]:
+            f.e = event(body=body, comment=comment)
+            self.assertEqual(bot.run(f.e, f), "success")
+            req = bot.authorize(f.e, f)
+            agent = bot.with_record(initial().agent, req, "outsider" if owners else None, status, pr)
+            self.assertEqual(f.state, initial(assignees=owners, status=status, agent=agent))
+            self.assertEqual(f.messages[-1][0], "success")
+        self.assertEqual(len(f.stored), 3)
+
+    def test_backlog_claim_recovers_after_assignment_before_status_failure(self):
+        f = Fake(state=initial(status="Backlog"))
+        def fail_status(api, field):
+            if field == "s":
+                raise bot.ApiFailure("synthetic status write failure")
+        f.on_field = fail_status
+        self.assertEqual(bot.run(f.e, f), "error")
+        self.assertEqual(f.state, initial(status="Backlog", assignees=("outsider",)))
+        f.on_field = None
+        f.e = event(comment=101)
+        self.assertEqual(bot.run(f.e, f), "success")
+        req = bot.authorize(f.e, f)
+        self.assertEqual(f.state, initial(assignees=("outsider",), status="In progress",
+            agent=bot.with_record(initial().agent, req, "outsider", "In progress", None)))
+
+    def test_claim_refusal_text_distinguishes_review_from_other_states(self):
+        for status in ("In review", "Done", "In progress"):
+            for owners in ((), ("outsider",)):
+                if status == "In progress" and owners:
+                    continue
+                with self.subTest(status=status, owners=owners):
+                    state = initial(status=status, assignees=owners)
+                    f = Fake(state=state)
+                    self.assertEqual(bot.run(f.e, f), "refused")
+                    self.assertEqual((f.state, f.writes), (state, []))
+                    text = f.messages[-1][1]
+                    if status == "In review":
+                        self.assertIn("In review", text)
+                    else:
+                        self.assertIn("Backlog", text)
+                        self.assertIn("Ready", text)
+                        self.assertNotIn("review", text)
+
     def test_refusals_do_not_change_tracking(self):
-        for state, body in [(initial(assignees=("someone",)), "/claim"), (initial(assignees=("a","b")), "/unclaim"),
-            (initial(status="Backlog"),"/claim"), (initial(status="Done"),"/claim"), (initial(open=False),"/claim"),
+        for state, body in [(initial(assignees=("someone",)), "/claim"),
+            (initial(status="Backlog", assignees=("someone",)),"/claim"), (initial(status="Backlog", assignees=("a","b")),"/claim"), (initial(assignees=("a","b")), "/unclaim"),
+            (initial(status="In progress"),"/claim"), (initial(status="Done"),"/claim"), (initial(open=False),"/claim"),
             (initial(locked=True),"/claim"), (initial(),"/review #123"), (initial(status="In progress"),"/unclaim"),
             (initial(assignees=("outsider",), status="In review"),"/claim"), (initial(),"/claim\n$(whoami)"),
             (initial(agent="Claim bot: broken"),"/claim"), (initial(agent="Other: " + "x"*1000),"/claim")]:
