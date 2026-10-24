@@ -85,7 +85,9 @@ The offline and release matrices cover these targets:
 | `aarch64-unknown-linux-gnu` | Ubuntu 22.04 ARM64 |
 | `x86_64-pc-windows-msvc` | Windows x64 |
 | `aarch64-apple-darwin` | macOS 15 ARM64 |
-| `x86_64-apple-darwin` | macOS 15 Intel |
+
+`x86_64-apple-darwin` (macOS Intel) is no longer built or tested after
+v0.4.1; v0.4.1 and older releases keep their Intel archives.
 
 Linux binaries are built and executed on Ubuntu 22.04. Before packaging,
 `scripts/audit_linux_abi.py` verifies ELF64 architecture and rejects GLIBC
