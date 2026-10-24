@@ -161,3 +161,10 @@ definitions, index structure and triggers. The 32 KiB schema limit bounds accept
 schema text, not allocation performed by SQL while constructing catalog JSON.
 No new compiler warning refers to the SQL files; the root library check still
 reports 98 warnings elsewhere. Full repository/CI and actual SQL gates are open.
+
+## Compiler process lifetime gate
+
+See [compiler-worker-contract.md](compiler-worker-contract.md) for the proposed
+fresh-process boundary and source API evidence. The existing metadata compiler
+is once per process; successful isolated tests do not establish a production
+supervisor. No worker command, transport or SQL publication route is added.
