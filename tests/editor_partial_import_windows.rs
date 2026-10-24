@@ -57,10 +57,8 @@ struct Case {
 }
 impl Case {
     fn create(test: &str) -> Self {
-        assert_eq!(
-            std::env::var("IBCMD_TEST_KEEP_FIXTURES").as_deref(),
-            Ok("1")
-        );
+        // Parent setup only copies/reads public fixtures and has no cleanup.
+        // Each compiler child receives and verifies KEEP=1 explicitly.
         let nonce = uuid::Uuid::new_v4().to_string();
         let root = std::env::temp_dir().join(format!("ibcmd-windows-plan-{nonce}"));
         fs::create_dir(&root).unwrap();
