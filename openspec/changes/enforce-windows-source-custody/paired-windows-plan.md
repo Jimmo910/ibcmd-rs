@@ -1,0 +1,85 @@
+# Paired ordinary Windows execution plan (not executed)
+
+## Immutable inputs and placement
+
+- Baseline/tests-only: `751751f8f5670d84cf2d96aab86895b6c5013d83`.
+- Fixed production candidate: `8433693b85f6130dccfff11c219207530b02f432`.
+- Fixed tree: `9c75fc6e226437422a7246ceaac63fb4a3e31c1e`.
+- Shared base: `6ca6ade04ceee151f056e29acb5cd6deaaa9fbc4`.
+
+Before execution, verify both exact commit/tree receipts and byte-identical windows_custody_tests.rs blobs. No moving branch HEAD, old binary or compile-only result substitutes for either input. Coordinator chooses the separately authorized ordinary push/PR Windows job placement; this document creates no workflow, dispatch, publication, settings change or execution grant. Do not use VM/SSH, user data, native1C, ACL changes or a registration/selector bypass.
+
+Preferred execution is a sequential paired ordinary Windows job with immutable checkouts and captured expected-red outcomes. If using the existing ordinary PR jobs instead, finish and retain the baseline Windows runtime evidence before advancing the branch to the fixed descendant, so workflow concurrency cannot cancel away the baseline proof. Do not broaden/redesign CI without its own scoped authorization. Do not manually dispatch or rerun merely to obtain green.
+
+## Environment and attribution
+
+Use Rust1.95.0, x86_64-pc-windows-msvc, jobs1 and test-threads1. Give baseline and fixed distinct physical TMP/TEMP/TMPDIR and CARGO_TARGET_DIR directories under the job-owned workspace/temp; KEEP_FIXTURES=1. All fixtures are new owned directories/public short strings. Record runner image/OS, toolchain, actual commit/tree, compile exit, exact test names, raw stdout/stderr/exit codes and test-harness SHA256. Retain scoped fixture/log/receipt artifacts, not credentials, unrelated build caches or user files. This is a CI runner plan; all local preparation artifacts stay in the external lab.
+
+First compile each exact Windows unit harness, without running any tests:
+
+```text
+cargo test --locked -p ibcmd-rs --lib --no-default-features --no-run --message-format=json
+```
+
+Require exit0. Extract the root lib compiler-artifact executable from Cargo JSON and hash that exact executable. Any compile/link/dependency/API-signature failure stops the phase and is NOT an observed custody red. Direct harness execution avoids accidentally accepting a zero-test filter or mixing a cached binary from the other target.
+
+## Baseline: four exact isolated tests
+
+Execute each compiled harness test separately with `--exact --nocapture --test-threads=1`:
+
+```text
+mssql_source_change::files::windows_custody_tests::windows_source_directories_deny_delete_without_any_leaf_handle
+mssql_source_change::files::windows_custody_tests::windows_preexisting_ancestor_delete_access_refuses_source_custody
+mssql_source_change::files::windows_custody_tests::windows_zero_access_directory_probe_is_not_rename_custody
+mssql_source_change::files::windows_custody_tests::windows_directory_anchor_preserves_idle_child_edits_without_leaf_custody
+```
+
+| Baseline control | Required observed outcome before calling it RED |
+| --- | --- |
+| No-leaf directory custody | Nonzero test exit and exact expected-sharing-denial assertion because a DELETE probe unexpectedly succeeds; setup/rename round-trip had succeeded |
+| Pre-existing DELETE | Nonzero test exit and exact existing-DELETE-not-excluded assertion after successful normal admission and DELETE-handle creation |
+| Explicit zero-access metadata probe | One selected test PASS, exit0; metadata-only probe remains the negative control |
+| Idle child edit | One selected test PASS, exit0; ordinary creation/edit/nested rename succeeds |
+
+Record actual exits (typically101 for failed Rust tests); the exit number alone is not proof. A different panic, unsupported profile/setup/ACL failure, missing/ignored/zero-selected test or cancelled job invalidates the red receipt and stops the phase. Do not ignore/relabel existing tests or hide unexpected failures under broad continue-on-error. A deliberate expected-red verification wrapper must check the exact test/assertion outcome; it must never waive fixed/required merge checks.
+
+The pinned sharing helper requires raw_os_error()==Some(32) for a denied probe. On fixed PASS, executing that assertion proves ERROR_SHARING_VIOLATION32. On a baseline unexpectedly successful open, there is no applicable failed-call GetLastError; do not invent32 or read a stale last-error value. Preserve raw assertion output and label inferred versus printed OS-result evidence accurately.
+
+## Fixed: identical custody controls plus three profile controls
+
+Run the identical four tests against the separately compiled fixed harness. Require all four PASS, one selected test per invocation, exit0. Then run these exact new tests:
+
+```text
+mssql_source_change::files::windows_profile::tests::source_profile_refuses_remote_nonfixed_unknown_and_non_ntfs_facts
+mssql_source_change::files::windows_profile::tests::source_member_volume_is_bound_to_source_root_not_a_target
+mssql_source_change::files::windows_profile::tests::canonical_root_namespace_is_bounded_without_claiming_raw_operator_policy
+```
+
+Require all three PASS/exit0. The profile decision table proves its refusal predicates, not actual ReFS/SMB runtime. Positive capture exercises actual source root/directory/leaf NTFS handles independently of any database target. Internal canonical-path tests do not claim a new raw-operator spelling policy; canonical_directory's existing per-ancestor reparse checks remain authoritative.
+
+## Existing compatibility controls
+
+Run the unchanged Windows selected/detached tests exactly:
+
+```text
+mssql_source_change::original_source_tests::windows_required_original_and_ancestors_exclude_write_delete_share
+mssql_source_change::original_source_tests::windows_detached_compiler_cache_retains_bytes_and_rejects_later_mutation
+mssql_source_change::traversal_budget_tests::consumed_cache_revalidates_file_and_ancestor_witnesses
+mssql_source_change::traversal_budget_tests::consumed_cache_rejects_ancestor_rebinding_with_unchanged_leaf
+mssql_source_change::traversal_budget_tests::empty_directory_growth_is_bounded_during_initial_and_final_capture
+mssql_source_change::traversal_budget_tests::depth_limit_refuses_instead_of_truncating_the_census
+```
+
+Require actual PASS with no missing/ignored substitutions. Preserve the distinction: selected leaf handles exclude writes/deletes; detached nested-cache edits remain possible but final witness/digest/census must refuse changes. Existing typed cancellation must not become an IO/profile fallback.
+
+A separately authorized ordinary Unix job must retain the existing low-FD regression:
+
+```text
+cargo test --locked -p ibcmd-rs --lib --no-default-features mssql_source_change::traversal_budget_tests::source_xml_custody_is_bounded_under_low_fd_limit -- --exact --nocapture --test-threads=1
+```
+
+It uses the existing child-only soft FD limit128 for1024 XMLs; do not alter host/global limits. Retain ordinary Unix source/witness/traversal/cancellation checks as appropriate to the eventual merge gate. No new local test run is authorized by this plan.
+
+## Completion and limits
+
+The evidence table must distinguish baseline predicted/observed red, fixed Windows compile/runtime, synthetic profile refusal, existing regression results and unavailable profiles. Record every pass/fail/ignored/missing outcome with exact run/job/head/harness hash. Do not claim actual remote/ReFS acceptance, end-to-end Windows editor import or MCP mutation, universal ABA protection or atomic source/target CAS. Source review, local macOS compilation and any #530 target-layer results are separate evidence only. Publication/CI/Ready/merge remain outside this preparation phase.
