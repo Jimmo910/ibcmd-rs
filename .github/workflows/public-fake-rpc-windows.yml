@@ -39,8 +39,9 @@ jobs:
           $env:TEMP = $env:STATUS_LAB_TEST_ROOT
           $env:TMPDIR = $env:STATUS_LAB_TEST_ROOT
           # Hosted interpreter only; no runtime/package downloads or installs.
-          $python = (Get-Command python.exe -CommandType Application -ErrorAction Stop).Source
-          if (-not $python.StartsWith('C:\hostedtoolcache\windows\Python\', [StringComparison]::OrdinalIgnoreCase)) { throw 'hosted Python required' }
+          $pythonCommands = @(Get-Command python.exe -CommandType Application -All -ErrorAction Stop | Where-Object { $_.Source.StartsWith('C:\hostedtoolcache\windows\Python\', [StringComparison]::OrdinalIgnoreCase) })
+          if ($pythonCommands.Count -lt 1 -or $pythonCommands.Count -gt 8) { throw 'finite hosted Python selection required' }
+          $python = [string]$pythonCommands[0].Source
           $manifestPath = 'scripts/status-lab/windows-source-sha256.json'
           $manifestFile = Get-Item $manifestPath -ErrorAction Stop
           if (($manifestFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $manifestFile.Length -gt 16384) { throw 'manifest boundary' }
