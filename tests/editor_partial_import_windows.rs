@@ -858,12 +858,62 @@ fn windows_plan_target_budget_refuses_before_writes() {
     budget("windows_plan_target_budget_refuses_before_writes", false);
 }
 
+// Measure this host's destination replacement denial without touching real
+// recovery artifacts. The same directory/prefix is used by the writer.
+fn measured_backup_replacement_denial(case: &Case) -> i32 {
+    let data = fs::canonicalize(ibcmd_filedb::data_file(&case.db())).unwrap();
+    let parent = data.parent().unwrap();
+    let target = parent.join("owned-rename-probe-target");
+    let before = parent.join("owned-rename-probe-before");
+    let after = parent.join("owned-rename-probe-after");
+    fs::write(&target, b"public original probe").unwrap();
+    fs::write(&before, b"public unheld replacement").unwrap();
+    fs::rename(&before, &target).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"public unheld replacement");
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(
+            windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ
+                | windows_sys::Win32::Storage::FileSystem::FILE_SHARE_WRITE,
+        )
+        .open(&target)
+        .unwrap();
+    fs::write(&after, b"public after-close replacement").unwrap();
+    let error = fs::rename(&after, &target)
+        .expect_err("no-DELETE destination handle must deny replacement");
+    let code = error
+        .raw_os_error()
+        .expect("Windows denial must retain its OS code");
+    assert!(
+        matches!(code, 5 | 32),
+        "unexpected measured Windows denial: {error}"
+    );
+    assert_eq!(fs::read(&target).unwrap(), b"public unheld replacement");
+    assert_eq!(fs::read(&after).unwrap(), b"public after-close replacement");
+    drop(held);
+    fs::rename(&after, &target).unwrap();
+    assert_eq!(
+        fs::read(&target).unwrap(),
+        b"public after-close replacement"
+    );
+    json(
+        &case.root.join("recovery-denial-probe.json"),
+        &serde_json::json!({
+            "without_handle_rename_passed": true, "held_rename_denied": true,
+            "after_drop_rename_passed": true, "denial_raw_os_error": code,
+            "held_target_preserved": true, "held_source_preserved": true,
+        }),
+    );
+    code
+}
+
 #[test]
 fn windows_plan_committed_recovery_error_retains_original() {
     const TEST: &str = "windows_plan_committed_recovery_error_retains_original";
     if let Some((case, phase)) = Case::child(TEST) {
         match phase.as_str() {
             "publish-recovery" => {
+                let measured_code = measured_backup_replacement_denial(&case);
                 let plan = prepare(&case, MODULE);
                 let before = bytes(&case.db());
                 let previous = backup(&case.db());
@@ -886,7 +936,7 @@ fn windows_plan_committed_recovery_error_retains_original() {
                     .chain()
                     .find_map(|cause| match cause.downcast_ref::<ibcmd_filedb::Error>() {
                         Some(ibcmd_filedb::Error::Published { recovery, error }) => {
-                            assert_eq!(error.raw_os_error(), Some(32));
+                            assert_eq!(error.raw_os_error(), Some(measured_code));
                             Some(recovery.clone())
                         }
                         _ => None,
@@ -904,7 +954,7 @@ fn windows_plan_committed_recovery_error_retains_original() {
                 assert!(!rows(&case.db(), "CONFIGSAVE").is_empty());
                 json(
                     &case.root.join("committed-recovery.json"),
-                    &serde_json::json!({"published":true,"raw_os_error":32,"original_sha256":sha(&before),"recovery_sha256":sha(&fs::read(recovery).unwrap())}),
+                    &serde_json::json!({"published":true,"raw_os_error":measured_code,"original_sha256":sha(&before),"recovery_sha256":sha(&fs::read(recovery).unwrap())}),
                 );
                 drop(held_backup);
             }
