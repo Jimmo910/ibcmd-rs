@@ -113,3 +113,38 @@ External retained logs:
 
 - `logs/issue-380-windows-activation-b301f67a-targeted.log`
 - `logs/issue-380-windows-activation-b301f67a-full.log`
+
+
+## First activation failures and checkout correction
+
+On `6fa969bf`, neither automatic Windows job reached the seven tests. Fork
+job `120850121678` failed because Get-Command returned multiple application
+matches (hosted Python plus a WindowsApps alias) and Source was passed as an
+array. The correction filters the bounded PATH-priority candidate list to the
+approved hosted tool cache and executes one scalar path. This does not claim
+that exactly one Python installation exists.
+
+Upstream job `120850130242` stopped earlier at manifest binding. Its merge
+commit and the fork head contain the identical manifest Git blob
+`f7e1ee95b08a8b9d5613389bad09af09477ab567`; the old failure log does not print
+the mismatching checkout hash, so the precise byte difference is not attested.
+The correction declares LF for only the status-lab sources and three pinned
+Rust API files at checkout, avoiding a post-checkout conversion assumption. The
+strict expected hash is unchanged; new workflow output records the measured
+public manifest SHA-256 and byte length before comparison.
+
+Retained local Git 2.52 diagnostics show core.autocrlf=true creates CRLF without
+an explicit LF attribute. The old restore step DID repair it on this Mac, so
+these diagnostics do not reproduce the exact Git-for-Windows failure. New
+positive/negative checkout tests discriminate the declarative LF rule itself;
+they are public synthetic Git controls, not Windows kernel execution evidence.
+The old failures remain recorded; no manual retry/dispatch is used.
+
+
+Checkout correction local evidence: **two targeted Git controls passed (0.048 s)**,
+then unchanged reviewed source hashes passed the full suite: **86 run, 83 passed,
+three explicit Windows kernel skips (2.499 s)**. External retained logs:
+`logs/issue-380-checkout-469f2805-targeted.log` and
+`logs/issue-380-checkout-469f2805-full.log`. The manifest remains `b301f67a`.
+These results validate the LF contract under this local Git, not the unexecuted
+corrected Windows workflow. No product/SQL/native/VM/host/Rust process ran.

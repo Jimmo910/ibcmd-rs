@@ -6,10 +6,12 @@ on:
     paths:
       - 'scripts/status-lab/**'
       - '.github/workflows/public-fake-rpc-windows.yml'
+      - '.gitattributes'
   pull_request:
     paths:
       - 'scripts/status-lab/**'
       - '.github/workflows/public-fake-rpc-windows.yml'
+      - '.gitattributes'
 permissions:
   contents: read
 jobs:
@@ -25,8 +27,6 @@ jobs:
         with:
           path: ibcmd-rs-lab/repos/issue-380-sql
           persist-credentials: false
-      - name: Restore byte-exact sources in this disposable checkout
-        run: git -c core.autocrlf=false -c core.eol=lf checkout-index --all --force
       - name: Windows kernel controls (exact seven tests, no skips)
         id: gate
         run: |
@@ -45,7 +45,9 @@ jobs:
           $manifestPath = 'scripts/status-lab/windows-source-sha256.json'
           $manifestFile = Get-Item $manifestPath -ErrorAction Stop
           if (($manifestFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $manifestFile.Length -gt 16384) { throw 'manifest boundary' }
-          if ((Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'b301f67a27a1784a82749b66d44bdba2e2196cc75c8e6b9ce43bce107476ae2d') { throw 'manifest binding' }
+          $manifestHash = (Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Output ('Public manifest SHA256=' + $manifestHash + ' bytes=' + $manifestFile.Length)
+          if ($manifestHash -ne 'b301f67a27a1784a82749b66d44bdba2e2196cc75c8e6b9ce43bce107476ae2d') { throw 'manifest binding' }
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
           foreach ($item in $manifest.sha256.PSObject.Properties) {
             $path = Join-Path 'scripts/status-lab' $item.Name
