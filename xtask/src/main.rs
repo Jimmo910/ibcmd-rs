@@ -276,6 +276,29 @@ fn ci_steps(root: &Path) -> Vec<Step> {
             "--no-default-features",
         ],
     ));
+    for (name, filter) in [
+        ("bounded Form field-map observation", "field_map_observer"),
+        (
+            "shared Form observer schema",
+            "form_observer_shared_schema_tests",
+        ),
+    ] {
+        steps.push(
+            Step::cargo(
+                format!("test ({name})"),
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    ROOT_PACKAGE,
+                    "--lib",
+                    filter,
+                    "--no-default-features",
+                ],
+            )
+            .env("IBCMD_TEST_KEEP_FIXTURES", "1"),
+        );
+    }
     steps
 }
 
