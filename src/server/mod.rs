@@ -23,6 +23,7 @@
 mod apply;
 pub mod infobases;
 pub mod rpc;
+pub mod sql_import;
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
