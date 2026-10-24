@@ -94,3 +94,38 @@ stage to hide an unselected object.
 - **WHEN** effective or compiled coverage omits C
 - **THEN** preparation refuses, and C's original physical headers and parts remain
   outside any replacement authority.
+
+### Requirement: Compiler output evidence preserves raw ambiguity
+The opt-in SQL evidence path SHALL retain raw old/new storage export entries,
+notes, dispositions and descriptor candidates, bound to the immutable packed
+views, source census, selection and platform/profile. OLD evidence SHALL be
+captured before selected tree edits and NEW evidence SHALL come from export of
+the exact independently verified compiled artifact. The existing FileDb planner
+path SHALL retain its prior behavior.
+
+#### Scenario: Duplicate or unsafe output claim
+- **GIVEN** duplicate key/path claims, canonical slash/case collisions, an escaped
+  path, unsupported profile or an exceeded witness budget
+- **WHEN** bounded raw output evidence is indexed for an SQL candidate
+- **THEN** the candidate refuses without overwriting a prior claim or publishing.
+
+#### Scenario: Supported but incomplete or ambiguous ownership
+- **GIVEN** a Supported entry missing an expected output or no independent proof
+  of a complete canonical UUID/kind/role/parent chain
+- **WHEN** selected mapping is requested
+- **THEN** the candidate reports insufficient evidence and cannot gain mutation
+  authority from the surviving outputs or a reduced canonical lookup map.
+
+### Requirement: Compiler diagnostics cannot grant SQL authority
+A library diagnostic consumer SHALL perform bounded source admission and opt-in
+raw compiler evidence capture without DB I/O, RPC dispatch or publication. Its
+caller-provided packed view/context SHALL NOT be classified as a verified SQL
+snapshot. Results SHALL contain bounded counts/digests and explicit refusal,
+never raw descriptor contents, object names or compiler note chains.
+
+#### Scenario: Diagnostic-only stable output mapping
+- **GIVEN** an admitted source and a caller-provided packed view with stable raw
+  selected output pairs
+- **WHEN** compiler diagnostics are requested
+- **THEN** owner/completeness remains refused, no write token or accepted SQL
+  capability is returned, and the source/cancellation guards are rechecked.

@@ -25,3 +25,9 @@
 - [x] F.5 Owned structural body-coverage invariant and omission/expansion/budget/
   cancellation controls: 27 combined tests and library check passed; not wired
   to shared effective-view policy or SQL routing and not an ownership proof.
+- [x] F.6 Opt-in raw old/new export evidence, bounded collision/selection binding
+  checks and real diagnostic consumer; fresh static review, owned-warning-free
+  library check, 15 planner +14 FileDb +29 SQL-contract tests passed. Tightened
+  refusal oracle passed one exact test; all fixtures and prior failures retained.
+- [ ] F.7 Independent complete owner/kind/full-parent/selected-role witnesses,
+  origin-aware versions authority and full readset-preserving SQL transaction.

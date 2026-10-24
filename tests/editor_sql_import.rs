@@ -1097,3 +1097,68 @@ mod coverage_contracts {
         assert!(ibcmd_rs::cancel::is_cancelled(&error));
     }
 }
+
+mod compiler_diagnostic_contracts {
+    use super::*;
+    use ibcmd_rs::server::sql_import::compiler_diagnostic::{self, Failure, Limits, ProvidedView};
+    use std::{collections::BTreeMap, sync::Arc};
+    fn view() -> ProvidedView {
+        ProvidedView {
+            rows: BTreeMap::new(),
+            snapshot_label: [1; 32],
+            schema_label: [2; 32],
+            profile_label: [3; 32],
+            epoch_label: 4,
+            export_profile: "synthetic-profile".into(),
+            export_schema: 1,
+        }
+    }
+    #[test]
+    fn library_diagnostic_guard_errors_are_redacted_and_cancellation_stays_typed() {
+        let error = compiler_diagnostic::inspect_provided_view(
+            view(),
+            Path::new("private-path-user-sentinel"),
+            &selected(),
+            ibcmd_rs::platform::parse_flag("8.5.1").unwrap(),
+            Limits::default(),
+            Arc::new(|| Err(anyhow::anyhow!("private-path-user-sentinel"))),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.downcast_ref::<Failure>(), Some(&Failure::Interrupted));
+        assert!(!format!("{error:#}").contains("private-path-user-sentinel"));
+        let error = compiler_diagnostic::inspect_provided_view(
+            view(),
+            Path::new("private-path-user-sentinel"),
+            &selected(),
+            ibcmd_rs::platform::parse_flag("8.5.1").unwrap(),
+            Limits::default(),
+            Arc::new(|| {
+                Err(anyhow::Error::from(ibcmd_rs::cancel::Cancelled)
+                    .context("private-path-user-sentinel"))
+            }),
+        )
+        .err()
+        .unwrap();
+        assert!(ibcmd_rs::cancel::is_cancelled(&error));
+        assert!(!format!("{error:#}").contains("private-path-user-sentinel"));
+    }
+    #[test]
+    fn invalid_diagnostic_admission_has_no_private_error_chain() {
+        let error = compiler_diagnostic::inspect_provided_view(
+            view(),
+            Path::new("private-path-user-sentinel"),
+            &Selection::default(),
+            ibcmd_rs::platform::parse_flag("8.5.1").unwrap(),
+            Limits::default(),
+            Arc::new(|| Ok(())),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.downcast_ref::<Failure>(), Some(&Failure::Admission));
+        assert_eq!(
+            format!("{error:#}"),
+            "compiler diagnostic source admission refused"
+        );
+    }
+}
