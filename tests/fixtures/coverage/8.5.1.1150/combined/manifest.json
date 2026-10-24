@@ -114,6 +114,11 @@
       "manifest_sha256": "28700a6edb122960410de28955bac0c49f4ff8457ed4e42a6d69c501e9833a81"
     },
     {
+      "set": "8.5.1.1150-xml-2.21-documentnumerators",
+      "path": "documentnumerators",
+      "manifest_sha256": "f089fc672c680823693fef840212d0ff913e22b8abfa39568f69ce92b506f9a2"
+    },
+    {
       "set": "8.5.1.1150-xml-2.21-documents",
       "path": "documents",
       "manifest_sha256": "6478e0e585cb6e91c763b61b90cbb566a0dd1374eb4a87bbedc570c710934b08"
@@ -167,6 +172,11 @@
       "set": "8.5.1.1150-xml-2.21-integrationservices",
       "path": "integrationservices",
       "manifest_sha256": "0206ae57b3772920ae3008310a71cc002632f09488dae97f9ca9608b41160c8b"
+    },
+    {
+      "set": "8.5.1.1150-xml-2.21-interfaces",
+      "path": "interfaces",
+      "manifest_sha256": "8c21b7f210cd684c6f62702e9387e14b5484d991cc73e62ffc56d42461a061ed"
     },
     {
       "set": "8.5.1.1150-xml-2.21-palettecolors",
@@ -265,9 +275,9 @@
   },
   "configuration_cf": {
     "path": "configuration.cf.b64",
-    "decoded_size": 353976,
-    "decoded_sha256": "595343b636eb767eea6cd7c58c4408cc1ecfd5766620d56ff112f50df9a87f0b",
-    "encoded_sha256": "207c04b0ef30b288aea8acdbffa9448715b84821162fcabbc9f211d106d1749c"
+    "decoded_size": 359428,
+    "decoded_sha256": "14661e6d55ed6b2b5d319388e4dd39f34c92368a1fb1174a306ea9a41c553db6",
+    "encoded_sha256": "dddf2c5c062b7d1c3c67ed78c82eb83c58419cfd114e4e4f6745dbd8a7e4de3d"
   },
   "variants": [
     {
@@ -2443,6 +2453,61 @@
       ]
     },
     {
+      "name": "DocumentNumerators/CovCheckUnique_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "DocumentNumerators/CovCheckUnique_false.xml",
+          "size": 1396,
+          "sha256": "58fb8ab783411ec7f6653d360e27f6963ac3618e3a11dbe2514e53747e3a4a15"
+        }
+      ]
+    },
+    {
+      "name": "DocumentNumerators/CovNumberAllowedLength_Fixed",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "DocumentNumerators/CovNumberAllowedLength_Fixed.xml",
+          "size": 1400,
+          "sha256": "648b82b338c96ac89e09e747bce8bb4178866571c3eeaf5b3b74f16075896fd2"
+        }
+      ]
+    },
+    {
+      "name": "DocumentNumerators/CovNumberLength_11",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "DocumentNumerators/CovNumberLength_11.xml",
+          "size": 1394,
+          "sha256": "3fd10af45e86b7cf2b756f9f1d726c30e7f85c599e3d321861b9cc1d91bf6d2a"
+        }
+      ]
+    },
+    {
+      "name": "DocumentNumerators/CovNumberPeriodicity_Year",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "DocumentNumerators/CovNumberPeriodicity_Year.xml",
+          "size": 1391,
+          "sha256": "7a1fda52037e4bcfdb977e3acb58384c657ab2442655273a6ca2a2325cb39a62"
+        }
+      ]
+    },
+    {
+      "name": "DocumentNumerators/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "DocumentNumerators/CovTemplate.xml",
+          "size": 1386,
+          "sha256": "9d33fa26c9c98690ddc8accf925728f3267f143aec27cf4bba18036f0b3b4515"
+        }
+      ]
+    },
+    {
       "name": "Documents/CovAccountingRecorder",
       "status": "platform_proven",
       "files": [
@@ -3389,6 +3454,28 @@
       ]
     },
     {
+      "name": "Interfaces/CovSwitchable_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Interfaces/CovSwitchable_false.xml",
+          "size": 1193,
+          "sha256": "4b42731524ffc4f0ddbdaf28d7cde6dabe741cc330fbe6f3abb7a950bee66250"
+        }
+      ]
+    },
+    {
+      "name": "Interfaces/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Interfaces/CovTemplate.xml",
+          "size": 1184,
+          "sha256": "51a8837cb6de6a9474cf09570b743a7ac77a46296a8b1f98f91d80949644e1b6"
+        }
+      ]
+    },
+    {
       "name": "PaletteColors/CovTemplate",
       "status": "platform_proven",
       "files": [
@@ -3911,8 +3998,8 @@
       "files": [
         {
           "path": "Configuration.xml",
-          "size": 30883,
-          "sha256": "456c6e3871c882b1269803dffadab0eb1cb3a0c28a2871a859e3cddab92c9359"
+          "size": 31291,
+          "sha256": "fbe7c7e89a176d3f1979079f954fb5c7b9945643a55404e3f63f91b9083f8d79"
         },
         {
           "path": "Languages/Русский.xml",

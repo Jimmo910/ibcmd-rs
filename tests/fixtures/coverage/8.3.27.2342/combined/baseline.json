@@ -179,6 +179,11 @@
     "DocumentJournals/CovListPresentation_Cov",
     "DocumentJournals/CovTemplate",
     "DocumentJournals/CovUseStandardCommands_false",
+    "DocumentNumerators/CovCheckUnique_false",
+    "DocumentNumerators/CovNumberAllowedLength_Fixed",
+    "DocumentNumerators/CovNumberLength_11",
+    "DocumentNumerators/CovNumberPeriodicity_Year",
+    "DocumentNumerators/CovTemplate",
     "Documents/CovAccountingRecorder",
     "Documents/CovAccumulationRecorder",
     "Documents/CovAutonumbering_false",
@@ -302,7 +307,6 @@
     "WebSocketClients/CovTemplate",
     "WebSocketClients/CovUseOSAuthentication_true",
     "WebSocketClients/CovUseOSProxy_true",
-    "XDTOPackages/CovTemplate",
-    "configuration"
+    "XDTOPackages/CovTemplate"
   ]
 }

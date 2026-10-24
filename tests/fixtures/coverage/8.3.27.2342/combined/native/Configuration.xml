@@ -256,6 +256,8 @@
 			<CommonPicture>CovTemplate</CommonPicture>
 			<CommonPicture>CovAvailabilityForChoice_true</CommonPicture>
 			<CommonPicture>CovAvailabilityForAppearance_true</CommonPicture>
+			<Interface>CovTemplate</Interface>
+			<Interface>CovSwitchable_false</Interface>
 			<SessionParameter>CovTemplate</SessionParameter>
 			<Role>CovTemplate</Role>
 			<CommonTemplate>CovTemplate</CommonTemplate>
@@ -450,6 +452,11 @@
 			<Document>CovChoiceHistoryOnInput_DontUse</Document>
 			<Document>CovUpdateDataHistoryImmediatelyAfterWrite_true</Document>
 			<Document>CovExecuteAfterWriteDataHistoryVersionProcessing_true</Document>
+			<DocumentNumerator>CovTemplate</DocumentNumerator>
+			<DocumentNumerator>CovNumberLength_11</DocumentNumerator>
+			<DocumentNumerator>CovNumberAllowedLength_Fixed</DocumentNumerator>
+			<DocumentNumerator>CovNumberPeriodicity_Year</DocumentNumerator>
+			<DocumentNumerator>CovCheckUnique_false</DocumentNumerator>
 			<Sequence>CovTemplate</Sequence>
 			<DocumentJournal>CovTemplate</DocumentJournal>
 			<DocumentJournal>CovUseStandardCommands_false</DocumentJournal>

@@ -1,5 +1,5 @@
 {
-  "comment": "Seed recipes of tools/coverage/new_set.py: what the platform refused a minimal seed for, answered. `properties` and `children` are XML inserted into the seed (after <Comment/>, into <ChildObjects>); `internal_head` opens its InternalInfo; {uuid:N} becomes a deterministic identifier. `requires` names auxiliary objects (`aux`) built with the seed, which stay in the set's base configuration. `recorder` names the auxiliary document whose register records generate.py extends to every variant of a register set. `tag` and `generated` stand in for a corpus object when the corpus has none of the class.",
+  "comment": "Seed recipes of tools/coverage/new_set.py: what the platform refused a minimal seed for, answered. `properties` and `children` are XML inserted into the seed (after <Comment/>, into <ChildObjects>); `internal_head` opens its InternalInfo; {uuid:N} becomes a deterministic identifier. `requires` names auxiliary objects (`aux`) built with the seed, which stay in the set's base configuration. `recorder` names the auxiliary document whose register records generate.py extends to every variant of a register set. `tag` and `generated` stand in for a corpus object when the corpus has none of the class. `values_from` observes the values on another class of the corpus whose properties share the class's types (a numerator's number type, length and periodicity are a document's).",
   "aux": {
     "CommonModules/CovHandlers": {
       "properties": "\t\t\t<Server>true</Server>\n",
@@ -148,6 +148,13 @@
     },
     "Styles": {
       "tag": "Style"
+    },
+    "DocumentNumerators": {
+      "tag": "DocumentNumerator",
+      "values_from": "Documents"
+    },
+    "Interfaces": {
+      "tag": "Interface"
     }
   }
 }

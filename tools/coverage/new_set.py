@@ -183,13 +183,20 @@ def main():
         raise SystemExit("seeded export: the template is not listed once in Configuration.xml")
     base_configuration.write_text("\ufeff" + text.replace(line, ""), encoding="utf-8")
 
-    # 3. The value space.
+    # 3. The value space, observed on the class itself or on the class the
+    # recipe names (the source then says so).
+    observed = recipe.get("values_from", args.collection)
+    corpus_name = args.corpus_name if observed == args.collection else f"{args.corpus_name}/{observed}"
     subprocess.run(
         [sys.executable, "-I", str(HERE / "observe_values.py"), "--template", str(inputs / "template.xml"),
-         "--corpus", str(args.corpus), "--collection", args.collection, "--corpus-name", args.corpus_name,
+         "--corpus", str(args.corpus), "--collection", observed, "--corpus-name", corpus_name,
          "--output", str(inputs / "values.json")],
         check=True,
     )
+    if observed != args.collection:
+        space = json.loads((inputs / "values.json").read_text(encoding="utf-8"))
+        space["collection"] = args.collection
+        (inputs / "values.json").write_text(json.dumps(space, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if recipe.get("recorder"):
         # The register's recorder lists every register of the set; generate.py
         # extends it to the variants.
