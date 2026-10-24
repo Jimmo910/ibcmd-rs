@@ -311,7 +311,7 @@ pub fn save_config(args: &InfobaseConfigSaveArgs) -> Result<InfobaseConfigSaveRe
             user: config.db_user.as_deref(),
             password: config.db_pwd.as_deref(),
             password_env: &args.db_pwd_env,
-            trust_server_certificate: true,
+            trust_server_certificate: false,
         })?
     };
     let save = save_config(&ConfigSaveRequest {
@@ -600,7 +600,7 @@ fn extension_dump_args(
         sql_user: config.db_user.clone(),
         sql_pwd: config.db_pwd.clone(),
         sql_pwd_env: db_pwd_env.to_string(),
-        sqlcmd_trust_cert: true,
+        sqlcmd_trust_cert: false,
         database: config.db_name.clone(),
         extension: Some(extension.to_string()),
         all_extensions: false,
@@ -2285,7 +2285,7 @@ mod tests {
         assert_eq!(args.database, "ibcmd_rs_x");
         assert_eq!(args.output_dir, PathBuf::from("out"));
         assert!(args.overwrite);
-        assert!(args.sqlcmd_trust_cert);
+        assert!(!args.sqlcmd_trust_cert);
         assert_eq!(args.platform, None);
     }
 

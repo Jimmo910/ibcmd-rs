@@ -167,7 +167,7 @@ pub fn save_config_command(args: &MssqlSaveConfigArgs) -> Result<ConfigSaveRepor
                 user: args.sql_user.as_deref(),
                 password: password.as_deref(),
                 password_env: &args.sql_pwd_env,
-                trust_server_certificate: true,
+                trust_server_certificate: false,
             })?
         }
     };

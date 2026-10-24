@@ -498,6 +498,19 @@ mod tests {
     }
 
     #[test]
+    fn explicit_certificate_trust_policy_is_preserved_for_both_backends() {
+        for external in [false, true] {
+            for trust in [false, true] {
+                let mut options = options(external.then_some(Path::new("sqlcmd")), None);
+                options.trust_server_certificate = trust;
+                let sql = SqlExec::from_options(options).unwrap();
+                assert_eq!(sql.trust_server_certificate(), trust);
+                assert_eq!(sql.tools().is_some(), external);
+            }
+        }
+    }
+
+    #[test]
     fn the_built_in_client_is_the_default_and_opens_nothing_up_front() {
         let sql = SqlExec::from_options(options(None, None)).unwrap();
         let SqlBackend::Client(client) = sql.backend() else {

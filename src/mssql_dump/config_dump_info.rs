@@ -1095,6 +1095,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn common_command_empty_help_has_typed_route_and_unknown_suffix_stays_closed() {
+        let refs = BTreeMap::from([(
+            "command".to_owned(),
+            "CommonCommand.PublicFixture".to_owned(),
+        )]);
+        let modules = BTreeMap::new();
+        let assets = BTreeMap::new();
+        let emitted = BTreeMap::new();
+        assert_eq!(
+            config_dump_top_name("command.1", &refs, &modules, &assets, &emitted).unwrap(),
+            "CommonCommand.PublicFixture.Help"
+        );
+        for id in ["command.5", "command.99", "missing.1"] {
+            assert!(config_dump_top_name(id, &refs, &modules, &assets, &emitted).is_err());
+        }
+    }
+
+    #[test]
     fn dynamic_update_service_marker_is_not_an_object_inventory_entry() {
         let versions = vec![ConfigVersionEntry {
             id: "object.0".to_owned(),

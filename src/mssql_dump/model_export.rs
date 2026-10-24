@@ -696,15 +696,7 @@ pub(crate) fn configuration_compatibility_with_snapshot(
     {
         crate::sql::SqlExec::detached("the rows come from a folder, a file infobase or PostgreSQL")
     } else {
-        crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
-            sqlcmd: args.sqlcmd.as_deref(),
-            bcp: args.bcp_executable.as_deref(),
-            server: &args.server,
-            user: args.sql_user.as_deref(),
-            password: password.as_deref(),
-            password_env: &args.sql_pwd_env,
-            trust_server_certificate: true,
-        })?
+        super::sql_for_export(args, password.as_deref())?
     };
     Ok((
         configuration_compatibility_from_storage(&sql, &args.database, args.main_configuration)?,
