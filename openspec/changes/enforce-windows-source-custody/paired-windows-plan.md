@@ -3,8 +3,8 @@
 ## Immutable inputs and placement
 
 - Baseline/tests-only: `751751f8f5670d84cf2d96aab86895b6c5013d83`.
-- Fixed production candidate: `2070c830907558ca14ccaf925f6dc43f2a201401`.
-- Fixed tree: `d4bf7220a101b06d18fa457b82dd51b36245adb3`.
+- Fixed production candidate: `63637dbe9914709e57ff64af56b1d8a7fba27a22`.
+- Fixed tree: `6a73a7710683d0b9532b981e882e8d433dc1c983`.
 - Shared base: `6ca6ade04ceee151f056e29acb5cd6deaaa9fbc4`.
 
 Before execution, verify both exact commit/tree receipts and byte-identical windows_custody_tests.rs blobs. No moving branch HEAD, old binary or compile-only result substitutes for either input. Coordinator chooses the separately authorized ordinary push/PR Windows job placement; this document creates no workflow, dispatch, publication, settings change or execution grant. Do not use VM/SSH, user data, native1C, ACL changes or a registration/selector bypass.
@@ -98,3 +98,6 @@ The HEAD guard explicitly requests `git diff --no-renames --name-only -z` and pa
 
 
 The first published candidate843 did not pass actual Windows compilation: E0432 rejected importing DRIVE_FIXED from the windows-sys FileSystem namespace. Candidate2070 declares the official documented GetDriveTypeW DRIVE_FIXED=3 return code locally, without a new dependency/feature or predicate change. The old immutable843/tree9c75 and run receipts remain historical evidence; compilation failure is not an observed baseline RED or fixed acceptance. Baseline751 and all four identical custody controls are preserved. The new functional pin and this runner-pin delta require source re-review and a new ordinary push event only after the first paired run's available receipts are retained; no manual rerun or moving-head substitution.
+
+
+Candidate2070 then passed Windows compilation but failed four real rename-positive controls in root CI; its dedicated paired run40079496139 stopped at idle child rename after three fixed passes. That terminal archive12555720101 was retained and its SHA2564914299c83ff5027675601a0cf0bedfeb4818943f0917d60bd2f044b4a33240d/raw assertions verified before changing pins. Baseline751 again had2 intended RED+2 PASS. The updated directory-only contract96c4 permits READ|WRITE sharing without DELETE sharing for MS-FSA destination-parent add-child opens; leaves retain exact strict READ sharing. Functional63637dbe/tree6a73a771 implements only that conditional directory mask. All four custody tests remain byte-identical to751, and every existing original-source/traversal regression is unchanged. Review this exact implementation and runner-pin descendant before the next ordinary synchronize; source approval alone is not a runtime verdict. Require both deny controls and all positives/regressions to pass, without releasing retained handles or weakening an assertion.
