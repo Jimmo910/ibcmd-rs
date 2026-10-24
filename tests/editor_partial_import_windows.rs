@@ -861,6 +861,7 @@ fn windows_plan_target_budget_refuses_before_writes() {
 // Measure this host's destination replacement denial without touching real
 // recovery artifacts. The same directory/prefix is used by the writer.
 fn measured_backup_replacement_denial(case: &Case) -> i32 {
+    use std::os::windows::fs::MetadataExt;
     let data = fs::canonicalize(ibcmd_filedb::data_file(&case.db())).unwrap();
     let parent = data.parent().unwrap();
     let target = parent.join("owned-rename-probe-target");
@@ -869,7 +870,15 @@ fn measured_backup_replacement_denial(case: &Case) -> i32 {
     fs::write(&target, b"public original probe").unwrap();
     fs::write(&before, b"public unheld replacement").unwrap();
     fs::rename(&before, &target).unwrap();
+    assert!(!before.exists());
     assert_eq!(fs::read(&target).unwrap(), b"public unheld replacement");
+    let attributes = fs::metadata(&target).unwrap().file_attributes();
+    assert_eq!(
+        attributes,
+        fs::metadata(ibcmd_filedb::backup_file(&case.db()))
+            .unwrap()
+            .file_attributes()
+    );
     let held = fs::OpenOptions::new()
         .read(true)
         .share_mode(
@@ -890,8 +899,10 @@ fn measured_backup_replacement_denial(case: &Case) -> i32 {
     );
     assert_eq!(fs::read(&target).unwrap(), b"public unheld replacement");
     assert_eq!(fs::read(&after).unwrap(), b"public after-close replacement");
+    assert_eq!(fs::metadata(&target).unwrap().file_attributes(), attributes);
     drop(held);
     fs::rename(&after, &target).unwrap();
+    assert!(!after.exists());
     assert_eq!(
         fs::read(&target).unwrap(),
         b"public after-close replacement"
@@ -902,6 +913,7 @@ fn measured_backup_replacement_denial(case: &Case) -> i32 {
             "without_handle_rename_passed": true, "held_rename_denied": true,
             "after_drop_rename_passed": true, "denial_raw_os_error": code,
             "held_target_preserved": true, "held_source_preserved": true,
+            "same_parent_attrs_match": true, "held_attrs_unchanged": true,
         }),
     );
     code
