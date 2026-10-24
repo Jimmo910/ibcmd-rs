@@ -6,8 +6,13 @@ use std::{
     path::{Component, Path, Prefix},
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, DRIVE_FIXED, GetDriveTypeW, GetVolumeInformationByHandleW,
+    BY_HANDLE_FILE_INFORMATION, GetDriveTypeW, GetVolumeInformationByHandleW,
 };
+
+// SDK GetDriveTypeW return code; windows-sys places it behind an unrelated
+// WindowsProgramming feature. Keep this documented ABI value local.
+// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getdrivetypew
+const DRIVE_FIXED: u32 = 3;
 
 fn unsupported() -> SourceChangeError {
     io(
