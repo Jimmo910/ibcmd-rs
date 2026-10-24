@@ -429,3 +429,6 @@ impl OriginalFile {
         Ok(())
     }
 }
+
+#[cfg(all(test, windows))]
+mod windows_custody_tests;
