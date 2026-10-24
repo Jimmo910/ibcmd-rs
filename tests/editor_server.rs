@@ -1241,3 +1241,49 @@ fn rpc_incomplete_selected_exports_refuse_before_any_plan_or_workspace_write() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[path = "common/mcp_export_fixture.rs"]
+mod read_fixture;
+#[test]
+fn source_read_refuses_only_requested_invalid_descriptor_cold_and_cached() {
+    use read_fixture::{Case, Scenario};
+    let mut failures = Vec::new();
+    for rows in [false, true] {
+        let case = Case::new(Scenario::NestedInvalid, rows);
+        let before = case.input();
+        let corpus = Corpus {
+            root: case.root.clone(),
+            settings: case.settings.clone(),
+        };
+        let mut server = Server::start(&corpus);
+        server.ok(
+            "initialize",
+            json!({"protocolVersion":"1.4", "workspaceFolder":case.root}),
+        );
+        for _ in 0..2 {
+            let response = server.call(
+                "source/read",
+                json!({"infobase":"demo","path":"Catalogs/CorpusList/Forms/ListForm.xml"}),
+            );
+            if response.get("error").is_none() {
+                failures.push(format!("rows={rows}: {response}"));
+            }
+            for path in [
+                "Catalogs/CorpusList.xml",
+                "Catalogs/CorpusList/Forms/ListForm/Ext/Form/Module.bsl",
+                "Catalogs/CorpusList/Forms/ListForm/Ext/Form.xml",
+            ] {
+                let valid = server.ok("source/read", json!({"infobase":"demo","path":path}));
+                assert_eq!(valid["exists"], true, "{path}");
+            }
+            let missing = server.ok("source/read", json!({"infobase":"demo","path":"Catalogs/CorpusList/Forms/ListForm/Ext/nonexistent.txt"}));
+            assert_eq!(missing["exists"], false);
+        }
+        server.finish(true);
+        assert_eq!(case.input(), before);
+    }
+    assert!(
+        failures.is_empty(),
+        "RPC returned guessed descriptor: {failures:?}"
+    );
+}

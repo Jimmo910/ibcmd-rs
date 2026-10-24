@@ -402,7 +402,7 @@ fn selected_validation_preserves_each_backends_original_configuration_writer() {
             ConfigSource::RowsDir(c.root.join("unused-rows"))
         };
         let mut config = StoredConfiguration::from_rows_snapshot(
-            source,
+            source.clone(),
             crate::platform::parse("8.3.27").unwrap(),
             rows.clone(),
         );
@@ -412,6 +412,26 @@ fn selected_validation_preserves_each_backends_original_configuration_writer() {
             .export(&names, &|_, _, _| {})
             .unwrap()
             .remove(0);
+        // A diagnostic cache is not a typed-value proof; point reads must
+        // revalidate without changing either backend's established writer.
+        let (read, path) = config
+            .main_view_mut()
+            .read_file("Configuration.xml")
+            .unwrap();
+        assert_eq!(
+            read.files[&path], observed.files[&path],
+            "warm point read sql={sql}"
+        );
+        let mut cold = StoredConfiguration::from_rows_snapshot(
+            source,
+            crate::platform::parse("8.3.27").unwrap(),
+            rows.clone(),
+        );
+        let (read, path) = cold.main_view_mut().read_file("Configuration.xml").unwrap();
+        assert_eq!(
+            read.files[&path], observed.files[&path],
+            "cold point read sql={sql}"
+        );
         fs::write(
             c.source.join("ConfigDumpInfo.xml"),
             config.native_config_dump_info().unwrap(),

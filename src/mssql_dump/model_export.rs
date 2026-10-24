@@ -536,6 +536,30 @@ impl ModelExport {
         &self.context.names
     }
 
+    /// Validate known scalar domains without requiring a model output path.
+    /// A generic decoder coverage gap still belongs to the legacy writer;
+    /// a typed invalid value must never become that writer's guessed default.
+    pub(super) fn validate_descriptor_values(&self, file_name: &str, stored: &[u8]) -> Result<()> {
+        let Some(kind) = self
+            .plan
+            .kind_of(file_name)
+            .filter(|kind| has_decoder(kind))
+        else {
+            return Ok(());
+        };
+        let result = (|| {
+            let text = inflate_raw_deflate(stored)?;
+            let tree = parse_row(&text)?;
+            decode_object(kind, &tree, &self.context)
+        })();
+        if let Err(error) = result
+            && error.is::<crate::metadata_model::export::values::UnsupportedDescriptorValue>()
+        {
+            return Err(error).context("requested descriptor has an unsupported value");
+        }
+        Ok(())
+    }
+
     /// The descriptor XML of a row through the model, or `None` when its kind
     /// has no decoder: the legacy converter writes it then.
     pub(super) fn export_row(

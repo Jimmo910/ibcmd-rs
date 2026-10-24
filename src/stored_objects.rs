@@ -876,6 +876,27 @@ pub fn object_of_path(path: &str) -> Option<String> {
     (!name.is_empty()).then(|| format!("{kind}.{name}"))
 }
 
+/// Descriptor paths follow the same root/owned collection pairs as source_prefixes.
+/// Body XML under Ext is not a metadata descriptor.
+fn descriptor_path(path: &str) -> bool {
+    if path == "Configuration.xml" {
+        return true;
+    }
+    let Some(stem) = path.strip_suffix(".xml") else {
+        return false;
+    };
+    let parts = stem.split('/').collect::<Vec<_>>();
+    !parts.is_empty()
+        && parts.len() % 2 == 0
+        && parts.chunks(2).all(|pair| {
+            !pair[1].is_empty()
+                && ROOT_COLLECTIONS
+                    .iter()
+                    .chain(NESTED_COLLECTIONS)
+                    .any(|(folder, _)| *folder == pair[0])
+        })
+}
+
 /// A relative path as the export names files: `/`-separated, without `.`,
 /// `..` or a root.
 pub fn normalize_path(path: &str) -> Option<String> {
@@ -911,6 +932,8 @@ pub struct StoredConfiguration {
 struct CachedExport {
     files: Arc<ObjectFiles>,
     complete: bool,
+    /// Typed values checked on the exact bytes converted for this descriptor.
+    checked_descriptor: Option<String>,
 }
 
 impl StoredConfiguration {
@@ -1082,9 +1105,19 @@ impl StoredConfiguration {
         progress: Progress<'_>,
         require_complete: bool,
     ) -> Result<Vec<Arc<ObjectFiles>>> {
+        self.export_with_descriptor_check_unlocked(names, progress, require_complete, None)
+    }
+
+    fn export_with_descriptor_check_unlocked(
+        &mut self,
+        names: &[String],
+        progress: Progress<'_>,
+        require_complete: bool,
+        requested_descriptor: Option<&str>,
+    ) -> Result<Vec<Arc<ObjectFiles>>> {
         // The cache is looked at once the inventory is current: a changed
         // `versions` row empties it.
-        let resolved = self.with_inventory(|inventory, table| {
+        let (digest, resolved) = self.with_inventory(|inventory, table| {
             let mut resolved = Vec::new();
             for name in names {
                 let object = inventory.resolve(table, name)?;
@@ -1092,8 +1125,11 @@ impl StoredConfiguration {
                 let version = inventory.version_of(&rows);
                 resolved.push((object, rows, version));
             }
-            Ok(resolved)
+            Ok((inventory.digest.clone(), resolved))
         })?;
+        // Only descriptor paths need this proof, including owned descriptors
+        // cached in their top-level owner's map. Modules/body XML keep their route.
+        let requested_descriptor = requested_descriptor.filter(|path| descriptor_path(path));
         let planned = resolved
             .into_iter()
             .map(|(object, rows, version)| {
@@ -1101,6 +1137,11 @@ impl StoredConfiguration {
                     .exports
                     .get(&object.full_name)
                     .filter(|entry| !require_complete || entry.complete)
+                    .filter(|entry| {
+                        requested_descriptor.is_none()
+                            || entry.complete
+                            || entry.checked_descriptor.as_deref() == requested_descriptor
+                    })
                     .map(|entry| entry.files.clone());
                 (object, cached, rows, version)
             })
@@ -1123,7 +1164,22 @@ impl StoredConfiguration {
                 .filter(|(_, cached, _, _)| cached.is_none())
                 .map(|(object, _, _, _)| object.full_name.clone())
                 .collect::<Vec<_>>();
-            files = self.export_rows(rows, require_complete.then_some(selected.as_slice()))?;
+            files = self.export_rows(
+                rows,
+                require_complete.then_some(selected.as_slice()),
+                requested_descriptor,
+            )?;
+            if requested_descriptor.is_some() {
+                // Rendering and typed validation share raw row bytes. Also bind
+                // that proof to the versions that named this ObjectFiles map;
+                // never certify a conversion read after external publication.
+                self.with_inventory(|inventory, _| {
+                    if inventory.digest != digest {
+                        bail!("stored configuration changed during requested descriptor conversion; retry the read");
+                    }
+                    Ok(())
+                })?;
+            }
             progress(missing, missing, &what);
         }
         let mut out = Vec::with_capacity(planned.len());
@@ -1156,6 +1212,7 @@ impl StoredConfiguration {
                 CachedExport {
                     files: exported.clone(),
                     complete: require_complete,
+                    checked_descriptor: requested_descriptor.map(str::to_owned),
                 },
             );
             out.push(exported);
@@ -1171,6 +1228,7 @@ impl StoredConfiguration {
         &self,
         rows: BTreeSet<String>,
         selected: Option<&[String]>,
+        requested_descriptor: Option<&str>,
     ) -> Result<BTreeMap<String, Vec<u8>>> {
         if rows.is_empty() {
             return Ok(BTreeMap::new());
@@ -1206,6 +1264,13 @@ impl StoredConfiguration {
             crate::mssql_dump::dump_config_with_selected_validation(
                 &args,
                 hooks,
+                self.main_configuration && matches!(self.source, ConfigSource::Database { .. }),
+            )?
+        } else if let Some(path) = requested_descriptor {
+            crate::mssql_dump::dump_config_with_descriptor_validation(
+                &args,
+                hooks,
+                path,
                 self.main_configuration && matches!(self.source, ConfigSource::Database { .. }),
             )?
         } else {
@@ -1317,14 +1382,17 @@ impl StoredConfiguration {
     /// The export of the object a file belongs to, and the file's path as
     /// the export names it: `files.get(path)` is the file as the export
     /// writes it (`None`: it writes no such file). Nothing is written to
-    /// disk.
+    /// disk. A present requested descriptor is checked for typed semantic errors
+    /// on the same stored row bytes used to render it; independent files and
+    /// unsupported/missing files retain the diagnostic conversion semantics.
     pub fn read_file(&mut self, path: &str) -> Result<(Arc<ObjectFiles>, String)> {
         let path =
             normalize_path(path).ok_or_else(|| anyhow!("{path:?} is not a relative path"))?;
         let name = object_of_path(&path)
             .ok_or_else(|| anyhow!("{path} is not a file of a configuration object"))?;
         let _engine = engine();
-        let exported = self.export_unlocked(&[name], &|_, _, _| {})?;
+        let exported =
+            self.export_with_descriptor_check_unlocked(&[name], &|_, _, _| {}, false, Some(&path))?;
         let exported = exported.into_iter().next().expect("one object asked for");
         Ok((exported, path))
     }
@@ -2023,3 +2091,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "stored_objects/descriptor_read_tests.rs"]
+mod descriptor_read_tests;

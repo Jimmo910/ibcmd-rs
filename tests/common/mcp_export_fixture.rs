@@ -167,3 +167,49 @@ impl Case {
         tree(&self.root)
     }
 }
+
+impl Case {
+    pub fn nested_value(&self, value: ibcmd_rs::metadata_model::brace::Brace) {
+        selected::mutate_descriptor(
+            &self.database,
+            "c099c30b-8a08-45b0-be7d-9594366e78a5",
+            |row| {
+                row.as_list_mut().unwrap()[1].as_list_mut().unwrap()[1]
+                    .as_list_mut()
+                    .unwrap()[2] = value;
+            },
+        );
+        let mut db = ibcmd_filedb::FileDb::open(&self.database).unwrap();
+        let mut rows = db.config_rows("CONFIG").unwrap();
+        drop(db);
+        // The platform changes the descriptor's version when it writes the row.
+        let version = rows.iter_mut().find(|r| r.file_name == "versions").unwrap();
+        let mut plain = Vec::new();
+        flate2::read::DeflateDecoder::new(version.binary.as_slice())
+            .read_to_end(&mut plain)
+            .unwrap();
+        use ibcmd_rs::metadata_model::brace::{Brace, parse_row, serialize_row};
+        let mut versions = parse_row(&plain).unwrap();
+        let fields = versions.as_list_mut().unwrap();
+        let at = fields
+            .iter()
+            .position(|node| node.as_str() == Some("c099c30b-8a08-45b0-be7d-9594366e78a5"))
+            .unwrap();
+        fields[at + 1] = Brace::uuid(&uuid::Uuid::new_v4().to_string());
+        let plain = serialize_row(&versions);
+        let mut packed =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        packed.write_all(&plain).unwrap();
+        version.binary = packed.finish().unwrap();
+        version.data_size = version.binary.len() as u64;
+        ibcmd_filedb::replace_config_table(&self.database, "CONFIG", &rows).unwrap();
+        for row in rows {
+            fs::write(
+                self.rows
+                    .join(format!("{}__part{}.bin", row.file_name, row.part_no)),
+                row.binary,
+            )
+            .unwrap();
+        }
+    }
+}

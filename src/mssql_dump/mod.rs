@@ -2515,7 +2515,7 @@ pub(crate) fn dump_config_with(
     args: &MssqlDumpConfigArgs,
     hooks: DumpHooks,
 ) -> Result<MssqlDumpConfigReport> {
-    dump_config_with_options(args, hooks, None)
+    dump_config_with_options(args, hooks, None, None)
 }
 
 /// Validate an editor's selected map without changing the renderer that the
@@ -2528,13 +2528,25 @@ pub(crate) fn dump_config_with_selected_validation(
     hooks: DumpHooks,
     originally_unfiltered: bool,
 ) -> Result<MssqlDumpConfigReport> {
-    dump_config_with_options(args, hooks, Some(originally_unfiltered))
+    dump_config_with_options(args, hooks, Some(originally_unfiltered), None)
+}
+
+/// Point reads validate only the descriptor actually returned, on the same raw
+/// row bytes as its writer. Asset/child completeness stays diagnostic here.
+pub(crate) fn dump_config_with_descriptor_validation(
+    args: &MssqlDumpConfigArgs,
+    hooks: DumpHooks,
+    path: &str,
+    originally_unfiltered: bool,
+) -> Result<MssqlDumpConfigReport> {
+    dump_config_with_options(args, hooks, Some(originally_unfiltered), Some(path))
 }
 
 fn dump_config_with_options(
     args: &MssqlDumpConfigArgs,
     hooks: DumpHooks,
     editor_writer_scope: Option<bool>,
+    requested_descriptor: Option<&str>,
 ) -> Result<MssqlDumpConfigReport> {
     let password_marker = if args.sql_user.is_none() {
         password_source_marker(PASSWORD_SOURCE_NONE)
@@ -2549,7 +2561,7 @@ fn dump_config_with_options(
         &args.database,
         args.runtime_journal.as_deref(),
     )?;
-    match dump_config_inner(args, hooks, editor_writer_scope) {
+    match dump_config_inner(args, hooks, editor_writer_scope, requested_descriptor) {
         Ok(report) => {
             subprocess_journal.finish_passed()?;
             Ok(report)
@@ -2569,6 +2581,7 @@ fn dump_config_inner(
     args: &MssqlDumpConfigArgs,
     hooks: DumpHooks,
     editor_writer_scope: Option<bool>,
+    requested_descriptor: Option<&str>,
 ) -> Result<MssqlDumpConfigReport> {
     // Lab aid: `IBCMD_RS_EXTENSION_MODE=1` runs this export as an extension
     // export's converters run (rows written by `IBCMD_RS_EXTENSION_NORMALIZED_ROWS_OUT`),
@@ -2774,6 +2787,7 @@ fn dump_config_inner(
                 .filter(|_| role == MssqlConfigurationTableRole::Current),
             hooks.object_recursion.is_some() && !args.objects.is_empty(),
             editor_writer_scope,
+            requested_descriptor,
         )?;
         let mut dumped = dumped;
         if dumped.incremental.is_some() {
@@ -3040,6 +3054,7 @@ pub(crate) fn export_staged_state(
             false,
             None,
             false,
+            None,
             None,
         )
     };
@@ -3764,6 +3779,7 @@ struct DumpRowContext<'a> {
     extract_metadata_xml: bool,
     collect_all_source_asset_diagnostics: bool,
     selected_metadata_validator: Option<&'a model_export::ModelExport>,
+    requested_descriptor: Option<(&'a str, &'a model_export::ModelExport)>,
     refused_output_paths: &'a ReferenceOutputCollisions,
     module_text_paths: &'a BTreeMap<String, PathBuf>,
     source_assets: &'a BTreeMap<String, SourceAsset>,
@@ -4494,6 +4510,7 @@ fn dump_table_rows_with_options_mode(
         extract_metadata_xml,
         collect_all_source_asset_diagnostics,
         selected_metadata_validator: None,
+        requested_descriptor: None,
         refused_output_paths: &reference_collisions,
         module_text_paths: &module_text_paths,
         source_assets: &source_assets,
@@ -4803,6 +4820,7 @@ fn dump_table_rows_streamed(
     incremental: Option<&incremental::IncrementalExport>,
     selected_object_export: bool,
     editor_writer_scope: Option<bool>,
+    requested_descriptor: Option<&str>,
 ) -> Result<DumpedTable> {
     let table = inventory_plan.role().sql_name();
     let generate_config_dump_info = inventory_plan.config_dump_info_eligible();
@@ -5032,7 +5050,7 @@ fn dump_table_rows_streamed(
                 &selected_metadata_texts,
             ));
     let broad_metadata_indexes_without_command_refs =
-        selected_object_export || natural_broad_metadata_indexes;
+        selected_object_export || requested_descriptor.is_some() || natural_broad_metadata_indexes;
     let mut selected_configuration_body_rows = Vec::new();
     if !(if editor_writer_scope.is_some() {
         natural_broad_metadata_indexes
@@ -5328,7 +5346,7 @@ fn dump_table_rows_streamed(
     // a run that fetched part of it stays legacy.
     let plan_started = Instant::now();
     let plan_cpu = process_cpu_ms();
-    let model_plan = ((model_export || selected_object_export)
+    let model_plan = ((model_export || selected_object_export || requested_descriptor.is_some())
         && extract_metadata_xml
         && broad_metadata_indexes)
         .then(|| {
@@ -6239,6 +6257,7 @@ fn dump_table_rows_streamed(
         extract_metadata_xml,
         collect_all_source_asset_diagnostics,
         selected_metadata_validator: model.as_ref().filter(|_| selected_object_export),
+        requested_descriptor: requested_descriptor.zip(model.as_ref()),
         refused_output_paths: &reference_collisions,
         module_text_paths: &module_text_paths,
         source_assets: &source_assets,
@@ -7407,6 +7426,13 @@ fn dump_table_row_bytes(
         timings.metadata_xml_convert_us += micros(started).saturating_sub(shadow_us);
         match extracted {
             Ok(extracted) => {
+                if let Some((requested, validator)) = context.requested_descriptor
+                    && extracted.relative_path == Path::new(requested)
+                {
+                    // The bytes are this converter's input, never a second source
+                    // read after returning an Arc from the observational cache.
+                    validator.validate_descriptor_values(file_name, bytes)?;
+                }
                 let path = context.output_dir.join(&extracted.relative_path);
                 if let Some(parent) = path.parent() {
                     context

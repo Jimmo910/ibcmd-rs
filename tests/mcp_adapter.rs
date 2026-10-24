@@ -858,3 +858,52 @@ async fn real_mcp_export_rejects_incomplete_maps_without_returning_partial_files
         }
     }
 }
+
+#[tokio::test]
+async fn real_mcp_read_refuses_only_the_requested_invalid_descriptor() {
+    use export_fixture::{Case, Scenario};
+    for rows_dir in [false, true] {
+        let case = Case::new(Scenario::NestedInvalid, rows_dir);
+        let before = case.input();
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
+        command
+            .arg("mcp")
+            .arg("--settings")
+            .arg(&case.settings)
+            .stderr(Stdio::piped());
+        let client = ().serve(TokioChildProcess::new(command).unwrap()).await.unwrap();
+        for _ in 0..2 {
+            let refused = call(
+                &client,
+                "read",
+                json!({"path":"Catalogs/CorpusList/Forms/ListForm.xml"}),
+            )
+            .await;
+            assert_eq!(refused.is_error, Some(true), "{refused:?}");
+            for content in &refused.content {
+                let text = &content.as_text().unwrap().text;
+                assert!(!text.contains("<IncludeHelpInContents>false"));
+                assert!(!text.contains("\"version\""));
+            }
+            for path in [
+                "Catalogs/CorpusList.xml",
+                "Catalogs/CorpusList/Forms/ListForm/Ext/Form/Module.bsl",
+                "Catalogs/CorpusList/Forms/ListForm/Ext/Form.xml",
+            ] {
+                let good = value(&call(&client, "read", json!({"path":path})).await);
+                assert!(good["file"].is_object(), "{path}: {good}");
+            }
+            let missing = value(
+                &call(
+                    &client,
+                    "read",
+                    json!({"path":"Catalogs/CorpusList/Forms/ListForm/Ext/nonexistent.txt"}),
+                )
+                .await,
+            );
+            assert!(missing["file"].is_null());
+        }
+        assert_eq!(case.input(), before);
+        client.cancel().await.unwrap();
+    }
+}
