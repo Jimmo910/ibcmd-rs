@@ -481,7 +481,8 @@ const ROUTES: &[SourceAssetRoute] = &[
         Module
     ),
     route!("CommonPicture", Picture, ".0", "Ext/Picture.xml", Picture),
-    route!("CommonCommand", Help, ".5", "Ext/Help.xml", Help),
+    // Match the measured Help suffix used by the export reader below.
+    route!("CommonCommand", Help, ".1", "Ext/Help.xml", Help),
     // The remaining help slots, read off `ConfigDumpInfo.xml`, which names
     // every versioned storage record: Документооборот КОРП 3.0.21.3 writes
     // `Catalog.ДокументыПредприятия.Help` for `<uuid>.1`,
@@ -1821,7 +1822,7 @@ mod tests {
             ProfileId::parse("platform-8.3.27.1989").unwrap(),
             vec![
                 ObjectStorageRoute::new(configuration_uuid, Vec::new()).unwrap(),
-                ObjectStorageRoute::new(command_uuid, vec![StorageSuffix::new(".5").unwrap()])
+                ObjectStorageRoute::new(command_uuid, vec![StorageSuffix::new(".1").unwrap()])
                     .unwrap(),
             ],
         )
@@ -1859,7 +1860,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(entry.target().key().as_str(), format!("{command_uuid}.5"));
+        assert_eq!(entry.target().key().as_str(), format!("{command_uuid}.1"));
         let StoragePatchOutcome::Compiled(blob) = entry.outcome() else {
             panic!("help route must compile")
         };

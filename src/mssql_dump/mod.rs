@@ -2431,6 +2431,64 @@ pub(crate) fn dump_config_with(
     }
 }
 
+/// Export and its compatibility probe share a validating TLS policy. Explicit
+/// caller-owned SqlExec hooks retain their own policy; no connection is opened here.
+fn sql_for_export(
+    args: &MssqlDumpConfigArgs,
+    password: Option<&str>,
+) -> Result<crate::sql::SqlExec> {
+    crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
+        sqlcmd: args.sqlcmd.as_deref(),
+        bcp: args.bcp_executable.as_deref(),
+        server: &args.server,
+        user: args.sql_user.as_deref(),
+        password,
+        password_env: &args.sql_pwd_env,
+        trust_server_certificate: false,
+    })
+}
+
+#[cfg(test)]
+mod export_tls_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn export_sql_constructor_validates_certificates_for_built_in_and_external_backends() {
+        for external in [false, true] {
+            let mut argv = vec![
+                "ibcmd-rs",
+                "mssql-dump-config",
+                "--server",
+                "sql.example.invalid",
+                "--database",
+                "demo",
+                "--sql-user",
+                "fixture-user",
+                "--sql-pwd",
+                "fixture-password",
+                "--output-dir",
+                "unused",
+            ];
+            if external {
+                argv.extend(["--sqlcmd", "sqlcmd"]);
+            }
+            let crate::cli::Commands::MssqlDumpConfig(args) =
+                crate::cli::Cli::try_parse_from(argv).unwrap().command
+            else {
+                panic!("export args expected");
+            };
+            let sql = sql_for_export(&args, args.sql_pwd.as_deref()).unwrap();
+            assert!(
+                !sql.trust_server_certificate(),
+                "export/probe must validate certificates"
+            );
+            assert_eq!(sql.tools().is_some(), external);
+            assert_eq!(sql.user(), Some("fixture-user"));
+        }
+    }
+}
+
 fn dump_config_inner(
     args: &MssqlDumpConfigArgs,
     hooks: DumpHooks,
@@ -2556,15 +2614,7 @@ fn dump_config_inner(
     } else if let Some(sql) = hooks.sql.clone() {
         sql
     } else {
-        crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
-            sqlcmd: args.sqlcmd.as_deref(),
-            bcp: args.bcp_executable.as_deref(),
-            server: &args.server,
-            user: args.sql_user.as_deref(),
-            password: password.as_deref(),
-            password_env: &args.sql_pwd_env,
-            trust_server_certificate: true,
-        })?
+        sql_for_export(args, password.as_deref())?
     };
 
     // `--object`: the rows of the named objects, as the editor server

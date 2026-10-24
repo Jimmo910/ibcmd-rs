@@ -628,15 +628,7 @@ pub fn configuration_compatibility_8_5_or_later(args: &MssqlDumpConfigArgs) -> R
     let sql = if args.rows_dir.is_some() || args.file_infobase.is_some() {
         crate::sql::SqlExec::detached("the rows come from a folder or a file infobase")
     } else {
-        crate::sql::SqlExec::from_options(crate::sql::SqlOptions {
-            sqlcmd: args.sqlcmd.as_deref(),
-            bcp: args.bcp_executable.as_deref(),
-            server: &args.server,
-            user: args.sql_user.as_deref(),
-            password: password.as_deref(),
-            password_env: &args.sql_pwd_env,
-            trust_server_certificate: true,
-        })?
+        super::sql_for_export(args, password.as_deref())?
     };
     // Match the export's published main view for platform detection too.
     // No rows is a valid uninitialized configuration; nonempty malformed rows

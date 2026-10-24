@@ -62,6 +62,27 @@ mod tests {
     }
 
     #[test]
+    fn editor_sql_sessions_validate_server_certificates_for_both_auth_modes() {
+        for login in [
+            Login {
+                auth: Some(AuthMode::Windows),
+                ..Login::default()
+            },
+            Login {
+                auth: Some(AuthMode::Sql),
+                user: Some("fixture-user".into()),
+                password: Some(Secret::new("fixture-password".into())),
+            },
+        ] {
+            let session = Session::open(&entry(false), None, login, &Settings::default()).unwrap();
+            let ConfigSource::Database { sql, .. } = session.configuration.source() else {
+                panic!("SQL session expected");
+            };
+            assert!(!sql.trust_server_certificate());
+        }
+    }
+
+    #[test]
     fn explicit_auth_does_not_inherit_a_global_sql_user() {
         let env =
             |key: &str| (key == crate::settings::ENV_DB_USER).then(|| "global-user".to_string());
@@ -495,7 +516,7 @@ impl Session {
                     user: login.user.as_deref(),
                     password: login.password.as_ref().map(Secret::expose),
                     password_env: ENV_DB_PASSWORD,
-                    trust_server_certificate: true,
+                    trust_server_certificate: false,
                 })?,
                 database: database.clone(),
             },
