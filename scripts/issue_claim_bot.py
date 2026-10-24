@@ -335,7 +335,8 @@ def perform(api, req):
             raise Refusal("Новая задача берётся из Ready; текущий review нельзя отменить командой /claim.")
         owner, status = req.actor, "In progress"
     elif action == "unclaim":
-        if state.assignees == () and state.status == "Ready":
+        if (not state.assignees and state.status == "Ready"
+                and not (record and record["owner"] and record["owner"].casefold() == actor)):
             return "Задача уже свободна; назначения и доска не менялись."
         if state.assignees != (actor,) and not (not state.assignees and record and record["owner"] and record["owner"].casefold() == actor):
             raise Refusal("Освободить задачу может только её исполнитель.")

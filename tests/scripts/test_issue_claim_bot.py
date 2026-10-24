@@ -248,8 +248,27 @@ class Commands(unittest.TestCase):
         f.on_field=None;f.e=event("/unclaim",comment=102)
         self.assertEqual(bot.run(f.e,f),"success");self.assertEqual(f.state.status,"Ready")
 
+    def test_partial_release_after_status_write_reconciles_own_agent_record(self):
+        f=Fake();bot.run(f.e,f);f.e=event("/unclaim",comment=101)
+        def fail_agent(api,field):
+            if field=="a":raise bot.ApiFailure("synthetic Agent write failure")
+        f.on_field=fail_agent
+        self.assertEqual(bot.run(f.e,f),"error")
+        self.assertEqual((f.state.status,f.state.assignees),("Ready",()))
+        self.assertEqual(bot.owned_record(f.state.agent)["owner"],"outsider")
+        f.on_field=None;f.e=event("/unclaim",comment=102)
+        self.assertEqual(bot.run(f.e,f),"success")
+        self.assertEqual(bot.owned_record(f.state.agent),{"actor":"outsider","owner":None,"request":102,"status":"Ready","pr":None})
+
     def test_free_unclaim_does_not_overwrite_tracking(self):
         f=Fake(event("/unclaim"));self.assertEqual(bot.run(f.e,f),"success");self.assertEqual(f.writes,[])
+
+    def test_free_task_does_not_let_a_foreign_actor_edit_stale_owner_record(self):
+        req=bot.authorize(event(),Fake());agent=bot.with_record(initial().agent,req,"outsider","In progress",None)
+        f=Fake(event("/unclaim",actor="another",comment=101),initial(agent=agent))
+        self.assertEqual(bot.run(f.e,f),"success")
+        self.assertEqual(f.writes,[])
+        self.assertEqual(f.state,initial(agent=agent))
 
     def test_agent_other_lines_retained_and_duplicate_record_refused(self):
         req=bot.authorize(event(),Fake())
