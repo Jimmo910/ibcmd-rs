@@ -286,6 +286,14 @@ impl RootAnchor {
                 }
                 current = Some(file);
             }
+            crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
+            if let Some(current) = &current {
+                if stamp(current, false)?.identity != directory {
+                    return Err(SourceChangeError::FileChangedDuringRead(
+                        exact_relative.to_owned(),
+                    ));
+                }
+            }
             for (held, expected) in &chain {
                 crate::cancel::check().map_err(SourceChangeError::Cancelled)?;
                 if stamp(held, false)?.identity != *expected {
