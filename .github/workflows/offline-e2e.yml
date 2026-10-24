@@ -42,6 +42,7 @@ jobs:
           npx --yes @fission-ai/openspec@1.6.0 validate add-fast-parity-evidence --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate add-selected-cf-extract --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate implement-edt-project-conversion --strict --no-interactive
+          npx --yes @fission-ai/openspec@1.6.0 validate add-issue-self-service --strict --no-interactive
 
   quality:
     name: Quality
