@@ -28,7 +28,7 @@ def digest(value):
 
 
 def verify(doc):
-    require(doc.get("schema") == 1, "unknown transcript schema")
+    require(type(doc.get("schema")) is int and doc["schema"] == 1, "unknown transcript schema")
     require(doc["fixture"]["kind"] == "public-clean-room", "public fixture required")
     require(digest(doc["fixture"]["sha256"]), "fixture digest required")
     product = doc["product"]
@@ -56,6 +56,11 @@ def verify(doc):
     by_operation = {c["operation"]: c for c in consents}
     require(stamp(by_operation["stage"]["completedAt"]) < stamp(by_operation["apply"]["authorizedAt"]),
             "stage/apply consent order differs")
+    bindings = doc["requestBindings"]
+    require(set(bindings) == {"infobase", "sourceDir", "versionBaselineDir"}, "native status bindings required")
+    require(all(isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", v) for v in bindings.values()),
+            "sanitized logical request bindings required")
+    require(digest(doc["baselineIdentity"]), "bound reference digest required")
     captures = doc["captures"]
     require(isinstance(captures, list) and 5 <= len(captures) <= 24, "bounded capture set required")
     ids, phases, dispositions = set(), {}, set()
@@ -79,9 +84,14 @@ def verify(doc):
                 require(ended < stamp(by_operation["apply"]["authorizedAt"]), "staged capture follows apply consent")
         request, response = capture["request"], capture["response"]
         require(request["method"] == "objects/status", "status transcript cannot authorize writes")
+        require(request.get("params") == bindings, "status request binding mismatch")
+        require(capture["baselineIdentity"] == doc["baselineIdentity"], "reference binding mismatch")
+        require(capture["view"] == "main", "native status view mismatch")
+        require(capture["treeRequest"] == {"method": "tree/children", "params": {"infobase": bindings["infobase"], "mainConfiguration": True}},
+                "tree/status view or target mismatch")
         require(type(request["id"]) is int and request["id"] not in ids, "unique integer request id required")
         ids.add(request["id"])
-        require(response["id"] == request["id"], "response request id mismatch")
+        require(type(response["id"]) is int and response["id"] == request["id"], "response request id mismatch")
         generation, current = request["generation"], capture["currentGeneration"]
         require(type(generation) is int and type(current) is int and 0 <= generation <= current,
                 "invalid generation")
@@ -113,6 +123,10 @@ def verify(doc):
             require(evidence["basis"] == "native-config-version" and evidence["object"] == row["object"],
                     "native evidence object/basis mismatch")
             require(evidence.get("objectVersion") == row.get("version"), "native evidence cache-token mismatch")
+            if evidence.get("conclusive") is True:
+                require(isinstance(row.get("version"), str) and bool(row["version"])
+                        and isinstance(evidence.get("objectVersion"), str) and bool(evidence["objectVersion"]),
+                        "conclusive cache tokens must be nonempty strings")
             require(evidence["baselineIdentity"] == capture["baselineIdentity"]
                     and evidence["databaseSnapshot"] == result["databaseSnapshot"], "stale native evidence")
             require(type(evidence["conclusive"]) is bool, "conclusive must be boolean")

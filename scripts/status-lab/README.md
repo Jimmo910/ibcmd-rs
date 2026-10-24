@@ -13,11 +13,26 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/status-lab -p 
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/status-lab/verify_capture.py /external/owned-run/sanitized-transcript.json
 ```
 
+`client_contract.cjs` executes the current pure `object-status.ts` adapter in
+memory. Point `STATUS_LAB_TYPESCRIPT` at an already installed absolute TypeScript
+module (for example the extension's `node_modules/typescript/lib/typescript.js`),
+then run `NODE_DISABLE_COMPILE_CACHE=1 node --test scripts/status-lab/client_contract.cjs`.
+It installs nothing and writes only new synthetic byte fixtures under TMPDIR,
+always retained. It tests all six labels, including equal-current-bytes `both`,
+unchanged historical reference and conservative unknowns. It does not instantiate
+ObjectView, a real RPC transport or an extension host.
+
 The synthetic `transcript()` factory in `test_verify_capture.py` is the schema
 example. Its hashes, operator, lease and timestamps are invented public controls,
 not evidence of an executed operation. Capture metadata (`generation`, phase,
 lease, hashes and disposition) surrounds the actual status request/response; it
-is not a proposed RPC wire-field extension. Use real recorded values for a smoke.
+is not a proposed RPC wire-field extension. `requestBindings` maps the original
+infobase/source/reference to stable sanitized logical labels; the actual request's
+three parameter values are replaced consistently by those labels. Each capture
+must preserve that parameter map and its main-view tree request. Raw local
+captures must independently prove that the labels/digests map to the exact inputs.
+This verifier covers native opt-in main status; active byte-only captures remain
+separate attachments for operator review. Use real recorded values for a smoke.
 
 A transcript has one public fixture digest, exact product commit plus embedded
 commit/binary digest, a one-hour maximum exclusive disposable-DB lease, opaque

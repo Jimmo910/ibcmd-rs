@@ -209,10 +209,10 @@ fn pack(bytes: &[u8]) -> Vec<u8> {
     encoder.write_all(bytes).unwrap();
     encoder.finish().unwrap()
 }
-fn changed_versions(rows: &Rows) -> Vec<u8> {
+fn changed_versions(rows: &Rows, generation: &str) -> Vec<u8> {
     pack(&ibcmd_rs::metadata_model::root::versions_row(
         &rows.keys().cloned().collect::<Vec<_>>(),
-        || "20000000-0000-4000-8000-000000000001".into(),
+        || generation.to_owned(),
     ))
 }
 
@@ -396,7 +396,7 @@ fn recording_sql_status_contract() {
     {
         let mut s = state.lock().unwrap();
         s.stage = s.active.clone();
-        let versions = changed_versions(&s.active);
+        let versions = changed_versions(&s.active, "20000000-0000-4000-8000-000000000001");
         s.stage.insert("versions".into(), versions);
     }
     let staged = config.native_config_dump_info().unwrap();
@@ -410,17 +410,51 @@ fn recording_sql_status_contract() {
         staged,
         "modeled apply preserves main native state"
     );
-    {
-        let mut s = state.lock().unwrap();
-        s.stage = s.active.clone();
-        s.stage.insert("commit".into(), b"unfinished".to_vec());
+    for unfinished in ["missing-versions", "commit", "payload.new"] {
+        {
+            let mut s = state.lock().unwrap();
+            s.stage = s.active.clone();
+            let versions = changed_versions(&s.active, "30000000-0000-4000-8000-000000000001");
+            s.stage.insert("versions".into(), versions);
+        }
+        assert_ne!(
+            config.native_config_dump_info().unwrap(),
+            staged,
+            "complete candidate must differ before refusal control"
+        );
+        {
+            let mut s = state.lock().unwrap();
+            if unfinished == "missing-versions" {
+                s.stage.remove("versions");
+            } else {
+                s.stage.insert(unfinished.into(), b"unfinished".to_vec());
+            }
+        }
+        assert_eq!(
+            config.native_config_dump_info().unwrap(),
+            staged,
+            "unfinished {unfinished} must fall back to active inventory"
+        );
     }
-    assert_eq!(
-        config.native_config_dump_info().unwrap(),
-        staged,
-        "unfinished stage cannot replace active state"
-    );
     state.lock().unwrap().stage.clear();
+
+    let renamed = String::from_utf8(reference.clone())
+        .unwrap()
+        .replace(MODULE, "CommonModule.Previous");
+    let deleted = String::from_utf8(reference.clone()).unwrap().replace("</ConfigVersions>",
+        "<Metadata name=\"CommonModule.Removed\" id=\"40000000-0000-4000-8000-000000000001\" configVersion=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"/></ConfigVersions>");
+    for historical in [renamed, deleted] {
+        fs::write(&reference_path, historical).unwrap();
+        let full = config
+            .status_with_versions(Some(&names), &source, &baseline, &progress)
+            .unwrap();
+        assert!(full.full_required, "rename/delete requires full evidence");
+        assert!(full.objects.iter().all(|row| {
+            let evidence = row.database_version_status.as_ref().unwrap();
+            !evidence.conclusive && evidence.changed.is_none()
+        }));
+    }
+    fs::write(&reference_path, &reference).unwrap();
 
     state.lock().unwrap().fail = true;
     assert!(

@@ -17,9 +17,9 @@ It models plain one-part names and an unchanged-membership completed CONFIGSAVE
 overlay; it is not a T-SQL interpreter and does not establish alias, multipart,
 collation, isolation or physical stage/apply semantics. Unknown query shapes fail.
 
-Scenarios cover active/main routing, completed versus unfinished stage inventory,
+Scenarios cover active/main routing, completed versus distinguishably different unfinished stage inventory,
 independent byte/native evidence, missing/source-only objects, source immutability,
-read errors, cooperative cancellation, reference drift and database-version drift.
+read errors, cooperative cancellation with versionBaselineDir, reference drift and database-version drift, and rename/delete fullRequired refusal.
 The stage/apply transition is an in-memory fixture transition only. All
 process-wide engine/cancellation scenarios run serially in one exact child test;
 the parent must observe exactly one passing test, not merely exit zero.
@@ -67,12 +67,30 @@ Passing synthetic transcripts is contract preparation, never live acceptance.
 
 - [x] Current #380 comments and merged #484 coverage limits inspected.
 - [x] Isolated worktree pinned to master `6ca6ade04ceee151f056e29acb5cd6deaaa9fbc4`.
-- [ ] Targeted Rust contract suite compiled/executed under a bounded planner grant.
-- [x] Offline transcript verifier: 18 synthetic controls passed (Python unittest).
-- [ ] Independent review of the isolated follow-up.
+- [x] Initial Rust contract suite at `42f703dd`: 2 passed under bounded jobs=2 grant; log `logs/issue-380-sql-contract-42f703dd.log`.
+- [ ] Revised discriminating stage/refusal controls compiled/executed under the next bounded grant.
+- [x] Offline transcript verifier: 29 synthetic controls passed (Python unittest).
+- [x] Initial independent review: verifier token/parameter findings corrected; 11 rejection controls fail the prior verifier and pass now.
+- [x] Actual pure client adapter: 6 tests pass, including equal-current-bytes both.
+- [x] Independent review of the revised stage/client delta: APPROVE; static review plus prior lightweight controls.
+- [x] Strict OpenSpec, pinned standalone Rustfmt and diff-check pass.
 - [ ] Actual sole-operator SQL smoke after separate VM/operator grant.
 - [ ] Live RPC/editor/native parity and supported stage/apply owner evidence.
 
 No VM, Cargo, native process, SSH, access change or full CI is part of the initial
 preparation. This document does not close #380 or upgrade prior mocked coverage
 to live acceptance.
+
+## Public testbrief coverage still separated
+
+The SQL model has no dynamic aliases, multipart rows or added-object membership
+changes. It therefore does not prove a staged-added-object tree, actual SQL
+isolation or every storage topology. Unsupported native owner roles remain
+covered here only at the client inconclusive-evidence boundary; existing server
+owner tests are not claimed rerun. The direct cancellation case calls
+`status_with_versions`, not just export. Actual RPC `-32800`, ObjectView clear/late
+ignore and native Windows smoke require separate transport/platform evidence.
+
+Synthetic Python results: 29 passed. Client adapter source SHA-256:
+`63c42026d2e0465825d1b7f471b614d228f4d46b75d6a06f0b8997ddcb36ef6b`.
+All local fixtures were retained; no old fixture or receipt was purged.
