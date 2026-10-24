@@ -124,8 +124,10 @@ The bot updates and reads back Assignees, Status and its own `Claim bot:`
 Agent line; under this protocol it preserves other owners' Agent lines. A failed or unfinished
 command may have partially applied: inspect the current assignment and send
 one new command to reconcile your own work. Never rerun an old command to
-restore state. If the bot is unavailable or the issue is neither Backlog nor Ready, ask the
-maintainer to triage it; do not grant yourself access or start silently.
+restore state. A sole existing owner may retry `/claim` in Backlog, Ready or
+In progress. If the bot is unavailable, ask the maintainer for help. An
+unassigned issue outside Backlog/Ready needs maintainer triage; do not grant
+yourself access or start silently.
 Setup, refusals and recovery: [issue self-service](docs/issue-self-service.md).
 
 Contributors may claim Backlog directly; maintainers may triage into Ready, reconcile unexpected interference,
