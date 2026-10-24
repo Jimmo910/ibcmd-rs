@@ -8481,25 +8481,7 @@ mod reference_alias_tests {
         for (script_code, reference, description) in
             [("0", "Ref", "Description"), ("1", "Ссылка", "Наименование")]
         {
-            let mut fields = ["0"; 61];
-            fields[0] = "68";
-            fields[3] = script_code;
-            let root = MetadataTextRow {
-                file_name: "11111111-1111-4111-8111-111111111111".into(),
-                text: format!(
-                    "{{9cd510cd-abfc-11d4-9434-004095e12fc7,{{{}}}}}",
-                    fields.join(",")
-                ),
-                object_code: None,
-                header: None,
-                kind: None,
-                folder: None,
-            };
-            let declarations = refs::build_metadata_field_declaration_index_from_texts(
-                &[root],
-                &BTreeMap::new(),
-                &BTreeMap::new(),
-            );
+            let declarations = declarations_for_script(script_code, &BTreeMap::new());
             assert_eq!(declarations.english_script(), script_code == "0");
             let query = format!("SELECT P.{reference} AS SelectedRef FROM Catalog.Products AS P");
             let selected = parse_form_dynamic_list_query_selection(&query).unwrap();
@@ -8526,6 +8508,123 @@ mod reference_alias_tests {
             assert!(fields.contains(reference));
             assert!(fields.contains(description));
         }
+    }
+
+    fn declarations_for_script(
+        script_code: &str,
+        object_refs: &BTreeMap<String, String>,
+    ) -> MetadataFieldDeclarationIndex {
+        let mut fields = ["0"; 61];
+        fields[0] = "68";
+        fields[3] = script_code;
+        let root = MetadataTextRow {
+            file_name: "11111111-1111-4111-8111-111111111111".into(),
+            text: format!(
+                "{{9cd510cd-abfc-11d4-9434-004095e12fc7,{{{}}}}}",
+                fields.join(",")
+            ),
+            object_code: None,
+            header: None,
+            kind: None,
+            folder: None,
+        };
+        refs::build_metadata_field_declaration_index_from_texts(
+            &[root],
+            object_refs,
+            &BTreeMap::new(),
+        )
+    }
+
+    // Production-policy discriminators, not native golden expectations. Each
+    // synthetic input changes one source of the available-field universe.
+    // Actual UT XML facts are still needed to select a correction.
+    fn deletion_mark_paths(
+        script_code: &str,
+        auto_fill: Option<bool>,
+        calculated_path: Option<&str>,
+        secondary_name: Option<&str>,
+    ) -> Vec<String> {
+        let object_refs = BTreeMap::from([(
+            "22222222-2222-4222-8222-222222222222".to_string(),
+            "Catalog.Test".to_string(),
+        )]);
+        let declarations = declarations_for_script(script_code, &object_refs);
+        let auto_fill_property = auto_fill.map_or_else(String::new, |value| {
+            format!(r#","AutoFillAvailableFields",{{"B",{}}}"#, u8::from(value))
+        });
+        let secondary_property = secondary_name.map_or_else(String::new, |name| {
+            format!(r#","FieldsMapItemSecondaryName0",{{"S","{name}"}}"#)
+        });
+        let property_count =
+            5 + usize::from(auto_fill.is_some()) + usize::from(secondary_name.is_some());
+        let bag = format!(
+            r#"{{0,{property_count},"ManualQuery",{{"B",1}},"QueryText",{{"S","SELECT 1 AS Marker FROM Catalog.Test AS T"}},"FieldsMapItemId0",{{"N",10}},"FieldsMapItemName0",{{"S","DeletionMark"}},"ReqMapFieldId0",{{"N",10}}{auto_fill_property}{secondary_property}}}"#
+        );
+        let mut settings = parse_form_dynamic_list_settings(&bag, &object_refs).unwrap();
+        settings.main_table = Some("Catalog.Test".into());
+        settings.server_state_xml = calculated_path.map(|path| {
+            format!(
+                r#"<ServerState xmlns:dcssch="http://v8.1c.ru/8.1/data-composition-system/schema"><CalculatedField><dcssch:dataPath>{path}</dcssch:dataPath></CalculatedField></ServerState>"#
+            )
+        });
+        let facts = FormDynamicListFieldFacts::read(
+            &bag,
+            Some(&settings),
+            &object_refs,
+            Some(&declarations),
+            None,
+        )
+        .unwrap();
+        assert!(facts.universe.is_some());
+        facts.use_always("List", Some(&settings))
+    }
+
+    #[test]
+    fn use_always_script_and_auto_fill_discriminate_missing_deletion_mark() {
+        for auto_fill in [None, Some(true)] {
+            assert_eq!(
+                deletion_mark_paths("0", auto_fill, None, None),
+                ["List.DeletionMark"],
+            );
+            assert_eq!(
+                deletion_mark_paths("1", auto_fill, None, None),
+                ["~List.DeletionMark"],
+            );
+        }
+        for script_code in ["0", "1"] {
+            assert_eq!(
+                deletion_mark_paths(script_code, Some(false), None, None),
+                ["~List.DeletionMark"],
+            );
+        }
+    }
+
+    #[test]
+    fn use_always_calculated_membership_is_distinct_from_leaf_name_similarity() {
+        for path in ["DeletionMark", "dElEtIoNmArK"] {
+            assert_eq!(
+                deletion_mark_paths("1", Some(false), Some(path), None),
+                ["List.DeletionMark"],
+            );
+        }
+        for path in ["Other.DeletionMark", "Unrelated"] {
+            assert_eq!(
+                deletion_mark_paths("1", Some(false), Some(path), None),
+                ["~List.DeletionMark"],
+            );
+        }
+    }
+
+    #[test]
+    fn use_always_localized_twin_requires_real_universe_membership() {
+        assert_eq!(
+            deletion_mark_paths("1", None, None, Some("ПометкаУдаления")),
+            ["List.DeletionMark"],
+        );
+        assert_eq!(
+            deletion_mark_paths("1", Some(false), None, Some("ПометкаУдаления")),
+            ["~List.DeletionMark~List.ПометкаУдаления"],
+        );
     }
 }
 
