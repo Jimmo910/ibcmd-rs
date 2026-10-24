@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   paired-controls:
-    if: github.event.pull_request.head.repo.full_name == 'Jimmo910/ibcmd-rs' && github.event.pull_request.head.ref == 'agent/issue-382-windows-source-custody'
+    if: github.event.pull_request.head.repo.full_name == 'Jimmo910/ibcmd-rs' && (github.event.pull_request.head.ref == 'agent/issue-382-windows-source-custody' || github.event.pull_request.head.ref == 'agent/issue-382-windows-editor-e2e')
     name: Source custody (${{ matrix.mode }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45

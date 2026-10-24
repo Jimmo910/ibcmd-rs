@@ -13,8 +13,8 @@ import tempfile
 
 BASE = "6ca6ade04ceee151f056e29acb5cd6deaaa9fbc4"
 BASELINE = "751751f8f5670d84cf2d96aab86895b6c5013d83"
-FIXED = "63637dbe9914709e57ff64af56b1d8a7fba27a22"
-FIXED_TREE = "6a73a7710683d0b9532b981e882e8d433dc1c983"
+FIXED = "505dfeeecb1b5c067fb7a960d4fe5380b4cab09e"
+FIXED_TREE = "7789309deee180849fde96832ad670a1eaf5db01"
 CONTROL_FILE = "src/mssql_source_change/files/windows_custody_tests.rs"
 PREFIX = "mssql_source_change::files::windows_custody_tests::"
 CUSTODY = [
