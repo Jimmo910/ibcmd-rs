@@ -125,7 +125,10 @@ fn inputs_digest(set: &Path) -> String {
             }
         }
     }
-    visit(set, &set.join("input"), &mut files);
+    // A combined set has no inputs of its own (the digest of nothing).
+    if set.join("input").is_dir() {
+        visit(set, &set.join("input"), &mut files);
+    }
     files.sort();
     let mut digest = Sha256::new();
     for (path, bytes) in files {
@@ -276,6 +279,24 @@ fn measure(set: &Path) -> Measured {
         manifest["inputs_sha256"].as_str().unwrap(),
         "{name}: input/ differs from the inputs the set was proven from; rerun the native round trip"
     );
+    // The combined set is made of the class sets beside it: it is current only
+    // while their manifests are the ones it was built from.
+    for source in manifest["sources"].as_array().into_iter().flatten() {
+        let path = set
+            .parent()
+            .unwrap()
+            .join(source["path"].as_str().unwrap())
+            .join("manifest.json");
+        assert_eq!(
+            fs::read(&path)
+                .map(|bytes| sha256_hex(&bytes))
+                .ok()
+                .as_deref(),
+            source["manifest_sha256"].as_str(),
+            "{name}: {} changed since the combined set was built; rerun tools/coverage/combine.py",
+            path.display()
+        );
+    }
     let native = read_tree(&set.join("native"));
     let temp = TempDirectory::new();
     let mut claimed = BTreeSet::new();
@@ -345,22 +366,21 @@ fn measure(set: &Path) -> Measured {
         let cf_path = temp.0.join("set.cf");
         fs::write(&cf_path, &cf).unwrap();
         let ours = cf_export(&cf_path, &temp.0.join("export"), source_version);
-        let collection = manifest["collection"].as_str().unwrap();
+        // A class set names its variants by object; the combined set names
+        // them `<collection>/<object>` already.
+        let collection = manifest["collection"].as_str();
         for variant in manifest["variants"].as_array().unwrap() {
             let variant_name = variant["name"].as_str().unwrap().to_owned();
             if variant["status"] == "platform_refused" {
                 verdicts.insert(variant_name, Verdict::PlatformRefused);
                 continue;
             }
+            let own = match collection {
+                Some(collection) => format!("{collection}/{variant_name}"),
+                None => variant_name.clone(),
+            };
             let verdict = match &ours {
-                Ok(ours) => compare(
-                    variant,
-                    &native,
-                    ours,
-                    &[format!("{collection}/{variant_name}")],
-                    &mut claimed,
-                    name,
-                ),
+                Ok(ours) => compare(variant, &native, ours, &[own], &mut claimed, name),
                 Err(message) => {
                     failure.get_or_insert(message.clone());
                     for path in variant["files"].as_array().unwrap() {

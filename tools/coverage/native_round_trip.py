@@ -204,6 +204,18 @@ def main():
             else:
                 record.update(status="platform_proven", files=by_variant.pop(name, []))
             variants.append(record)
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from generate import combination_name
+
+    for combination in space.get("combinations", []):
+        name = combination_name(combination)
+        record = {"name": name, "property": sorted(combination["set"]), "kind": "combination",
+                  "value": combination["set"], "source": combination.get("source", "combination")}
+        if name in refused:
+            record.update(status="platform_refused", message=refused[name], files=[])
+        else:
+            record.update(status="platform_proven", files=by_variant.pop(name, []))
+        variants.append(record)
     if by_variant:
         raise SystemExit(f"native files of no known variant: {sorted(by_variant)[:5]}")
 

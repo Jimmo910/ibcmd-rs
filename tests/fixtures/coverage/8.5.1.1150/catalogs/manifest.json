@@ -11,12 +11,12 @@
     "database_kind": "isolated_file_infobase",
     "rounds": "import -> export (1) -> config save -> load -> export (2); identical outside ConfigDumpInfo.xml"
   },
-  "inputs_sha256": "c579af081434282287043bed3f4a4796303255cded9a79c3c4ed66286795ce91",
+  "inputs_sha256": "5ae83ecd0121390f60bd643ce5504b007b239f5d4dcbb4cd93edbb4e3179c072",
   "configuration_cf": {
     "path": "configuration.cf.b64",
-    "decoded_size": 108997,
-    "decoded_sha256": "cbd6caf0b78bd07e1b6f419a8af48dd0061df2f222258d6d6d00dadfc35db1f7",
-    "encoded_sha256": "82340141d0909cd01288eff41258c4ae78ccc0816040fdfb1b37dab13a13a83e"
+    "decoded_size": 110674,
+    "decoded_sha256": "5c5165c245acd2424a61709288d8c5d461e9adee32005fecec4a0bbd008d03ef",
+    "encoded_sha256": "f8feb855987ed32f52abe2618df43c3f7d687772ecbcdf20cb1750e0fc01b4ab"
   },
   "variants": [
     {
@@ -25,8 +25,8 @@
       "files": [
         {
           "path": "Configuration.xml",
-          "size": 13062,
-          "sha256": "53188db8a980abf9f8e9be655e1f4eabba096f29e29a0c868a46224c87dc8472"
+          "size": 13192,
+          "sha256": "ce82c2342573f35577a0396b0cf0ff089dbaeda486f2d4ba384cc243f9bf83bd"
         },
         {
           "path": "Languages/Русский.xml",
@@ -664,6 +664,48 @@
           "path": "Catalogs/CovExecuteAfterWriteDataHistoryVersionProcessing_true.xml",
           "size": 4880,
           "sha256": "24717144e7a1fa30000ebe5d80961502e2ec648999acc1344b8ade8fd0e5f18c"
+        }
+      ]
+    },
+    {
+      "name": "CovCodeLength_0__InputByStringDescription",
+      "property": [
+        "CodeLength",
+        "InputByString"
+      ],
+      "kind": "combination",
+      "value": {
+        "CodeLength": "0",
+        "InputByString": "\n\t\t\t\t<xr:Field>Catalog.CovTemplate.StandardAttribute.Description</xr:Field>\n\t\t\t"
+      },
+      "source": "platform refusal of CodeLength_0: input by string names the code",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovCodeLength_0__InputByStringDescription.xml",
+          "size": 4686,
+          "sha256": "62984cc6c878575c90030a5c3830880c5c0c80ffa4a9198e3bed14689e1b6100"
+        }
+      ]
+    },
+    {
+      "name": "CovDescriptionLength_0__InputByStringCode",
+      "property": [
+        "DescriptionLength",
+        "InputByString"
+      ],
+      "kind": "combination",
+      "value": {
+        "DescriptionLength": "0",
+        "InputByString": "\n\t\t\t\t<xr:Field>Catalog.CovTemplate.StandardAttribute.Code</xr:Field>\n\t\t\t"
+      },
+      "source": "platform refusal of DescriptionLength_0: input by string names the description",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovDescriptionLength_0__InputByStringCode.xml",
+          "size": 4678,
+          "sha256": "c32c55f9e6078eb8eaf1af446e60b59d89fef5e0df1dddcfe0086d0572c969cb"
         }
       ]
     }

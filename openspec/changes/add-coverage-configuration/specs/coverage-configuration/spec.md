@@ -93,3 +93,30 @@ produces it, and checked offline through the `cf export` input of the same kind.
 - **GIVEN** a generated external data processor variant
 - **WHEN** the platform builds it into an `.epf` from its root XML and exports it twice with identical trees
 - **THEN** the `.epf` and the native tree are committed, and the offline check exports the `.epf` and compares it with that tree
+
+### Requirement: A combined configuration holds every proven variant of a platform
+
+For each platform with configuration sets, a combined configuration SHALL
+contain every platform-proven variant of those sets, be proven by the same
+native route, and be checked offline like a set. The offline check SHALL fail
+when a source set's manifest changed after the combined configuration was
+built.
+
+#### Scenario: A source set changes
+
+- **GIVEN** a combined configuration built from the class sets of a platform
+- **WHEN** one of those sets is proven again with new variants
+- **THEN** the offline check fails and names `tools/coverage/combine.py` until the combined configuration is rebuilt
+
+### Requirement: A mismatch on a typical configuration becomes a coverage variant first
+
+A difference between native and ibcmd-rs output found on a typical
+configuration SHALL be reproduced as a platform-proven coverage variant that
+the offline check reports as different or refused, before the decoder or
+writer is changed for it.
+
+#### Scenario: A property value differs on a typical configuration
+
+- **GIVEN** a file of a typical configuration that differs from the native one in one property value
+- **WHEN** an agent fixes it
+- **THEN** the PR contains a coverage variant with that value which was red before the fix and is in the baseline after it

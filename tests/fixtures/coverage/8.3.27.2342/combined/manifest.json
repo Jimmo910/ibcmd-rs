@@ -1,0 +1,1682 @@
+{
+  "schema_version": 1,
+  "kind": "combined",
+  "set": "8.3.27.2342-xml-2.20-combined",
+  "evidence": {
+    "status": "platform_proven",
+    "created_on": "2026-10-24",
+    "platform_version": "8.3.27.2342",
+    "source_version": "2.20",
+    "ibcmd_sha256": "d4e1892f270bf01877b61c0696c3624ce5f79c06d5b743755542aedad4596baa",
+    "database_kind": "isolated_file_infobase",
+    "rounds": "import -> export (1) -> config save -> load -> export (2); identical outside ConfigDumpInfo.xml"
+  },
+  "inputs_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "sources": [
+    {
+      "set": "8.3.27.2342-xml-2.20-catalogs",
+      "path": "catalogs",
+      "manifest_sha256": "c5b466783dfbb2274469a08725d68aeaf20f3efc6e29a5a303a60a952e26c8c5"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-chartsofcharacteristictypes",
+      "path": "chartsofcharacteristictypes",
+      "manifest_sha256": "0713eee61761068e40720b875ce2182a2acda6be82ca3121599e68830f04835f"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-commandgroups",
+      "path": "commandgroups",
+      "manifest_sha256": "f1351bf0877138525739a6a109d223c0fa461fee44cfe225a67021b8bf075989"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-commonattributes",
+      "path": "commonattributes",
+      "manifest_sha256": "c331783ad908af64fb0f82744bc9154f0b1a7debfe5dd95470833b411f0c1ed7"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-commonforms",
+      "path": "commonforms",
+      "manifest_sha256": "c7a04330b095e75e9eda59709c67eded9a3213ea62f926ac233d37b679cacef8"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-commonmodules",
+      "path": "commonmodules",
+      "manifest_sha256": "7c022c16bb92bc49073e853ae81c86fa1eb5f966d48dc386298d154f5630eb36"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-commonpictures",
+      "path": "commonpictures",
+      "manifest_sha256": "d018fa3be4ea5b419d245e241eb87345a388aa0080333b2d6ba116cada79ac40"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-commontemplates",
+      "path": "commontemplates",
+      "manifest_sha256": "0971fad92c05794d2c72dfd0c51cfaa241855c781185c811a982d3167112d1d0"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-constants",
+      "path": "constants",
+      "manifest_sha256": "25ebd6c19bce69559cc8311c896aa26fdbda589ea6cc5fd8ad76b91863ef6d77"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-dataprocessors",
+      "path": "dataprocessors",
+      "manifest_sha256": "9daa9ed8e30af81dae000b920c91b04459cdbbb1eb493ef5a00bd3241feaac67"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-definedtypes",
+      "path": "definedtypes",
+      "manifest_sha256": "e760cd41acd1cdcf82d63efb3461c56131e8855317678440e7d26b54348940a0"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-enums",
+      "path": "enums",
+      "manifest_sha256": "3e75db9671f6ff8b3de1fc72ac9c24b8654df1a754741302d28a42eff8a1a3a4"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-reports",
+      "path": "reports",
+      "manifest_sha256": "f3e67479ca0471a241437796ddf84c2f1282769f5ffa71a12a5f928942a9a0cf"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-roles",
+      "path": "roles",
+      "manifest_sha256": "adbe60f3304922eea6fae7b3fd4875e18ebba1bcdf807bcd25969a82130e7506"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-sessionparameters",
+      "path": "sessionparameters",
+      "manifest_sha256": "7a7d3baeb5092062b568a93928f2a31eda79bb0c7c990393496d2e6e67702114"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-styleitems",
+      "path": "styleitems",
+      "manifest_sha256": "cc5dcb2c9d882c12b512822ad420e3e755e8d70471c993fb0e39994d444b18dd"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-subsystems",
+      "path": "subsystems",
+      "manifest_sha256": "ff4a6dfce0b3419d85f66f9f6158b16c18cebb9a003d083dcecf2b96ca8b69c3"
+    },
+    {
+      "set": "8.3.27.2342-xml-2.20-xdtopackages",
+      "path": "xdtopackages",
+      "manifest_sha256": "6a1e7663c214e777c17e5c1db1cd44ccfa3150f2b2230d3b97feb8aa3d973727"
+    }
+  ],
+  "configuration_cf": {
+    "path": "configuration.cf.b64",
+    "decoded_size": 189249,
+    "decoded_sha256": "da1b838a800712d48fa24d2d459fdcc422c635f3d4e68fce20a258abb25f98a4",
+    "encoded_sha256": "b9f012407defad6db8046245c6ea1dbaab78c67ba8f527158c6ccb4fb696b1c1"
+  },
+  "variants": [
+    {
+      "name": "Catalogs/CovAutonumbering_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovAutonumbering_false.xml",
+          "size": 4579,
+          "sha256": "6b5435b0633a766263ecf463615a16b1ee2d819c5d79c614db79b49284eadecc"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovCheckUnique_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovCheckUnique_false.xml",
+          "size": 4563,
+          "sha256": "132c50dc0db7db1b7c28802ce4ad5bc76386815695d4a30ff5f0ef63dab8d84e"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovChoiceHistoryOnInput_DontUse",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovChoiceHistoryOnInput_DontUse.xml",
+          "size": 4653,
+          "sha256": "d9cc441fb9e9eafcdf858ac430d3b696bbfc45803ae08e18b146b2c126c22e27"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovChoiceMode_FromForm",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovChoiceMode_FromForm.xml",
+          "size": 4578,
+          "sha256": "3e004151808d2eefd3ddf49636968d0247dfb61bfbfdc79190b9f45fab99b36f"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovChoiceMode_QuickChoice",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovChoiceMode_QuickChoice.xml",
+          "size": 4605,
+          "sha256": "902ed649ec3a33ae3a6c7e89b71d2e7384629af08c3cf67ca8aca1b463d242af"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovCodeAllowedLength_Fixed",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovCodeAllowedLength_Fixed.xml",
+          "size": 4607,
+          "sha256": "84dc219419d4a499db5de456a9fabe33aae3b809ed36e719f1e15d5519645cba"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovCodeLength_0__InputByStringDescription",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovCodeLength_0__InputByStringDescription.xml",
+          "size": 4631,
+          "sha256": "4a1037ed98c7fc0cec6f79458f0fbcf1c34a7e512e8ebf17c71e3fa539e2d42f"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovCodeLength_11",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovCodeLength_11.xml",
+          "size": 4531,
+          "sha256": "8b935695102edd838b4c6770b5cbfb4910c937076f22b7194de9f3083d5ba236"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovCodeLength_3",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovCodeLength_3.xml",
+          "size": 4522,
+          "sha256": "17d8cd8522eae5b20078c6a6b48fa72465550dd7b547eaada1913a1c62fb7544"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovCodeLength_5",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovCodeLength_5.xml",
+          "size": 4522,
+          "sha256": "40a7bc6aedecbdf8d69fe84e9c0043e44d3ab7087b8c6d1d84fa603af6841b47"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovCodeSeries_WithinOwnerSubordination",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovCodeSeries_WithinOwnerSubordination.xml",
+          "size": 4718,
+          "sha256": "a9f0f63fec081fff000a826faadddcfbccee3eaa956adca7acc67127f4ecc2f2"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovCodeSeries_WithinSubordination",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovCodeSeries_WithinSubordination.xml",
+          "size": 4673,
+          "sha256": "ccebebb9effde169194a327b840328947891240b12677a3468d9973d2ddf5d68"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovCodeType_Number",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovCodeType_Number.xml",
+          "size": 4546,
+          "sha256": "7a678f3e96e10b0c8b5a4388a5f989aa349e2b0c9570699b3b8df329ec1822f1"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovCreateOnInput_DontUse",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovCreateOnInput_DontUse.xml",
+          "size": 4598,
+          "sha256": "c4b098ce43b99172f854724e2ac0cc004ca4122d4e9ceaa743dffab8ed4a3022"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovDataLockControlMode_Automatic",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovDataLockControlMode_Automatic.xml",
+          "size": 4660,
+          "sha256": "2ea24bd55e27bb5ef20bd18f33a10fef2673d55400d9f41c0122de44d8b6feab"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovDefaultPresentation_AsCode",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovDefaultPresentation_AsCode.xml",
+          "size": 4627,
+          "sha256": "668cf6d32b8ec1d5f1e226a9f145eeaa568fab1522ba14ce8df6cfd790dead0b"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovDescriptionLength_0__InputByStringCode",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovDescriptionLength_0__InputByStringCode.xml",
+          "size": 4623,
+          "sha256": "af65bb79b30e1097cf329f08296024854e899d9da3dec081b494b7941a15a69e"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovDescriptionLength_10",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovDescriptionLength_10.xml",
+          "size": 4586,
+          "sha256": "b5cdb19a6f57d3cdc871dca215dcc747af001925ffe33d75e53d4f1049b77ed5"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovDescriptionLength_36",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovDescriptionLength_36.xml",
+          "size": 4586,
+          "sha256": "9895fec4970d627bdfba04a5f6cef97a9996965ca78bc21eda0cff254433e8ec"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovDescriptionLength_50",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovDescriptionLength_50.xml",
+          "size": 4586,
+          "sha256": "9dadeee71cb295ac91073b43d15cd8d54c2fe10e0fba42b7bcca0204990412b9"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovEditType_BothWays",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovEditType_BothWays.xml",
+          "size": 4562,
+          "sha256": "da72ce4bf9b611aa10427b6d3519db0996e5955ad370dc848ffbfafecf8a1c4c"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovEditType_InList",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovEditType_InList.xml",
+          "size": 4544,
+          "sha256": "2fd687363afcb466167eea1545e38a633bfd616286edefa9362764afc48599a0"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovExecuteAfterWriteDataHistoryVersionProcessing_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovExecuteAfterWriteDataHistoryVersionProcessing_true.xml",
+          "size": 4825,
+          "sha256": "c819f94550a6b0e7658d1a60401e2b387c3f98438af253d73b98ac4491e3260b"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovExplanation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovExplanation_Cov.xml",
+          "size": 4658,
+          "sha256": "c40ae56b9ff890dce1ed80b2ff5de269022ed8a013db8cadcb130d2d44e482a4"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovExtendedListPresentation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovExtendedListPresentation_Cov.xml",
+          "size": 4775,
+          "sha256": "82a8c596a1a6abf1244f05a976da37227c76d79614d1ab1e9a0a77502750f140"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovExtendedObjectPresentation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovExtendedObjectPresentation_Cov.xml",
+          "size": 4793,
+          "sha256": "35dff6c921133167d973a2507ed4ae228d9f54ffeaf13ff83902950d8dec295c"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovFoldersOnTop_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovFoldersOnTop_false.xml",
+          "size": 4571,
+          "sha256": "06641f8d18b6af10ec78481baf06236afcec5e6b4b4f80d1fc1f999e1433edf9"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovFullTextSearch_DontUse",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovFullTextSearch_DontUse.xml",
+          "size": 4606,
+          "sha256": "124cfe414f5a7b931c96c2c9427ea6ebc9ce2378afad92bc49be30ef7862e97f"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovHierarchical_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovHierarchical_true.xml",
+          "size": 4561,
+          "sha256": "63c04b4ed5f6758298878b7b6a579824a15062982d8822c154c316c61c3a43ff"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovHierarchyType_HierarchyOfItems",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovHierarchyType_HierarchyOfItems.xml",
+          "size": 4658,
+          "sha256": "6e9956fca28a190bf326e9757aa6f642224e50328b3112c6497278cee110625e"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovIncludeHelpInContents_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovIncludeHelpInContents_true.xml",
+          "size": 4633,
+          "sha256": "7bfd7e540225e62043e5d18b40a993a1675f4bee8564631618e7b1a7fdfcb910"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovLevelCount_1",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovLevelCount_1.xml",
+          "size": 4522,
+          "sha256": "78b5c69d03c91015cddeaced439ad6a8b94e77804346bd5f729a41325737be8c"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovLevelCount_3",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovLevelCount_3.xml",
+          "size": 4522,
+          "sha256": "77c3d5700e5f7eb4382ce8b1c780634fab5667a911fa498d20d9f2d24f107034"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovLimitLevelCount_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovLimitLevelCount_true.xml",
+          "size": 4585,
+          "sha256": "95f7dc47be413b0d35c5b351d728a28f6dc2784d8e867b4cdbe04250aaf22bc9"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovListPresentation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovListPresentation_Cov.xml",
+          "size": 4703,
+          "sha256": "45ed6be04a3599ee41871fe2cab784bf296942d3d535cf017f169140d1033424"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovObjectPresentation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovObjectPresentation_Cov.xml",
+          "size": 4721,
+          "sha256": "812ba6e5c141b15a1b23485d8a38a2deb7f53f5acf9cf789e7c6e9e34b1cbd5d"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovPredefinedDataUpdate_AutoUpdate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovPredefinedDataUpdate_AutoUpdate.xml",
+          "size": 4680,
+          "sha256": "a5758c9f96024cc6498f55af102dc6bf55019cc0a63a2745e52dd2294267d4fe"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovPredefinedDataUpdate_DontAutoUpdate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovPredefinedDataUpdate_DontAutoUpdate.xml",
+          "size": 4716,
+          "sha256": "a3b0104137d4b693daca60fac34c85f9cace637d9e5db8c849629bd90b1f78a0"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovQuickChoice_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovQuickChoice_true.xml",
+          "size": 4553,
+          "sha256": "aee30b7b9d496b4001d9f73ebcea842749c4cf4745a62736cd04f0df86fdb392"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovSearchStringModeOnInputByString_AnyPart",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovSearchStringModeOnInputByString_AnyPart.xml",
+          "size": 4740,
+          "sha256": "aea787d71285675b3138f6f30bc125a0d595619e47130687a7e0dc572f6cd26f"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovTemplate.xml",
+          "size": 4490,
+          "sha256": "11ded6acc8971635c270708495ea9bcc6e5d0aa13e8483ed52ec13a2918da6c2"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovUpdateDataHistoryImmediatelyAfterWrite_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovUpdateDataHistoryImmediatelyAfterWrite_true.xml",
+          "size": 4769,
+          "sha256": "d2d9bbcea7e6403c0703c9d43b8ee0f76442ae3c049f15602c13b49d2682a1b1"
+        }
+      ]
+    },
+    {
+      "name": "Catalogs/CovUseStandardCommands_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Catalogs/CovUseStandardCommands_false.xml",
+          "size": 4627,
+          "sha256": "55cd34a4d34ef2be04c252119da67c58259abee1ab42e36902ef13dbaaa9d6c6"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovAutonumbering_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovAutonumbering_false.xml",
+          "size": 5011,
+          "sha256": "5a6a0212b53aef1455cc4bba643315866518c3c0a645199b71f2fb6f639ad9ea"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovCheckUnique_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovCheckUnique_false.xml",
+          "size": 4993,
+          "sha256": "508258e6a5333ff8bc939bcf92c36cc390b4377ed7cc497d2ffd9ae8a15e272c"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovChoiceHistoryOnInput_DontUse",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovChoiceHistoryOnInput_DontUse.xml",
+          "size": 5094,
+          "sha256": "06bf7aab0972fc6dfd0c765c02f8071a6c2977bf9a1e7c2f61853186644fa7a4"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovCodeAllowedLength_Fixed",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovCodeAllowedLength_Fixed.xml",
+          "size": 5043,
+          "sha256": "7354f57a3de1ec8daef1ec5da84743fb2ae2c0dccdef3eb7b0a3c007e3d3579e"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovDescriptionLength_100",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovDescriptionLength_100.xml",
+          "size": 5029,
+          "sha256": "35c295cfdf7fd35100acde2e753517086bdaed6d49e90b3469eb54478ba8809f"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovDescriptionLength_150",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovDescriptionLength_150.xml",
+          "size": 5029,
+          "sha256": "13b5efbf9b372c1d11c5b27933a98b764841c5a54bfe5d71ecca6e72b9a681c4"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovExecuteAfterWriteDataHistoryVersionProcessing_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovExecuteAfterWriteDataHistoryVersionProcessing_true.xml",
+          "size": 5288,
+          "sha256": "e213a26c8c6927f6c0e08a5d260c629e02c1230fdfb3045a2e42a18d0c3bbcea"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovFoldersOnTop_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovFoldersOnTop_false.xml",
+          "size": 5002,
+          "sha256": "9978fbbb354dd00a2950061edc8eec7eddf944f6010fab2c4b6fb3ea615b0080"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovHierarchical_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovHierarchical_true.xml",
+          "size": 4991,
+          "sha256": "43015f7794faa16b1008408279784748ce35024073da3df6e5256eee0a113dec"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovIncludeHelpInContents_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovIncludeHelpInContents_true.xml",
+          "size": 5072,
+          "sha256": "5d54134cf1725fe4ffd18f4ce5346ba02c44fea8eb0387d1da836e1cee9795ae"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovObjectPresentation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovObjectPresentation_Cov.xml",
+          "size": 5156,
+          "sha256": "6f04140523e29f78346e6b20c167c5cc02cc1dd020082840dc754418d333c12a"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovPredefinedDataUpdate_DontAutoUpdate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovPredefinedDataUpdate_DontAutoUpdate.xml",
+          "size": 5164,
+          "sha256": "1ee2fb8181893f2015a6933e1cbe892c6cd88aa0041d444bda99c5670665c763"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovQuickChoice_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovQuickChoice_true.xml",
+          "size": 4982,
+          "sha256": "2e1bf4b756e2d1177b557548de75cd44d220e91eb346e77131938180aaed5719"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovTemplate.xml",
+          "size": 4911,
+          "sha256": "5d434f15de425500d6a39ae408c891c8ca2fdd1be8310ad6ddbe17a459ca86fa"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovUpdateDataHistoryImmediatelyAfterWrite_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovUpdateDataHistoryImmediatelyAfterWrite_true.xml",
+          "size": 5225,
+          "sha256": "d01d459abedb5e2bc2300c5203ac96c0239a118fb6867e5cd48adf9bfb35d615"
+        }
+      ]
+    },
+    {
+      "name": "ChartsOfCharacteristicTypes/CovUseStandardCommands_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "ChartsOfCharacteristicTypes/CovUseStandardCommands_false.xml",
+          "size": 5065,
+          "sha256": "f75d3b694155f45b169931d0fb4cbf785163292ecdf3fd692f36df46e6ac52c5"
+        }
+      ]
+    },
+    {
+      "name": "CommandGroups/CovCategory_ActionsPanel",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommandGroups/CovCategory_ActionsPanel.xml",
+          "size": 1224,
+          "sha256": "4d4dd54ebf51545a7f1f401ca2d661db49c072d499a9c70557c9dd812dd80ff0"
+        }
+      ]
+    },
+    {
+      "name": "CommandGroups/CovCategory_FormCommandBar",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommandGroups/CovCategory_FormCommandBar.xml",
+          "size": 1228,
+          "sha256": "8dcaac22d92ac4126656bd3ddf8af4ab5abd6b2624658023a80bddb2c43e2404"
+        }
+      ]
+    },
+    {
+      "name": "CommandGroups/CovRepresentation_Picture",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommandGroups/CovRepresentation_Picture.xml",
+          "size": 1231,
+          "sha256": "a78da5632f4d6b88d17ce3075dcbf3650af9e3009d32daf7cbd4d08a9656cbc5"
+        }
+      ]
+    },
+    {
+      "name": "CommandGroups/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommandGroups/CovTemplate.xml",
+          "size": 1214,
+          "sha256": "a7e4bc364459a4f0fc9b427f1259a5d47b2f16e9a590638109e98d824a341cad"
+        }
+      ]
+    },
+    {
+      "name": "CommandGroups/CovToolTip_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommandGroups/CovToolTip_Cov.xml",
+          "size": 1325,
+          "sha256": "cbdc80c2ffa29fbba981b4b2b18f8cfb334305584ead121165d5e0e689a8036d"
+        }
+      ]
+    },
+    {
+      "name": "CommonAttributes/CovAuthenticationSeparation_Separate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonAttributes/CovAuthenticationSeparation_Separate.xml",
+          "size": 2546,
+          "sha256": "23a1b55ea029a5dfe709171a33269e6d8990a72d898cf5542c40b95a5ecc1e11"
+        }
+      ]
+    },
+    {
+      "name": "CommonAttributes/CovAutoUse_Use",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonAttributes/CovAutoUse_Use.xml",
+          "size": 2519,
+          "sha256": "ba407ccfcdc108ee2aa617ae46a02fd9d669bcc6e1b1efc8cae2676e28ad8016"
+        }
+      ]
+    },
+    {
+      "name": "CommonAttributes/CovConfigurationExtensionsSeparation_Separate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonAttributes/CovConfigurationExtensionsSeparation_Separate.xml",
+          "size": 2555,
+          "sha256": "11bf76fcaf1fbabf604064ebc2c7d910911b930cc706184a324de2f5d2ce8c1f"
+        }
+      ]
+    },
+    {
+      "name": "CommonAttributes/CovExtendedEdit_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonAttributes/CovExtendedEdit_true.xml",
+          "size": 2528,
+          "sha256": "6cc3a19de7b7ffb7c6d9ee302897b260cc5420f9fe0abab9014b3ac30f8ab487"
+        }
+      ]
+    },
+    {
+      "name": "CommonAttributes/CovFillFromFillingValue_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonAttributes/CovFillFromFillingValue_true.xml",
+          "size": 2536,
+          "sha256": "fa6c2d0c82b38b30d2b11779e4cc14788aaac91eac7683d7ff62806557c8706c"
+        }
+      ]
+    },
+    {
+      "name": "CommonAttributes/CovIndexing_IndexWithAdditionalOrder",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonAttributes/CovIndexing_IndexWithAdditionalOrder.xml",
+          "size": 2560,
+          "sha256": "dd01f0970d1527cbfd2d49aedd68f10a9a82e1f2f898369aac8ed794cbec1c64"
+        }
+      ]
+    },
+    {
+      "name": "CommonAttributes/CovMarkNegatives_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonAttributes/CovMarkNegatives_true.xml",
+          "size": 2529,
+          "sha256": "90922c10505fed70169e3f34ed6828c85e789e406d3c2777dbbe6e402b8bf4c1"
+        }
+      ]
+    },
+    {
+      "name": "CommonAttributes/CovMultiLine_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonAttributes/CovMultiLine_true.xml",
+          "size": 2525,
+          "sha256": "cb892e3b7bd7659d4510b2473f253ec17ade36000c821db120c1b1c62032b258"
+        }
+      ]
+    },
+    {
+      "name": "CommonAttributes/CovPasswordMode_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonAttributes/CovPasswordMode_true.xml",
+          "size": 2528,
+          "sha256": "13676cf71b9127530ac362dd1b4505feeed51dc8bfc739460565d7f8278c5009"
+        }
+      ]
+    },
+    {
+      "name": "CommonAttributes/CovSeparatedDataUse_IndependentlyAndSimultaneously",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonAttributes/CovSeparatedDataUse_IndependentlyAndSimultaneously.xml",
+          "size": 2576,
+          "sha256": "d252cbfc51c9e2d3842edb3b5f6e363bdbcb7136c58f14b7b675b43711b77c3d"
+        }
+      ]
+    },
+    {
+      "name": "CommonAttributes/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonAttributes/CovTemplate.xml",
+          "size": 2520,
+          "sha256": "b26161a4de17ee6f42a7185509f1525c6b3db55325e5364b84796986e2331962"
+        }
+      ]
+    },
+    {
+      "name": "CommonAttributes/CovUsersSeparation_Separate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonAttributes/CovUsersSeparation_Separate.xml",
+          "size": 2537,
+          "sha256": "8c24e39a3c162f868558efcef7ae393e993fae21b449b01f16b002b543acb390"
+        }
+      ]
+    },
+    {
+      "name": "CommonForms/CovExplanation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonForms/CovExplanation_Cov.xml",
+          "size": 1615,
+          "sha256": "986ddc6a031ed14c4fa735761ef223e277287838f030d2a0af500da11fc1f1a2"
+        }
+      ]
+    },
+    {
+      "name": "CommonForms/CovFormType_Managed",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonForms/CovFormType_Managed.xml",
+          "size": 1503,
+          "sha256": "ca6ef2463ccbdc0ced381d65e90807478e57c5cc09860cce675bc5ceef42f2b5"
+        }
+      ]
+    },
+    {
+      "name": "CommonForms/CovIncludeHelpInContents_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonForms/CovIncludeHelpInContents_true.xml",
+          "size": 1513,
+          "sha256": "33aa138e92ce9d013ed2d3f2c00a0ba17639de9995233602a4cf8e36ba8a865b"
+        }
+      ]
+    },
+    {
+      "name": "CommonForms/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonForms/CovTemplate.xml",
+          "size": 1496,
+          "sha256": "2c3b4c2e0bd07660c671348b3aaa538fa04e6fbd1da17e83da209ddb9bd40f33"
+        }
+      ]
+    },
+    {
+      "name": "CommonForms/CovUseStandardCommands_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonForms/CovUseStandardCommands_false.xml",
+          "size": 1514,
+          "sha256": "500a6661f8867cb6d114bc080137a61a92a48c83377832df68d07eb77599b032"
+        }
+      ]
+    },
+    {
+      "name": "CommonModules/CovClientManagedApplication_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonModules/CovClientManagedApplication_true.xml",
+          "size": 1474,
+          "sha256": "4f11329bac7a9df5fad4a4cddf06b24404921765ca52ba23b7187886d9c6ee41"
+        }
+      ]
+    },
+    {
+      "name": "CommonModules/CovClientOrdinaryApplication_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonModules/CovClientOrdinaryApplication_false.xml",
+          "size": 1478,
+          "sha256": "368307cacf7f4b2622c41017e7d6449740a12ed71268bc6b7f929429653f8fd4"
+        }
+      ]
+    },
+    {
+      "name": "CommonModules/CovExternalConnection_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonModules/CovExternalConnection_true.xml",
+          "size": 1468,
+          "sha256": "294466b7b4bdfe777e03b9fbfd4b80eb697452ca70a71c631e9e92680bb3bb24"
+        }
+      ]
+    },
+    {
+      "name": "CommonModules/CovGlobal_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonModules/CovGlobal_true.xml",
+          "size": 1456,
+          "sha256": "e04530c3dca954d5c12151bc2a426fe8b17b671d6178c8196b5d1b7c7c1a5550"
+        }
+      ]
+    },
+    {
+      "name": "CommonModules/CovPrivileged_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonModules/CovPrivileged_true.xml",
+          "size": 1460,
+          "sha256": "bfc35ad859ed505d2117c7f172e2fb0af5883a1fcc3bb3385f099cbf970b0302"
+        }
+      ]
+    },
+    {
+      "name": "CommonModules/CovReturnValuesReuse_DuringRequest",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonModules/CovReturnValuesReuse_DuringRequest.xml",
+          "size": 1483,
+          "sha256": "04305cae3935860eae36d0c6cd56c2721c59be12f3388efbe4500cb10eb8b2f6"
+        }
+      ]
+    },
+    {
+      "name": "CommonModules/CovReturnValuesReuse_DuringSession",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonModules/CovReturnValuesReuse_DuringSession.xml",
+          "size": 1483,
+          "sha256": "0cfd3a20a214c2156abe66bd8206687e8b710d57db3e66969efba8ece22ed42f"
+        }
+      ]
+    },
+    {
+      "name": "CommonModules/CovServerCall_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonModules/CovServerCall_true.xml",
+          "size": 1460,
+          "sha256": "f0b797f0f561c7939d84039704c6b2aa214b46b0009a61e450983ac79fcce7c8"
+        }
+      ]
+    },
+    {
+      "name": "CommonModules/CovServer_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonModules/CovServer_true.xml",
+          "size": 1456,
+          "sha256": "6bc113627741b97efb4cb589a8b1be920175990ac5f2ca430b23021c36a1964c"
+        }
+      ]
+    },
+    {
+      "name": "CommonModules/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonModules/CovTemplate.xml",
+          "size": 1454,
+          "sha256": "d9d8cd3211844aa1b0319f071afe36a3e68d28895cef17055c42afa9c41d905f"
+        }
+      ]
+    },
+    {
+      "name": "CommonPictures/CovAvailabilityForAppearance_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonPictures/CovAvailabilityForAppearance_true.xml",
+          "size": 1246,
+          "sha256": "315d05ebd3dfc491948efbbddec316795bd32883a309224e92d066cf55b5633a"
+        }
+      ]
+    },
+    {
+      "name": "CommonPictures/CovAvailabilityForChoice_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonPictures/CovAvailabilityForChoice_true.xml",
+          "size": 1242,
+          "sha256": "e41af6cd5939539824f85814d3f7078f23eded7b5778ea394a85c41aae93f76e"
+        }
+      ]
+    },
+    {
+      "name": "CommonPictures/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonPictures/CovTemplate.xml",
+          "size": 1225,
+          "sha256": "ca66e3b5664fb216daa0274446223cae54fcbdd3469ebdfe5026fe896de7c9d9"
+        }
+      ]
+    },
+    {
+      "name": "CommonTemplates/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonTemplates/CovTemplate.xml",
+          "size": 1158,
+          "sha256": "5275fef6701207c04b0fe46ee92a25d6158d1447087b6e699c7b8d7b7e25f1e0"
+        }
+      ]
+    },
+    {
+      "name": "CommonTemplates/CovTemplateType_AddIn",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonTemplates/CovTemplateType_AddIn.xml",
+          "size": 1154,
+          "sha256": "d512f225321d648988b7e4e9f7ad1c3a6f39b04224dd5b0878fb41579215a95f"
+        }
+      ]
+    },
+    {
+      "name": "CommonTemplates/CovTemplateType_BinaryData",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonTemplates/CovTemplateType_BinaryData.xml",
+          "size": 1164,
+          "sha256": "ec62a2b80ba8b81c0211253d4aea88489a4fcb8c63bda2523f142e8ed4d57c0b"
+        }
+      ]
+    },
+    {
+      "name": "CommonTemplates/CovTemplateType_DataCompositionAppearanceTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonTemplates/CovTemplateType_DataCompositionAppearanceTemplate.xml",
+          "size": 1210,
+          "sha256": "1ffca4ef801733c08f5fd03342d8b3323cbd78241634906799d56fb4be4a4ee5"
+        }
+      ]
+    },
+    {
+      "name": "CommonTemplates/CovTemplateType_DataCompositionSchema",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonTemplates/CovTemplateType_DataCompositionSchema.xml",
+          "size": 1186,
+          "sha256": "b3e811c9085c8677141cdb8b40f2fb7c3e7bd01a236d61c638b318dced27cb5a"
+        }
+      ]
+    },
+    {
+      "name": "CommonTemplates/CovTemplateType_HTMLDocument",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonTemplates/CovTemplateType_HTMLDocument.xml",
+          "size": 1168,
+          "sha256": "3d087920016151bd6ef863d26b05199c6bf9b397aec0151e0dbb24def7752098"
+        }
+      ]
+    },
+    {
+      "name": "CommonTemplates/CovTemplateType_TextDocument",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "CommonTemplates/CovTemplateType_TextDocument.xml",
+          "size": 1168,
+          "sha256": "1b3aa01aef5ade9f08709244e4f07be90f969108081ad02312a5c70ff9898204"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovDataLockControlMode_Automatic",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovDataLockControlMode_Automatic.xml",
+          "size": 3082,
+          "sha256": "7c80c334eb528f03f11fda9ac1eb6d2453ca6ed6718574d2d4ca3e0b383d98fb"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovExecuteAfterWriteDataHistoryVersionProcessing_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovExecuteAfterWriteDataHistoryVersionProcessing_true.xml",
+          "size": 3163,
+          "sha256": "e1462a1a5eb78be9f702cb40143104a43dc10c1a506510b553a5249f22f74e79"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovExplanation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovExplanation_Cov.xml",
+          "size": 3136,
+          "sha256": "c96ad30f5654f7d754be793b1338ae42f676a950010a7842e55a4795ea19815c"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovExtendedEdit_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovExtendedEdit_true.xml",
+          "size": 3031,
+          "sha256": "03def3669fc18e49ed5697106414d5514047106ad1f31bf554a4714ae4740217"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovExtendedPresentation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovExtendedPresentation_Cov.xml",
+          "size": 3181,
+          "sha256": "26ad5c8f09f4a756e053407da6e6a16035fda946e9ae910938be11d4b7cca804"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovFillChecking_ShowError",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovFillChecking_ShowError.xml",
+          "size": 3052,
+          "sha256": "14f8cd83e6cff00a0395813325d264b4c394acff4eb6c428405d51af916f354c"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovMarkNegatives_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovMarkNegatives_true.xml",
+          "size": 3035,
+          "sha256": "fa0d878a8af072a87b1fc52a6cc5ddcbf2f9a00881b2d3fe02f840c8d0af68af"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovMultiLine_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovMultiLine_true.xml",
+          "size": 3019,
+          "sha256": "cda1cab0c12545b426f1f2b51dbc5296d942eaa23a766068bc82870ed585f7bd"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovPasswordMode_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovPasswordMode_true.xml",
+          "size": 3031,
+          "sha256": "4ae6280d48c0881d4a432000eb858ae53a8ca6bd7c03af8d914ceb709f0af627"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovTemplate.xml",
+          "size": 2996,
+          "sha256": "782cbcd81ab4289a7e5511479c942ce9bd5dc88a17130dc856a209682bd0665d"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovToolTip_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovToolTip_Cov.xml",
+          "size": 3116,
+          "sha256": "cdba93eb764b3ecd872c9d6132689d494d3c2faf3ececafdf180c711b75871e9"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovUpdateDataHistoryImmediatelyAfterWrite_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovUpdateDataHistoryImmediatelyAfterWrite_true.xml",
+          "size": 3135,
+          "sha256": "fce8609da19aa2cd5f7edf4dc85391d06790a673fcfa4c29057b9a97d0b54ae3"
+        }
+      ]
+    },
+    {
+      "name": "Constants/CovUseStandardCommands_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Constants/CovUseStandardCommands_false.xml",
+          "size": 3065,
+          "sha256": "87281693989a006dd572414f32fe7645767aa38f0ea4f5fe219314009f8b5143"
+        }
+      ]
+    },
+    {
+      "name": "DataProcessors/CovExplanation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "DataProcessors/CovExplanation_Cov.xml",
+          "size": 1962,
+          "sha256": "f985178a6782fb7fc3d265e5c57f911e572d2aee83c2bd821d03e61d4d79cfe4"
+        }
+      ]
+    },
+    {
+      "name": "DataProcessors/CovExtendedPresentation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "DataProcessors/CovExtendedPresentation_Cov.xml",
+          "size": 1998,
+          "sha256": "b9fda588de3b3fa349a38c42e3149f2ece3235838a9126039019f2519d6ff77d"
+        }
+      ]
+    },
+    {
+      "name": "DataProcessors/CovIncludeHelpInContents_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "DataProcessors/CovIncludeHelpInContents_true.xml",
+          "size": 1882,
+          "sha256": "97cac4cfc616c121bb0cef0f16de5c4293c59079969db47d1e3c627f7502c6fa"
+        }
+      ]
+    },
+    {
+      "name": "DataProcessors/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "DataProcessors/CovTemplate.xml",
+          "size": 1829,
+          "sha256": "795cb6e0f364cfab265a0c2baee6af1fdc20d15a4cf51ba050f2485f723f7d6e"
+        }
+      ]
+    },
+    {
+      "name": "DataProcessors/CovUseStandardCommands_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "DataProcessors/CovUseStandardCommands_false.xml",
+          "size": 1881,
+          "sha256": "46aa5d581bbae5f514d3e13e0ef8e3b60240e4a666749a5dee7cd4f4d3231aad"
+        }
+      ]
+    },
+    {
+      "name": "DefinedTypes/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "DefinedTypes/CovTemplate.xml",
+          "size": 1565,
+          "sha256": "235a6e96f557aad44c9dd1a821dc4bb0487651e5f12d4c59ac74c52fd77f0277"
+        }
+      ]
+    },
+    {
+      "name": "Enums/CovChoiceHistoryOnInput_DontUse",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Enums/CovChoiceHistoryOnInput_DontUse.xml",
+          "size": 2276,
+          "sha256": "553e150f1790b34fdee8ff7ba0e5a8df6c42293725e6ef529c077389c96baf13"
+        }
+      ]
+    },
+    {
+      "name": "Enums/CovChoiceMode_QuickChoice",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Enums/CovChoiceMode_QuickChoice.xml",
+          "size": 2252,
+          "sha256": "66f6209dab8b71adcbca2f08b3466b88d0ce84dae9cfe12cc5d27c6e26728c00"
+        }
+      ]
+    },
+    {
+      "name": "Enums/CovExplanation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Enums/CovExplanation_Cov.xml",
+          "size": 2333,
+          "sha256": "7cbfff5eb0bdcef85434d2201b21d2447a59b85fe293eaee126c1c78e535a535"
+        }
+      ]
+    },
+    {
+      "name": "Enums/CovQuickChoice_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Enums/CovQuickChoice_false.xml",
+          "size": 2230,
+          "sha256": "d56608b8d096d6461094373f85d9c75ff6ecbd3348e85d71248edc753dcc40b2"
+        }
+      ]
+    },
+    {
+      "name": "Enums/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Enums/CovTemplate.xml",
+          "size": 2193,
+          "sha256": "2e2bb825b716512587b0ea6ef7f10d3a33ec6098e8d70108d102c26b0098e2ef"
+        }
+      ]
+    },
+    {
+      "name": "Enums/CovUseStandardCommands_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Enums/CovUseStandardCommands_true.xml",
+          "size": 2256,
+          "sha256": "0fbdffef71d2f9a01b6147063643f9251aff5dc938f06ba2e4811e1776c6729e"
+        }
+      ]
+    },
+    {
+      "name": "Reports/CovExplanation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Reports/CovExplanation_Cov.xml",
+          "size": 2095,
+          "sha256": "b56cc0a363b0bbc2c285fc536b916789759c4ad4b1bfb393d0b32fa8389579cf"
+        }
+      ]
+    },
+    {
+      "name": "Reports/CovExtendedPresentation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Reports/CovExtendedPresentation_Cov.xml",
+          "size": 2131,
+          "sha256": "d4496ad380dfbd2c883c139906d1bfff49cd83d85db6c053006f5db881fae8eb"
+        }
+      ]
+    },
+    {
+      "name": "Reports/CovIncludeHelpInContents_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Reports/CovIncludeHelpInContents_true.xml",
+          "size": 2015,
+          "sha256": "d6ef264eb36179e45994b429479aab85ed9643f6d8f41c38427ab2738e01f5aa"
+        }
+      ]
+    },
+    {
+      "name": "Reports/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Reports/CovTemplate.xml",
+          "size": 1962,
+          "sha256": "328f9e8486cc904977aaa4f76d8f58153fee6b8b79adeb5703daefc509915049"
+        }
+      ]
+    },
+    {
+      "name": "Reports/CovUseStandardCommands_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Reports/CovUseStandardCommands_false.xml",
+          "size": 2014,
+          "sha256": "f244e3b8ae175dfa0c24694c7b10b272566d30389f0121993e97e00a3ad91f18"
+        }
+      ]
+    },
+    {
+      "name": "Roles/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Roles/CovTemplate.xml",
+          "size": 1085,
+          "sha256": "40bb3f1cce1ad0512d269ff1d05e8fc78ca2c1ce51d4bcc45d41e96135ba3d57"
+        }
+      ]
+    },
+    {
+      "name": "SessionParameters/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "SessionParameters/CovTemplate.xml",
+          "size": 1305,
+          "sha256": "d5c0c21a869cd2799751fe9190c5dc992a20341d2688cda52d9d1aee4baa4bf6"
+        }
+      ]
+    },
+    {
+      "name": "StyleItems/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "StyleItems/CovTemplate.xml",
+          "size": 1167,
+          "sha256": "b318f9a43dfc8c4d7beb680a9e5ddd03d72913fa8952df618ebcce9454112708"
+        }
+      ]
+    },
+    {
+      "name": "StyleItems/CovType_Font",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "StyleItems/CovType_Font.xml",
+          "size": 1167,
+          "sha256": "cc6d89172a025c0fc854fdb12593142f3965851bfbabc08970f6ef2821e45cfd"
+        }
+      ]
+    },
+    {
+      "name": "Subsystems/CovExplanation_Cov",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Subsystems/CovExplanation_Cov.xml",
+          "size": 1443,
+          "sha256": "446610a23679d4e9488a8548e8bf67c86f4edd9a225909cabbe777c5092d3ac2"
+        }
+      ]
+    },
+    {
+      "name": "Subsystems/CovIncludeHelpInContents_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Subsystems/CovIncludeHelpInContents_false.xml",
+          "size": 1344,
+          "sha256": "144a2b1a168dfb216ffcca66bae41eb9f4ba64d05919245ad4cc0035d4eabd29"
+        }
+      ]
+    },
+    {
+      "name": "Subsystems/CovIncludeInCommandInterface_false",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Subsystems/CovIncludeInCommandInterface_false.xml",
+          "size": 1348,
+          "sha256": "753c8c1c1091bf8db6bff1d1ae702a0bb5026da6672950d9931e006c6afbcb2c"
+        }
+      ]
+    },
+    {
+      "name": "Subsystems/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Subsystems/CovTemplate.xml",
+          "size": 1324,
+          "sha256": "5163f57b2c80bce9035c5691e3addaf3eef523200bb87cf5881d03c0e897e186"
+        }
+      ]
+    },
+    {
+      "name": "Subsystems/CovUseOneCommand_true",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Subsystems/CovUseOneCommand_true.xml",
+          "size": 1333,
+          "sha256": "ffffec531f2f8ee8df53746b6f27e25f4d9fb0037825edcc51a1cb22d5f3991c"
+        }
+      ]
+    },
+    {
+      "name": "XDTOPackages/CovTemplate",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "XDTOPackages/CovTemplate.xml",
+          "size": 1156,
+          "sha256": "13d39f37a77c0f86eefafc39fab37440f1f309ee73925caeb3392a9d2d49712d"
+        }
+      ]
+    },
+    {
+      "name": "configuration",
+      "status": "platform_proven",
+      "files": [
+        {
+          "path": "Configuration.xml",
+          "size": 18383,
+          "sha256": "986edd306a106f7bc442eea92337fcbac92cf8ff5dc5b042419256c4444617b5"
+        },
+        {
+          "path": "Languages/Русский.xml",
+          "size": 1251,
+          "sha256": "6b08f5aa864e291924f7ac6ef047e7d335aaaaef691e891ac693e00d07e60510"
+        }
+      ]
+    }
+  ]
+}

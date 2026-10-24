@@ -30,10 +30,11 @@ from native_round_trip import create_from_tree, export, first_error, run_ibcmd  
 TEMPLATE = "CovTemplate"
 
 
-def seed_object(corpus_object):
-    """A minimal object of the corpus object's class, as XML."""
+def seed_object(corpus_object, head):
+    """A minimal object of the corpus object's class, as XML, under `head`:
+    the target platform's own `MetaDataObject` line (the corpus may be of
+    another platform and format version)."""
     text = corpus_object.read_text(encoding="utf-8-sig")
-    head = text.split("\n")[1]
     tag = re.search(r"<MetaDataObject[^>]*>\s*<(\w+) uuid=", text).group(1)
     generated = re.findall(r'<xr:GeneratedType name="(\w+)\.[^"]+" category="(\w+)"', text)
     ids = (str(uuid.uuid5(NAMESPACE, f"{TEMPLATE}-{tag}/{index}")) for index in range(100))
@@ -91,7 +92,8 @@ def main():
     shutil.copytree(work / "empty-xml", inputs / "base", ignore=shutil.ignore_patterns("ConfigDumpInfo.xml"))
 
     # 2. The template: a minimal seed the platform completes.
-    tag, seed = seed_object(corpus_objects[0])
+    head = (inputs / "base" / "Configuration.xml").read_text(encoding="utf-8-sig").split("\n")[1]
+    tag, seed = seed_object(corpus_objects[0], head)
     tree = work / "seed"
     shutil.copytree(inputs / "base", tree)
     (tree / args.collection).mkdir()

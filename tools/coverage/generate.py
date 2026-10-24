@@ -32,12 +32,27 @@ def variant_name(prop, value):
     return f"Cov{prop}_{tail}"[:80]
 
 
+def combination_name(combination):
+    """The combination's own `name`, or `Cov<property>_<value>__<property>_<value>…`."""
+    if combination.get("name"):
+        return combination["name"]
+    parts = [variant_name(prop, value).removeprefix("Cov") for prop, value in combination["set"].items()]
+    return ("Cov" + "__".join(parts))[:80]
+
+
 def set_property(xml, prop, kind, value):
     """The template with one property's element replaced; refuses when the
-    element is missing or occurs more than once."""
-    pattern = re.compile(rf"<{prop}>[^<]*</{prop}>|<{prop}/>")
+    element is missing or occurs more than once. Kind `xml` replaces a nested
+    element's whole content (`""` empties it)."""
+    if kind == "xml":
+        pattern = re.compile(rf"<{prop}>.*?</{prop}>|<{prop}/>", re.S)
+    else:
+        pattern = re.compile(rf"<{prop}>[^<]*</{prop}>|<{prop}/>")
     if len(pattern.findall(xml)) != 1:
-        raise SystemExit(f"template: property {prop} is not exactly one scalar element")
+        raise SystemExit(f"template: property {prop} is not exactly one element")
+    if kind == "xml":
+        element = f"<{prop}>{value}</{prop}>" if value else f"<{prop}/>"
+        return pattern.sub(lambda _: element, xml)
     if kind == "localized":
         element = f"<{prop}>" + LOCALIZED.format(value=value) + f"</{prop}>"
     else:
@@ -48,9 +63,10 @@ def set_property(xml, prop, kind, value):
 CLASS_ID = re.compile(r"<xr:ClassId>([0-9a-f-]{36})</xr:ClassId>")
 
 
-def rename(xml, template_name, name):
-    """Gives the copy its own name and its own identifiers. Class ids are
-    constants of the platform, not of the object, and stay."""
+def rename(xml, template_name, name, seed=None):
+    """Gives the copy its own name and its own identifiers, derived from `seed`
+    (the name by default). Class ids are constants of the platform, not of the
+    object, and stay."""
     xml = xml.replace(f">{template_name}<", f">{name}<").replace(f".{template_name}", f".{name}")
     constants = set(CLASS_ID.findall(xml))
     seen = {}
@@ -60,7 +76,7 @@ def rename(xml, template_name, name):
         if old in constants:
             return old
         if old not in seen:
-            seen[old] = str(uuid.uuid5(NAMESPACE, f"{name}/{len(seen)}"))
+            seen[old] = str(uuid.uuid5(NAMESPACE, f"{seed or name}/{len(seen)}"))
         return seen[old]
 
     return UUID.sub(fresh, xml)
@@ -88,6 +104,15 @@ def main():
             name = variant_name(prop["name"], entry["value"])
             xml = set_property(template, prop["name"], prop["kind"], entry["value"])
             variants.append((name, rename(xml, template_name, name)))
+    # Values that only work together: one variant sets them all.
+    kinds = {prop["name"]: prop["kind"] for prop in space["properties"]}
+    for combination in space.get("combinations", []):
+        values = combination["set"]
+        name = combination_name(combination)
+        xml = template
+        for prop, value in values.items():
+            xml = set_property(xml, prop, combination.get("kinds", {}).get(prop, kinds.get(prop, "enum")), value)
+        variants.append((name, rename(xml, template_name, name)))
     names = [name for name, _ in variants]
     if len(set(names)) != len(names):
         raise SystemExit("two variants share a name")

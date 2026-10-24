@@ -518,5 +518,29 @@
         }
       ]
     }
+  ],
+  "combinations": [
+    {
+      "set": {
+        "CodeLength": "0",
+        "InputByString": "\n\t\t\t\t<xr:Field>Catalog.CovTemplate.StandardAttribute.Description</xr:Field>\n\t\t\t"
+      },
+      "kinds": {
+        "InputByString": "xml"
+      },
+      "source": "platform refusal of CodeLength_0: input by string names the code",
+      "name": "CovCodeLength_0__InputByStringDescription"
+    },
+    {
+      "set": {
+        "DescriptionLength": "0",
+        "InputByString": "\n\t\t\t\t<xr:Field>Catalog.CovTemplate.StandardAttribute.Code</xr:Field>\n\t\t\t"
+      },
+      "kinds": {
+        "InputByString": "xml"
+      },
+      "source": "platform refusal of DescriptionLength_0: input by string names the description",
+      "name": "CovDescriptionLength_0__InputByStringCode"
+    }
   ]
 }

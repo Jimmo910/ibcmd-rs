@@ -103,7 +103,10 @@ def object_files(parent, name):
 
 def attributes(donor_root):
     """`(variant name, attribute XML)` for every attribute of the donor."""
-    text = donor_root.read_text(encoding="utf-8-sig")
+    return attributes_of(donor_root.read_text(encoding="utf-8-sig"))
+
+
+def attributes_of(text):
     out, names = [], set()
     for block in re.findall(r"\t\t\t<Attribute uuid=\"[^\"]+\">.*?\n\t\t\t</Attribute>", text, re.S):
         kind = re.search(r"<v8:(?:Type|TypeSet)>([^<]+)</v8:(?:Type|TypeSet)>", block)
@@ -124,6 +127,8 @@ def main():
     parser.add_argument("--set", required=True, type=pathlib.Path)
     parser.add_argument("--work", required=True, type=pathlib.Path)
     parser.add_argument("--attributes-donor", type=pathlib.Path)
+    parser.add_argument("--combined-of", type=pathlib.Path,
+                        help="a proven set whose variants' attributes all go into one CovCombined file")
     parser.add_argument("--platform", required=True)
     parser.add_argument("--xml-version", required=True)
     args = parser.parse_args()
@@ -158,8 +163,24 @@ def main():
             xml = template.replace("<ChildObjects/>", f"<ChildObjects>\n{block}\n\t\t</ChildObjects>")
             variants.append((name, rename(xml, TEMPLATE, name), {"property": "Attribute", "value": name[8:],
                                                                    "source": "donor"}))
+    sources = []
+    if args.combined_of:
+        # One file with every attribute of every proven variant of the source
+        # set, as the platform wrote them; their names and ids are unique.
+        source_manifest = json.loads((args.combined_of / "manifest.json").read_text(encoding="utf-8"))
+        blocks = []
+        for variant in source_manifest["variants"]:
+            if variant["status"] != "platform_proven" or variant["name"] == TEMPLATE:
+                continue
+            root_xml = (args.combined_of / "native" / f"{variant['name']}.xml").read_text(encoding="utf-8-sig")
+            blocks += [block for _, block in attributes_of(root_xml)]
+        xml = template.replace("<ChildObjects/>", "<ChildObjects>\n" + "\n".join(blocks) + "\n\t\t</ChildObjects>")
+        variants = [("CovCombined", rename(xml, TEMPLATE, "CovCombined"),
+                     {"property": "Combined", "value": args.combined_of.name, "source": "combined"})]
+        sources = [{"set": source_manifest["set"], "path": args.combined_of.name,
+                    "manifest_sha256": sha256((args.combined_of / "manifest.json").read_bytes())}]
     (inputs / "values.json").write_text(json.dumps({
-        "schema_version": 1, "kind": args.kind, "attributes_donor": donor,
+        "schema_version": 1, "kind": args.kind, "attributes_donor": donor, "sources": sources,
         "variants": [name for name, _, _ in variants],
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -212,6 +233,7 @@ def main():
             "rounds": "config import --out -> config export --file (1) -> config import --out -> config export --file (2); identical",
         },
         "inputs_sha256": inputs_digest(args.set),
+        "sources": sources,
         "variants": records,
     }
     (args.set / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",

@@ -300,6 +300,8 @@
 			<Catalog>CovChoiceHistoryOnInput_DontUse</Catalog>
 			<Catalog>CovUpdateDataHistoryImmediatelyAfterWrite_true</Catalog>
 			<Catalog>CovExecuteAfterWriteDataHistoryVersionProcessing_true</Catalog>
+			<Catalog>CovCodeLength_0__InputByStringDescription</Catalog>
+			<Catalog>CovDescriptionLength_0__InputByStringCode</Catalog>
 		</ChildObjects>
 	</Configuration>
 </MetaDataObject>

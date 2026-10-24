@@ -81,6 +81,8 @@ def main():
     parser.add_argument("--platform", required=True)
     parser.add_argument("--xml-version", required=True)
     parser.add_argument("--locale", default="ru_RU")
+    parser.add_argument("--combined-of", type=pathlib.Path,
+                        help="a proven extension set whose objects all go into one CovCombined extension")
     args = parser.parse_args()
 
     work = args.work
@@ -174,8 +176,31 @@ def main():
                          {f"Catalogs/{BASE_CATALOG}.xml": adopted(base_catalog, [f"<{prop}>{value}</{prop}>"])},
                          "add-on", {"property": "ControlledProperty", "value": prop, "source": "template"}))
 
+    sources = []
+    if args.combined_of:
+        # One extension with every object the source set proves one by one:
+        # the own catalog and the adopted catalog with all its controlled
+        # properties. Properties of the extension itself do not combine (an
+        # extension has one purpose); they stay separate extensions.
+        source_manifest = json.loads((args.combined_of / "manifest.json").read_text(encoding="utf-8"))
+        proven = {v["name"]: v for v in source_manifest["variants"] if v["status"] == "platform_proven"}
+        values = dict(re.findall(r"\n\t\t\t<(\w+)>([A-Za-z0-9]+)</\1>", base_catalog))
+        controlled = [f"<{v['value']}>{values[v['value']]}</{v['value']}>" for v in proven.values()
+                      if v.get("property") == "ControlledProperty"]
+        configuration_xml = template_cfg
+        extra = {}
+        if "CovExtOwnCatalog" in proven:
+            configuration_xml = add_child(configuration_xml, "Catalog", f"{PREFIX}Own")
+            extra[f"Catalogs/{PREFIX}Own.xml"] = own
+        if "CovExtAdoptedCatalog" in proven:
+            configuration_xml = add_child(configuration_xml, "Catalog", BASE_CATALOG)
+            extra[f"Catalogs/{BASE_CATALOG}.xml"] = adopted(base_catalog, controlled)
+        variants = [("CovCombined", configuration_xml, extra, "add-on",
+                     {"property": "Combined", "value": args.combined_of.name, "source": "combined"})]
+        sources = [{"set": source_manifest["set"], "path": args.combined_of.name,
+                    "manifest_sha256": sha256((args.combined_of / "manifest.json").read_bytes())}]
     (inputs / "values.json").write_text(json.dumps(
-        {"schema_version": 1, "kind": "extension", "variants": [v[0] for v in variants]},
+        {"schema_version": 1, "kind": "extension", "sources": sources, "variants": [v[0] for v in variants]},
         ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     for sub in ("variants", "native"):
         if (args.set / sub).exists():
@@ -238,6 +263,7 @@ def main():
                       " outside ConfigDumpInfo.xml",
         },
         "inputs_sha256": inputs_digest(args.set),
+        "sources": sources,
         "variants": records,
     }
     (args.set / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
