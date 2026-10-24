@@ -129,3 +129,21 @@ never raw descriptor contents, object names or compiler note chains.
 - **WHEN** compiler diagnostics are requested
 - **THEN** owner/completeness remains refused, no write token or accepted SQL
   capability is returned, and the source/cancellation guards are rechecked.
+
+### Requirement: Engine observations remain bounded passive diagnostics
+The opt-in diagnostic adapter SHALL bind old and compiled packed observations to
+their separate canonical-map and ordered-view digests, enforce one combined
+old/new observation budget, preserve typed cancellation and expose only redacted
+counts/digests and unsupported dimensions. It SHALL retain the unconditional
+owner-completeness refusal and final original-source validation.
+
+#### Scenario: Two observations exhaust one request budget
+- **GIVEN** old and compiled views under one diagnostic request
+- **WHEN** a view exceeds its conservative non-transferable budget partition
+- **THEN** the entire diagnostic refuses without partial evidence or SQL writes.
+
+#### Scenario: Recognized header candidates without authority
+- **GIVEN** engine candidates with key-anchored UUIDs or recognized graph families
+- **WHEN** passive diagnostic observations succeed
+- **THEN** owner, parent, body-role, versions and projection authority remain
+  unavailable and publication remains false.

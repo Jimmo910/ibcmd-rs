@@ -151,7 +151,7 @@ fn prepare_inner(
         bail!("partial import requires an existing configuration");
     }
     let old_packed = if let Some(capture) = capture.as_deref_mut() {
-        Some(capture.packed(&effective_rows)?)
+        Some(capture.packed(&effective_rows, platform)?)
     } else {
         None
     };
@@ -339,7 +339,7 @@ fn prepare_inner(
         // Bind the complete raw artifact, including any CF service entry
         // excluded from the unchanged FileDb prepared map below.
         let new_packed = if let Some(capture) = capture.as_deref_mut() {
-            Some(capture.packed(&entries)?)
+            Some(capture.packed(&entries, platform)?)
         } else {
             None
         };
@@ -383,6 +383,12 @@ fn prepare_inner(
     };
     let evidence = match (binding, old_evidence) {
         (Some(binding), Some(old)) => Some(witness::RawCompilerEvidence {
+            // No observation escapes until mandatory verification and artifact
+            // hash checks above succeeded (or no compile due to missing refs).
+            engine_observations: capture
+                .as_deref_mut()
+                .ok_or_else(|| anyhow!("compiler observer capture is missing"))?
+                .take_observations(),
             binding,
             old,
             new: new_evidence,
@@ -743,6 +749,20 @@ mod tests {
         .unwrap();
         assert!(!report.database_accessed);
         assert!(!report.publication_allowed);
+        assert_eq!(report.engine_observations.len(), 2);
+        for observation in &report.engine_observations {
+            assert!(observation.candidates > 0);
+            assert_ne!(
+                observation.canonical_map_digest,
+                observation.ordered_view_digest
+            );
+            assert_eq!(observation.unsupported_dimensions.len(), 6);
+            assert!(
+                observation
+                    .unsupported_dimensions
+                    .contains(&"owner_completeness")
+            );
+        }
         assert_eq!(report.changed_files, 1);
         assert_eq!(report.missing_references, 0);
         assert!(report.compiled_entries.is_some());

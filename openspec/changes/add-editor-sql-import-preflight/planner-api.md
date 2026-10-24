@@ -107,3 +107,38 @@ refusal with one output pair and three old/new descriptor candidates. Its final
 oracle requires that exact refusal and one pair; it no longer accepts mapping
 refusal as a substitute. This is diagnostic-only synthetic execution, not real
 SQL/native acceptance or mutation authority.
+
+## Passive engine observer adapter (integration contract)
+
+The opt-in raw-evidence path may synchronously observe immutable assembled packed
+entries through the engine-owned `import_evidence::observe_view` seam. This does
+not change legacy FileDb `prepare`. The supplied origin/table/profile strings
+remain assertions; an occurrence ordinal identifies an entry in an already
+reduced provided map, never a SQL PartNo or proof of physical uniqueness/source
+completeness. No SQL headers are synthesized and no parent source handle is passed.
+
+Old observation binds the complete baseline map before source edits. New
+observation binds the complete compiled artifact map before service filtering;
+it is admitted only after mandatory staged verification and artifact hash checks.
+The ordered observation digest and canonical planner map digest remain distinct
+and are retained together. Failed verification returns neither as accepted
+evidence. Only redacted counts/digests and unavailable dimensions leave the
+private adapter; raw labels, header candidates and collection contents do not.
+
+The initial adapter uses `descriptor_bytes` as the combined inflated+normalized
+observer cap, and `text_bytes` as the separate label cap. These caps do not bound
+the total Capture allocator. It uses conservative non-transferable old/new
+budget partitions:
+each view receives floor(total/2) for candidates, label bytes, packed bytes and
+collection items. Both inflated and normalized representations each receive
+floor(total/4) per view against the one combined text budget. Thus the sum of both admitted
+views cannot exceed the one request budget, even though the engine API does not
+report consumed allocation counters. Odd remainders and unused capacity are not
+reused; tiny/invalid partitions refuse. These are observer input/output bounds,
+not a total allocator or decoder CPU bound. Cancellation restores the original
+typed parent error rather than stringifying it into a generic compilation error.
+
+Recognized graph candidates and key-anchored header UUIDs establish no independent
+owner identity. Full parent, body role, raw profile, versions, projection and owner
+completeness remain Unsupported; the diagnostic consumer still refuses authority.
+No observer result can reach a SQL writer or change final source/cancel guards.

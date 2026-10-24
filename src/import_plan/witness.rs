@@ -1,6 +1,8 @@
 //! Raw compiler evidence for an opt-in candidate, never mutation authority.
 //! Supported is not completeness. Reduced canonical indexes cannot prove owner
 //! ambiguity or full parent chains; no production owner proof is built here.
+pub(crate) mod engine_observation;
+
 use crate::{
     mssql_dump::StorageImageSourceExportReport,
     mssql_source_change::{
@@ -89,6 +91,7 @@ pub(crate) struct Side {
     pub(super) descriptors: Vec<DescriptorCandidate>,
 }
 pub(crate) struct RawCompilerEvidence {
+    pub(super) engine_observations: Vec<engine_observation::Summary>,
     pub(super) binding: Binding,
     pub(super) old: Side,
     pub(super) new: Option<Side>,
@@ -124,6 +127,7 @@ impl SelectedOutputEvidence {
 }
 
 pub(crate) struct Capture {
+    observations: Vec<engine_observation::Summary>,
     request: Request,
     entries: usize,
     outputs: usize,
@@ -158,6 +162,7 @@ impl Capture {
             "compiler evidence limits are invalid"
         );
         Ok(Self {
+            observations: Vec::new(),
             request,
             entries: 0,
             outputs: 0,
@@ -216,6 +221,7 @@ impl Capture {
     pub fn packed(
         &mut self,
         rows: &BTreeMap<String, Vec<u8>>,
+        platform: PlatformSpec,
     ) -> Result<([u8; 32], BTreeSet<String>)> {
         ensure!(
             rows.len() <= self.request.limits.entries,
@@ -239,7 +245,21 @@ impl Capture {
             feed(&mut hash, bytes, &self.request.check)?;
             keys.insert(key.clone());
         }
-        Ok((hash.finalize().into(), keys))
+        let digest = hash.finalize().into();
+        let observation = engine_observation::observe(
+            rows,
+            digest,
+            self.observations.len(),
+            &self.request.target.schema,
+            platform,
+            self.request.limits,
+            &self.request.check,
+        )?;
+        self.observations.push(observation);
+        Ok((digest, keys))
+    }
+    pub fn take_observations(&mut self) -> Vec<engine_observation::Summary> {
+        std::mem::take(&mut self.observations)
     }
     pub fn binding(
         &mut self,
@@ -504,6 +524,9 @@ pub(crate) fn output_claims(side: &Side, limits: Limits, check: &Check) -> Resul
     Ok(OutputClaims { by_path, by_key })
 }
 impl RawCompilerEvidence {
+    pub fn engine_observations(&self) -> &[engine_observation::Summary] {
+        &self.engine_observations
+    }
     pub fn binding(&self) -> &Binding {
         &self.binding
     }
@@ -665,6 +688,7 @@ mod tests {
             .map(|p| canonical(p).unwrap())
             .collect();
         RawCompilerEvidence {
+            engine_observations: Vec::new(),
             binding: Binding {
                 target: TargetBinding {
                     snapshot: [2; 32],
@@ -990,7 +1014,10 @@ mod tests {
         let mut capture = Capture::new(r).unwrap();
         assert!(
             capture
-                .packed(&BTreeMap::from([("A".into(), vec![1, 2])]))
+                .packed(
+                    &BTreeMap::from([("A".into(), vec![1, 2])]),
+                    crate::platform::parse_flag("8.5.1").unwrap()
+                )
                 .is_err()
         );
     }

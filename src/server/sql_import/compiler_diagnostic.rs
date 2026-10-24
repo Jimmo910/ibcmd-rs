@@ -72,9 +72,20 @@ pub struct Diagnostic {
     pub old_descriptor_digest: [u8; 32],
     pub new_descriptor_digest: Option<[u8; 32]>,
     pub binding_digest: [u8; 32],
+    pub engine_observations: Vec<EngineObservation>,
     pub outputs: Option<OutputLedger>,
     pub database_accessed: bool,
     pub publication_allowed: bool,
+}
+/// Redacted passive evidence; no names, raw reports or authority are exposed.
+#[derive(Debug)]
+pub struct EngineObservation {
+    pub canonical_map_digest: [u8; 32],
+    pub ordered_view_digest: [u8; 32],
+    pub candidates: usize,
+    pub ambiguous_or_unbound: usize,
+    pub audit_issues: usize,
+    pub unsupported_dimensions: Vec<&'static str>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Failure {
@@ -155,6 +166,16 @@ pub fn inspect_provided_view(
         check()?;
         let evidence = &planned.evidence;
         let missing = planned.prepared.missing_references.len();
+        let observations = evidence.engine_observations();
+        let expected = evidence.binding();
+        anyhow::ensure!(
+            observations.len() == 1 + usize::from(expected.new_packed.is_some())
+                && observations[0].canonical_map_digest == expected.old_packed
+                && expected
+                    .new_packed
+                    .is_none_or(|digest| observations[1].canonical_map_digest == digest),
+            "engine diagnostic observations do not bind the complete compiler views"
+        );
         let (refusal, outputs) = if missing > 0 {
             (Refusal::MissingReferences, None)
         } else {
@@ -249,6 +270,18 @@ pub fn inspect_provided_view(
                 .map(|d| descriptor_digest(d, &check))
                 .transpose()?,
             binding_digest: binding_hash.finalize().into(),
+            engine_observations: evidence
+                .engine_observations()
+                .iter()
+                .map(|o| EngineObservation {
+                    canonical_map_digest: o.canonical_map_digest,
+                    ordered_view_digest: o.ordered_view_digest,
+                    candidates: o.candidates,
+                    ambiguous_or_unbound: o.ambiguous_or_unbound,
+                    audit_issues: o.audit_issues,
+                    unsupported_dimensions: o.unsupported_dimensions.clone(),
+                })
+                .collect(),
             outputs,
             database_accessed: false,
             publication_allowed: false,
