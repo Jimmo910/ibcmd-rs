@@ -1,0 +1,100 @@
+# Наборы покрытия
+
+Конфигурация покрытия (`openspec/changes/add-coverage-configuration`): для
+каждой пары «класс метаданных и версия платформы» есть набор clean-room
+объектов. Каждый объект — шаблон, у которого одно свойство изменено на одно
+из своих значений. Эталоном служит нативная выгрузка платформы. Офлайн-тест
+`tests/coverage_corpus.rs` выгружает каждый набор без платформы и сверяет
+вариант за вариантом.
+
+## Устройство набора
+
+`tests/fixtures/coverage/<платформа>/<класс>/`:
+
+| Путь | Что это |
+|---|---|
+| `input/base/` | нативная выгрузка пустой базы без `ConfigDumpInfo.xml` |
+| `input/template.xml` | объект `CovTemplate`, дописанный платформой из минимальной затравки |
+| `input/values.json` | пространство значений: свойство, вид, значение шаблона, значения и их источник |
+| `configuration.cf.b64` | `.cf` набора после нативного round-trip |
+| `native/` | нативная выгрузка второго раунда без `ConfigDumpInfo.xml` |
+| `manifest.json` | происхождение, sha256 входов и `.cf`, статус и файлы каждого варианта |
+| `baseline.json` | варианты, которые у ibcmd-rs совпадают с нативными |
+
+Вариант называется `Cov<Свойство>_<Значение>`. Варианты, которые платформа
+отвергла, записаны в манифесте как `platform_refused` с её сообщением. Чаще
+всего это связанные свойства: например, длина кода 0 при вводе по строке по
+коду. Такой случай закрывается парным вариантом, а не правкой нашего кода.
+
+Источник значения:
+- `boolean` — оба значения;
+- `observed:<корпус>` — значение встречено в нативной выгрузке этого корпуса;
+  в репозиторий попадает только само значение;
+- `generated` — образец текста, сгенерированный нами;
+- `declared` — значение объявлено моделью EDT (будет после импорта `mdclass`).
+
+## Расширения и внешние файлы
+
+Наборы этих видов лежат в `<платформа>/extensions/<набор>/` и
+`<платформа>/external/<набор>/`. Каждый вариант — отдельный файл:
+`variants/<вариант>.cfe.b64` или `variants/<вариант>.epf.b64` / `.erf.b64`.
+Нативное дерево лежит в `native/<вариант>/` (расширение) или в
+`native/<вариант>.xml` и `native/<вариант>/` (внешний файл).
+
+```text
+# расширения поверх базы с справочником CovBase из набора справочников
+python3 tools/coverage/extension_set.py --ibcmd <ibcmd> \
+  --catalogs-set tests/fixtures/coverage/<платформа>/catalogs \
+  --set tests/fixtures/coverage/<платформа>/extensions/basic --work <scratch> \
+  --platform <сборка> --xml-version <версия>
+
+# внешние обработки и отчёты; донор реквизитов — clean-room фикстура с реквизитом каждого типа
+python3 tools/coverage/external_set.py --ibcmd <ibcmd> --context-db <пустая файловая база> \
+  --kind epf --set tests/fixtures/coverage/<платформа>/external/epf-attributes --work <scratch> \
+  --attributes-donor tests/fixtures/external/all_types/inputIBCMD.epf \
+  --platform <сборка> --xml-version <версия>
+```
+
+Для `config import --out` и `config export --file` нативному `ibcmd` нужна
+база-контекст: годится любая пустая файловая база.
+
+## Новый набор
+
+Нужны нативный `ibcmd` и нативная выгрузка корпуса с объектами этого класса:
+
+```text
+python3 tools/coverage/new_set.py --ibcmd <ibcmd> --collection Documents \
+  --corpus <нативное дерево> --corpus-name <имя корпуса> \
+  --set tests/fixtures/coverage/<платформа>/documents --work <scratch>
+python3 tools/coverage/generate.py tests/fixtures/coverage/<платформа>/documents <scratch>/tree
+python3 tools/coverage/native_round_trip.py --ibcmd <ibcmd> --platform <сборка> \
+  --xml-version <2.20|2.21> --set tests/fixtures/coverage/<платформа>/documents \
+  --tree <scratch>/tree --work <scratch>/rt
+cargo test --locked -p ibcmd-rs --test coverage_corpus --no-default-features -- --nocapture \
+  | python3 tools/coverage/update_baseline.py
+```
+
+Скрипты работают на Linux и Windows. Нативный `ibcmd` запускается с
+собственным каталогом `--data`, поэтому параллельные сессии ему не мешают.
+
+## Проверка
+
+```text
+cargo test --locked -p ibcmd-rs --test coverage_corpus --no-default-features -- --nocapture
+```
+
+По каждому набору тест печатает строку: сколько вариантов сгенерировано,
+подтверждено и отвергнуто платформой, совпало, отличается, отвергнуто
+ibcmd-rs. Дальше идут отличающиеся варианты с первым расходящимся файлом.
+Тест падает, если вариант из `baseline.json` перестал совпадать или если
+фикстура расходится со своим манифестом.
+
+## Правила
+
+- Вариант удаляют из `baseline.json` только руками, с причиной в PR.
+  `update_baseline.py` умеет только добавлять.
+- Отличающийся вариант — это ошибка нашего кода с готовым минимальным
+  воспроизведением. Чиним декодер или писатель, а не набор.
+- Входы набора не правят вручную: после любой правки `input/` набор заново
+  проходит `native_round_trip.py`, иначе тест не совпадёт по sha256 входов.
+- Объекты корпусов в набор не копируются, только значения свойств.
