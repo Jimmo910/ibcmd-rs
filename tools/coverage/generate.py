@@ -44,20 +44,24 @@ def set_property(xml, prop, kind, value):
     """The template with one property's element replaced; refuses when the
     element is missing or occurs more than once. Kind `xml` replaces a nested
     element's whole content (`""` empties it)."""
+    # Only the object's own properties: a dimension or an attribute in its
+    # children may carry a property of the same name.
+    own_end = xml.find("\n\t\t<ChildObjects")
+    head, tail = (xml, "") if own_end < 0 else (xml[:own_end], xml[own_end:])
     if kind == "xml":
         pattern = re.compile(rf"<{prop}>.*?</{prop}>|<{prop}/>", re.S)
     else:
         pattern = re.compile(rf"<{prop}>[^<]*</{prop}>|<{prop}/>")
-    if len(pattern.findall(xml)) != 1:
+    if len(pattern.findall(head)) != 1:
         raise SystemExit(f"template: property {prop} is not exactly one element")
     if kind == "xml":
         element = f"<{prop}>{value}</{prop}>" if value else f"<{prop}/>"
-        return pattern.sub(lambda _: element, xml)
+        return pattern.sub(lambda _: element, head) + tail
     if kind == "localized":
         element = f"<{prop}>" + LOCALIZED.format(value=value) + f"</{prop}>"
     else:
         element = f"<{prop}>{value}</{prop}>"
-    return pattern.sub(lambda _: element, xml)
+    return pattern.sub(lambda _: element, head) + tail
 
 
 CLASS_ID = re.compile(r"<xr:ClassId>([0-9a-f-]{36})</xr:ClassId>")
@@ -119,6 +123,20 @@ def main():
 
     for name, xml in variants:
         (output / collection / f"{name}.xml").write_text("\ufeff" + xml, encoding="utf-8")
+    recorder = space.get("recorder")
+    if recorder:
+        # A register needs a document that records into it: the base's recorder
+        # lists the template; it lists every variant as well.
+        path = output / recorder["path"]
+        text = path.read_text(encoding="utf-8-sig")
+        item = f'<xr:Item xsi:type="xr:MDObjectRef">{recorder["kind"]}.{template_name}</xr:Item>'
+        line = next((line for line in text.split("\n") if line.strip() == item), None)
+        if line is None:
+            raise SystemExit(f"{recorder['path']}: the recorder does not list {recorder['kind']}.{template_name}")
+        indent = line[: len(line) - len(line.lstrip())]
+        listed = "\n".join(f'{indent}<xr:Item xsi:type="xr:MDObjectRef">{recorder["kind"]}.{name}</xr:Item>'
+                           for name in names)
+        path.write_text("\ufeff" + text.replace(line, listed, 1), encoding="utf-8")
     configuration = output / "Configuration.xml"
     text = configuration.read_text(encoding="utf-8-sig")
     children = "".join(f"\t\t\t<{kind_tag}>{name}</{kind_tag}>\n" for name in names)

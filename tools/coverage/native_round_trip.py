@@ -58,11 +58,40 @@ def objects_of(tree, collection):
     return sorted(path.stem for path in (tree / collection).glob("*.xml"))
 
 
+MD_REF = re.compile(r'^\s*<xr:Item xsi:type="xr:MDObjectRef">(\w+)\.(\w+)</xr:Item>\s*$')
+
+
+def prune_references(tree):
+    """Drops `<xr:Item>` references to objects the tree does not hold (a
+    recorder listing a register left out), so one refused variant does not
+    take the rest of the set with it."""
+    configuration = (tree / "Configuration.xml").read_text(encoding="utf-8-sig")
+    present = set(re.findall(r"\n\t\t\t<(\w+)>([^<]+)</\1>", configuration))
+    for path in tree.rglob("*.xml"):
+        if path.name == "Configuration.xml":
+            continue
+        text = path.read_text(encoding="utf-8-sig")
+        lines = text.split("\n")
+        kept = [line for line in lines if not ((m := MD_REF.match(line)) and m.groups() not in present
+                                                and m.group(1)[0].isupper() and m.group(1) in KINDS)]
+        if len(kept) != len(lines):
+            path.write_text("\ufeff" + "\n".join(kept), encoding="utf-8")
+
+
+# Metadata reference kinds a recorder or a list can name.
+KINDS = {"AccumulationRegister", "AccountingRegister", "CalculationRegister", "InformationRegister", "Document",
+         "Catalog", "BusinessProcess", "Task", "ChartOfAccounts", "ChartOfCalculationTypes",
+         "ChartOfCharacteristicTypes", "ExchangePlan", "Constant", "Sequence", "DocumentJournal"}
+
+
 def subset(tree, collection, keep, target):
-    """A copy of `tree` with only the objects named in `keep`."""
+    """A copy of `tree` with only those objects of the set's class named in
+    `keep`; objects of other classes (the base's auxiliary objects) stay."""
     if target.exists():
         shutil.rmtree(target)
     shutil.copytree(tree, target)
+    any_object = next((target / collection).glob("*.xml"))
+    tag = re.search(r"<MetaDataObject[^>]*>\s*<(\w+) uuid=", any_object.read_text(encoding="utf-8-sig")).group(1)
     for name in objects_of(target, collection):
         if name not in keep:
             (target / collection / f"{name}.xml").unlink()
@@ -72,11 +101,10 @@ def subset(tree, collection, keep, target):
     lines = [
         line
         for line in text.split("\n")
-        if not (m := re.fullmatch(r"\t\t\t<\w+>([^<]+)</\w+>", line))
-        or m.group(1) in keep
-        or line.strip().startswith("<Language>")
+        if not (m := re.fullmatch(rf"\t\t\t<{tag}>([^<]+)</{tag}>", line)) or m.group(1) in keep
     ]
     configuration.write_text("\ufeff" + "\n".join(lines), encoding="utf-8")
+    prune_references(target)
     return target
 
 
