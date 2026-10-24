@@ -60,3 +60,32 @@ missing query identity or automatic-field provenance.
 
 No native parity, production cause or correction for the remaining UT differences
 is claimed. Default chart selection and Form marker behavior remain unresolved.
+
+## Reviewed new-file inventory registration
+
+Offline Quality on `0f826d0b` failed at the unchanged physical-adapter guard:
+[run 40093799022 / job 120871748331](https://github.com/Untru/ibcmd-rs/actions/runs/40093799022/job/120871748331).
+The reported digest `bf824c6b03bbb50b961e1be2c6f86a7a0462ec6da10f900d84aed573f7f807e6`
+is the logical-path hash for `src/mssql_dump/form_body/field_map_observer/context.rs`,
+not a content hash. The second new query-identity module was also absent from
+the file inventory. The Offline matrix was skipped, not passed.
+
+Two independent static reviews against the unchanged scanner found zero
+production UUID, name-routing or XML-policy occurrences in these modules. Their
+inline test suites remain covered by the existing test-only rule. The correction
+registers exactly those two paths with empty occurrence lists. All 49 previous
+records are byte-preserved; every fingerprint/count, scanner rule and exclusion
+remains unchanged. No literal allowance or compatibility exception is added; any
+future policy occurrence in either file still fails.
+
+Old baseline SHA256:
+`93918cc2c2acb688f43673f31007cf18562444fc0c43127de0ef6a2c6e7d00b0`.
+New baseline SHA256:
+`5d47f1d6f7a768cb4047d8441b3c20ac01b859339a2a627ce1a06d7bed5d4bb1`.
+No blanket baseline generation, denied local validator, extracted scanner or
+destructive SelfTest was used. Static review and exact JSON/byte-delta checks
+are not a runtime policy PASS; the automatic corrective-head CI remains a gate.
+
+The exact `0f826d0b` Windows artifact is retained and verified but not executed.
+It remains prior-head evidence until corrective CI and worker/source bindings
+are reviewed. No private-input observation or production parity is implied.
