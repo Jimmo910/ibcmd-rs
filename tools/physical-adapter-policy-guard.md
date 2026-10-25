@@ -5,12 +5,19 @@ and `pwsh -File tools/validate-physical-adapter-policy.ps1 -RepositoryRoot .
 -SelfTest`.
 
 The guarded production slice is `src/module_blob.rs` plus non-test Rust modules
-under `src/mssql_dump/`, except `mxl_ir.rs` and `moxel.rs`.  A module the
-compiler reads only for tests is not production and is left out with every file
-below its directory: the guard finds it from the declaration `#[cfg(test)] mod
-name;` (also `pub`, or with other attributes) in a scoped file, so `tests.rs`,
-`tests/`, `metadata_order_tests.rs` and `revision_mix_tests.rs` need no listing
-and the next `*_tests.rs` file needs none either.  A module with a
+under `src/mssql_dump/`, plus the files under `crates/` that hold code moved out
+of them (`$GuardedCrateFiles`: `crates/ibcmd-moxel/src/root_helpers.rs`).  Code
+that leaves the slice for a crate takes the slice with it: its file is listed
+there and its baseline entries move to the new path in the same change, never
+dropped.  The MOXCEL decoder itself (`crates/ibcmd-moxel`, formerly
+`src/mssql_dump/moxel.rs` and `mxl_ir.rs`) was outside the slice and stays
+outside it; its root entry points in `src/mssql_dump/moxel_entry.rs` are guarded.
+A module the compiler reads only for tests is not production and is left out
+with every file below its directory: the guard finds it from the declaration
+`#[cfg(test)] mod name;` (also `pub`, or with other attributes) in a scoped
+file, so `tests.rs`, `tests/`, `metadata_order_tests.rs` and
+`revision_mix_tests.rs` need no listing and the next `*_tests.rs` file needs
+none either.  A module with a
 `#[path = "..."]` attribute is not resolved and stays guarded.  Inline items are
 excluded only when their `cfg(...)` predicate requires `test=true`; ambiguous
 or partly-production predicates remain guarded.  Schema-owned accessor calls without local literals

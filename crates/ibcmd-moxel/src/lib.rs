@@ -1,10 +1,40 @@
-use super::mxl_ir::{
-    MxlDiagnostic, MxlFormatReferenceMap, MxlPaletteProvenance, MxlSpreadsheetWritePlan,
-};
-use super::*;
+//! Decoder of the native MOXCEL spreadsheet body and its XML writer.
+//!
+//! A spreadsheet template (`Template.xml` of a `SpreadsheetDocument` layout)
+//! is stored as a compressed compatible-MXL container whose body is a 1C
+//! braced value. This crate reads that body into a canonical spreadsheet IR
+//! (`mxl_ir`) and writes the XML the platform publishes for it, byte for
+//! byte.
+//!
+//! The root crate reaches it through `mssql_dump`: the container codec
+//! (`compiler::bodies::mxl::decode_compatible_mxl`) and the 8.5 primitive
+//! rewrite (`mssql_dump::form::layout_8_5_1`) stay in the root, whose thin
+//! entry points hand this crate the decoded body text. The root also passes
+//! its built-in platform type table as a function, the one table the decoder
+//! asks about a `{"#",<uuid>}` value type. The crate depends on nothing in the
+//! root, so a root rebuild reuses it.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 
-/// [`escape_xml_element_text`] written straight into the output: the same
+use serde::Serialize;
+
+mod mxl_ir;
+mod root_helpers;
+
+pub use mxl_ir::{MxlDiagnostic, MxlDiagnosticStage};
+use mxl_ir::{MxlFormatReferenceMap, MxlPaletteProvenance, MxlSpreadsheetWritePlan};
+use root_helpers::{
+    STD_PICTURE_INFORMATION_UUID, STD_PICTURE_SAVE_FILE_UUID, extract_base64_payload,
+    parse_non_zero_uuid, parse_uuid_field, xml_bool,
+};
+
+/// The root's table of built-in platform type identifiers
+/// (`mssql_dump::builtin_type_reference`): the XML type name of a platform
+/// type identifier, `None` for an identifier the table does not know.
+pub type BuiltinTypeReference = fn(&str) -> Option<&'static str>;
+
+/// The root's `escape_xml_element_text` written straight into the output: the same
 /// bytes (`\r\n` read as `\n`, then `&`, `<` and `>` escaped) without
 /// building the escaped copy first.
 struct XmlElementText<'a>(&'a str);
@@ -79,7 +109,7 @@ fn push_xml_text_element(xml: &mut String, indent: &str, tag: &str, value: &str)
     xml.push_str(">\r\n");
 }
 
-/// [`escape_xml_text`] written straight into the output.
+/// The root's `escape_xml_text` written straight into the output.
 struct XmlText<'a>(&'a str);
 
 impl std::fmt::Display for XmlText<'_> {
@@ -191,7 +221,7 @@ const INLINE_BRACED_FIELDS: usize = 16;
 /// millions of short records and throws each split away at once, so the usual
 /// record keeps its fields inline and only a longer one moves to the heap.
 #[derive(Clone, Debug)]
-pub(super) struct BracedFields<'a> {
+pub struct BracedFields<'a> {
     inline: [&'a str; INLINE_BRACED_FIELDS],
     len: usize,
     spilled: Vec<&'a str>,
@@ -295,7 +325,8 @@ fn braced_field_first_byte(text: &str, n: usize) -> Option<u8> {
 
 /// The top-level fields of the braced value at `start`, trimmed: the same
 /// answer as the shared splitter.
-fn split_1c_braced_fields(text: &str, start: usize) -> Option<BracedFields<'_>> {
+#[doc(hidden)]
+pub fn split_1c_braced_fields(text: &str, start: usize) -> Option<BracedFields<'_>> {
     if text.len() < SPLIT_CACHE_MIN_LEN {
         return split_braced_inline(text, start);
     }
@@ -654,8 +685,8 @@ struct DecodedMoxelSpreadsheet {
     write_plan: MxlSpreadsheetWritePlan,
 }
 
-pub(super) struct MoxelSpreadsheet {
-    pub(super) column_count: usize,
+pub struct MoxelSpreadsheet {
+    pub column_count: usize,
     /// The document's own language record, the fourth top-level field.
     ///
     /// Evidence (native 1С:УТ 11.5.27.75): all 674 distinct bodies behind the
@@ -665,12 +696,12 @@ pub(super) struct MoxelSpreadsheet {
     /// blocks embedded in forms carry three forms, and the platform publishes
     /// a different thing for each. `None` is a record this reader cannot
     /// spell, which keeps the block it has always written.
-    pub(super) language_settings: Option<MoxelLanguageSettings>,
+    pub language_settings: Option<MoxelLanguageSettings>,
     /// The template-mode flag, the fourteenth top-level field. Two embedded
     /// bodies are byte-equal but for this scalar and the platform's outputs
     /// differ by exactly the presence of `<templateMode>`; every standalone
     /// body stores 1.
-    pub(super) template_mode: bool,
+    pub template_mode: bool,
     /// The step direction the fifteenth top-level field states, when it states
     /// one this reader can name.
     ///
@@ -683,16 +714,16 @@ pub(super) struct MoxelSpreadsheet {
     /// and `…/ПечатьСертификатПриказФСБ50` -- and those two are also the only
     /// files in any of the eight stand corpora that publish one, as
     /// `<stepDirection>WithoutMove</stepDirection>`.
-    pub(super) step_direction: Option<&'static str>,
-    pub(super) column_sets: Vec<MoxelColumnSet>,
-    pub(super) column_formats: Vec<MoxelFormat>,
-    pub(super) extra_formats: BTreeMap<usize, MoxelFormat>,
-    pub(super) default_format_width: Option<usize>,
+    pub step_direction: Option<&'static str>,
+    pub column_sets: Vec<MoxelColumnSet>,
+    pub column_formats: Vec<MoxelFormat>,
+    pub extra_formats: BTreeMap<usize, MoxelFormat>,
+    pub default_format_width: Option<usize>,
     /// Font slot carried by the same leading record the default width came
     /// from, published with that width when the default format is materialized.
-    pub(super) default_format_font: Option<usize>,
-    pub(super) default_format: MoxelFormat,
-    pub(super) formats: Vec<MoxelFormat>,
+    pub default_format_font: Option<usize>,
+    pub default_format: MoxelFormat,
+    pub formats: Vec<MoxelFormat>,
     /// The document's format table in the order the body stores it, before the
     /// column/pool split reorders it.
     ///
@@ -700,59 +731,59 @@ pub(super) struct MoxelSpreadsheet {
     /// published pool, so the published reference can only be recovered from
     /// the record's own bytes. Empty when the body carries no format table the
     /// reader can spell, which leaves the reference on its previous path.
-    pub(super) source_formats: Vec<MoxelFormat>,
-    pub(super) rows: Vec<MoxelRow>,
-    pub(super) vertical_groups: Vec<MoxelVerticalGroup>,
-    pub(super) horizontal_groups: Vec<MoxelVerticalGroup>,
-    pub(super) merges: Vec<MoxelMerge>,
-    pub(super) horizontal_unmerges: Vec<MoxelMerge>,
-    pub(super) vertical_unmerges: Vec<MoxelMerge>,
-    pub(super) page_breaks: MoxelPageBreaks,
-    pub(super) named_items: Vec<MoxelNamedItem>,
+    pub source_formats: Vec<MoxelFormat>,
+    pub rows: Vec<MoxelRow>,
+    pub vertical_groups: Vec<MoxelVerticalGroup>,
+    pub horizontal_groups: Vec<MoxelVerticalGroup>,
+    pub merges: Vec<MoxelMerge>,
+    pub horizontal_unmerges: Vec<MoxelMerge>,
+    pub vertical_unmerges: Vec<MoxelMerge>,
+    pub page_breaks: MoxelPageBreaks,
+    pub named_items: Vec<MoxelNamedItem>,
     #[allow(dead_code)]
-    pub(super) areas: Vec<MoxelArea>,
+    pub areas: Vec<MoxelArea>,
     /// The source position each internal format slot came from, in internal
     /// order. The column/pool split is position-only, so this is that same
     /// split run over `1..=n`; empty when there is no table to split.
-    pub(super) internal_sources: Vec<usize>,
+    pub internal_sources: Vec<usize>,
     /// The published format pool as internal slots, in the order the platform
     /// itself writes it: every stored reference in publication order, each
     /// source-table entry taking the next position the first time it is named.
     /// `None` where the document does not present a source table this order can
     /// be built from, which leaves the pool on its previous path.
-    pub(super) first_use_pool: Option<Vec<usize>>,
-    pub(super) print_area: Option<MoxelArea>,
+    pub first_use_pool: Option<Vec<usize>>,
+    pub print_area: Option<MoxelArea>,
     /// The repeating band `<repeatRows>` names, read from the first four of
     /// the ten scalars behind the print-area record.
-    pub(super) repeat_rows: Option<MoxelArea>,
+    pub repeat_rows: Option<MoxelArea>,
     /// `groupsBackColor`, `groupsColor`, `headersBackColor`, `headersColor`, in
     /// publication order, each `None` where the document leaves the role at its
     /// default.
-    pub(super) group_header_colors: [Option<String>; 4],
-    pub(super) print_settings: Option<MoxelPrintSettings>,
-    pub(super) lines: Vec<MoxelLine>,
-    pub(super) fonts: Vec<MoxelFont>,
-    pub(super) drawings: Vec<MoxelDrawing>,
-    pub(super) pictures: Vec<MoxelPicture>,
-    pub(super) header_footer_format_index: Option<usize>,
+    pub group_header_colors: [Option<String>; 4],
+    pub print_settings: Option<MoxelPrintSettings>,
+    pub lines: Vec<MoxelLine>,
+    pub fonts: Vec<MoxelFont>,
+    pub drawings: Vec<MoxelDrawing>,
+    pub pictures: Vec<MoxelPicture>,
+    pub header_footer_format_index: Option<usize>,
     /// The six header/footer slots in publication order, present only when the
     /// document publishes at least one of them.
-    pub(super) header_footer_slots: Option<Vec<Option<MoxelHeaderFooter>>>,
-    pub(super) default_format_index: Option<usize>,
+    pub header_footer_slots: Option<Vec<Option<MoxelHeaderFooter>>>,
+    pub default_format_index: Option<usize>,
     /// The document's leading default-format record, the fifth top-level field
     /// of the MOXCEL body, decoded as a format.
-    pub(super) leading_default_format: Option<MoxelFormat>,
-    pub(super) source_format_map: Option<MoxelSourceFormatMap>,
-    pub(super) height: usize,
+    pub leading_default_format: Option<MoxelFormat>,
+    pub source_format_map: Option<MoxelSourceFormatMap>,
+    pub height: usize,
     /// Document-level tables the format members at bits 23, 25 and 34 index
     /// into.
-    pub(super) value_types: Vec<MoxelValueType>,
-    pub(super) control_types: Vec<String>,
-    pub(super) mask_refs: Vec<Vec<MoxelLocalizedValue>>,
+    pub value_types: Vec<MoxelValueType>,
+    pub control_types: Vec<String>,
+    pub mask_refs: Vec<Vec<MoxelLocalizedValue>>,
 }
 
 /// A decoded language record.
-pub(super) enum MoxelLanguageSettings {
+pub enum MoxelLanguageSettings {
     /// The `#` placeholder: `{"#","",0,1,"#","Язык по умолчанию",…}`, which the
     /// platform answers with no `<languageSettings>` element at all.
     Placeholder,
@@ -764,14 +795,14 @@ pub(super) enum MoxelLanguageSettings {
     },
 }
 
-pub(super) struct MoxelLanguageInfo {
-    pub(super) id: String,
-    pub(super) code: String,
-    pub(super) description: String,
+pub struct MoxelLanguageInfo {
+    pub id: String,
+    pub code: String,
+    pub description: String,
 }
 
 /// `{current, default, 0, count, (id, code, description) * count, 0}`.
-pub(super) fn parse_moxel_language_settings(text: &str) -> Option<MoxelLanguageSettings> {
+pub fn parse_moxel_language_settings(text: &str) -> Option<MoxelLanguageSettings> {
     let fields = split_1c_braced_fields(text, 0)?;
     let current = parse_1c_string(fields.first()?)?;
     let default = parse_1c_string(fields.get(1)?)?;
@@ -799,14 +830,14 @@ pub(super) fn parse_moxel_language_settings(text: &str) -> Option<MoxelLanguageS
     })
 }
 
-pub(super) struct MoxelSourceFormatMap {
+pub struct MoxelSourceFormatMap {
     source_to_internal: Vec<usize>,
     internal_to_source: Vec<usize>,
     output_source_order: Vec<usize>,
 }
 
 impl MoxelSourceFormatMap {
-    pub(super) fn try_new(
+    pub fn try_new(
         format_count: usize,
         internal_column_sources: &[usize],
         output_column_sources: &[usize],
@@ -833,10 +864,7 @@ impl MoxelSourceFormatMap {
             }
             *slot = internal_offset + 1;
         }
-        if source_to_internal
-            .iter()
-            .any(|format_index| *format_index == 0)
-        {
+        if source_to_internal.contains(&0) {
             return None;
         }
 
@@ -1007,18 +1035,18 @@ fn complete_moxel_source_format_order(
 }
 
 #[derive(Clone)]
-pub(super) struct MoxelRow {
-    pub(super) index: usize,
-    pub(super) index_to: Option<usize>,
-    pub(super) format_index: usize,
-    pub(super) source_format_index: Option<usize>,
-    pub(super) columns_id: Option<String>,
-    pub(super) cells: Vec<MoxelCell>,
+pub struct MoxelRow {
+    pub index: usize,
+    pub index_to: Option<usize>,
+    pub format_index: usize,
+    pub source_format_index: Option<usize>,
+    pub columns_id: Option<String>,
+    pub cells: Vec<MoxelCell>,
 }
 
-pub(super) struct MoxelColumnSet {
-    pub(super) id: Option<String>,
-    pub(super) default_format_index: Option<usize>,
+pub struct MoxelColumnSet {
+    pub id: Option<String>,
+    pub default_format_index: Option<usize>,
     /// The set's default-format reference exactly as the body stores it: a
     /// position in the document's source format table, or 0 for none.
     ///
@@ -1026,30 +1054,30 @@ pub(super) struct MoxelColumnSet {
     /// the 1810 column sets, the 1734 that store 0 publish no `<formatIndex>`
     /// and the 76 that store anything else all publish one - no exception in
     /// either direction.
-    pub(super) raw_default_format_index: usize,
-    pub(super) size: usize,
-    pub(super) columns: Vec<MoxelColumn>,
+    pub raw_default_format_index: usize,
+    pub size: usize,
+    pub columns: Vec<MoxelColumn>,
 }
 
 impl MoxelColumnSet {
     /// The stored reference as an option: `None` is the stored 0, which is the
     /// body's own way of saying the set names no format.
-    pub(super) fn source_default_format_index(&self) -> Option<usize> {
+    pub fn source_default_format_index(&self) -> Option<usize> {
         (self.raw_default_format_index > 0).then_some(self.raw_default_format_index)
     }
 }
 
-pub(super) struct MoxelColumn {
-    pub(super) index: i32,
-    pub(super) format_index: usize,
-    pub(super) source_format_index: Option<usize>,
+pub struct MoxelColumn {
+    pub index: i32,
+    pub format_index: usize,
+    pub source_format_index: Option<usize>,
 }
 
 #[derive(Clone)]
-pub(super) struct MoxelCell {
-    pub(super) column_index: usize,
-    pub(super) format_index: usize,
-    pub(super) source_format_index: Option<usize>,
+pub struct MoxelCell {
+    pub column_index: usize,
+    pub format_index: usize,
+    pub source_format_index: Option<usize>,
     /// Every declared language of the cell's text list, in declaration
     /// order. Evidence (native ERP УХ 3.2.12.6, bilingual corpus): a cell
     /// text list declares as many `v8:item` entries as languages are
@@ -1057,41 +1085,41 @@ pub(super) struct MoxelCell {
     /// empty vec with `empty_text` unset means no text member is present at
     /// all, and an empty vec with `empty_text` set publishes a self-closed
     /// `<tl/>`/`<tfl/>`.
-    pub(super) text: Vec<MoxelLocalizedValue>,
+    pub text: Vec<MoxelLocalizedValue>,
     /// The text list carries a trailing `1`: the platform spells the same
     /// content `<tfl>` instead of `<tl>`.
-    pub(super) formatted_text: bool,
-    pub(super) parameter: Option<String>,
-    pub(super) detail_parameter: Option<String>,
-    pub(super) picture_parameter: Option<String>,
+    pub formatted_text: bool,
+    pub parameter: Option<String>,
+    pub detail_parameter: Option<String>,
+    pub picture_parameter: Option<String>,
     /// Base64 payload of an embedded control, published as `<control>`.
-    pub(super) control: Option<String>,
-    pub(super) value: Option<MoxelCellValue>,
-    pub(super) detail_value: Option<MoxelCellValue>,
-    pub(super) note: Option<MoxelNote>,
-    pub(super) empty_text: bool,
+    pub control: Option<String>,
+    pub value: Option<MoxelCellValue>,
+    pub detail_value: Option<MoxelCellValue>,
+    pub note: Option<MoxelNote>,
+    pub empty_text: bool,
 }
 
 #[derive(Clone)]
-pub(super) struct MoxelNote {
-    pub(super) format_index: usize,
-    pub(super) source_format_index: usize,
-    pub(super) text: Vec<MoxelLocalizedValue>,
-    pub(super) begin_row: i32,
-    pub(super) begin_row_offset: i32,
-    pub(super) end_row: i32,
-    pub(super) end_row_offset: i32,
-    pub(super) begin_column: i32,
-    pub(super) begin_column_offset: i32,
-    pub(super) end_column: i32,
-    pub(super) end_column_offset: i32,
-    pub(super) auto_size: bool,
+pub struct MoxelNote {
+    pub format_index: usize,
+    pub source_format_index: usize,
+    pub text: Vec<MoxelLocalizedValue>,
+    pub begin_row: i32,
+    pub begin_row_offset: i32,
+    pub end_row: i32,
+    pub end_row_offset: i32,
+    pub begin_column: i32,
+    pub begin_column_offset: i32,
+    pub end_column: i32,
+    pub end_column_offset: i32,
+    pub auto_size: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct MoxelLocalizedValue {
-    pub(super) lang: String,
-    pub(super) content: String,
+pub struct MoxelLocalizedValue {
+    pub lang: String,
+    pub content: String,
 }
 
 /// The text child a published header/footer element carries.
@@ -1103,7 +1131,7 @@ pub(super) struct MoxelLocalizedValue {
 /// A `{0,ref}` record has no text child at all. All 522 records of the 87
 /// publishing documents fall into exactly these three cases.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum MoxelHeaderFooterText {
+pub enum MoxelHeaderFooterText {
     /// `{0,ref}`: a bare format reference, published without a text child.
     Absent,
     /// `{16,ref,texts,0}`: published as `<tl>`.
@@ -1114,35 +1142,35 @@ pub(super) enum MoxelHeaderFooterText {
 
 /// One published header/footer slot.
 #[derive(Clone)]
-pub(super) struct MoxelHeaderFooter {
+pub struct MoxelHeaderFooter {
     /// The stored format reference. `0` publishes `<f>0</f>` verbatim; a
     /// non-zero reference has to be projected onto the output format table.
-    pub(super) source_format_ref: usize,
-    pub(super) text_kind: MoxelHeaderFooterText,
-    pub(super) text: Vec<MoxelLocalizedValue>,
+    pub source_format_ref: usize,
+    pub text_kind: MoxelHeaderFooterText,
+    pub text: Vec<MoxelLocalizedValue>,
 }
 
 #[derive(Clone)]
-pub(super) enum MoxelNamedItem {
+pub enum MoxelNamedItem {
     Cells(MoxelArea),
     Drawing { name: String, drawing_id: usize },
 }
 
 #[derive(Clone)]
-pub(super) struct MoxelArea {
-    pub(super) name: String,
-    pub(super) area_type: &'static str,
-    pub(super) begin_row: i32,
-    pub(super) end_row: i32,
-    pub(super) begin_column: i32,
-    pub(super) end_column: i32,
-    pub(super) columns_id: Option<String>,
+pub struct MoxelArea {
+    pub name: String,
+    pub area_type: &'static str,
+    pub begin_row: i32,
+    pub end_row: i32,
+    pub begin_column: i32,
+    pub end_column: i32,
+    pub columns_id: Option<String>,
 }
 
-pub(super) struct MoxelVerticalGroup {
-    pub(super) begin_row: usize,
-    pub(super) end_row: usize,
-    pub(super) level: usize,
+pub struct MoxelVerticalGroup {
+    pub begin_row: usize,
+    pub end_row: usize,
+    pub level: usize,
     /// Whether the group is expanded. The record stores the collapsed state, so
     /// this is its complement.
     ///
@@ -1150,11 +1178,11 @@ pub(super) struct MoxelVerticalGroup {
     /// 1703 group records split 1693 storing 0 and 10 storing 1, and exactly
     /// the 10 publish `<o>false</o>` - the other 1693 publish no `<o>` at all
     /// and no record in the corpus publishes `<o>true</o>`.
-    pub(super) open: bool,
+    pub open: bool,
     /// The group's own label, published as `<t>`. Empty when the record's
     /// own localized-value member (field 3) declares zero items -- see
     /// `parse_moxel_vertical_group`.
-    pub(super) text: Vec<MoxelLocalizedValue>,
+    pub text: Vec<MoxelLocalizedValue>,
     /// The record's sixth member, published as `<g>Begin</g>` when set.
     ///
     /// Evidence (native ERP УХ 3.2.12.6): `<g>` occurs six times in the whole
@@ -1168,16 +1196,16 @@ pub(super) struct MoxelVerticalGroup {
     /// демо -- publishes no `<g>` at all, so a member the reader ignored
     /// entirely was right everywhere except in that one document. Only `0`
     /// and `1` are observed; another value is a typed refusal.
-    pub(super) group_begin: bool,
+    pub group_begin: bool,
 }
 
 #[derive(Clone)]
-pub(super) struct MoxelMerge {
-    pub(super) row: i32,
-    pub(super) column: i32,
-    pub(super) height: i32,
-    pub(super) width: i32,
-    pub(super) columns_id: Option<String>,
+pub struct MoxelMerge {
+    pub row: i32,
+    pub column: i32,
+    pub height: i32,
+    pub width: i32,
+    pub columns_id: Option<String>,
 }
 
 /// A decoded MOXCEL font descriptor.
@@ -1187,34 +1215,34 @@ pub(super) struct MoxelMerge {
 /// attribute. A descriptor that sets no member at all is published as
 /// `<font ref="..." kind="StyleItem"/>`.
 #[derive(Clone)]
-pub(super) struct MoxelFont {
-    pub(super) ref_name: Option<String>,
-    pub(super) face_name: Option<String>,
-    pub(super) height: Option<String>,
-    pub(super) bold: Option<bool>,
-    pub(super) italic: Option<bool>,
-    pub(super) underline: Option<bool>,
-    pub(super) strikeout: Option<bool>,
-    pub(super) kind: &'static str,
-    pub(super) scale: Option<usize>,
+pub struct MoxelFont {
+    pub ref_name: Option<String>,
+    pub face_name: Option<String>,
+    pub height: Option<String>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub underline: Option<bool>,
+    pub strikeout: Option<bool>,
+    pub kind: &'static str,
+    pub scale: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct MoxelLine {
-    pub(super) style: &'static str,
-    pub(super) line_type: &'static str,
-    pub(super) width: usize,
+pub struct MoxelLine {
+    pub style: &'static str,
+    pub line_type: &'static str,
+    pub width: usize,
 }
 
 /// Internal provenance carried until the final `MoxelLine` projection.
 #[derive(Clone)]
-pub(super) struct ResolvedMoxelLine {
-    pub(super) line: MoxelLine,
-    pub(super) raw_parents: Vec<MoxelRawLineParent>,
-    pub(super) transformations: Vec<MoxelLineTransformation>,
-    pub(super) format_support: Vec<MoxelLineFormatSupport>,
-    pub(super) ambiguous: bool,
-    pub(super) fail_closed: bool,
+pub struct ResolvedMoxelLine {
+    pub line: MoxelLine,
+    pub raw_parents: Vec<MoxelRawLineParent>,
+    pub transformations: Vec<MoxelLineTransformation>,
+    pub format_support: Vec<MoxelLineFormatSupport>,
+    pub ambiguous: bool,
+    pub fail_closed: bool,
 }
 
 impl std::ops::Deref for ResolvedMoxelLine {
@@ -1232,18 +1260,18 @@ impl std::ops::DerefMut for ResolvedMoxelLine {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct MoxelRawLineParent {
+pub struct MoxelRawLineParent {
     /// Field entry in the raw Moxel payload, never an output palette index.
-    pub(super) raw_entry_index: usize,
+    pub raw_entry_index: usize,
     /// Entry in the raw line table after non-line payload fields are removed.
-    pub(super) line_entry_index: usize,
+    pub line_entry_index: usize,
     /// Exact UTF-8 byte span of the raw field in the native `{8,...}` body.
-    pub(super) span_start: usize,
-    pub(super) span_end: usize,
+    pub span_start: usize,
+    pub span_end: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum MoxelLineBorderSlot {
+pub enum MoxelLineBorderSlot {
     Border,
     Left,
     Top,
@@ -1253,13 +1281,13 @@ pub(super) enum MoxelLineBorderSlot {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct MoxelLineFormatSupport {
-    pub(super) format_index: usize,
-    pub(super) border_slot: MoxelLineBorderSlot,
+pub struct MoxelLineFormatSupport {
+    pub format_index: usize,
+    pub border_slot: MoxelLineBorderSlot,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum MoxelLineTransformation {
+pub enum MoxelLineTransformation {
     Truncated { reason: &'static str },
     DrawingOnlySelectedSource { source_index: usize },
     DefaultShift { reason: &'static str },
@@ -1270,7 +1298,7 @@ pub(super) enum MoxelLineTransformation {
 /// Receives one owned, final-palette line event.  The parser only materializes
 /// this event when a caller opts in, so ordinary extraction retains its former
 /// output-only path.
-pub(crate) trait MoxelLineTraceSink {
+pub trait MoxelLineTraceSink {
     /// Reserves space before an owned trace event is materialized.  A false
     /// result is terminal for the current trace pass.
     fn try_reserve_event(&self) -> bool {
@@ -1284,7 +1312,7 @@ pub(crate) trait MoxelLineTraceSink {
 /// field comes from the carried `ResolvedMoxelLine`; it deliberately performs
 /// no post-hoc XML/raw matching.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub(crate) struct MoxelLineTraceEvent {
+pub struct MoxelLineTraceEvent {
     pub output_line_index: usize,
     pub raw_parents: Vec<MoxelRawLineParentTrace>,
     pub transformations: Vec<MoxelLineTransformationTrace>,
@@ -1298,7 +1326,7 @@ pub(crate) struct MoxelLineTraceEvent {
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub(crate) struct MoxelRawLineParentTrace {
+pub struct MoxelRawLineParentTrace {
     pub raw_entry_index: usize,
     pub line_entry_index: usize,
     pub span_start: usize,
@@ -1306,13 +1334,13 @@ pub(crate) struct MoxelRawLineParentTrace {
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub(crate) struct MoxelLineFormatSupportTrace {
+pub struct MoxelLineFormatSupportTrace {
     pub format_index: usize,
     pub border_slot: &'static str,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub(crate) struct MoxelLineTransformationTrace {
+pub struct MoxelLineTransformationTrace {
     pub kind: &'static str,
     pub reason: Option<&'static str>,
     pub source_index: Option<usize>,
@@ -1411,31 +1439,31 @@ fn trace_final_moxel_lines(
     }
 }
 
-pub(super) struct MoxelDrawing {
-    pub(super) id: usize,
-    pub(super) format_index: usize,
-    pub(super) begin_row: i32,
-    pub(super) begin_row_offset: i32,
-    pub(super) end_row: i32,
-    pub(super) end_row_offset: i32,
-    pub(super) begin_column: i32,
-    pub(super) begin_column_offset: i32,
-    pub(super) end_column: i32,
-    pub(super) end_column_offset: i32,
-    pub(super) auto_size: bool,
-    pub(super) z_order: usize,
-    pub(super) members: MoxelDrawingMembers,
-    pub(super) kind: MoxelDrawingKind,
+pub struct MoxelDrawing {
+    pub id: usize,
+    pub format_index: usize,
+    pub begin_row: i32,
+    pub begin_row_offset: i32,
+    pub end_row: i32,
+    pub end_row_offset: i32,
+    pub begin_column: i32,
+    pub begin_column_offset: i32,
+    pub end_column: i32,
+    pub end_column_offset: i32,
+    pub auto_size: bool,
+    pub z_order: usize,
+    pub members: MoxelDrawingMembers,
+    pub kind: MoxelDrawingKind,
 }
 
 /// The optional members the drawing's leading `{mask, formatIndex, ...}` record
 /// carries, published between `formatIndex` and `beginRow`.
 #[derive(Default)]
-pub(super) struct MoxelDrawingMembers {
+pub struct MoxelDrawingMembers {
     /// Every declared language of the drawing's text member, in declaration
     /// order. Same container the cell record uses (see `MoxelCell::text`);
     /// a bilingual drawing publishes one `v8:item` per configured language.
-    pub(super) text: Vec<MoxelLocalizedValue>,
+    pub text: Vec<MoxelLocalizedValue>,
     /// Whether the record carries the text member at all, which is a
     /// different question from whether that member has any language in it:
     /// a declared-but-empty container publishes `<text/>`.
@@ -1449,13 +1477,16 @@ pub(super) struct MoxelDrawingMembers {
     /// them. (The 19 records whose container is a parameter -- a sole item
     /// with an empty language -- publish `<parameter>` and no `<text>`, which
     /// is the case this reader already separates.)
-    pub(super) text_present: bool,
-    pub(super) parameter: Option<String>,
-    pub(super) value: Option<String>,
-    pub(super) detail_parameter: Option<String>,
+    pub text_present: bool,
+    pub parameter: Option<String>,
+    pub value: Option<String>,
+    pub detail_parameter: Option<String>,
 }
 
-pub(super) enum MoxelDrawingKind {
+// `Chart` and `GanttChart` hold their whole decoded record inline. Boxing them
+// would change the payload type of public variants, which is not a lint fix.
+#[allow(clippy::large_enum_variant)]
+pub enum MoxelDrawingKind {
     /// `Line`, `Rectangle` and `Text`: the tail-less record, which publishes no
     /// element after `zOrder` and always publishes `pictureSize` `Stretch`.
     Shape(&'static str),
@@ -1480,7 +1511,7 @@ pub(super) enum MoxelDrawingKind {
 /// one that does; every other member of the raw wrapper (roughly two thirds
 /// of it) is unread and validated as a literal in `parse_moxel_gantt_chart`,
 /// same treatment as `MoxelChart`'s own literal-heavy fields.
-pub(super) struct MoxelGanttChart {
+pub struct MoxelGanttChart {
     chart: MoxelChart,
     points_base_data: String,
     points_auto_text: bool,
@@ -1501,7 +1532,7 @@ pub(super) struct MoxelGanttChart {
     text_placement: &'static str,
 }
 
-pub(super) struct MoxelChart {
+pub struct MoxelChart {
     /// `labelsColor`, `bkgColor`, `ttlColor`, `legColor`, `chColor`,
     /// `ttlTxtColor`, `legTxtColor` and `chTxtColor`, read from `tail[8]`,
     /// `[21]`, `[23]`, `[25]`, `[27]`, `[28]`, `[29]` and `[30]`.
@@ -1597,7 +1628,7 @@ pub(super) struct MoxelChart {
 /// `МакетФакторныйАнализВодопад`. See
 /// `docs/evidence/form-chart-legend-list-and-placements-20260827.md`.
 #[derive(Clone, Default, PartialEq, Eq)]
-pub(super) struct MoxelChartPalette {
+pub struct MoxelChartPalette {
     name: Option<&'static str>,
     gradient_start_color: Option<String>,
 }
@@ -1611,7 +1642,7 @@ pub(super) struct MoxelChartPalette {
 /// and each child has its own member; a record whose every child is at its
 /// default publishes no block at all.
 #[derive(Clone, Default)]
-pub(super) struct MoxelChartScale {
+pub struct MoxelChartScale {
     grid_lines_show_mode: Option<&'static str>,
     grid_line: Option<(usize, &'static str)>,
     label_font: Option<MoxelFont>,
@@ -1642,12 +1673,12 @@ impl MoxelChartScale {
 /// pre-existing corpus's uniform `0`/`WithoutBorder` for all three -- a
 /// single hard-coded literal cannot spell all of these at once.
 #[derive(Clone, Copy)]
-pub(super) struct MoxelChartBorder {
+pub struct MoxelChartBorder {
     width: usize,
     style: &'static str,
 }
 
-pub(super) struct MoxelChartSeries {
+pub struct MoxelChartSeries {
     id: usize,
     color: String,
     line: MoxelChartLine,
@@ -1659,7 +1690,7 @@ pub(super) struct MoxelChartSeries {
     color_priority: bool,
 }
 
-pub(super) struct MoxelChartPoint {
+pub struct MoxelChartPoint {
     id: usize,
     color: String,
     line: MoxelChartLine,
@@ -1671,11 +1702,11 @@ pub(super) struct MoxelChartPoint {
     color_priority: bool,
 }
 
-pub(super) struct MoxelChartLine {
+pub struct MoxelChartLine {
     width: usize,
 }
 
-pub(super) struct MoxelChartGaugeBand {
+pub struct MoxelChartGaugeBand {
     begin: String,
     end: String,
     back_color: String,
@@ -1683,7 +1714,7 @@ pub(super) struct MoxelChartGaugeBand {
     tooltip: Vec<MoxelLocalizedValue>,
 }
 
-pub(super) struct MoxelChartDataItem {
+pub struct MoxelChartDataItem {
     /// The XSD type the stored value names for itself.
     value_type: &'static str,
     value: String,
@@ -1693,7 +1724,7 @@ pub(super) struct MoxelChartDataItem {
     tooltip: String,
 }
 
-pub(super) struct MoxelChartRectangle {
+pub struct MoxelChartRectangle {
     left: String,
     right: String,
     top: String,
@@ -1701,7 +1732,7 @@ pub(super) struct MoxelChartRectangle {
 }
 
 #[derive(Default)]
-pub(super) struct MoxelChartAxis {
+pub struct MoxelChartAxis {
     base_value: Option<String>,
     min_value: Option<String>,
     max_value: Option<String>,
@@ -1709,13 +1740,13 @@ pub(super) struct MoxelChartAxis {
     max_detection: bool,
 }
 
-pub(super) struct MoxelPicture {
-    pub(super) index: usize,
-    pub(super) ref_name: Option<String>,
-    pub(super) payload: Option<String>,
+pub struct MoxelPicture {
+    pub index: usize,
+    pub ref_name: Option<String>,
+    pub payload: Option<String>,
     /// The record's seventh member, which decides whether the published element
     /// carries `t="false"` at all.
-    pub(super) transparency: usize,
+    pub transparency: usize,
     /// The record's fifth and sixth members: the coordinates of the pixel whose
     /// colour the picture is drawn transparent in, or `None` for the `-1,-1`
     /// pair that names no pixel.
@@ -1731,36 +1762,36 @@ pub(super) struct MoxelPicture {
     /// Templates/ФакторыРиска` stores `1` with `-1,-1` and publishes neither
     /// attribute. So the flag decides `t` and the coordinate pair decides
     /// `tx`/`ty`, independently.
-    pub(super) transparent_pixel: Option<(i64, i64)>,
+    pub transparent_pixel: Option<(i64, i64)>,
 }
 
 #[derive(Clone, Default)]
-pub(super) struct MoxelPrintSettings {
-    pub(super) page_orientation: Option<&'static str>,
-    pub(super) scale: Option<usize>,
-    pub(super) collate: Option<bool>,
-    pub(super) copies: Option<usize>,
-    pub(super) per_page: Option<usize>,
-    pub(super) top_margin: Option<usize>,
-    pub(super) left_margin: Option<usize>,
-    pub(super) bottom_margin: Option<usize>,
-    pub(super) right_margin: Option<usize>,
-    pub(super) header_size: Option<usize>,
-    pub(super) footer_size: Option<usize>,
-    pub(super) fit_to_page: Option<bool>,
-    pub(super) black_and_white: Option<bool>,
-    pub(super) printer_name: Option<String>,
-    pub(super) paper: Option<usize>,
-    pub(super) paper_source: Option<usize>,
+pub struct MoxelPrintSettings {
+    pub page_orientation: Option<&'static str>,
+    pub scale: Option<usize>,
+    pub collate: Option<bool>,
+    pub copies: Option<usize>,
+    pub per_page: Option<usize>,
+    pub top_margin: Option<usize>,
+    pub left_margin: Option<usize>,
+    pub bottom_margin: Option<usize>,
+    pub right_margin: Option<usize>,
+    pub header_size: Option<usize>,
+    pub footer_size: Option<usize>,
+    pub fit_to_page: Option<bool>,
+    pub black_and_white: Option<bool>,
+    pub printer_name: Option<String>,
+    pub paper: Option<usize>,
+    pub paper_source: Option<usize>,
     /// Page geometry is a decimal, not an integer: key 16 stores `60.5` in
     /// three of the corpus's 56 print-settings records, and reading the whole
     /// record through `usize` refused all of them - with them the entire
     /// `<printSettings>` element, twenty members, in every document that
     /// carries that record. The token is published as stored.
-    pub(super) page_width: Option<String>,
-    pub(super) page_height: Option<String>,
-    pub(super) duplex_type: Option<&'static str>,
-    pub(super) page_placement_alternation: Option<&'static str>,
+    pub page_width: Option<String>,
+    pub page_height: Option<String>,
+    pub duplex_type: Option<&'static str>,
+    pub page_placement_alternation: Option<&'static str>,
     /// Key 21, published as `<firstPageNumber>` behind
     /// `<pagePlacementAlternation>`, exactly where its key sits in the record.
     ///
@@ -1771,38 +1802,38 @@ pub(super) struct MoxelPrintSettings {
     /// `<firstPageNumber>0</firstPageNumber>`. The key was outside this
     /// reader's domain, and a key outside the domain refuses the whole record
     /// by design, so the document lost its entire `<printSettings>`.
-    pub(super) first_page_number: Option<usize>,
+    pub first_page_number: Option<usize>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]
-pub(super) struct MoxelFormat {
-    pub(super) font: Option<usize>,
-    pub(super) border: Option<usize>,
-    pub(super) left_border: Option<usize>,
-    pub(super) top_border: Option<usize>,
-    pub(super) right_border: Option<usize>,
-    pub(super) bottom_border: Option<usize>,
-    pub(super) height: Option<i32>,
-    pub(super) border_color: Option<String>,
-    pub(super) width: Option<usize>,
-    pub(super) width_weight_factor: Option<usize>,
-    pub(super) horizontal_alignment: Option<&'static str>,
-    pub(super) vertical_alignment: Option<&'static str>,
-    pub(super) back_color: Option<String>,
-    pub(super) pattern_color: Option<String>,
-    pub(super) pattern: Option<&'static str>,
-    pub(super) text_color: Option<String>,
-    pub(super) text_placement: Option<&'static str>,
-    pub(super) text_orientation: Option<usize>,
-    pub(super) fill_type: Option<&'static str>,
-    pub(super) number_format_present: bool,
-    pub(super) number_format: Vec<MoxelLocalizedValue>,
-    pub(super) edit_format_present: bool,
-    pub(super) edit_format: Vec<MoxelLocalizedValue>,
-    pub(super) contains_value: Option<bool>,
-    pub(super) value_type_index: Option<usize>,
-    pub(super) control_type_index: Option<usize>,
-    pub(super) drawing_border: Option<usize>,
+pub struct MoxelFormat {
+    pub font: Option<usize>,
+    pub border: Option<usize>,
+    pub left_border: Option<usize>,
+    pub top_border: Option<usize>,
+    pub right_border: Option<usize>,
+    pub bottom_border: Option<usize>,
+    pub height: Option<i32>,
+    pub border_color: Option<String>,
+    pub width: Option<usize>,
+    pub width_weight_factor: Option<usize>,
+    pub horizontal_alignment: Option<&'static str>,
+    pub vertical_alignment: Option<&'static str>,
+    pub back_color: Option<String>,
+    pub pattern_color: Option<String>,
+    pub pattern: Option<&'static str>,
+    pub text_color: Option<String>,
+    pub text_placement: Option<&'static str>,
+    pub text_orientation: Option<usize>,
+    pub fill_type: Option<&'static str>,
+    pub number_format_present: bool,
+    pub number_format: Vec<MoxelLocalizedValue>,
+    pub edit_format_present: bool,
+    pub edit_format: Vec<MoxelLocalizedValue>,
+    pub contains_value: Option<bool>,
+    pub value_type_index: Option<usize>,
+    pub control_type_index: Option<usize>,
+    pub drawing_border: Option<usize>,
     /// Whether the drawing this format decorates is printed. Member 4 of a
     /// drawing-referenced record, the slot an ordinary record spends on
     /// `bottomBorder`; the platform publishes it first, before `drawingBorder`.
@@ -1811,7 +1842,7 @@ pub(super) struct MoxelFormat {
     /// `false`, and no drawing-referenced record anywhere in the corpus
     /// publishes a `bottomBorder`. The inverted spelling is the one
     /// `protection` (member 16) already carries.
-    pub(super) print: Option<bool>,
+    pub print: Option<bool>,
     /// The four `drawingHave*Border` flags, still packed. Member 3 of a
     /// drawing-referenced record, the slot an ordinary record spends on
     /// `rightBorder`. Evidence: 17 records publish the four flags, our reader
@@ -1820,44 +1851,44 @@ pub(super) struct MoxelFormat {
     /// Mask 2 is the one that separates the members, publishing `top` alone, so
     /// `top` weighs 2 and the remaining three follow publication order; masks 0
     /// and 15 cannot separate them and the corpus holds no other value.
-    pub(super) drawing_have_borders: Option<usize>,
+    pub drawing_have_borders: Option<usize>,
     /// Member 40, published between `width` and `widthWeightFactor`. Evidence:
     /// nine records publish `<autoWidthCalculation>true</autoWidthCalculation>`
     /// and each stores member 40 as 1 next to the `width` (member 7) and
     /// `widthWeightFactor` (member 41) it is published between; the bit was
     /// the one hole left in the supported-member list between 39 and 41.
-    pub(super) auto_width_calculation: Option<bool>,
-    pub(super) by_selected_columns: Option<bool>,
-    pub(super) details_use: Option<&'static str>,
-    pub(super) mark_negatives: Option<bool>,
-    pub(super) hyper_link: Option<bool>,
-    pub(super) auto_mark_incomplete: Option<bool>,
-    pub(super) mark_incomplete: Option<bool>,
-    pub(super) protection: Option<bool>,
-    pub(super) hidden: Option<bool>,
-    pub(super) indent: Option<usize>,
-    pub(super) auto_indent: Option<usize>,
-    pub(super) column_size_change: Option<&'static str>,
+    pub auto_width_calculation: Option<bool>,
+    pub by_selected_columns: Option<bool>,
+    pub details_use: Option<&'static str>,
+    pub mark_negatives: Option<bool>,
+    pub hyper_link: Option<bool>,
+    pub auto_mark_incomplete: Option<bool>,
+    pub mark_incomplete: Option<bool>,
+    pub protection: Option<bool>,
+    pub hidden: Option<bool>,
+    pub indent: Option<usize>,
+    pub auto_indent: Option<usize>,
+    pub column_size_change: Option<&'static str>,
     /// `<mask>` is a localized value, not an enumeration: format member 34
     /// indexes the document's own mask table. Evidence (native 1С:УТ
     /// 11.5.27.75, all 683 MOXCEL spreadsheet templates): 1379 published masks
     /// are the empty `<mask/>` and 37 carry an `<v8:item>` payload - `0`, `1`,
     /// `2`, `3`, `9`, `13`, `999`, `9999`, `9999999999`. Reading member 34 as
     /// an enumeration whose only value was `0 => <mask/>` dropped all 37.
-    pub(super) mask_index: Option<usize>,
-    pub(super) pic_index: Option<usize>,
-    pub(super) picture_size_mode: Option<&'static str>,
-    pub(super) pic_horizontal_alignment: Option<&'static str>,
-    pub(super) pic_vertical_alignment: Option<&'static str>,
-    pub(super) text_position: Option<&'static str>,
-    pub(super) left_margin: Option<usize>,
-    pub(super) top_margin: Option<usize>,
-    pub(super) right_margin: Option<usize>,
-    pub(super) bottom_margin: Option<usize>,
+    pub mask_index: Option<usize>,
+    pub pic_index: Option<usize>,
+    pub picture_size_mode: Option<&'static str>,
+    pub pic_horizontal_alignment: Option<&'static str>,
+    pub pic_vertical_alignment: Option<&'static str>,
+    pub text_position: Option<&'static str>,
+    pub left_margin: Option<usize>,
+    pub top_margin: Option<usize>,
+    pub right_margin: Option<usize>,
+    pub bottom_margin: Option<usize>,
 }
 
 impl MoxelFormat {
-    pub(super) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.font.is_none()
             && self.border.is_none()
             && self.left_border.is_none()
@@ -1912,7 +1943,7 @@ impl MoxelFormat {
     }
 }
 
-pub(super) fn resolve_existing_moxel_default_format_index(
+pub fn resolve_existing_moxel_default_format_index(
     column_formats: &[MoxelFormat],
     formats: &[MoxelFormat],
     default_format: &MoxelFormat,
@@ -1945,7 +1976,7 @@ pub(super) fn resolve_existing_moxel_default_format_index(
             .iter()
             .enumerate()
             .filter_map(|(index, format)| (format == target).then_some(index + 1))
-            .last()
+            .next_back()
     };
     preferred_target_exact
         .as_ref()
@@ -1956,99 +1987,56 @@ pub(super) fn resolve_existing_moxel_default_format_index(
 /// The stand-in for callers that carry no generated-type index: an empty one
 /// leaves every `{"#",<uuid>}` value type on its identity form, which is what
 /// those callers published before the index existed.
-static NO_MOXEL_GENERATED_TYPES: std::sync::LazyLock<BTreeMap<String, String>> =
+pub static NO_MOXEL_GENERATED_TYPES: std::sync::LazyLock<BTreeMap<String, String>> =
     std::sync::LazyLock::new(BTreeMap::new);
 
-pub(crate) fn extract_moxel_spreadsheet_xml(
-    bytes: &[u8],
-    object_refs: &BTreeMap<String, String>,
-) -> Option<String> {
-    try_extract_moxel_spreadsheet_xml(bytes, object_refs).ok()
+/// The diagnostic of a compressed MOXCEL container the root's codec could not
+/// decode.
+pub fn binary_container_diagnostic(message: impl Into<String>) -> MxlDiagnostic {
+    MxlDiagnostic::decoder("mxl.decoder.binary-container", message)
 }
 
-/// Decodes a compressed MOXCEL container, builds canonical spreadsheet IR and
-/// then projects it to the already-evidenced XML writer.  Its diagnostics keep
-/// decoder and writer failures distinct without changing the legacy `Option`
-/// API used by the dump pipeline.
-pub fn try_extract_moxel_spreadsheet_xml(
-    bytes: &[u8],
-    object_refs: &BTreeMap<String, String>,
-) -> Result<String, MxlDiagnostic> {
-    try_extract_moxel_spreadsheet_xml_with_generated_types(
-        bytes,
-        object_refs,
-        &NO_MOXEL_GENERATED_TYPES,
-    )
-}
-
-/// The same extraction with the configuration's generated-type index in hand,
-/// which is what a `{"#",<uuid>}` value type names.
-pub(crate) fn try_extract_moxel_spreadsheet_xml_with_generated_types(
-    bytes: &[u8],
+/// Builds canonical spreadsheet IR from a decoded MOXCEL body and projects it
+/// to the already-evidenced XML writer. The root's entry points
+/// (`mssql_dump::try_extract_moxel_spreadsheet_xml` and its siblings) decode
+/// the container and hand the body text here; every split of a long slice of
+/// `text` is remembered for the conversion.
+pub fn extract_moxel_body_xml(
+    text: &str,
     object_refs: &BTreeMap<String, String>,
     generated_types: &BTreeMap<String, String>,
+    builtin_type_reference: BuiltinTypeReference,
+    trace_sink: Option<&dyn MoxelLineTraceSink>,
 ) -> Result<String, MxlDiagnostic> {
-    try_extract_moxel_spreadsheet_xml_with_generated_types_and_policy(
-        bytes,
+    extract_moxel_body_xml_with_policy(
+        text,
         object_refs,
         generated_types,
+        builtin_type_reference,
+        trace_sink,
         MoxelChartSeriesAutomaticName::Stored,
     )
 }
 
-/// Decode the same source with an explicitly selected chart publication policy.
-/// The legacy/compiler entrypoints above retain Stored representation.
-pub(crate) fn try_extract_moxel_spreadsheet_xml_with_generated_types_and_policy(
-    bytes: &[u8],
+/// Decode the same body with an explicitly selected generated-label policy.
+/// Built-in type resolution and trace custody are identical to the Stored route.
+pub fn extract_moxel_body_xml_with_policy(
+    text: &str,
     object_refs: &BTreeMap<String, String>,
     generated_types: &BTreeMap<String, String>,
+    builtin_type_reference: BuiltinTypeReference,
+    trace_sink: Option<&dyn MoxelLineTraceSink>,
     policy: MoxelChartSeriesAutomaticName,
 ) -> Result<String, MxlDiagnostic> {
-    let body = crate::compiler::bodies::mxl::decode_compatible_mxl(bytes).map_err(|error| {
-        MxlDiagnostic::decoder("mxl.decoder.binary-container", error.to_string())
-    })?;
-    // An 8.5 spreadsheet spells its colour and font tuples one revision later.
-    let text =
-        super::form::layout_8_5_1::rewrite_primitives_8_5_1_in_place(body.native_body_text());
-    let _scope = SplitCacheScope::new(&text);
-    let decoded = decode_moxel_spreadsheet_ir(&text, object_refs, generated_types, None)?;
+    let _scope = SplitCacheScope::new(text);
+    let decoded = decode_moxel_spreadsheet_ir(
+        text,
+        object_refs,
+        generated_types,
+        builtin_type_reference,
+        trace_sink,
+    )?;
     write_moxel_spreadsheet_xml_with_policy(&decoded, policy)
-}
-
-pub(crate) fn extract_moxel_spreadsheet_xml_with_line_trace(
-    bytes: &[u8],
-    object_refs: &BTreeMap<String, String>,
-    trace_sink: Option<&dyn MoxelLineTraceSink>,
-) -> Option<String> {
-    let body = crate::compiler::bodies::mxl::decode_compatible_mxl(bytes).ok()?;
-    let _scope = SplitCacheScope::new(body.native_body_text());
-    let decoded = decode_moxel_spreadsheet_ir(
-        body.native_body_text(),
-        object_refs,
-        &NO_MOXEL_GENERATED_TYPES,
-        trace_sink,
-    )
-    .ok()?;
-    write_moxel_spreadsheet_xml(&decoded).ok()
-}
-
-/// Trace an already-inflated native MXL body retained by an offline dump.
-/// Its MOXCEL framing is validated by the same codec routine as packed blobs.
-pub(crate) fn extract_inflated_moxel_spreadsheet_xml_with_line_trace(
-    bytes: &[u8],
-    object_refs: &BTreeMap<String, String>,
-    trace_sink: Option<&dyn MoxelLineTraceSink>,
-) -> Option<String> {
-    let body = crate::compiler::bodies::mxl::decode_inflated_compatible_mxl(bytes).ok()?;
-    let _scope = SplitCacheScope::new(body.native_body_text());
-    let decoded = decode_moxel_spreadsheet_ir(
-        body.native_body_text(),
-        object_refs,
-        &NO_MOXEL_GENERATED_TYPES,
-        trace_sink,
-    )
-    .ok()?;
-    write_moxel_spreadsheet_xml(&decoded).ok()
 }
 
 /// Builds the bounded canonical hand-off without introducing any XML QName or
@@ -2058,6 +2046,7 @@ fn decode_moxel_spreadsheet_ir(
     text: &str,
     object_refs: &BTreeMap<String, String>,
     generated_types: &BTreeMap<String, String>,
+    builtin_type_reference: BuiltinTypeReference,
     trace_sink: Option<&dyn MoxelLineTraceSink>,
 ) -> Result<DecodedMoxelSpreadsheet, MxlDiagnostic> {
     // The palette is read off the same root fields the spreadsheet is.
@@ -2066,6 +2055,7 @@ fn decode_moxel_spreadsheet_ir(
         text,
         object_refs,
         generated_types,
+        builtin_type_reference,
         trace_sink,
         Some(&mut palette),
     )
@@ -2086,10 +2076,6 @@ fn decode_moxel_spreadsheet_ir(
         spreadsheet,
         write_plan,
     })
-}
-
-fn write_moxel_spreadsheet_xml(decoded: &DecodedMoxelSpreadsheet) -> Result<String, MxlDiagnostic> {
-    write_moxel_spreadsheet_xml_with_policy(decoded, MoxelChartSeriesAutomaticName::Stored)
 }
 
 fn write_moxel_spreadsheet_xml_with_policy(
@@ -2130,14 +2116,16 @@ fn moxel_spreadsheet_write_plan(
     )
 }
 
-pub(super) fn parse_moxel_spreadsheet_text(
+pub fn parse_moxel_spreadsheet_text(
     text: &str,
     object_refs: &BTreeMap<String, String>,
+    builtin_type_reference: BuiltinTypeReference,
 ) -> Option<MoxelSpreadsheet> {
     parse_moxel_spreadsheet_text_with_line_trace(
         text,
         object_refs,
         &NO_MOXEL_GENERATED_TYPES,
+        builtin_type_reference,
         None,
         None,
     )
@@ -2147,6 +2135,7 @@ fn parse_moxel_spreadsheet_text_with_line_trace(
     text: &str,
     object_refs: &BTreeMap<String, String>,
     generated_types: &BTreeMap<String, String>,
+    builtin_type_reference: BuiltinTypeReference,
     trace_sink: Option<&dyn MoxelLineTraceSink>,
     palette: Option<&mut Option<MxlPaletteProvenance>>,
 ) -> Option<MoxelSpreadsheet> {
@@ -2434,13 +2423,13 @@ fn parse_moxel_spreadsheet_text_with_line_trace(
         &style_refs,
         &drawing_format_indices,
     );
-    if default_format.is_empty() && default_format_width.is_none() {
-        if let Some(leading_default_format) =
+    if default_format.is_empty()
+        && default_format_width.is_none()
+        && let Some(leading_default_format) =
             parse_moxel_leading_default_format(&fields, &style_refs, &number_format_refs)
-        {
-            default_format_width = leading_default_format.width;
-            default_format = leading_default_format;
-        }
+    {
+        default_format_width = leading_default_format.width;
+        default_format = leading_default_format;
     }
     let (
         column_formats,
@@ -2787,7 +2776,7 @@ fn parse_moxel_spreadsheet_text_with_line_trace(
                         .unwrap_or(0)
                 })
                 .collect::<Vec<_>>();
-            if ordered.iter().any(|internal| *internal == 0) {
+            if ordered.contains(&0) {
                 return None;
             }
             match default_format_index {
@@ -2859,7 +2848,7 @@ fn parse_moxel_spreadsheet_text_with_line_trace(
         leading_default_format,
         source_format_map,
         height,
-        value_types: parse_moxel_value_types(&fields, generated_types),
+        value_types: parse_moxel_value_types(&fields, generated_types, builtin_type_reference),
         control_types: parse_moxel_control_types(&fields),
         mask_refs: parse_moxel_mask_refs(&fields),
     };
@@ -2969,15 +2958,16 @@ fn moxel_published_line_citations(format: &MoxelFormat) -> Vec<usize> {
         cited.push(index);
         return cited;
     }
-    for value in [
+    for index in [
         format.left_border,
         format.top_border,
         format.right_border,
         format.bottom_border,
-    ] {
-        if let Some(index) = value {
-            cited.push(index);
-        }
+    ]
+    .into_iter()
+    .flatten()
+    {
+        cited.push(index);
     }
     cited
 }
@@ -3048,7 +3038,7 @@ fn normalize_moxel_lines_to_published_citation_order(spreadsheet: &mut MoxelSpre
     spreadsheet.lines = lines;
 }
 
-pub(super) fn normalize_moxel_fonts(fonts: &mut Vec<MoxelFont>, formats: &[MoxelFormat]) {
+pub fn normalize_moxel_fonts(fonts: &mut Vec<MoxelFont>, formats: &[MoxelFormat]) {
     let Some(max_used_index) = formats.iter().filter_map(|format| format.font).max() else {
         return;
     };
@@ -3083,7 +3073,7 @@ pub(super) fn normalize_moxel_fonts(fonts: &mut Vec<MoxelFont>, formats: &[Moxel
     );
 }
 
-pub(super) fn default_moxel_column_sets(column_count: usize) -> Vec<MoxelColumnSet> {
+pub fn default_moxel_column_sets(column_count: usize) -> Vec<MoxelColumnSet> {
     vec![MoxelColumnSet {
         id: None,
         default_format_index: None,
@@ -3099,8 +3089,8 @@ pub(super) fn default_moxel_column_sets(column_count: usize) -> Vec<MoxelColumnS
     }]
 }
 
-#[cfg(test)]
-pub(super) fn parse_moxel_column_sets(
+#[doc(hidden)]
+pub fn parse_moxel_column_sets(
     fields: &[&str],
 ) -> (Vec<MoxelColumnSet>, BTreeMap<usize, String>, Option<usize>) {
     let (column_sets, row_column_ids, declared_sheet_height, _, _) =
@@ -3108,15 +3098,21 @@ pub(super) fn parse_moxel_column_sets(
     (column_sets, row_column_ids, declared_sheet_height)
 }
 
-fn parse_moxel_column_sets_with_source_format_order(
-    fields: &[&str],
-) -> (
+/// What [`parse_moxel_column_sets_with_source_format_order`] reads, in the
+/// order `parse_moxel_spreadsheet_text_with_line_trace` binds it:
+/// `column_sets`, `row_column_ids`, `declared_sheet_height`,
+/// `source_column_format_order` and `has_explicit_sparse_column_set_default`.
+type MoxelColumnSetsWithSourceFormatOrder = (
     Vec<MoxelColumnSet>,
     BTreeMap<usize, String>,
     Option<usize>,
     Vec<usize>,
     bool,
-) {
+);
+
+fn parse_moxel_column_sets_with_source_format_order(
+    fields: &[&str],
+) -> MoxelColumnSetsWithSourceFormatOrder {
     let shapes = root_shapes(fields);
     for index in 0..fields.len() {
         // `{count, default, uuid, n, (index, format) * n}`, `n <= 2048`.
@@ -3340,7 +3336,7 @@ fn moxel_group_run_shape(shapes: &[RootFieldShape], index: usize) -> MoxelGroupR
 /// format caps a document's group count; the run's own arithmetic
 /// (`count * 2 + 1` fields) is the only bound the record proves, and it is
 /// the one this reader now uses.
-pub(super) fn parse_moxel_row_column_groups(
+pub fn parse_moxel_row_column_groups(
     fields: &[&str],
 ) -> (Vec<MoxelVerticalGroup>, Vec<MoxelVerticalGroup>) {
     // A document whose row count is non-zero carries its own decoy: the `0`
@@ -3397,7 +3393,7 @@ fn scan_moxel_row_column_groups(
     None
 }
 
-pub(super) fn parse_moxel_vertical_group(text: &str) -> Option<MoxelVerticalGroup> {
+pub fn parse_moxel_vertical_group(text: &str) -> Option<MoxelVerticalGroup> {
     let fields = split_1c_braced_fields(text, 0)?;
     if fields.len() != 6 {
         return None;
@@ -3430,7 +3426,7 @@ pub(super) fn parse_moxel_vertical_group(text: &str) -> Option<MoxelVerticalGrou
     })
 }
 
-pub(super) fn parse_moxel_column_set(text: &str) -> Option<MoxelColumnSet> {
+pub fn parse_moxel_column_set(text: &str) -> Option<MoxelColumnSet> {
     let fields = split_1c_braced_fields(text, 0)?;
     if fields.len() < 4 {
         return None;
@@ -3474,7 +3470,7 @@ pub(super) fn parse_moxel_column_set(text: &str) -> Option<MoxelColumnSet> {
     })
 }
 
-pub(super) fn normalize_moxel_column_set_format_indices(column_sets: &mut [MoxelColumnSet]) {
+pub fn normalize_moxel_column_set_format_indices(column_sets: &mut [MoxelColumnSet]) {
     let mut normalized = BTreeMap::new();
     for column_set in column_sets.iter_mut() {
         for column in column_set.columns.iter_mut() {
@@ -3548,7 +3544,7 @@ fn moxel_step_direction_xml(field: Option<&str>) -> Option<&'static str> {
     }
 }
 
-pub(super) fn moxel_body_has_fixed_prefix(fields: &[&str]) -> bool {
+pub fn moxel_body_has_fixed_prefix(fields: &[&str]) -> bool {
     fields
         .get(MOXEL_HEADER_FOOTER_BLOCK_START..MOXEL_HEADER_FOOTER_BLOCK_START + 6)
         .is_some_and(|block| {
@@ -3566,9 +3562,7 @@ pub(super) fn moxel_body_has_fixed_prefix(fields: &[&str]) -> bool {
 /// `None` for the whole block means either the block decoded as six empty
 /// records or a record refused; either way nothing is published, which is what
 /// the platform does for the 596 documents that carry no header or footer.
-pub(super) fn parse_moxel_header_footer_slots(
-    fields: &[&str],
-) -> Option<Vec<Option<MoxelHeaderFooter>>> {
+pub fn parse_moxel_header_footer_slots(fields: &[&str]) -> Option<Vec<Option<MoxelHeaderFooter>>> {
     let block = fields.get(MOXEL_HEADER_FOOTER_BLOCK_START..MOXEL_HEADER_FOOTER_BLOCK_START + 6)?;
     let mut slots = vec![None, None, None, None, None, None];
     let mut any = false;
@@ -3620,7 +3614,7 @@ fn parse_moxel_header_footer_record(text: &str) -> Option<Option<MoxelHeaderFoot
 }
 
 /// The single format reference six `{0,ref}` records share, if that is the shape.
-pub(super) fn parse_moxel_uniform_header_footer_format_ref(fields: &[&str]) -> Option<usize> {
+pub fn parse_moxel_uniform_header_footer_format_ref(fields: &[&str]) -> Option<usize> {
     let slots = parse_moxel_header_footer_slots(fields)?;
     let mut refs = slots.iter().map(|slot| {
         slot.as_ref()
@@ -3632,7 +3626,7 @@ pub(super) fn parse_moxel_uniform_header_footer_format_ref(fields: &[&str]) -> O
         .then_some(first)
 }
 
-pub(super) fn is_sparse_moxel_column_set_default_format(format: &MoxelFormat) -> bool {
+pub fn is_sparse_moxel_column_set_default_format(format: &MoxelFormat) -> bool {
     format.font == Some(0)
         && format.width == Some(72)
         && format.height.is_none()
@@ -3660,7 +3654,7 @@ pub(super) fn is_sparse_moxel_column_set_default_format(format: &MoxelFormat) ->
         && format.bottom_margin.is_none()
 }
 
-pub(super) fn resolve_sparse_moxel_column_set_default_format_index(
+pub fn resolve_sparse_moxel_column_set_default_format_index(
     column_sets: &mut [MoxelColumnSet],
     column_format_len: usize,
     formats: &[MoxelFormat],
@@ -3717,7 +3711,7 @@ pub(super) fn resolve_sparse_moxel_column_set_default_format_index(
     Some(format_index)
 }
 
-pub(super) fn moxel_internal_format<'a>(
+pub fn moxel_internal_format<'a>(
     column_formats: &'a [MoxelFormat],
     formats: &'a [MoxelFormat],
     format_index: usize,
@@ -3731,15 +3725,12 @@ pub(super) fn moxel_internal_format<'a>(
     formats.get(format_index - column_formats.len() - 1)
 }
 
-pub(super) fn moxel_column_format_slots(
-    column_sets: &[MoxelColumnSet],
-    column_count: usize,
-) -> usize {
+pub fn moxel_column_format_slots(column_sets: &[MoxelColumnSet], column_count: usize) -> usize {
     column_sets
         .iter()
         .flat_map(|column_set| column_set.columns.iter().map(|column| column.format_index))
         .max()
-        .unwrap_or_else(|| {
+        .unwrap_or({
             if column_sets.is_empty() {
                 column_count
             } else {
@@ -3748,7 +3739,7 @@ pub(super) fn moxel_column_format_slots(
         })
 }
 
-pub(super) fn moxel_default_format_index(
+pub fn moxel_default_format_index(
     _column_sets: &[MoxelColumnSet],
     _print_settings: Option<&MoxelPrintSettings>,
     has_default_format: bool,
@@ -3760,7 +3751,7 @@ pub(super) fn moxel_default_format_index(
     None
 }
 
-pub(super) fn parse_moxel_row_column_set_ids(
+pub fn parse_moxel_row_column_set_ids(
     fields: &[&str],
     index: usize,
     additional_sets: &[MoxelColumnSet],
@@ -3828,7 +3819,7 @@ pub(super) fn parse_moxel_row_column_set_ids(
     Some(row_column_ids)
 }
 
-pub(super) fn moxel_spreadsheet_height(
+pub fn moxel_spreadsheet_height(
     rows: &[MoxelRow],
     merges: &[MoxelMerge],
     horizontal_unmerges: &[MoxelMerge],
@@ -3868,7 +3859,7 @@ pub(super) fn moxel_spreadsheet_height(
 /// `columnsID`, which refused the 24 runs the platform collapses with one of
 /// those two members present.  `is_moxel_compactable_empty_row` keeps the old
 /// spelling because the structurally-empty-sheet guard is calibrated on it.
-pub(super) fn compact_moxel_empty_row_ranges(rows: &mut Vec<MoxelRow>) {
+pub fn compact_moxel_empty_row_ranges(rows: &mut Vec<MoxelRow>) {
     let source = std::mem::take(rows);
     let mut compacted: Vec<MoxelRow> = Vec::with_capacity(source.len());
     // A cell-less row opens a run, and each next row extends it while its
@@ -3902,11 +3893,11 @@ fn moxel_rows_publish_equal_empty_payload(left: &MoxelRow, right: &MoxelRow) -> 
         && left.source_format_index == right.source_format_index
 }
 
-pub(super) fn is_moxel_compactable_empty_row(row: &MoxelRow) -> bool {
+pub fn is_moxel_compactable_empty_row(row: &MoxelRow) -> bool {
     row.format_index <= 1 && row.columns_id.is_none() && row.cells.is_empty()
 }
 
-pub(super) fn parse_moxel_rows(fields: &[&str]) -> Vec<MoxelRow> {
+pub fn parse_moxel_rows(fields: &[&str]) -> Vec<MoxelRow> {
     // The row block sits right behind the header/footer block, and the scalar
     // this scan reads as its first marker is the template-mode flag, not part
     // of the block. Evidence (native 1С:УТ 11.5.27.75): field 14 is the literal
@@ -4043,7 +4034,7 @@ pub(super) fn parse_moxel_rows(fields: &[&str]) -> Vec<MoxelRow> {
     }
 }
 
-pub(super) fn parse_moxel_rows_by_scanning(fields: &[&str]) -> Vec<MoxelRow> {
+pub fn parse_moxel_rows_by_scanning(fields: &[&str]) -> Vec<MoxelRow> {
     let mut best_rows = Vec::new();
     let mut index = 3usize;
     while index < fields.len() {
@@ -4074,7 +4065,7 @@ pub(super) fn parse_moxel_rows_by_scanning(fields: &[&str]) -> Vec<MoxelRow> {
     best_rows
 }
 
-pub(super) fn parse_moxel_row_start_at_for_scanning(
+pub fn parse_moxel_row_start_at_for_scanning(
     fields: &[&str],
     index: usize,
 ) -> Option<(MoxelRow, usize)> {
@@ -4082,7 +4073,7 @@ pub(super) fn parse_moxel_row_start_at_for_scanning(
     parse_moxel_row_at_for_scanning(fields, index, expected_row_index)
 }
 
-pub(super) fn parse_moxel_row_at(
+pub fn parse_moxel_row_at(
     fields: &[&str],
     index: usize,
     expected_row_index: usize,
@@ -4131,7 +4122,7 @@ pub(super) fn parse_moxel_row_at(
 /// then jumps past the missing ones (`4` is followed directly by a record
 /// naming index `6`, skipping `5`). Requiring strict equality here read that
 /// jump as corruption and stopped decoding every row after the gap.
-pub(super) fn parse_moxel_row_at_allow_forward_gap(
+pub fn parse_moxel_row_at_allow_forward_gap(
     fields: &[&str],
     index: usize,
 ) -> Option<(MoxelRow, usize)> {
@@ -4165,7 +4156,7 @@ pub(super) fn parse_moxel_row_at_allow_forward_gap(
     )
 }
 
-pub(super) fn parse_moxel_row_at_for_scanning(
+pub fn parse_moxel_row_at_for_scanning(
     fields: &[&str],
     index: usize,
     expected_row_index: usize,
@@ -4204,16 +4195,16 @@ pub(super) fn parse_moxel_row_at_for_scanning(
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct MoxelRowShape {
-    pub(super) row_index_offset: usize,
-    pub(super) format_offset: usize,
-    pub(super) cell_count_offset: usize,
-    pub(super) cells_offset: usize,
-    pub(super) allow_empty: bool,
-    pub(super) validate_empty_prefix: bool,
+pub struct MoxelRowShape {
+    pub row_index_offset: usize,
+    pub format_offset: usize,
+    pub cell_count_offset: usize,
+    pub cells_offset: usize,
+    pub allow_empty: bool,
+    pub validate_empty_prefix: bool,
 }
 
-pub(super) fn parse_moxel_row_shape(
+pub fn parse_moxel_row_shape(
     fields: &[&str],
     index: usize,
     expected_row_index: usize,
@@ -4341,7 +4332,7 @@ const MOXCEL_CELL_KNOWN_MASK: usize = (1 << MOXCEL_CELL_CONTROL_BIT)
 /// `<v8:Property name="...">` children there, each with the matching
 /// `<v8:Value>` (or `<v8:Value xsi:nil="true"/>` for the `{"U"}` one).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum MoxelCellValue {
+pub enum MoxelCellValue {
     Nil,
     Boolean(bool),
     Text(String),
@@ -4352,7 +4343,7 @@ pub(super) enum MoxelCellValue {
     Array(Vec<MoxelCellValue>),
 }
 
-pub(super) fn parse_moxel_cell_value(text: &str) -> Option<MoxelCellValue> {
+pub fn parse_moxel_cell_value(text: &str) -> Option<MoxelCellValue> {
     let fields = split_1c_braced_fields(text, 0)?;
     // A tag is one letter, and nothing but the quoted letter unescapes to it.
     let tag = match fields.first()?.trim() {
@@ -4486,7 +4477,7 @@ fn parse_moxel_cell_control(text: &str) -> Option<String> {
 /// list's own trailing "formatted" flag closes the record -- when the record
 /// carries it at all; see the flag's own note below. All 2 025 751 records of
 /// the 1С:УТ 11.5.27.75 corpus are consumed exactly by this walk.
-pub(super) fn parse_moxel_cell(text: &str, column_index: usize) -> Option<MoxelCell> {
+pub fn parse_moxel_cell(text: &str, column_index: usize) -> Option<MoxelCell> {
     let fields = split_1c_braced_fields(text, 0)?;
     let mask = fields.first()?.trim().parse::<usize>().ok()?;
     if mask & !MOXCEL_CELL_KNOWN_MASK != 0 {
@@ -4771,7 +4762,7 @@ fn parse_moxel_formatted_cell_text(text: &str) -> Option<Vec<MoxelLocalizedValue
 /// content}` pairs and the platform publishes every one of them - reading
 /// only the first (the prior shape of this function) silently dropped every
 /// language past the first on any multi-language configuration.
-pub(super) fn parse_moxel_localized_cell_value(text: &str) -> Option<Vec<MoxelLocalizedValue>> {
+pub fn parse_moxel_localized_cell_value(text: &str) -> Option<Vec<MoxelLocalizedValue>> {
     let fields = split_1c_braced_fields(text, 0)?;
     let count = fields.get(1)?.trim().parse::<usize>().ok()?;
     if count == 0 {
@@ -4792,7 +4783,7 @@ pub(super) fn parse_moxel_localized_cell_value(text: &str) -> Option<Vec<MoxelLo
 }
 
 #[allow(dead_code)]
-pub(super) fn parse_moxel_areas(fields: &[&str]) -> Vec<MoxelArea> {
+pub fn parse_moxel_areas(fields: &[&str]) -> Vec<MoxelArea> {
     parse_moxel_named_items(fields)
         .into_iter()
         .filter_map(|item| match item {
@@ -4802,7 +4793,7 @@ pub(super) fn parse_moxel_areas(fields: &[&str]) -> Vec<MoxelArea> {
         .collect()
 }
 
-pub(super) fn parse_moxel_named_items(fields: &[&str]) -> Vec<MoxelNamedItem> {
+pub fn parse_moxel_named_items(fields: &[&str]) -> Vec<MoxelNamedItem> {
     let shapes = root_shapes(fields);
     fields
         .iter()
@@ -4818,7 +4809,7 @@ pub(super) fn parse_moxel_named_items(fields: &[&str]) -> Vec<MoxelNamedItem> {
         .unwrap_or_default()
 }
 
-pub(super) fn parse_moxel_print_area(fields: &[&str]) -> Option<MoxelArea> {
+pub fn parse_moxel_print_area(fields: &[&str]) -> Option<MoxelArea> {
     let shapes = root_shapes(fields);
     fields.iter().enumerate().find_map(|(index, field)| {
         // Six bounds that lead with the area kind 1, 2 or 3.
@@ -4888,7 +4879,7 @@ fn moxel_print_area_anchor(fields: &[&str]) -> Option<usize> {
 /// rather than guessed into a `<repeatRows>` band of its own.
 const MOXEL_REPEAT_ROWS_SLOT_OFFSET: usize = 1;
 
-pub(super) fn parse_moxel_repeat_rows(fields: &[&str]) -> Option<MoxelArea> {
+pub fn parse_moxel_repeat_rows(fields: &[&str]) -> Option<MoxelArea> {
     let anchor = moxel_print_area_anchor(fields)?;
     let mut slots = [0i32; 4];
     for (offset, slot) in slots.iter_mut().enumerate() {
@@ -4913,7 +4904,7 @@ pub(super) fn parse_moxel_repeat_rows(fields: &[&str]) -> Option<MoxelArea> {
     })
 }
 
-pub(super) fn parse_moxel_group_header_colors(
+pub fn parse_moxel_group_header_colors(
     fields: &[&str],
     style_refs: &[Option<String>],
 ) -> [Option<String>; 4] {
@@ -4938,7 +4929,7 @@ pub(super) fn parse_moxel_group_header_colors(
     colors
 }
 
-pub(super) fn parse_moxel_fonts(
+pub fn parse_moxel_fonts(
     fields: &[&str],
     object_refs: &BTreeMap<String, String>,
 ) -> Vec<MoxelFont> {
@@ -5045,7 +5036,7 @@ const V85_STYLE_FONT_CODES: [(&str, &str); 8] = [
 /// A spreadsheet's XML with the 8.5 standard style fonts written by code, as
 /// the 2.20 dialect does. A configuration style item of the same name keeps
 /// its name.
-pub(super) fn with_v85_style_fonts_by_code(
+pub fn with_v85_style_fonts_by_code(
     mut xml: String,
     object_refs: &BTreeMap<String, String>,
 ) -> String {
@@ -5072,10 +5063,7 @@ fn moxel_system_font_ref(index: &str) -> Option<&'static str> {
     }
 }
 
-pub(super) fn parse_moxel_font(
-    text: &str,
-    object_refs: &BTreeMap<String, String>,
-) -> Option<MoxelFont> {
+pub fn parse_moxel_font(text: &str, object_refs: &BTreeMap<String, String>) -> Option<MoxelFont> {
     let fields = split_1c_braced_fields(text, 0)?;
     if fields.first()?.trim() != "7" {
         return None;
@@ -5211,8 +5199,8 @@ pub(super) fn parse_moxel_font(
     }
 }
 
-pub(super) fn format_moxel_font_height(raw_height: usize) -> String {
-    if raw_height % 10 == 0 {
+pub fn format_moxel_font_height(raw_height: usize) -> String {
+    if raw_height.is_multiple_of(10) {
         (raw_height / 10).to_string()
     } else {
         format!("{}.{}", raw_height / 10, raw_height % 10)
@@ -5253,8 +5241,8 @@ fn finalize_moxel_line_slots(
     lines
 }
 
-#[cfg(test)]
-pub(super) fn parse_moxel_lines(
+#[doc(hidden)]
+pub fn parse_moxel_lines(
     fields: &[&str],
     formats: &[MoxelFormat],
     shift_default_line_styles: bool,
@@ -5296,7 +5284,7 @@ const MAX_MOXEL_LINE_WIDTH: usize = 1024;
 /// mislabelled every one of those 29 drawing lines. No other drawing code
 /// occurs in the corpus, so any other pairing is a typed refusal rather than
 /// a guess at the rest of that enumeration.
-pub(super) fn parse_moxel_line_table(fields: &[&str]) -> Option<Vec<MoxelLine>> {
+pub fn parse_moxel_line_table(fields: &[&str]) -> Option<Vec<MoxelLine>> {
     let entries = split_1c_braced_fields(fields.get(MOXEL_LINE_TABLE_FIELD)?, 0)?;
     let count = entries.first()?.trim().parse::<usize>().ok()?;
     if count > MAX_MOXEL_LINE_TABLE_ENTRIES || entries.len() != count * 3 + 1 {
@@ -5973,7 +5961,7 @@ fn moxel_style_slot_marker(text: &str) -> Option<(&str, &str)> {
     Some((fields.get(1)?.trim(), payload.first()?.trim()))
 }
 
-pub(super) fn expected_moxel_line_slots(
+pub fn expected_moxel_line_slots(
     used_indexes: &BTreeSet<usize>,
     uses_drawing_line: bool,
     shift_default_line_styles: bool,
@@ -6000,20 +5988,21 @@ pub(super) fn expected_moxel_line_slots(
     expected
 }
 
-pub(super) fn moxel_used_line_indexes(formats: &[MoxelFormat]) -> BTreeSet<usize> {
+pub fn moxel_used_line_indexes(formats: &[MoxelFormat]) -> BTreeSet<usize> {
     let mut indexes = BTreeSet::new();
     for format in formats {
-        for value in [
+        for index in [
             format.border,
             format.left_border,
             format.top_border,
             format.right_border,
             format.bottom_border,
             format.drawing_border,
-        ] {
-            if let Some(index) = value {
-                indexes.insert(index);
-            }
+        ]
+        .into_iter()
+        .flatten()
+        {
+            indexes.insert(index);
         }
     }
     indexes
@@ -6118,7 +6107,7 @@ fn remap_moxel_format_line_refs(format: &mut MoxelFormat, remap: &BTreeMap<usize
     }
 }
 
-pub(super) fn parse_moxel_pictures(
+pub fn parse_moxel_pictures(
     fields: &[&str],
     object_refs: &BTreeMap<String, String>,
 ) -> Vec<MoxelPicture> {
@@ -6173,7 +6162,7 @@ pub(super) fn parse_moxel_pictures(
 /// Position of the transparency member inside a picture record.
 const MOXEL_PICTURE_TRANSPARENCY_FIELD: usize = 6;
 
-pub(super) fn parse_moxel_picture(
+pub fn parse_moxel_picture(
     text: &str,
     object_refs: &BTreeMap<String, String>,
 ) -> Option<MoxelPicture> {
@@ -6259,7 +6248,7 @@ pub(super) fn parse_moxel_picture(
     })
 }
 
-pub(super) fn normalize_moxel_picture_payload(payload: &str) -> String {
+pub fn normalize_moxel_picture_payload(payload: &str) -> String {
     let has_trailing_line_break = payload.ends_with('\n') || payload.ends_with('\r');
     let mut normalized = payload
         .lines()
@@ -6280,7 +6269,7 @@ pub(super) fn normalize_moxel_picture_payload(payload: &str) -> String {
 /// publish 695 drawings and every one of them writes its 1-based ordinal, with
 /// no gaps and no repeats, while the `<id>` beside it skips freely (3, 4, 5, 6,
 /// 7, 10, 11 ... in `CommonTemplates/ОшибкиОтчетовСПАРКРиски`).
-pub(super) fn parse_moxel_drawings(
+pub fn parse_moxel_drawings(
     fields: &[&str],
     object_refs: &BTreeMap<String, String>,
 ) -> Vec<MoxelDrawing> {
@@ -6399,7 +6388,7 @@ fn parse_moxel_drawing_format_record(text: &str) -> Option<(usize, MoxelDrawingM
 /// not ordered or non-negative: 9 records end left of where they begin, 2 end
 /// above, and one publishes `beginColumnOffset` `-1`.  The range guard this
 /// replaces refused those.
-pub(super) fn parse_moxel_drawing(
+pub fn parse_moxel_drawing(
     text: &str,
     object_refs: &BTreeMap<String, String>,
 ) -> Option<MoxelDrawing> {
@@ -7307,7 +7296,7 @@ mod gantt_multilevel_tests {
     #[test]
     fn native_four_level_gantt_components_decode() {
         let text = include_str!(
-            "../../tests/fixtures/native-evidence/8.3.27.2214/moxel-gantt-multiple-levels/object-payload.txt"
+            "../../../tests/fixtures/native-evidence/8.3.27.2214/moxel-gantt-multiple-levels/object-payload.txt"
         );
         let fields = split_1c_braced_fields(text, 0).unwrap();
         let chart = split_1c_braced_fields(fields[1], 0).unwrap();
@@ -7326,7 +7315,7 @@ mod gantt_multilevel_tests {
     #[test]
     fn quarter_scale_uses_the_same_time_code_as_the_writer() {
         let text = include_str!(
-            "../../tests/fixtures/native-evidence/8.3.27.2214/moxel-gantt-multiple-levels/object-payload.txt"
+            "../../../tests/fixtures/native-evidence/8.3.27.2214/moxel-gantt-multiple-levels/object-payload.txt"
         );
         let fields = split_1c_braced_fields(text, 0).unwrap();
         let scale = fields[7].replacen("{8,40,", "{8,60,", 1);
@@ -7551,8 +7540,8 @@ fn parse_moxel_gantt_chart(
 /// element's child sits at). Exists so `tests.rs` can assert platform-proven
 /// raw records round-trip to byte-identical native XML without exposing
 /// `MoxelChart`'s private fields.
-#[cfg(test)]
-pub(super) fn parse_and_render_moxel_chart_for_test(text: &str) -> Option<String> {
+#[doc(hidden)]
+pub fn parse_and_render_moxel_chart_for_test(text: &str) -> Option<String> {
     let chart = parse_moxel_chart(text, &BTreeMap::new())?;
     let mut xml = String::new();
     push_moxel_chart_xml(&mut xml, &chart);
@@ -7565,8 +7554,8 @@ pub(super) fn parse_and_render_moxel_chart_for_test(text: &str) -> Option<String
 /// for a kind-`10` drawing whose type uuid is `GanttChart`) and renders it
 /// back to the `<object xsi:type="d3p1:GanttChart">...</object>` fragment
 /// `push_moxel_gantt_chart_xml` writes.
-#[cfg(test)]
-pub(super) fn parse_and_render_moxel_gantt_chart_for_test(text: &str) -> Option<String> {
+#[doc(hidden)]
+pub fn parse_and_render_moxel_gantt_chart_for_test(text: &str) -> Option<String> {
     let gantt = parse_moxel_gantt_chart(text, &BTreeMap::new())?;
     let mut xml = String::new();
     push_moxel_gantt_chart_xml(&mut xml, &gantt);
@@ -8439,7 +8428,7 @@ fn compact_moxel_chart_token(text: &str) -> String {
     compact
 }
 
-pub(super) fn normalize_moxel_chart_decimal(text: &str) -> Option<String> {
+pub fn normalize_moxel_chart_decimal(text: &str) -> Option<String> {
     let value = text.trim();
     if value.is_empty() || value.len() > MAX_MOXEL_CHART_DECIMAL_BYTES {
         return None;
@@ -8526,15 +8515,12 @@ pub(super) fn normalize_moxel_chart_decimal(text: &str) -> Option<String> {
     (normalized.len() <= MAX_MOXEL_CHART_DECIMAL_BYTES).then_some(normalized)
 }
 
-pub(super) fn moxel_chart_fraction_to_percent(text: &str) -> Option<String> {
+pub fn moxel_chart_fraction_to_percent(text: &str) -> Option<String> {
     let value = normalize_moxel_chart_decimal(text)?;
     normalize_moxel_chart_decimal(&format!("{value}e2"))
 }
 
-pub(super) fn parse_moxel_default_format_width(
-    fields: &[&str],
-    column_count: usize,
-) -> Option<usize> {
+pub fn parse_moxel_default_format_width(fields: &[&str], column_count: usize) -> Option<usize> {
     let shapes = root_shapes(fields);
     // A column width is `{128, width}`, the extended one `{161, 0, 0, width}`.
     let may_be_width = |index: usize| {
@@ -8579,7 +8565,7 @@ pub(super) fn parse_moxel_default_format_width(
     })
 }
 
-pub(super) fn parse_moxel_extended_default_format_width(text: &str) -> Option<usize> {
+pub fn parse_moxel_extended_default_format_width(text: &str) -> Option<usize> {
     let fields = split_1c_braced_fields(text, 0)?;
     if fields.len() != 4
         || fields.first()?.trim() != "161"
@@ -8591,7 +8577,7 @@ pub(super) fn parse_moxel_extended_default_format_width(text: &str) -> Option<us
     fields.get(3)?.trim().parse::<usize>().ok()
 }
 
-pub(super) fn parse_moxel_leading_default_format_width_129(text: &str) -> Option<usize> {
+pub fn parse_moxel_leading_default_format_width_129(text: &str) -> Option<usize> {
     let fields = split_1c_braced_fields(text, 0)?;
     if fields.len() != 3 || fields.first()?.trim() != "129" || fields.get(1)?.trim() != "0" {
         return None;
@@ -8613,7 +8599,7 @@ pub(super) fn parse_moxel_leading_default_format_width_129(text: &str) -> Option
 /// platform writes `<font>0</font>` before that `<width>` in all 35. The rest
 /// resolve their default format to an entry of the written table instead and
 /// are left alone by the width filter at the call site.
-pub(super) fn parse_moxel_leading_default_format_record(text: &str) -> Option<(usize, usize)> {
+pub fn parse_moxel_leading_default_format_record(text: &str) -> Option<(usize, usize)> {
     let fields = split_1c_braced_fields(text, 0)?;
     let font = fields.get(1)?.trim().parse::<usize>().ok()?;
     match fields.first()?.trim() {
@@ -8627,7 +8613,7 @@ pub(super) fn parse_moxel_leading_default_format_record(text: &str) -> Option<(u
 
 /// One descriptor of a cell's declared value type.
 #[derive(Clone, PartialEq, Eq)]
-pub(super) enum MoxelValueTypeItem {
+pub enum MoxelValueTypeItem {
     Boolean,
     String {
         length: usize,
@@ -8657,8 +8643,8 @@ pub(super) enum MoxelValueTypeItem {
 /// composite type published as a run of `<v8:Type>` followed by the
 /// qualifiers.
 #[derive(Clone, PartialEq, Eq)]
-pub(super) struct MoxelValueType {
-    pub(super) items: Vec<MoxelValueTypeItem>,
+pub struct MoxelValueType {
+    pub items: Vec<MoxelValueTypeItem>,
 }
 
 /// Decodes the document's value-type table.
@@ -8675,9 +8661,10 @@ pub(super) struct MoxelValueType {
 ///
 /// A descriptor outside these shapes refuses the whole table rather than
 /// letting some formats publish a type and others silently drop theirs.
-pub(super) fn parse_moxel_value_types(
+pub fn parse_moxel_value_types(
     fields: &[&str],
     generated_types: &BTreeMap<String, String>,
+    builtin_type_reference: BuiltinTypeReference,
 ) -> Vec<MoxelValueType> {
     let shapes = root_shapes(fields);
     for (start, count_field) in fields.iter().enumerate() {
@@ -8716,7 +8703,7 @@ pub(super) fn parse_moxel_value_types(
         }
         return entries
             .iter()
-            .map(|entry| parse_moxel_value_type(entry, generated_types))
+            .map(|entry| parse_moxel_value_type(entry, generated_types, builtin_type_reference))
             .collect::<Option<Vec<_>>>()
             .unwrap_or_default();
     }
@@ -8725,9 +8712,10 @@ pub(super) fn parse_moxel_value_types(
 
 const MAX_MOXEL_VALUE_TYPES: usize = 2048;
 
-pub(super) fn parse_moxel_value_type(
+pub fn parse_moxel_value_type(
     text: &str,
     generated_types: &BTreeMap<String, String>,
+    builtin_type_reference: BuiltinTypeReference,
 ) -> Option<MoxelValueType> {
     let fields = split_1c_braced_fields(text, 0)?;
     if unquote_moxel_string(fields.first()?)? != "Pattern" {
@@ -8753,7 +8741,11 @@ pub(super) fn parse_moxel_value_type(
     // table (and with it every `<valueType>` of the document) down.
     let mut items = Vec::with_capacity(fields.len().saturating_sub(1));
     for descriptor in fields.get(1..)? {
-        items.push(parse_moxel_value_type_item(descriptor, generated_types)?);
+        items.push(parse_moxel_value_type_item(
+            descriptor,
+            generated_types,
+            builtin_type_reference,
+        )?);
     }
     Some(MoxelValueType { items })
 }
@@ -8761,6 +8753,7 @@ pub(super) fn parse_moxel_value_type(
 fn parse_moxel_value_type_item(
     text: &str,
     generated_types: &BTreeMap<String, String>,
+    builtin_type_reference: BuiltinTypeReference,
 ) -> Option<MoxelValueTypeItem> {
     let payload = split_1c_braced_fields(text, 0)?;
     match unquote_moxel_string(payload.first()?)?.as_str() {
@@ -8874,7 +8867,7 @@ fn moxel_root_table_end(fields: &[&str]) -> Option<usize> {
         .map(|index| index + 1)
 }
 
-pub(super) fn parse_moxel_mask_refs(fields: &[&str]) -> Vec<Vec<MoxelLocalizedValue>> {
+pub fn parse_moxel_mask_refs(fields: &[&str]) -> Vec<Vec<MoxelLocalizedValue>> {
     let Some(end) = moxel_root_table_end(fields) else {
         return Vec::new();
     };
@@ -8902,7 +8895,7 @@ pub(super) fn parse_moxel_mask_refs(fields: &[&str]) -> Vec<Vec<MoxelLocalizedVa
 /// UUID root fields. Evidence (same corpus): 51 documents carry it, and the
 /// UUID at the index named by format member 25 equals the published
 /// `<controlType>` in all 51 - 285 references, zero mismatches.
-pub(super) fn parse_moxel_control_types(fields: &[&str]) -> Vec<String> {
+pub fn parse_moxel_control_types(fields: &[&str]) -> Vec<String> {
     let shapes = root_shapes(fields);
     for (start, count_field) in fields.iter().enumerate() {
         let count = match shapes
@@ -8944,7 +8937,7 @@ pub(super) fn parse_moxel_control_types(fields: &[&str]) -> Vec<String> {
     Vec::new()
 }
 
-pub(super) fn parse_moxel_default_format(
+pub fn parse_moxel_default_format(
     fields: &[&str],
     object_refs: &BTreeMap<String, String>,
 ) -> MoxelFormat {
@@ -8972,7 +8965,7 @@ pub(super) fn parse_moxel_default_format(
 /// own record is the empty `{0}`, which manufactured a default format, a
 /// `<defaultFormatIndex>` the platform does not write, and an empty entry in
 /// the pool slot that reference landed on.
-pub(super) fn parse_moxel_leading_default_format(
+pub fn parse_moxel_leading_default_format(
     fields: &[&str],
     style_refs: &[Option<String>],
     number_format_refs: &[Vec<MoxelLocalizedValue>],
@@ -8984,9 +8977,9 @@ pub(super) fn parse_moxel_leading_default_format(
 }
 
 /// Position of the leading default-format record among the top-level fields.
-pub(super) const MOXEL_LEADING_DEFAULT_FORMAT_FIELD: usize = 4;
+pub const MOXEL_LEADING_DEFAULT_FORMAT_FIELD: usize = 4;
 
-pub(super) fn parse_moxel_default_format_field(
+pub fn parse_moxel_default_format_field(
     text: &str,
     object_refs: &BTreeMap<String, String>,
 ) -> Option<MoxelFormat> {
@@ -9007,7 +9000,7 @@ pub(super) fn parse_moxel_default_format_field(
     })
 }
 
-pub(super) fn parse_moxel_print_settings(fields: &[&str]) -> Option<MoxelPrintSettings> {
+pub fn parse_moxel_print_settings(fields: &[&str]) -> Option<MoxelPrintSettings> {
     let shapes = root_shapes(fields);
     fields
         .iter()
@@ -9024,7 +9017,7 @@ pub(super) fn parse_moxel_print_settings(fields: &[&str]) -> Option<MoxelPrintSe
         .next()
 }
 
-pub(super) fn parse_moxel_print_settings_field(text: &str) -> Option<MoxelPrintSettings> {
+pub fn parse_moxel_print_settings_field(text: &str) -> Option<MoxelPrintSettings> {
     let mut fields = split_1c_braced_fields(text, 0)?;
     if fields.len() == 1 && fields.first()?.trim_start().starts_with('{') {
         fields = split_1c_braced_fields(fields.first()?, 0)?;
@@ -9095,13 +9088,13 @@ pub(super) fn parse_moxel_print_settings_field(text: &str) -> Option<MoxelPrintS
     Some(settings)
 }
 
-pub(super) enum MoxelPrintSettingsValue {
+pub enum MoxelPrintSettingsValue {
     Number(String),
     Text(String),
 }
 
 impl MoxelPrintSettingsValue {
-    pub(super) fn as_usize(&self) -> Option<usize> {
+    pub fn as_usize(&self) -> Option<usize> {
         match self {
             Self::Number(value) => value.parse::<usize>().ok(),
             Self::Text(_) => None,
@@ -9111,7 +9104,7 @@ impl MoxelPrintSettingsValue {
     /// The stored numeric token, for the members the platform publishes as a
     /// decimal. Admits digits with at most one fractional part, which is the
     /// whole of what the corpus's `"N"` values ever are.
-    pub(super) fn into_number_token(self) -> Option<String> {
+    pub fn into_number_token(self) -> Option<String> {
         let Self::Number(value) = self else {
             return None;
         };
@@ -9122,11 +9115,11 @@ impl MoxelPrintSettingsValue {
         .then_some(value)
     }
 
-    pub(super) fn as_bool(&self) -> Option<bool> {
+    pub fn as_bool(&self) -> Option<bool> {
         self.as_usize().map(|value| value != 0)
     }
 
-    pub(super) fn into_string(self) -> Option<String> {
+    pub fn into_string(self) -> Option<String> {
         match self {
             Self::Number(_) => None,
             Self::Text(value) => Some(value),
@@ -9134,7 +9127,7 @@ impl MoxelPrintSettingsValue {
     }
 }
 
-pub(super) fn parse_moxel_print_settings_value(text: &str) -> Option<MoxelPrintSettingsValue> {
+pub fn parse_moxel_print_settings_value(text: &str) -> Option<MoxelPrintSettingsValue> {
     let fields = split_1c_braced_fields(text, 0)?;
     if fields.len() != 2 {
         return None;
@@ -9150,7 +9143,7 @@ pub(super) fn parse_moxel_print_settings_value(text: &str) -> Option<MoxelPrintS
     }
 }
 
-pub(super) fn unquote_moxel_string(value: &str) -> Option<String> {
+pub fn unquote_moxel_string(value: &str) -> Option<String> {
     let value = value.trim();
     let inner = value.strip_prefix('"')?.strip_suffix('"')?;
     Some(inner.replace("\"\"", "\""))
@@ -9270,6 +9263,7 @@ fn remap_moxel_source_fonts(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn parse_moxel_formats_with_source_map(
     fields: &[&str],
     column_count: usize,
@@ -9336,8 +9330,8 @@ fn parse_moxel_formats_with_source_map(
     )
 }
 
-#[cfg(test)]
-pub(super) fn parse_moxel_formats(
+#[doc(hidden)]
+pub fn parse_moxel_formats(
     fields: &[&str],
     column_count: usize,
     sparse_source_format_refs: bool,
@@ -9363,6 +9357,7 @@ pub(super) fn parse_moxel_formats(
     (column_formats, formats)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn parse_moxel_formats_with_layout(
     fields: &[&str],
     column_count: usize,
@@ -9459,7 +9454,7 @@ fn moxel_internal_sources((column_sources, sources): (Vec<usize>, Vec<usize>)) -
     column_sources.into_iter().chain(sources).collect()
 }
 
-pub(super) fn parse_moxel_format_table(
+pub fn parse_moxel_format_table(
     fields: &[&str],
     column_count: usize,
     style_refs: &[Option<String>],
@@ -9553,7 +9548,7 @@ pub(super) fn parse_moxel_format_table(
     None
 }
 
-pub(super) fn parse_moxel_equal_width_only_format_table(
+pub fn parse_moxel_equal_width_only_format_table(
     fields: &[&str],
     column_count: usize,
 ) -> Option<(usize, Vec<Option<usize>>)> {
@@ -9611,7 +9606,7 @@ pub(super) fn parse_moxel_equal_width_only_format_table(
     None
 }
 
-pub(super) fn parse_moxel_nested_format_table(
+pub fn parse_moxel_nested_format_table(
     text: &str,
     column_count: usize,
     style_refs: &[Option<String>],
@@ -9625,9 +9620,7 @@ pub(super) fn parse_moxel_nested_format_table(
     }
     let mut formats = Vec::with_capacity(count);
     for (format_offset, field) in nested.iter().skip(1).enumerate() {
-        let Some(mut format) = parse_moxel_format(field, style_refs, number_format_refs) else {
-            return None;
-        };
+        let mut format = parse_moxel_format(field, style_refs, number_format_refs)?;
         if let Some(kind) = drawing_format_indices.get(&(format_offset + 1))
             && format.width.is_none()
         {
@@ -9649,8 +9642,8 @@ fn parse_moxel_drawing_pattern_color(text: &str, style_refs: &[Option<String>]) 
     parse_moxel_format_style_ref(&values, 13, style_refs)
 }
 
-#[cfg(test)]
-pub(super) fn normalize_moxel_drawing_format(format: &mut MoxelFormat) {
+#[doc(hidden)]
+pub fn normalize_moxel_drawing_format(format: &mut MoxelFormat) {
     normalize_moxel_drawing_format_with_pattern_color(format, MoxelFormatRefKind::Drawing, None);
 }
 
@@ -9665,13 +9658,13 @@ pub(super) fn normalize_moxel_drawing_format(format: &mut MoxelFormat) {
 /// `style:FormBackColor`, while 73 formats a `<drawing>` names publish
 /// `style:FormBackColor` and none publishes `style:ToolTipBackColor`.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(super) enum MoxelFormatRefKind {
+pub enum MoxelFormatRefKind {
     Drawing,
     Note,
 }
 
 /// Format-table positions a drawing or a note names, by which of the two it is.
-pub(super) type MoxelFormatRefKinds = BTreeMap<usize, MoxelFormatRefKind>;
+pub type MoxelFormatRefKinds = BTreeMap<usize, MoxelFormatRefKind>;
 
 fn normalize_moxel_drawing_format_with_pattern_color(
     format: &mut MoxelFormat,
@@ -9774,7 +9767,7 @@ fn normalize_moxel_report_header_tail_back_color(
     apply_moxel_report_header_tail_back_color(formats, tail_start);
 }
 
-pub(super) fn normalize_moxel_single_set_report_header_tail(
+pub fn normalize_moxel_single_set_report_header_tail(
     column_sets: &[MoxelColumnSet],
     column_formats: &[MoxelFormat],
     lines: &mut [ResolvedMoxelLine],
@@ -9810,7 +9803,7 @@ pub(super) fn normalize_moxel_single_set_report_header_tail(
 /// Splits a source-ordered table into the entries the column sets name and the
 /// rest. It is position-only, so the same call over `1..=n` yields the source
 /// position each internal slot came from.
-pub(super) fn split_moxel_formats_by_source_refs<T: Clone>(
+pub fn split_moxel_formats_by_source_refs<T: Clone>(
     formats: Vec<T>,
     source_column_format_refs: &[usize],
 ) -> (Vec<T>, Vec<T>) {
@@ -9840,7 +9833,7 @@ pub(super) fn split_moxel_formats_by_source_refs<T: Clone>(
     (column_formats, formats)
 }
 
-pub(super) fn prefers_moxel_leading_source_column_formats(
+pub fn prefers_moxel_leading_source_column_formats(
     formats: &[MoxelFormat],
     source_column_format_refs: &[usize],
 ) -> bool {
@@ -9867,7 +9860,7 @@ pub(super) fn prefers_moxel_leading_source_column_formats(
         .any(|format| !is_moxel_width_only_format(format))
 }
 
-pub(super) fn is_moxel_width_only_format(format: &MoxelFormat) -> bool {
+pub fn is_moxel_width_only_format(format: &MoxelFormat) -> bool {
     format.width.is_some()
         && format.height.is_none()
         && format.font.is_none()
@@ -9916,7 +9909,7 @@ pub(super) fn is_moxel_width_only_format(format: &MoxelFormat) -> bool {
 
 /// Position-only, like the split above: the same call over `1..=n` yields the
 /// source position each internal slot came from.
-pub(super) fn split_moxel_formats_for_output<T>(
+pub fn split_moxel_formats_for_output<T>(
     mut formats: Vec<T>,
     column_count: usize,
     sparse_source_format_refs: bool,
@@ -9950,7 +9943,7 @@ pub(super) fn split_moxel_formats_for_output<T>(
     (column_formats, formats)
 }
 
-pub(super) fn parse_moxel_number_format_refs(
+pub fn parse_moxel_number_format_refs(
     fields: &[&str],
     column_count: usize,
     style_refs: &[Option<String>],
@@ -10071,302 +10064,21 @@ pub(super) fn parse_moxel_number_format_refs(
     Vec::new()
 }
 
-#[cfg(all(test, feature = "mssql-live-tests"))]
-pub(super) fn spreadsheet_number_format_hint_from_text(
-    raw_text: &str,
-) -> Option<SpreadsheetNumberFormatHint> {
-    let body_start = raw_text.find('{')?;
-    let body = raw_text[body_start..].trim_start_matches('\u{feff}');
-    let fields = split_1c_braced_fields(body, 0)?;
-    if fields.first()?.trim() != "8" {
-        return None;
-    }
-    let declared_column_count = fields.get(2)?.trim().parse::<usize>().ok()? + 1;
-    let rows = parse_moxel_rows(&fields);
-    if rows.is_empty() {
-        return None;
-    }
-    let (column_sets, _, _) = parse_moxel_column_sets(&fields);
-    let style_refs = parse_moxel_style_refs(&fields, &BTreeMap::new());
-    let default_format = parse_moxel_default_format(&fields, &BTreeMap::new());
-    let observed_column_count = rows
-        .iter()
-        .flat_map(|row| row.cells.iter().map(|cell| cell.column_index + 1))
-        .max()
-        .unwrap_or(0);
-    let column_count = if observed_column_count > 0 {
-        observed_column_count
-    } else {
-        declared_column_count
-    };
-    let default_format_width = parse_moxel_default_format_width(
-        &fields,
-        moxel_column_format_slots(&column_sets, declared_column_count),
-    );
-    let column_sets = if column_sets.is_empty() {
-        default_moxel_column_sets(column_count)
-    } else {
-        column_sets
-    };
-    let drawings = parse_moxel_drawings(&fields, &BTreeMap::new());
-    // A cell note is a drawing record of its own -- `drawingType` `Comment`,
-    // its own `<formatIndex>` -- so the format it names is a drawing format,
-    // and that format's members 1, 3 and 4 are `drawingBorder`,
-    // `drawingHave*Border` and `print` rather than
-    // `leftBorder`/`rightBorder`/`bottomBorder`. This set was built from the
-    // `<drawing>` list alone, which left every note-only format read as a
-    // cell one.
-    //
-    // Evidence: of the 23 `<format>` elements that publish `<print>` across
-    // ERP УХ 3.2.12.6, 1С:УТ 11.5.27.75, Документооборот КОРП 3.0.21.3 and
-    // БСП demo/base, eleven sit in documents that carry no `<drawing>` at
-    // all, and in every one the format they name is exactly the
-    // `<formatIndex>` of a `<note>`. In
-    // `Reports/РасчетСтоимостиЧистыхАктивов/Templates/РасчетСтоимостиЧистыхАктивов`
-    // the whole `<formatIndex>` set is `{1..8, 31}`, disjoint from the `<f>`
-    // set the cells cite, and format 31 is the one that publishes
-    // `<print>false</print>`.
-    //
-    // A note-named format is only a drawing format where **no cell names it
-    // too**: 1С:УТ 11.5.27.75's `Documents/ИзменениеАссортимента/Templates/
-    // ЗагрузкаИзФайла` and four documents like it share one format between a
-    // note and their own report-header cells, and the platform renders it as
-    // a cell format there -- `leftBorder`/`rightBorder` and no
-    // `drawingBorder`. In `РасчетСтоимостиЧистыхАктивов` the two sets are
-    // disjoint, which is what makes format 31 a drawing format.
-    let cell_format_indices = rows
-        .iter()
-        .flat_map(|row| {
-            std::iter::once(row.format_index).chain(row.cells.iter().map(|cell| cell.format_index))
-        })
-        .collect::<BTreeSet<_>>();
-    let mut drawing_format_indices = drawings
-        .iter()
-        .map(|drawing| (drawing.format_index, MoxelFormatRefKind::Drawing))
-        .collect::<MoxelFormatRefKinds>();
-    for index in rows
-        .iter()
-        .flat_map(|row| row.cells.iter())
-        .filter_map(|cell| cell.note.as_ref().map(|note| note.format_index))
-        .filter(|index| *index > 0 && !cell_format_indices.contains(index))
-    {
-        // The set is read against the entry's own 1-based place in the
-        // stored table, which a note's reference carries one higher; see the
-        // same conversion in `parse_moxel_spreadsheet`.
-        drawing_format_indices
-            .entry(index - 1)
-            .or_insert(MoxelFormatRefKind::Note);
-    }
-    let column_format_slots = moxel_column_format_slots(&column_sets, column_count);
-    let _sparse_source_format_refs = moxel_uses_sparse_source_format_refs(
-        &column_sets,
-        column_count,
-        &rows,
-        &default_format,
-        default_format_width,
-    );
-    let number_format_refs = parse_moxel_number_format_refs(
-        &fields,
-        column_format_slots,
-        &style_refs,
-        &drawing_format_indices,
-    );
-    let slots = number_format_refs
-        .iter()
-        .map(|slot| {
-            slot.iter()
-                .map(|value| LocalizedString {
-                    lang: value.lang.clone(),
-                    content: value.content.clone(),
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    for index in 0..fields.len() {
-        if let Some(nested) = split_1c_braced_fields(fields[index], 0) {
-            let Some(count) = nested
-                .first()
-                .and_then(|field| field.trim().parse::<usize>().ok())
-            else {
-                continue;
-            };
-            if count > column_count
-                && count <= 2048
-                && nested.len() == count + 1
-                && nested.iter().skip(1).all(|field| {
-                    parse_moxel_format(field, &style_refs, &number_format_refs).is_some()
-                })
-            {
-                return Some(SpreadsheetNumberFormatHint {
-                    slots,
-                    format_slot_indices: nested
-                        .iter()
-                        .skip(1)
-                        .map(|field| parse_moxel_format_number_format_index(field))
-                        .collect(),
-                });
-            }
-        }
-        let Some(count) = fields
-            .get(index)
-            .and_then(|field| field.trim().parse::<usize>().ok())
-        else {
-            continue;
-        };
-        if count <= column_count || count > 2048 || index + count >= fields.len() {
-            continue;
-        }
-        let format_fields = &fields[index + 1..=index + count];
-        if format_fields
-            .iter()
-            .all(|field| parse_moxel_format(field, &style_refs, &number_format_refs).is_some())
-        {
-            return Some(SpreadsheetNumberFormatHint {
-                slots,
-                format_slot_indices: format_fields
-                    .iter()
-                    .map(|field| parse_moxel_format_number_format_index(field))
-                    .collect(),
-            });
-        }
-    }
-    None
-}
-
-#[cfg(all(test, feature = "mssql-live-tests"))]
-#[derive(Debug, Clone)]
-pub(crate) struct DebugMoxelSpreadsheetSummary {
-    pub column_count: usize,
-    pub column_format_slots: usize,
-    pub source_column_format_offset: usize,
-    pub default_format_index: Option<usize>,
-    pub column_formats_len: usize,
-    pub formats_len: usize,
-    pub number_format_indices: Vec<usize>,
-    pub first_rows: Vec<String>,
-    pub first_columns: Vec<String>,
-}
-
-#[cfg(all(test, feature = "mssql-live-tests"))]
-pub(crate) fn debug_moxel_spreadsheet_summary_from_blob(
-    blob: &[u8],
-) -> Option<DebugMoxelSpreadsheetSummary> {
-    let inflated = inflate_raw_deflate(blob).ok()?;
-    let raw_text = String::from_utf8(inflated).ok()?;
-    let body_start = raw_text.find('{')?;
-    let body = raw_text[body_start..].trim_start_matches('\u{feff}');
-    let spreadsheet = parse_moxel_spreadsheet_text(body, &BTreeMap::new())?;
-    let first_rows = spreadsheet
-        .rows
-        .iter()
-        .take(6)
-        .map(|row| {
-            let first_cells = row
-                .cells
-                .iter()
-                .take(4)
-                .map(|cell| format!("c{}:f{}", cell.column_index, cell.format_index))
-                .collect::<Vec<_>>()
-                .join(",");
-            format!(
-                "r{}:f{}:{}",
-                row.index,
-                row.format_index,
-                if first_cells.is_empty() {
-                    "<empty>".to_string()
-                } else {
-                    first_cells
-                }
-            )
-        })
-        .collect::<Vec<_>>();
-    let first_columns = spreadsheet
-        .column_sets
-        .iter()
-        .flat_map(|set| set.columns.iter())
-        .take(8)
-        .map(|column| {
-            format!(
-                "c{}:{}->{}",
-                column.index,
-                column.format_index,
-                column.source_format_index.unwrap_or(column.format_index)
-            )
-        })
-        .collect::<Vec<_>>();
-    let format_count = spreadsheet
-        .default_format_index
-        .unwrap_or(0)
-        .max(spreadsheet.column_formats.len() + spreadsheet.formats.len())
-        .max(1);
-    let number_format_indices = (1..=format_count)
-        .filter(|format_index| {
-            let format = moxel_format_for_index(&spreadsheet, *format_index);
-            !format.number_format.is_empty() || !format.edit_format.is_empty()
-        })
-        .collect::<Vec<_>>();
-    Some(DebugMoxelSpreadsheetSummary {
-        column_count: spreadsheet.column_count,
-        column_format_slots: moxel_column_format_slots(
-            &spreadsheet.column_sets,
-            spreadsheet.column_count,
-        ),
-        source_column_format_offset: moxel_source_column_format_offset(&spreadsheet.column_sets),
-        default_format_index: spreadsheet.default_format_index,
-        column_formats_len: spreadsheet.column_formats.len(),
-        formats_len: spreadsheet.formats.len(),
-        number_format_indices,
-        first_rows,
-        first_columns,
-    })
-}
-
-#[cfg(all(test, feature = "mssql-live-tests"))]
-#[derive(Debug, Clone)]
-pub(crate) struct DebugMoxelNumberFormatUsage {
-    pub slots: Vec<String>,
-    pub format_slot_indices: Vec<Option<usize>>,
-}
-
-#[cfg(all(test, feature = "mssql-live-tests"))]
-pub(crate) fn debug_moxel_number_format_usage(
-    raw_text: &str,
-) -> Option<DebugMoxelNumberFormatUsage> {
-    let hint = spreadsheet_number_format_hint_from_text(raw_text)?;
-    Some(DebugMoxelNumberFormatUsage {
-        slots: hint
-            .slots
-            .iter()
-            .map(|slot| {
-                if slot.is_empty() {
-                    "<empty>".to_string()
-                } else {
-                    slot.iter()
-                        .map(|value| format!("{}={}", value.lang, value.content))
-                        .collect::<Vec<_>>()
-                        .join("|")
-                }
-            })
-            .collect(),
-        format_slot_indices: hint.format_slot_indices,
-    })
-}
-
-pub(super) fn parse_moxel_format_number_format_index(text: &str) -> Option<usize> {
+pub fn parse_moxel_format_number_format_index(text: &str) -> Option<usize> {
     let fields = split_1c_braced_fields(text, 0)?;
     let flags = fields.first()?.trim().parse::<u64>().ok()?;
     let values = moxel_format_values(flags, &fields)?;
     parse_moxel_format_usize(&values, 24)
 }
 
-pub(super) fn parse_moxel_format_edit_format_index(text: &str) -> Option<usize> {
+pub fn parse_moxel_format_edit_format_index(text: &str) -> Option<usize> {
     let fields = split_1c_braced_fields(text, 0)?;
     let flags = fields.first()?.trim().parse::<u64>().ok()?;
     let values = moxel_format_values(flags, &fields)?;
     parse_moxel_format_usize(&values, 32)
 }
 
-pub(super) fn parse_moxel_format_localized_value_required_count(text: &str) -> usize {
+pub fn parse_moxel_format_localized_value_required_count(text: &str) -> usize {
     [
         parse_moxel_format_number_format_index(text),
         parse_moxel_format_edit_format_index(text),
@@ -10378,7 +10090,7 @@ pub(super) fn parse_moxel_format_localized_value_required_count(text: &str) -> u
     .unwrap_or(0)
 }
 
-pub(super) fn parse_moxel_localized_values(text: &str) -> Option<Vec<MoxelLocalizedValue>> {
+pub fn parse_moxel_localized_values(text: &str) -> Option<Vec<MoxelLocalizedValue>> {
     let fields = split_1c_braced_fields(text, 0)?;
     if fields.first()?.trim() != "1" {
         return None;
@@ -10403,7 +10115,7 @@ pub(super) fn parse_moxel_localized_values(text: &str) -> Option<Vec<MoxelLocali
         .collect()
 }
 
-pub(super) fn parse_moxel_format(
+pub fn parse_moxel_format(
     text: &str,
     style_refs: &[Option<String>],
     number_format_refs: &[Vec<MoxelLocalizedValue>],
@@ -10515,10 +10227,7 @@ pub(super) fn parse_moxel_format(
     Some(format)
 }
 
-pub(super) fn moxel_format_values<'a>(
-    flags: u64,
-    fields: &[&'a str],
-) -> Option<[Option<&'a str>; 64]> {
+pub fn moxel_format_values<'a>(flags: u64, fields: &[&'a str]) -> Option<[Option<&'a str>; 64]> {
     let mut values = [None; 64];
     if flags == 0 {
         return (fields.len() == 1).then_some(values);
@@ -10537,7 +10246,7 @@ pub(super) fn moxel_format_values<'a>(
     (field_index == fields.len()).then_some(values)
 }
 
-pub(super) fn moxel_format_bit_is_supported(bit: usize) -> bool {
+pub fn moxel_format_bit_is_supported(bit: usize) -> bool {
     matches!(
         bit,
         0 | 1
@@ -10590,19 +10299,19 @@ pub(super) fn moxel_format_bit_is_supported(bit: usize) -> bool {
     )
 }
 
-pub(super) fn parse_moxel_format_usize(values: &[Option<&str>; 64], bit: usize) -> Option<usize> {
+pub fn parse_moxel_format_usize(values: &[Option<&str>; 64], bit: usize) -> Option<usize> {
     values
         .get(bit)
         .and_then(|value| value.and_then(|value| value.trim().parse::<usize>().ok()))
 }
 
-pub(super) fn parse_moxel_format_i32(values: &[Option<&str>; 64], bit: usize) -> Option<i32> {
+pub fn parse_moxel_format_i32(values: &[Option<&str>; 64], bit: usize) -> Option<i32> {
     values
         .get(bit)
         .and_then(|value| value.and_then(|value| value.trim().parse::<i32>().ok()))
 }
 
-pub(super) fn parse_moxel_format_style_ref(
+pub fn parse_moxel_format_style_ref(
     values: &[Option<&str>; 64],
     bit: usize,
     style_refs: &[Option<String>],
@@ -10617,7 +10326,7 @@ pub(super) fn parse_moxel_format_style_ref(
         .or_else(|| resolve_moxel_compact_style_ref_index(raw_index, bit))
 }
 
-pub(super) fn remap_moxel_format_style_ref_index(
+pub fn remap_moxel_format_style_ref_index(
     style_refs: &[Option<String>],
     raw_index: usize,
 ) -> usize {
@@ -10648,7 +10357,7 @@ pub(super) fn remap_moxel_format_style_ref_index(
     raw_index
 }
 
-pub(super) fn resolve_moxel_format_style_ref(style_ref: &str, bit: usize) -> Option<String> {
+pub fn resolve_moxel_format_style_ref(style_ref: &str, bit: usize) -> Option<String> {
     if let Some((family, kind)) = parse_moxel_f527_style_ref(style_ref) {
         return match (bit, family, kind) {
             (11, "0", "1") | (5, "0", "1") => Some("style:ToolTipBackColor".to_string()),
@@ -10666,10 +10375,7 @@ pub(super) fn resolve_moxel_format_style_ref(style_ref: &str, bit: usize) -> Opt
     Some(style_ref.to_string())
 }
 
-pub(super) fn resolve_moxel_compact_style_ref_index(
-    raw_index: usize,
-    bit: usize,
-) -> Option<String> {
+pub fn resolve_moxel_compact_style_ref_index(raw_index: usize, bit: usize) -> Option<String> {
     match (bit, raw_index) {
         (11 | 5, 0) => Some("style:ToolTipBackColor".to_string()),
         (10, 0) => Some("style:ToolTipTextColor".to_string()),
@@ -10681,13 +10387,13 @@ pub(super) fn resolve_moxel_compact_style_ref_index(
     }
 }
 
-pub(super) fn parse_moxel_f527_style_ref(style_ref: &str) -> Option<(&str, &str)> {
+pub fn parse_moxel_f527_style_ref(style_ref: &str) -> Option<(&str, &str)> {
     let suffix = style_ref.strip_prefix("moxel:f527:")?;
     let (family, kind) = suffix.split_once(':')?;
     Some((family, kind))
 }
 
-pub(super) fn parse_moxel_style_refs(
+pub fn parse_moxel_style_refs(
     fields: &[&str],
     object_refs: &BTreeMap<String, String>,
 ) -> Vec<Option<String>> {
@@ -10854,7 +10560,7 @@ fn locate_moxel_style_ref_palette_in(
 /// count is 2, 4, or whose count-3 table starts at slot 3, matched neither
 /// branch and lost every override. A container that does not decode as whole
 /// pairs of `(index, style-ref slot)` is refused rather than partially read.
-pub(super) fn parse_moxel_indexed_style_ref_overrides(
+pub fn parse_moxel_indexed_style_ref_overrides(
     text: &str,
     object_refs: &BTreeMap<String, String>,
 ) -> Option<Vec<(usize, Option<String>)>> {
@@ -10877,7 +10583,7 @@ pub(super) fn parse_moxel_indexed_style_ref_overrides(
 /// Read at the block anchor rather than by scanning every six-field window; the
 /// two agree on all 683 spreadsheet documents, and only the anchor can be wrong
 /// for a reason the document states.
-pub(super) fn parse_moxel_empty_headers_footers(fields: &[&str]) -> bool {
+pub fn parse_moxel_empty_headers_footers(fields: &[&str]) -> bool {
     fields
         .get(MOXEL_HEADER_FOOTER_BLOCK_START..MOXEL_HEADER_FOOTER_BLOCK_START + 6)
         .is_some_and(|block| {
@@ -10887,7 +10593,7 @@ pub(super) fn parse_moxel_empty_headers_footers(fields: &[&str]) -> bool {
         })
 }
 
-pub(super) fn parse_moxel_empty_header_footer(text: &str) -> bool {
+pub fn parse_moxel_empty_header_footer(text: &str) -> bool {
     let Some(fields) = split_1c_braced_fields(text, 0) else {
         return false;
     };
@@ -10927,7 +10633,7 @@ pub(super) fn parse_moxel_empty_header_footer(text: &str) -> bool {
         }) == Some(true)
 }
 
-pub(super) fn parse_moxel_style_ref_slot(
+pub fn parse_moxel_style_ref_slot(
     text: &str,
     object_refs: &BTreeMap<String, String>,
 ) -> Option<Option<String>> {
@@ -11022,8 +10728,8 @@ pub(super) fn parse_moxel_style_ref_slot(
     }
 }
 
-#[cfg(test)]
-pub(super) fn parse_moxel_embedded_style_refs(
+#[doc(hidden)]
+pub fn parse_moxel_embedded_style_refs(
     text: &str,
     object_refs: &BTreeMap<String, String>,
 ) -> Vec<Option<String>> {
@@ -11061,11 +10767,8 @@ pub(super) fn parse_moxel_embedded_style_refs(
     refs
 }
 
-#[cfg(test)]
-pub(super) fn moxel_uses_sparse_f527_embedded_slots(
-    fields: &[&str],
-    refs: &[Option<String>],
-) -> bool {
+#[doc(hidden)]
+pub fn moxel_uses_sparse_f527_embedded_slots(fields: &[&str], refs: &[Option<String>]) -> bool {
     let sparse_wrapper = fields.len() == 10
         && fields[3].trim() == "0"
         && fields[4].trim() == "1"
@@ -11085,8 +10788,8 @@ pub(super) fn moxel_uses_sparse_f527_embedded_slots(
     )
 }
 
-#[cfg(test)]
-pub(super) fn parse_moxel_embedded_style_ref(
+#[doc(hidden)]
+pub fn parse_moxel_embedded_style_ref(
     text: &str,
     container_kind: Option<&str>,
     object_refs: &BTreeMap<String, String>,
@@ -11105,7 +10808,7 @@ pub(super) fn parse_moxel_embedded_style_ref(
     ))
 }
 
-pub(super) fn moxel_style_ref_for_uuid(
+pub fn moxel_style_ref_for_uuid(
     uuid: &str,
     object_refs: &BTreeMap<String, String>,
 ) -> Option<String> {
@@ -11118,8 +10821,8 @@ pub(super) fn moxel_style_ref_for_uuid(
     }
 }
 
-#[cfg(test)]
-pub(super) fn moxel_embedded_style_ref_for_uuid(
+#[doc(hidden)]
+pub fn moxel_embedded_style_ref_for_uuid(
     uuid: &str,
     container_kind: Option<&str>,
     family: Option<&str>,
@@ -11218,7 +10921,7 @@ fn parse_moxel_windows_color(value: &str) -> Option<String> {
 ///
 /// A code the corpus does not spell stays a typed refusal: an unresolvable
 /// slot makes the whole palette unusable rather than being guessed at.
-pub(super) fn parse_moxel_web_color(value: &str) -> Option<String> {
+pub fn parse_moxel_web_color(value: &str) -> Option<String> {
     let name = match value.parse::<u32>().ok()? {
         // `1` is pinned by a palette with one kind-2 slot and one published
         // web colour: ERP УХ 3.3.3.3 `DataProcessors/
@@ -11327,11 +11030,11 @@ pub(super) fn parse_moxel_web_color(value: &str) -> Option<String> {
     Some(format!("d3p1:{name}"))
 }
 
-pub(super) fn parse_moxel_style_color(value: &str) -> Option<String> {
+pub fn parse_moxel_style_color(value: &str) -> Option<String> {
     parse_moxel_direct_color(value)
 }
 
-pub(super) fn parse_moxel_direct_color(value: &str) -> Option<String> {
+pub fn parse_moxel_direct_color(value: &str) -> Option<String> {
     let color = value.parse::<u32>().ok()?;
     let red = color & 0xff;
     let green = (color >> 8) & 0xff;
@@ -11339,7 +11042,7 @@ pub(super) fn parse_moxel_direct_color(value: &str) -> Option<String> {
     Some(format!("#{red:02X}{green:02X}{blue:02X}"))
 }
 
-pub(super) fn moxel_horizontal_alignment(value: usize) -> Option<&'static str> {
+pub fn moxel_horizontal_alignment(value: usize) -> Option<&'static str> {
     match value {
         0 => Some("Left"),
         2 => Some("Right"),
@@ -11351,7 +11054,7 @@ pub(super) fn moxel_horizontal_alignment(value: usize) -> Option<&'static str> {
     }
 }
 
-pub(super) fn moxel_vertical_alignment(value: usize) -> Option<&'static str> {
+pub fn moxel_vertical_alignment(value: usize) -> Option<&'static str> {
     match value {
         0 => Some("Top"),
         4 | 24 => Some("Center"),
@@ -11360,7 +11063,7 @@ pub(super) fn moxel_vertical_alignment(value: usize) -> Option<&'static str> {
     }
 }
 
-pub(super) fn moxel_text_placement(value: usize) -> Option<&'static str> {
+pub fn moxel_text_placement(value: usize) -> Option<&'static str> {
     match value {
         0 => Some("Auto"),
         1 => Some("Cut"),
@@ -11370,7 +11073,7 @@ pub(super) fn moxel_text_placement(value: usize) -> Option<&'static str> {
     }
 }
 
-pub(super) fn moxel_format_pattern(value: usize) -> Option<&'static str> {
+pub fn moxel_format_pattern(value: usize) -> Option<&'static str> {
     const PATTERNS: [&str; 19] = [
         "Solid",
         "Pattern1",
@@ -11399,11 +11102,11 @@ pub(super) fn moxel_format_pattern(value: usize) -> Option<&'static str> {
     }
 }
 
-pub(super) fn moxel_false_only(value: usize) -> Option<bool> {
+pub fn moxel_false_only(value: usize) -> Option<bool> {
     (value == 0).then_some(false)
 }
 
-pub(super) fn moxel_bool_value(value: usize) -> Option<bool> {
+pub fn moxel_bool_value(value: usize) -> Option<bool> {
     match value {
         0 => Some(false),
         1 => Some(true),
@@ -11411,7 +11114,7 @@ pub(super) fn moxel_bool_value(value: usize) -> Option<bool> {
     }
 }
 
-pub(super) fn moxel_column_size_change(value: usize) -> Option<&'static str> {
+pub fn moxel_column_size_change(value: usize) -> Option<&'static str> {
     match value {
         0 => Some("Normal"),
         1 => Some("QuickChange"),
@@ -11419,7 +11122,7 @@ pub(super) fn moxel_column_size_change(value: usize) -> Option<&'static str> {
     }
 }
 
-pub(super) fn moxel_page_orientation(value: usize) -> Option<&'static str> {
+pub fn moxel_page_orientation(value: usize) -> Option<&'static str> {
     match value {
         1 => Some("Portrait"),
         2 => Some("Landscape"),
@@ -11427,7 +11130,7 @@ pub(super) fn moxel_page_orientation(value: usize) -> Option<&'static str> {
     }
 }
 
-pub(super) fn moxel_duplex_type(value: usize) -> Option<&'static str> {
+pub fn moxel_duplex_type(value: usize) -> Option<&'static str> {
     match value {
         1 => Some("None"),
         // Evidence: `Reports/КонтрольПлатежаНаСоответствие275ФЗ/Templates/
@@ -11441,11 +11144,11 @@ pub(super) fn moxel_duplex_type(value: usize) -> Option<&'static str> {
     }
 }
 
-pub(super) fn moxel_page_placement_alternation(value: usize) -> Option<&'static str> {
+pub fn moxel_page_placement_alternation(value: usize) -> Option<&'static str> {
     (value == 0).then_some("Auto")
 }
 
-pub(super) fn moxel_fill_type(value: usize) -> Option<&'static str> {
+pub fn moxel_fill_type(value: usize) -> Option<&'static str> {
     match value {
         0 => Some("Text"),
         1 => Some("Parameter"),
@@ -11454,7 +11157,7 @@ pub(super) fn moxel_fill_type(value: usize) -> Option<&'static str> {
     }
 }
 
-pub(super) fn moxel_details_use(value: usize) -> Option<&'static str> {
+pub fn moxel_details_use(value: usize) -> Option<&'static str> {
     match value {
         0 => Some("Cell"),
         1 => Some("Row"),
@@ -11463,7 +11166,7 @@ pub(super) fn moxel_details_use(value: usize) -> Option<&'static str> {
     }
 }
 
-pub(super) fn moxel_by_selected_columns(value: usize) -> Option<bool> {
+pub fn moxel_by_selected_columns(value: usize) -> Option<bool> {
     match value {
         0 => Some(false),
         1 => Some(true),
@@ -11473,7 +11176,7 @@ pub(super) fn moxel_by_selected_columns(value: usize) -> Option<bool> {
 
 /// `<print>` is stored inverted, the spelling `protection` (member 16) carries:
 /// the corpus holds only the value 1, published as `false`.
-pub(super) fn moxel_print_flag(value: usize) -> Option<bool> {
+pub fn moxel_print_flag(value: usize) -> Option<bool> {
     match value {
         0 => Some(true),
         1 => Some(false),
@@ -11481,7 +11184,7 @@ pub(super) fn moxel_print_flag(value: usize) -> Option<bool> {
     }
 }
 
-pub(super) fn moxel_protection(value: usize) -> Option<bool> {
+pub fn moxel_protection(value: usize) -> Option<bool> {
     match value {
         0 => Some(true),
         1 => Some(false),
@@ -11489,7 +11192,7 @@ pub(super) fn moxel_protection(value: usize) -> Option<bool> {
     }
 }
 
-pub(super) fn moxel_hidden(value: usize) -> Option<bool> {
+pub fn moxel_hidden(value: usize) -> Option<bool> {
     match value {
         0 => Some(false),
         1 => Some(true),
@@ -11497,7 +11200,7 @@ pub(super) fn moxel_hidden(value: usize) -> Option<bool> {
     }
 }
 
-pub(super) fn moxel_hyper_link(value: usize) -> Option<bool> {
+pub fn moxel_hyper_link(value: usize) -> Option<bool> {
     match value {
         1 => Some(true),
         0 => Some(false),
@@ -11505,7 +11208,7 @@ pub(super) fn moxel_hyper_link(value: usize) -> Option<bool> {
     }
 }
 
-pub(super) fn moxel_picture_size_mode(value: usize) -> Option<&'static str> {
+pub fn moxel_picture_size_mode(value: usize) -> Option<&'static str> {
     match value {
         0 => Some("RealSize"),
         1 => Some("Stretch"),
@@ -11516,7 +11219,7 @@ pub(super) fn moxel_picture_size_mode(value: usize) -> Option<&'static str> {
     }
 }
 
-pub(super) fn moxel_picture_horizontal_alignment(value: usize) -> Option<&'static str> {
+pub fn moxel_picture_horizontal_alignment(value: usize) -> Option<&'static str> {
     match value {
         0 => Some("Left"),
         2 => Some("Right"),
@@ -11526,7 +11229,7 @@ pub(super) fn moxel_picture_horizontal_alignment(value: usize) -> Option<&'stati
     }
 }
 
-pub(super) fn moxel_picture_vertical_alignment(value: usize) -> Option<&'static str> {
+pub fn moxel_picture_vertical_alignment(value: usize) -> Option<&'static str> {
     match value {
         0 => Some("Top"),
         8 => Some("Bottom"),
@@ -11563,7 +11266,7 @@ pub(super) fn moxel_picture_vertical_alignment(value: usize) -> Option<&'static 
 /// dropped whole wherever they occurred, taking 7 ERP УХ documents' whole
 /// `<format>` element with it. A code the corpus does not spell stays a typed
 /// refusal.
-pub(super) fn moxel_text_position(value: usize) -> Option<&'static str> {
+pub fn moxel_text_position(value: usize) -> Option<&'static str> {
     match value {
         0 => Some("Left"),
         1 => Some("Right"),
@@ -11575,7 +11278,7 @@ pub(super) fn moxel_text_position(value: usize) -> Option<&'static str> {
     }
 }
 
-pub(super) fn parse_moxel_column_width(text: &str) -> Option<usize> {
+pub fn parse_moxel_column_width(text: &str) -> Option<usize> {
     let fields = split_1c_braced_fields(text, 0)?;
     if fields.len() != 2 || fields.first()?.trim() != "128" {
         return None;
@@ -11583,7 +11286,7 @@ pub(super) fn parse_moxel_column_width(text: &str) -> Option<usize> {
     fields.get(1)?.trim().parse::<usize>().ok()
 }
 
-pub(super) fn parse_moxel_line(text: &str) -> Option<MoxelLine> {
+pub fn parse_moxel_line(text: &str) -> Option<MoxelLine> {
     let fields = split_1c_braced_fields(text, 0)?;
     if fields.len() != 3 || fields.first()?.trim() != "3" || fields.get(1)?.trim() != "3" {
         return None;
@@ -11605,9 +11308,9 @@ pub(super) fn parse_moxel_line(text: &str) -> Option<MoxelLine> {
 
 /// A document's page breaks.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct MoxelPageBreaks {
-    pub(super) vertical: Vec<i64>,
-    pub(super) horizontal: Vec<i64>,
+pub struct MoxelPageBreaks {
+    pub vertical: Vec<i64>,
+    pub horizontal: Vec<i64>,
 }
 
 /// The page breaks, read off the root behind the grouping block.
@@ -11625,7 +11328,7 @@ pub(super) struct MoxelPageBreaks {
 /// The block is found from the back: the last root position at which empty
 /// or parsed group runs, the two zeros and both break lists end exactly at a
 /// braced member.
-pub(super) fn parse_moxel_page_breaks(fields: &[&str]) -> MoxelPageBreaks {
+pub fn parse_moxel_page_breaks(fields: &[&str]) -> MoxelPageBreaks {
     let token = |index: usize| fields.get(index).map(|field| field.trim());
     let count_at = |index: usize| token(index).and_then(|value| value.parse::<usize>().ok());
     // A break position may be negative: one 8.3.27 corpus writes
@@ -11664,7 +11367,7 @@ pub(super) fn parse_moxel_page_breaks(fields: &[&str]) -> MoxelPageBreaks {
         .unwrap_or_default()
 }
 
-pub(super) fn parse_moxel_merge_regions(
+pub fn parse_moxel_merge_regions(
     fields: &[&str],
 ) -> (Vec<MoxelMerge>, Vec<MoxelMerge>, Vec<MoxelMerge>) {
     let mut merges = Vec::new();
@@ -11690,7 +11393,7 @@ pub(super) fn parse_moxel_merge_regions(
     (merges, horizontal_unmerges, vertical_unmerges)
 }
 
-pub(super) fn normalize_moxel_merge_order(merges: &mut Vec<MoxelMerge>) {
+pub fn normalize_moxel_merge_order(merges: &mut Vec<MoxelMerge>) {
     if merges.len() < 2 {
         return;
     }
@@ -11724,7 +11427,7 @@ pub(super) fn normalize_moxel_merge_order(merges: &mut Vec<MoxelMerge>) {
     }
 }
 
-pub(super) fn parse_moxel_merge_region_list(
+pub fn parse_moxel_merge_region_list(
     text: &str,
 ) -> Option<(Vec<MoxelMerge>, Vec<MoxelMerge>, Vec<MoxelMerge>)> {
     let fields = split_1c_braced_fields(text, 0)?;
@@ -11747,7 +11450,7 @@ pub(super) fn parse_moxel_merge_region_list(
     Some((merges, horizontal_unmerges, vertical_unmerges))
 }
 
-pub(super) fn parse_moxel_merge_region(text: &str) -> Option<(MoxelMerge, usize)> {
+pub fn parse_moxel_merge_region(text: &str) -> Option<(MoxelMerge, usize)> {
     let fields = split_1c_braced_fields(text, 0)?;
     if fields.len() < 4 {
         return None;
@@ -11779,7 +11482,7 @@ pub(super) fn parse_moxel_merge_region(text: &str) -> Option<(MoxelMerge, usize)
 }
 
 #[allow(dead_code)]
-pub(super) fn parse_moxel_area_list(text: &str) -> Option<Vec<MoxelArea>> {
+pub fn parse_moxel_area_list(text: &str) -> Option<Vec<MoxelArea>> {
     let items = parse_moxel_named_item_list(text)?;
     let areas = items
         .into_iter()
@@ -11791,7 +11494,7 @@ pub(super) fn parse_moxel_area_list(text: &str) -> Option<Vec<MoxelArea>> {
     (!areas.is_empty()).then_some(areas)
 }
 
-pub(super) fn parse_moxel_named_item_list(text: &str) -> Option<Vec<MoxelNamedItem>> {
+pub fn parse_moxel_named_item_list(text: &str) -> Option<Vec<MoxelNamedItem>> {
     let fields = split_1c_braced_fields(text, 0)?;
     let count = fields.first()?.trim().parse::<usize>().ok()?;
     // Evidence (native ERP УХ 3.2.12.6): the arity check right below
@@ -11819,7 +11522,7 @@ pub(super) fn parse_moxel_named_item_list(text: &str) -> Option<Vec<MoxelNamedIt
     (!items.is_empty()).then_some(items)
 }
 
-pub(super) fn parse_moxel_named_item(text: &str, name: String) -> Option<MoxelNamedItem> {
+pub fn parse_moxel_named_item(text: &str, name: String) -> Option<MoxelNamedItem> {
     let fields = split_1c_braced_fields(text, 0)?;
     match fields.first()?.trim() {
         "1" => {
@@ -11835,14 +11538,14 @@ pub(super) fn parse_moxel_named_item(text: &str, name: String) -> Option<MoxelNa
 }
 
 #[allow(dead_code)]
-pub(super) fn parse_moxel_area(text: &str, name: String) -> Option<MoxelArea> {
+pub fn parse_moxel_area(text: &str, name: String) -> Option<MoxelArea> {
     match parse_moxel_named_item(text, name)? {
         MoxelNamedItem::Cells(area) => Some(area),
         MoxelNamedItem::Drawing { .. } => None,
     }
 }
 
-pub(super) fn parse_moxel_bounds_area(bounds: &[&str], name: String) -> Option<MoxelArea> {
+pub fn parse_moxel_bounds_area(bounds: &[&str], name: String) -> Option<MoxelArea> {
     let area_type = match bounds.first()?.trim() {
         "1" => "Rows",
         "2" => "Columns",
@@ -11862,7 +11565,7 @@ pub(super) fn parse_moxel_bounds_area(bounds: &[&str], name: String) -> Option<M
     })
 }
 
-pub(super) fn format_moxel_spreadsheet_xml(spreadsheet: &MoxelSpreadsheet) -> String {
+pub fn format_moxel_spreadsheet_xml(spreadsheet: &MoxelSpreadsheet) -> String {
     // Isolated unchanged renderer for the legacy embedded-form caller. It does
     // not construct a typed plan and therefore cannot panic on plan admission.
     let output_format_indices = moxel_output_format_indices(spreadsheet);
@@ -12057,7 +11760,7 @@ fn render_moxel_spreadsheet_xml(
         push_moxel_columns_xml(
             &mut xml,
             column_set,
-            &output_format_index_map,
+            output_format_index_map,
             &published_source_format,
         );
     }
@@ -12065,12 +11768,12 @@ fn render_moxel_spreadsheet_xml(
         push_moxel_row_xml(
             &mut xml,
             row,
-            &output_format_index_map,
+            output_format_index_map,
             emit_first_row_format_index,
         );
     }
     for drawing in &spreadsheet.drawings {
-        push_moxel_drawing_xml_with_policy(&mut xml, drawing, &output_format_index_map, policy);
+        push_moxel_drawing_xml_with_policy(&mut xml, drawing, output_format_index_map, policy);
     }
     if let Some(slots) = &spreadsheet.header_footer_slots {
         // A zero reference publishes `<f>0</f>` as stored. A non-zero one names
@@ -12280,7 +11983,7 @@ fn render_moxel_spreadsheet_xml(
     xml
 }
 
-pub(super) fn moxel_output_format_count(spreadsheet: &MoxelSpreadsheet) -> usize {
+pub fn moxel_output_format_count(spreadsheet: &MoxelSpreadsheet) -> usize {
     let max_column_format_index = spreadsheet
         .column_sets
         .iter()
@@ -12327,7 +12030,7 @@ pub(super) fn moxel_output_format_count(spreadsheet: &MoxelSpreadsheet) -> usize
     // spreadsheet blocks embedded in forms publish no `<format>` at all.
 }
 
-pub(super) fn moxel_sparse_default_column_set_insertion_point(
+pub fn moxel_sparse_default_column_set_insertion_point(
     spreadsheet: &MoxelSpreadsheet,
     format_index: usize,
 ) -> Option<usize> {
@@ -12350,9 +12053,7 @@ pub(super) fn moxel_sparse_default_column_set_insertion_point(
     )
 }
 
-pub(super) fn moxel_sparse_source_output_order(
-    spreadsheet: &MoxelSpreadsheet,
-) -> Option<Vec<usize>> {
+pub fn moxel_sparse_source_output_order(spreadsheet: &MoxelSpreadsheet) -> Option<Vec<usize>> {
     let shared_default_format_index = spreadsheet.header_footer_format_index?;
     let selected_count = spreadsheet.column_formats.len();
     if selected_count == 0 {
@@ -12439,7 +12140,7 @@ pub(super) fn moxel_sparse_source_output_order(
     Some(ordered)
 }
 
-pub(super) fn moxel_output_format_indices(spreadsheet: &MoxelSpreadsheet) -> Vec<usize> {
+pub fn moxel_output_format_indices(spreadsheet: &MoxelSpreadsheet) -> Vec<usize> {
     let format_count = moxel_output_format_count(spreadsheet);
     if let Some(ordered) = spreadsheet
         .first_use_pool
@@ -12555,7 +12256,7 @@ pub(super) fn moxel_output_format_indices(spreadsheet: &MoxelSpreadsheet) -> Vec
     ordered
 }
 
-pub(super) fn moxel_output_format_index_map(output_indices: &[usize]) -> BTreeMap<usize, usize> {
+pub fn moxel_output_format_index_map(output_indices: &[usize]) -> BTreeMap<usize, usize> {
     output_indices
         .iter()
         .enumerate()
@@ -12563,7 +12264,7 @@ pub(super) fn moxel_output_format_index_map(output_indices: &[usize]) -> BTreeMa
         .collect()
 }
 
-pub(super) fn push_moxel_columns_xml(
+pub fn push_moxel_columns_xml(
     xml: &mut String,
     column_set: &MoxelColumnSet,
     output_format_index_map: &BTreeMap<usize, usize>,
@@ -12614,7 +12315,7 @@ pub(super) fn push_moxel_columns_xml(
     xml.push_str("\t</columns>\r\n");
 }
 
-pub(super) fn moxel_source_column_format_offset(column_sets: &[MoxelColumnSet]) -> usize {
+pub fn moxel_source_column_format_offset(column_sets: &[MoxelColumnSet]) -> usize {
     column_sets
         .iter()
         .flat_map(|column_set| column_set.columns.iter())
@@ -12627,7 +12328,7 @@ pub(super) fn moxel_source_column_format_offset(column_sets: &[MoxelColumnSet]) 
         .unwrap_or(0)
 }
 
-pub(super) fn moxel_source_column_format_refs(column_sets: &[MoxelColumnSet]) -> Vec<usize> {
+pub fn moxel_source_column_format_refs(column_sets: &[MoxelColumnSet]) -> Vec<usize> {
     let mut seen = BTreeSet::new();
     let mut ordered = Vec::new();
     for source_format_index in column_sets
@@ -12650,7 +12351,7 @@ pub(super) fn moxel_source_column_format_refs(column_sets: &[MoxelColumnSet]) ->
     ordered
 }
 
-pub(super) fn remap_moxel_column_set_output_format_indices(
+pub fn remap_moxel_column_set_output_format_indices(
     column_sets: &mut [MoxelColumnSet],
     source_column_format_refs: &[usize],
 ) {
@@ -12680,7 +12381,7 @@ pub(super) fn remap_moxel_column_set_output_format_indices(
     }
 }
 
-pub(super) fn remap_moxel_row_or_cell_source_format_index(
+pub fn remap_moxel_row_or_cell_source_format_index(
     format_index: usize,
     source_column_format_refs: &[usize],
     is_row: bool,
@@ -12884,7 +12585,7 @@ fn remap_moxel_sites_to_source_slots(
     }
 }
 
-pub(super) fn moxel_internal_format_index_for_source_index(
+pub fn moxel_internal_format_index_for_source_index(
     source_format_index: usize,
     column_format_len: usize,
     format_len: usize,
@@ -12905,7 +12606,7 @@ pub(super) fn moxel_internal_format_index_for_source_index(
     Some(column_format_len + source_format_index)
 }
 
-pub(super) fn moxel_internal_format_index_for_sparse_source_index(
+pub fn moxel_internal_format_index_for_sparse_source_index(
     source_format_index: usize,
     source_column_format_refs: &[usize],
     column_format_len: usize,
@@ -12931,7 +12632,7 @@ pub(super) fn moxel_internal_format_index_for_sparse_source_index(
     Some(source_column_format_refs.len() + source_format_index - removed_before)
 }
 
-pub(super) fn moxel_source_derived_internal_output_order(
+pub fn moxel_source_derived_internal_output_order(
     column_sets: &[MoxelColumnSet],
     column_format_len: usize,
     format_len: usize,
@@ -12971,7 +12672,7 @@ pub(super) fn moxel_source_derived_internal_output_order(
     ordered
 }
 
-pub(super) fn remap_moxel_column_set_internal_format_indices(
+pub fn remap_moxel_column_set_internal_format_indices(
     column_sets: &mut [MoxelColumnSet],
     column_format_len: usize,
     format_len: usize,
@@ -13004,7 +12705,7 @@ pub(super) fn remap_moxel_column_set_internal_format_indices(
     }
 }
 
-pub(super) fn remap_moxel_column_set_sparse_internal_format_indices(
+pub fn remap_moxel_column_set_sparse_internal_format_indices(
     column_sets: &mut [MoxelColumnSet],
     source_column_format_refs: &[usize],
     column_format_len: usize,
@@ -13155,7 +12856,7 @@ fn remap_moxel_row_and_cell_source_format_indices(
     }
 }
 
-pub(super) fn remap_moxel_row_and_cell_sparse_source_format_indices(
+pub fn remap_moxel_row_and_cell_sparse_source_format_indices(
     rows: &mut [MoxelRow],
     source_column_format_refs: &[usize],
     output_indices: &[usize],
@@ -13201,7 +12902,7 @@ pub(super) fn remap_moxel_row_and_cell_sparse_source_format_indices(
     }
 }
 
-pub(super) fn moxel_sparse_body_source_format_offset(
+pub fn moxel_sparse_body_source_format_offset(
     rows: &[MoxelRow],
     source_column_format_refs: &[usize],
 ) -> usize {
@@ -13230,7 +12931,7 @@ pub(super) fn moxel_sparse_body_source_format_offset(
     first_body_source_slot - 1
 }
 
-pub(super) fn moxel_sparse_source_font_format_indices(
+pub fn moxel_sparse_source_font_format_indices(
     column_format_count: usize,
     format_count: usize,
     source_body_offset: usize,
@@ -13248,7 +12949,7 @@ pub(super) fn moxel_sparse_source_font_format_indices(
     )
 }
 
-pub(super) fn remap_moxel_row_and_cell_sparse_internal_format_indices(
+pub fn remap_moxel_row_and_cell_sparse_internal_format_indices(
     rows: &mut [MoxelRow],
     source_column_format_refs: &[usize],
     column_format_len: usize,
@@ -13307,7 +13008,7 @@ pub(super) fn remap_moxel_row_and_cell_sparse_internal_format_indices(
     }
 }
 
-pub(super) fn remap_moxel_row_and_cell_output_format_indices(
+pub fn remap_moxel_row_and_cell_output_format_indices(
     rows: &mut [MoxelRow],
     source_column_format_refs: &[usize],
 ) {
@@ -13358,7 +13059,7 @@ fn remap_moxel_leading_source_column_format_indices(rows: &mut [MoxelRow]) {
     }
 }
 
-pub(super) fn normalize_moxel_zero_column_format_refs(rows: &mut [MoxelRow]) {
+pub fn normalize_moxel_zero_column_format_refs(rows: &mut [MoxelRow]) {
     for row in rows {
         if row.format_index > 0 {
             row.format_index -= 1;
@@ -13381,7 +13082,7 @@ pub(super) fn normalize_moxel_zero_column_format_refs(rows: &mut [MoxelRow]) {
     }
 }
 
-pub(super) fn restore_moxel_source_format_refs_without_format_table(rows: &mut [MoxelRow]) {
+pub fn restore_moxel_source_format_refs_without_format_table(rows: &mut [MoxelRow]) {
     for row in rows {
         if let Some(source_format_index) = row.source_format_index {
             row.format_index = source_format_index;
@@ -13397,7 +13098,7 @@ pub(super) fn restore_moxel_source_format_refs_without_format_table(rows: &mut [
     }
 }
 
-pub(super) fn moxel_uses_sparse_source_format_refs(
+pub fn moxel_uses_sparse_source_format_refs(
     column_sets: &[MoxelColumnSet],
     column_count: usize,
     _rows: &[MoxelRow],
@@ -13520,7 +13221,7 @@ fn push_moxel_header_footer_text_xml(xml: &mut String, tag: &str, values: &[Moxe
     _ = write!(xml, "\t\t</{tag}>\r\n");
 }
 
-pub(super) fn push_moxel_print_settings_xml(xml: &mut String, settings: &MoxelPrintSettings) {
+pub fn push_moxel_print_settings_xml(xml: &mut String, settings: &MoxelPrintSettings) {
     xml.push_str("\t<printSettings>\r\n");
     push_moxel_format_text(xml, "pageOrientation", settings.page_orientation);
     push_moxel_format_usize(xml, "scale", settings.scale);
@@ -13551,7 +13252,7 @@ pub(super) fn push_moxel_print_settings_xml(xml: &mut String, settings: &MoxelPr
 }
 
 impl MoxelPrintSettings {
-    pub(super) fn is_default_margins_only(&self) -> bool {
+    pub fn is_default_margins_only(&self) -> bool {
         self.page_orientation.is_none()
             && self.scale.is_none()
             && self.collate.is_none()
@@ -13579,8 +13280,8 @@ impl MoxelPrintSettings {
 /// Writes one `<format>` with the decoded font slot verbatim.  Production
 /// rendering goes through the font projection below; this entry point exists
 /// for format-level unit coverage.
-#[cfg(test)]
-pub(super) fn push_moxel_format_xml(
+#[doc(hidden)]
+pub fn push_moxel_format_xml(
     xml: &mut String,
     spreadsheet: &MoxelSpreadsheet,
     format_index: usize,
@@ -13751,7 +13452,7 @@ fn push_moxel_format_body_xml(
 /// 73 `S+D`) with no other permutation, and blocks whose `<v8:Type>` run
 /// starts with `xs:string` sit on both sides of that split -- so the two
 /// orders are independent.
-pub(super) fn push_moxel_value_type_xml(xml: &mut String, value_type: &MoxelValueType) {
+pub fn push_moxel_value_type_xml(xml: &mut String, value_type: &MoxelValueType) {
     if value_type.items.is_empty() {
         xml.push_str("\t\t<valueType/>\r\n");
         return;
@@ -13833,7 +13534,7 @@ pub(super) fn push_moxel_value_type_xml(xml: &mut String, value_type: &MoxelValu
     xml.push_str("\t\t</valueType>\r\n");
 }
 
-pub(super) fn push_moxel_localized_values_xml(
+pub fn push_moxel_localized_values_xml(
     xml: &mut String,
     tag: &str,
     values: &[MoxelLocalizedValue],
@@ -13874,10 +13575,7 @@ pub(super) fn push_moxel_localized_values_xml(
     _ = write!(xml, "\t\t</{tag}>\r\n");
 }
 
-pub(super) fn moxel_format_for_index(
-    spreadsheet: &MoxelSpreadsheet,
-    format_index: usize,
-) -> MoxelFormat {
+pub fn moxel_format_for_index(spreadsheet: &MoxelSpreadsheet, format_index: usize) -> MoxelFormat {
     // Where the pool is the platform's own first-reference walk every site
     // already carries an internal slot, so the split's own length is the
     // boundary between the two halves. Re-deriving it from the column
@@ -13970,31 +13668,31 @@ pub(super) fn moxel_format_for_index(
         .unwrap_or_default()
 }
 
-pub(super) fn push_moxel_format_usize(xml: &mut String, tag: &str, value: Option<usize>) {
+pub fn push_moxel_format_usize(xml: &mut String, tag: &str, value: Option<usize>) {
     if let Some(value) = value {
         _ = write!(xml, "\t\t<{tag}>{value}</{tag}>\r\n");
     }
 }
 
-pub(super) fn push_moxel_format_i32(xml: &mut String, tag: &str, value: Option<i32>) {
+pub fn push_moxel_format_i32(xml: &mut String, tag: &str, value: Option<i32>) {
     if let Some(value) = value {
         _ = write!(xml, "\t\t<{tag}>{value}</{tag}>\r\n");
     }
 }
 
-pub(super) fn push_moxel_format_bool(xml: &mut String, tag: &str, value: Option<bool>) {
+pub fn push_moxel_format_bool(xml: &mut String, tag: &str, value: Option<bool>) {
     if let Some(value) = value {
         _ = write!(xml, "\t\t<{tag}>{}</{tag}>\r\n", xml_bool(value));
     }
 }
 
-pub(super) fn push_moxel_format_text(xml: &mut String, tag: &str, value: Option<&str>) {
+pub fn push_moxel_format_text(xml: &mut String, tag: &str, value: Option<&str>) {
     if let Some(value) = value {
         _ = write!(xml, "\t\t<{tag}>{}</{tag}>\r\n", XmlElementText(value));
     }
 }
 
-pub(super) fn push_moxel_format_color(xml: &mut String, tag: &str, value: Option<&str>) {
+pub fn push_moxel_format_color(xml: &mut String, tag: &str, value: Option<&str>) {
     if let Some(name) = value.and_then(|value| value.strip_prefix("windows:")) {
         _ = write!(
             xml,
@@ -14012,7 +13710,7 @@ pub(super) fn push_moxel_format_color(xml: &mut String, tag: &str, value: Option
     }
 }
 
-pub(super) fn push_moxel_picture_xml(xml: &mut String, picture: &MoxelPicture) {
+pub fn push_moxel_picture_xml(xml: &mut String, picture: &MoxelPicture) {
     xml.push_str("\t<picture>\r\n");
     _ = write!(xml, "\t\t<index>{}</index>\r\n", picture.index);
     // The record's seventh member decides the attribute: 0 writes `t="false"`,
@@ -14050,8 +13748,7 @@ pub(super) fn push_moxel_picture_xml(xml: &mut String, picture: &MoxelPicture) {
     xml.push_str("\t</picture>\r\n");
 }
 
-#[cfg(test)]
-pub(super) fn push_moxel_drawing_xml(
+pub fn push_moxel_drawing_xml(
     xml: &mut String,
     drawing: &MoxelDrawing,
     output_format_index_map: &BTreeMap<usize, usize>,
@@ -14481,7 +14178,7 @@ fn push_moxel_chart_xml_with_automatic_name(
 /// `<object>` element the exporter publishes for it, or `None` where the
 /// reader refuses the record. The template writer checks the charts it
 /// builds against this.
-pub(crate) fn render_moxel_chart_object_xml(
+pub fn render_moxel_chart_object_xml(
     field: &str,
     gantt: bool,
     object_refs: &BTreeMap<String, String>,
@@ -14685,17 +14382,14 @@ const MOXEL_CHART_AUTOMATIC_SERIES_NAME: &str = "Pivot";
 /// An explicitly selected output representation, never an OS/build detector.
 /// Stored remains the compatibility default and compiler source-roundtrip
 /// representation. User-changed names and real-series eligibility are preserved.
-#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub enum MoxelChartSeriesAutomaticName {
     /// Explicit English republication over an eligible unchanged name cache.
-    #[value(name = "english")]
     RepublishedInEnglish,
     /// Explicit Russian republication; item language identifiers are preserved.
-    #[value(name = "russian")]
     Russian,
     /// Preserve the document's localized name cache.
     #[default]
-    #[value(name = "stored")]
     Stored,
 }
 
@@ -14713,7 +14407,7 @@ impl MoxelChartSeriesAutomaticName {
     /// Keep this default and compiler source validation Stored. The explicit
     /// English representation is available independently; selecting it for
     /// an export remains a separate, unresolved target-context decision.
-    pub(super) const fn host() -> Self {
+    pub const fn host() -> Self {
         Self::Stored
     }
 }
@@ -15155,7 +14849,7 @@ fn push_moxel_chart_empty(xml: &mut String, tag: &str) {
     _ = write!(xml, "\t\t\t<d3p1:{tag}/>\r\n");
 }
 
-pub(super) fn push_moxel_merge_xml(xml: &mut String, merge: &MoxelMerge) {
+pub fn push_moxel_merge_xml(xml: &mut String, merge: &MoxelMerge) {
     xml.push_str("\t<merge>\r\n");
     push_moxel_merge_body_xml(xml, merge);
     xml.push_str("\t</merge>\r\n");
@@ -15170,7 +14864,7 @@ pub(super) fn push_moxel_merge_xml(xml: &mut String, merge: &MoxelMerge) {
 /// on the stand publishes `<g>` beside `<t>` or `<o>`, so their relative
 /// order is unobserved and this writer follows the storage record rather
 /// than inventing one.
-pub(super) fn push_moxel_group_xml(xml: &mut String, tag: &str, group: &MoxelVerticalGroup) {
+pub fn push_moxel_group_xml(xml: &mut String, tag: &str, group: &MoxelVerticalGroup) {
     _ = write!(xml, "\t<{tag}>\r\n");
     _ = write!(xml, "\t\t<b>{}</b>\r\n", group.begin_row);
     if group.end_row != group.begin_row {
@@ -15203,19 +14897,19 @@ pub(super) fn push_moxel_group_xml(xml: &mut String, tag: &str, group: &MoxelVer
     _ = write!(xml, "\t</{tag}>\r\n");
 }
 
-pub(super) fn push_moxel_vertical_unmerge_xml(xml: &mut String, merge: &MoxelMerge) {
+pub fn push_moxel_vertical_unmerge_xml(xml: &mut String, merge: &MoxelMerge) {
     xml.push_str("\t<verticalUnmerge>\r\n");
     push_moxel_merge_body_xml(xml, merge);
     xml.push_str("\t</verticalUnmerge>\r\n");
 }
 
-pub(super) fn push_moxel_horizontal_unmerge_xml(xml: &mut String, merge: &MoxelMerge) {
+pub fn push_moxel_horizontal_unmerge_xml(xml: &mut String, merge: &MoxelMerge) {
     xml.push_str("\t<horizontalUnmerge>\r\n");
     push_moxel_merge_body_xml(xml, merge);
     xml.push_str("\t</horizontalUnmerge>\r\n");
 }
 
-pub(super) fn push_moxel_merge_body_xml(xml: &mut String, merge: &MoxelMerge) {
+pub fn push_moxel_merge_body_xml(xml: &mut String, merge: &MoxelMerge) {
     _ = write!(xml, "\t\t<r>{}</r>\r\n", merge.row);
     _ = write!(xml, "\t\t<c>{}</c>\r\n", merge.column);
     if merge.height > 0 {
@@ -15229,7 +14923,7 @@ pub(super) fn push_moxel_merge_body_xml(xml: &mut String, merge: &MoxelMerge) {
     }
 }
 
-pub(super) fn push_moxel_line_xml(xml: &mut String, line: &MoxelLine) {
+pub fn push_moxel_line_xml(xml: &mut String, line: &MoxelLine) {
     _ = write!(xml, "\t<line width=\"{}\" gap=\"false\">\r\n", line.width);
     _ = write!(
         xml,
@@ -15239,7 +14933,7 @@ pub(super) fn push_moxel_line_xml(xml: &mut String, line: &MoxelLine) {
     xml.push_str("\t</line>\r\n");
 }
 
-pub(super) fn push_moxel_font_xml(xml: &mut String, font: &MoxelFont) {
+pub fn push_moxel_font_xml(xml: &mut String, font: &MoxelFont) {
     xml.push_str("\t<font");
     if let Some(ref_name) = &font.ref_name {
         if ref_name.starts_with("sys:") {
@@ -15272,7 +14966,7 @@ pub(super) fn push_moxel_font_xml(xml: &mut String, font: &MoxelFont) {
     xml.push_str("/>\r\n");
 }
 
-pub(super) fn push_moxel_named_item_xml(xml: &mut String, named_item: &MoxelNamedItem) {
+pub fn push_moxel_named_item_xml(xml: &mut String, named_item: &MoxelNamedItem) {
     match named_item {
         MoxelNamedItem::Cells(area) => push_moxel_area_xml(xml, area),
         MoxelNamedItem::Drawing { name, drawing_id } => {
@@ -15284,7 +14978,7 @@ pub(super) fn push_moxel_named_item_xml(xml: &mut String, named_item: &MoxelName
     }
 }
 
-pub(super) fn push_moxel_area_xml(xml: &mut String, area: &MoxelArea) {
+pub fn push_moxel_area_xml(xml: &mut String, area: &MoxelArea) {
     xml.push_str("\t<namedItem xsi:type=\"NamedItemCells\">\r\n");
     _ = write!(xml, "\t\t<name>{}</name>\r\n", XmlElementText(&area.name));
     xml.push_str("\t\t<area>\r\n");
@@ -15308,7 +15002,7 @@ pub(super) fn push_moxel_area_xml(xml: &mut String, area: &MoxelArea) {
     xml.push_str("\t</namedItem>\r\n");
 }
 
-pub(super) fn push_moxel_document_area_xml(xml: &mut String, tag: &str, area: &MoxelArea) {
+pub fn push_moxel_document_area_xml(xml: &mut String, tag: &str, area: &MoxelArea) {
     _ = write!(xml, "\t<{tag}>\r\n");
     _ = write!(xml, "\t\t<type>{}</type>\r\n", area.area_type);
     _ = write!(xml, "\t\t<beginRow>{}</beginRow>\r\n", area.begin_row);
@@ -15329,7 +15023,7 @@ pub(super) fn push_moxel_document_area_xml(xml: &mut String, tag: &str, area: &M
     _ = write!(xml, "\t</{tag}>\r\n");
 }
 
-pub(super) fn push_moxel_row_xml(
+pub fn push_moxel_row_xml(
     xml: &mut String,
     row: &MoxelRow,
     output_format_index_map: &BTreeMap<usize, usize>,
@@ -15464,18 +15158,18 @@ pub(super) fn push_moxel_row_xml(
         // previously emitted first, ahead of every other member -- the reverse of
         // where the platform actually places it.
         let value_is_reference = matches!(cell.value, Some(MoxelCellValue::Reference(_)));
-        if let Some(value) = &cell.value {
-            if !value_is_reference {
-                push_moxel_cell_value_xml(xml, "v", value);
-            }
+        if let Some(value) = &cell.value
+            && !value_is_reference
+        {
+            push_moxel_cell_value_xml(xml, "v", value);
         }
         if let Some(detail_parameter) = &cell.detail_parameter {
             push_xml_text_element(xml, "\t\t\t\t\t", "detailParameter", detail_parameter);
         }
-        if let Some(value) = &cell.value {
-            if value_is_reference {
-                push_moxel_cell_value_xml(xml, "v", value);
-            }
+        if let Some(value) = &cell.value
+            && value_is_reference
+        {
+            push_moxel_cell_value_xml(xml, "v", value);
         }
         if let Some(detail_value) = &cell.detail_value {
             push_moxel_cell_value_xml(xml, "d", detail_value);
@@ -15674,6 +15368,12 @@ fn push_moxel_note_xml(
 mod moxel_exact_parity_tests {
     use super::*;
 
+    /// The built-in type table these tests decode with. None of their bodies
+    /// carries a value-type `Pattern`, so the table is never asked.
+    fn no_builtin_types(_type_id: &str) -> Option<&'static str> {
+        None
+    }
+
     /// Fixture: `tests/fixtures/moxel_reconciliation_report_headers_raw.txt`,
     /// 2005 bytes, sha256
     /// `c477882a48c0f27dbb8439de942c2ded6ef342c096a39a3aa2811c040f24fef3`. It
@@ -15687,15 +15387,20 @@ mod moxel_exact_parity_tests {
     /// for exactly those five, between the `width` (member 7) and the
     /// `widthWeightFactor` (member 41) each is written with.
     const RECONCILIATION_REPORT_HEADERS_RAW: &str =
-        include_str!("../../tests/fixtures/moxel_reconciliation_report_headers_raw.txt");
+        include_str!("../../../tests/fixtures/moxel_reconciliation_report_headers_raw.txt");
 
     fn reconciliation_report_headers() -> MoxelSpreadsheet {
-        parse_moxel_spreadsheet_text(RECONCILIATION_REPORT_HEADERS_RAW, &BTreeMap::new()).unwrap()
+        parse_moxel_spreadsheet_text(
+            RECONCILIATION_REPORT_HEADERS_RAW,
+            &BTreeMap::new(),
+            no_builtin_types,
+        )
+        .unwrap()
     }
 
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/ut-chart-policy/explicit-english-zero-series/projection_tests.rs"
+        "/../../tests/fixtures/ut-chart-policy/explicit-english-zero-series/typed_projection_tests.rs"
     ));
 
     #[test]
@@ -15915,7 +15620,8 @@ mod moxel_exact_parity_tests {
 
         let cleared = RECONCILIATION_REPORT_HEADERS_RAW.replacen("},1,2,9,", "},0,2,9,", 1);
         assert_ne!(cleared, RECONCILIATION_REPORT_HEADERS_RAW);
-        let spreadsheet = parse_moxel_spreadsheet_text(&cleared, &BTreeMap::new()).unwrap();
+        let spreadsheet =
+            parse_moxel_spreadsheet_text(&cleared, &BTreeMap::new(), no_builtin_types).unwrap();
         assert!(!spreadsheet.template_mode);
         assert!(!format_moxel_spreadsheet_xml(&spreadsheet).contains("<templateMode>"));
     }
@@ -15930,12 +15636,13 @@ mod moxel_exact_parity_tests {
     /// default-format record names a width the format pool does not already
     /// hold, so the platform materializes it as the pool's last entry.
     const BUYER_INSTRUCTION_RAW: &str =
-        include_str!("../../tests/fixtures/moxel_buyer_instruction_picture_parameter_raw.txt");
+        include_str!("../../../tests/fixtures/moxel_buyer_instruction_picture_parameter_raw.txt");
 
     #[test]
     fn picture_parameter_member_is_published_from_its_own_mask_bit() {
         let spreadsheet =
-            parse_moxel_spreadsheet_text(BUYER_INSTRUCTION_RAW, &BTreeMap::new()).unwrap();
+            parse_moxel_spreadsheet_text(BUYER_INSTRUCTION_RAW, &BTreeMap::new(), no_builtin_types)
+                .unwrap();
         let xml = format_moxel_spreadsheet_xml(&spreadsheet);
 
         assert!(
@@ -15947,7 +15654,8 @@ mod moxel_exact_parity_tests {
     #[test]
     fn unmaterialized_default_format_is_appended_and_named() {
         let spreadsheet =
-            parse_moxel_spreadsheet_text(BUYER_INSTRUCTION_RAW, &BTreeMap::new()).unwrap();
+            parse_moxel_spreadsheet_text(BUYER_INSTRUCTION_RAW, &BTreeMap::new(), no_builtin_types)
+                .unwrap();
         let xml = format_moxel_spreadsheet_xml(&spreadsheet);
 
         assert_eq!(xml.matches("<format").count(), 2, "{xml}");
@@ -16149,17 +15857,6 @@ mod moxel_exact_parity_tests {
             parse_moxel_style_color("12971252").as_deref(),
             Some("#F4ECC5")
         );
-    }
-
-    #[test]
-    fn typed_extraction_reports_binary_container_as_decoder_failure() {
-        let error = try_extract_moxel_spreadsheet_xml(&[0], &BTreeMap::new()).unwrap_err();
-
-        assert_eq!(
-            error.stage(),
-            crate::mssql_dump::MxlDiagnosticStage::Decoder
-        );
-        assert_eq!(error.code(), "mxl.decoder.binary-container");
     }
 
     #[test]
@@ -16622,11 +16319,11 @@ mod moxel_exact_parity_tests {
             },
         ];
         let source = "{8,{3,3,{-3}},{3,3,{-3}}}";
-        let raw_spans = split_1c_braced_fields_with_spans(source, 0).unwrap();
-        let fields = raw_spans
-            .iter()
-            .map(|(value, _, _)| *value)
-            .collect::<Vec<_>>();
+        // The root fields and their spans as the decoder reads them; the
+        // spans are the ones the root's `split_1c_braced_fields_with_spans`
+        // gives.
+        let fields = split_braced_bytes(source, 0).unwrap();
+        let raw_spans = moxel_root_field_spans(source, &fields);
         let lines = parse_moxel_lines_with_raw_spans(&fields, &raw_spans, &formats, false);
 
         assert_eq!(lines.len(), 2);

@@ -718,6 +718,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-moxel"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "ibcmd-number-format"
 version = "0.1.0"
 
@@ -746,6 +753,7 @@ dependencies = [
  "ibcmd-filedb",
  "ibcmd-form-native",
  "ibcmd-form-schema",
+ "ibcmd-moxel",
  "ibcmd-postgres",
  "ibcmd-schema",
  "ibcmd-v8",

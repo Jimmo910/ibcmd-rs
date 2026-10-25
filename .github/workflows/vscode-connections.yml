@@ -72,6 +72,8 @@ jobs:
           CARGO_BUILD_JOBS: "2"
           IBCMD_TEST_KEEP_FIXTURES: "1"
         run: |
+          cargo test --locked -p ibcmd-moxel chart_policy_
+          cargo test --locked -p ibcmd-moxel explicit_english_projection_
           cargo test --locked --lib chart_policy_ --no-default-features
           cargo test --locked --lib explicit_english_projection_ --no-default-features
           cargo test --locked --lib chart_series_names_ --no-default-features

@@ -126,3 +126,14 @@ Compiler mxl_native::chart uses the renderer to validate its stored source cache
 It MUST remain Stored; a global English default would reject valid Сводная XML or
 regress cached outputs. The future export selector needs an explicit immutable
 caller context and review; this patch intentionally does not invent that selector.
+
+## Test ownership after MOXCEL crate extraction
+
+Packed CF/archive, codec, default and compiler-roundtrip checks remain in the
+root `moxel_entry::series_projection_tests`. Typed mutation controls live in
+`typed_projection_tests.rs`, included by `ibcmd-moxel`, so the chart IR fields
+remain private. They use the existing public `empty-no-extended-scales` raw
+object identified by the wrapper prototype, while the root checks retain the
+exact source CF digest. The decoder crate adds no archive/compiler or Clap
+dependency. Both owners run in the VSCode workflow; the offline workspace and
+root gates also cover them.

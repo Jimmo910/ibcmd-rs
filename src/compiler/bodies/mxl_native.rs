@@ -2224,7 +2224,7 @@ impl<'a, 'd> BodyWriter<'a, 'd> {
                 }
                 // `<v8:TypeSet>` of all catalog references stores the built-in
                 // `cfg:CatalogRef` type id, the one spelling the exporter reads
-                // back (mssql_dump/moxel.rs `ConfigTypeSet("CatalogRef")`).
+                // back (crates/ibcmd-moxel `ConfigTypeSet("CatalogRef")`).
                 "TypeSet" => {
                     let spelled = child.text.trim();
                     let name = spelled.split_once(':').map(|(_, name)| name);

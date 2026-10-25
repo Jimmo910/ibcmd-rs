@@ -1151,7 +1151,7 @@ fn rectangle(node: &XmlNode) -> Result<[String; 4]> {
 // ---------------------------------------------------------------------------
 
 // The platform's one time-unit enumeration: the exporter's MXL chart reader
-// (mssql_dump/moxel.rs) and the planner codec decode `40` as `Week`, `60`
+// (crates/ibcmd-moxel) and the planner codec decode `40` as `Week`, `60`
 // `Quarter`, `70` `Year`; Управление задачами `Reports/узПланированиеПроекта/
 // Templates/пмГант_ГантДиаграмма` spells `Week`.
 const TIME_MEASURES: &[(&str, &str)] = &[
@@ -1352,7 +1352,7 @@ fn gantt_time_scale(node: &XmlNode) -> Result<String> {
             ),
         };
         // Member 7 is the level's localized `<format>` (`{1,0}` when empty),
-        // the slot the template exporter reads it from (mssql_dump/moxel.rs);
+        // the slot the template exporter reads it from (crates/ibcmd-moxel);
         // Управление задачами `пмГант_ГантДиаграмма` spells `ДФ=ММММ`.
         let level_format = localized(l.required("format")?)?;
         let mut labels = Children::chart(l.required("labels")?)?;

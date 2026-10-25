@@ -44,8 +44,6 @@ use crate::metadata_owner_graph::{
     self as owner_graph, CATALOG_ATTRIBUTE_GROUP_UUID, DOCUMENT_ATTRIBUTE_GROUP_UUID,
     METADATA_TEMPLATE_COLLECTION_UUID,
 };
-#[cfg(all(test, feature = "mssql-live-tests"))]
-use crate::module_blob::{LocalizedString, SpreadsheetNumberFormatHint};
 use crate::module_blob::{
     ParsedFormBodyBlob, parse_form_body_blob, unpack_module_blob_text,
     unpack_plain_text_module_body,
@@ -1018,8 +1016,7 @@ mod metadata;
 #[cfg(test)]
 mod metadata_order_tests;
 pub mod model_export;
-mod moxel;
-mod mxl_ir;
+mod moxel_entry;
 pub mod offline_context;
 mod offline_rows;
 mod output_writer;
@@ -1093,7 +1090,7 @@ use form_body::*;
 use form_ref_index::FormObjectRefIndex;
 use forms::*;
 use metadata::*;
-use moxel::*;
+use moxel_entry::*;
 use output_writer::OutputWriter;
 pub(crate) use output_writer::{FileSink, native_module_file_bytes};
 use refs::*;
@@ -1102,8 +1099,8 @@ use selected::*;
 use source_asset_diagnostics::cluster_source_asset_diagnostics;
 use source_assets::*;
 
+pub use ibcmd_moxel::{MxlDiagnostic, MxlDiagnosticStage};
 pub use metadata::MetadataExtractionMissReason;
-pub use mxl_ir::{MxlDiagnostic, MxlDiagnosticStage};
 pub use source_asset_diagnostics::{
     SourceAssetDiagnosticCluster, SourceAssetDiagnosticClusterReport, SourceAssetDiagnosticSample,
 };
@@ -1177,8 +1174,8 @@ pub(crate) fn extract_standalone_metadata_source_xml(
     )
     .map(|extracted| (extracted.relative_path, extracted.xml))
 }
-pub use moxel::{MoxelChartSeriesAutomaticName, try_extract_moxel_spreadsheet_xml};
-pub(crate) use moxel::{
+pub use moxel_entry::{MoxelChartSeriesAutomaticName, try_extract_moxel_spreadsheet_xml};
+pub(crate) use moxel_entry::{
     MoxelLineTraceEvent, MoxelLineTraceSink,
     extract_inflated_moxel_spreadsheet_xml_with_line_trace, extract_moxel_spreadsheet_xml,
     extract_moxel_spreadsheet_xml_with_line_trace, render_moxel_chart_object_xml,
@@ -1186,7 +1183,7 @@ pub(crate) use moxel::{
     try_extract_moxel_spreadsheet_xml_with_generated_types_and_policy,
 };
 #[cfg(all(test, feature = "mssql-live-tests"))]
-pub(crate) use moxel::{
+pub(crate) use moxel_entry::{
     debug_moxel_number_format_usage, debug_moxel_spreadsheet_summary_from_blob,
 };
 pub(crate) use source_assets::write_source_xml_file;
@@ -1197,8 +1194,6 @@ pub use timing::{
 };
 
 // Platform-level 1C standard pictures, not metadata UUIDs from one database.
-const STD_PICTURE_INFORMATION_UUID: &str = "4b54770b-d069-4c0e-9b17-5cc2a01134d9";
-const STD_PICTURE_SAVE_FILE_UUID: &str = "818ab7d0-4654-4542-bd5e-fd9d1352b5a1";
 const STD_PICTURE_USER_UUID: &str = "6ff3ddbd-56e3-4ddf-a5bf-048c1e2dfb2f";
 const STD_PICTURE_LOAD_REPORT_SETTINGS_UUID: &str = "283ecabd-aaed-41d1-ad46-6cca91c29120";
 const STD_PICTURE_INFORMATION_REGISTER_UUID: &str = "5b87ad1b-d8cc-43c1-b5c4-dc43613c518c";
