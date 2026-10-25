@@ -37,3 +37,12 @@ verified physical registration mapping.
 Prefixed namespace declarations unused throughout both compared documents are
 lexical only. Prefix use includes element/attribute names and decoded QName-like
 text/attribute values; default namespace declarations remain strict.
+
+Session emptiness is evidence only after session visibility is established.
+A shared fail-closed SQL predicate checks effective server permissions before
+DMV-based preflight and inside rendered admission/disruption scripts. SQL Server
+2019 and earlier require VIEW SERVER STATE; SQL Server2022 and later require
+VIEW SERVER PERFORMANCE STATE. A known supported major version and sufficient
+permission (or sysadmin) are required; NULL or unavailable proof is not success.
+No SQL permissions are granted automatically. See the Microsoft
+[dm_exec_sessions permission contract](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-objects/sys-dm-exec-sessions-transact-sql?view=sql-server-ver17#permissions).

@@ -102,3 +102,11 @@ unknown properties and object identities instead of accepting arbitrary drift.
 - **THEN** the source comparison treats the addition as lexical XML only
 - **AND** prefixes used by element names, attribute names or QName-like values
   retain their declared namespace bindings, including inherited bindings
+#### Scenario: SQL session visibility is not established
+- **GIVEN** an SQL login whose effective permissions cannot establish visibility
+  of other logins' sessions, or whose visibility facts are NULL or unsupported
+- **WHEN** an actual-target session gate prepares activation or LIVE disruption
+- **THEN** it refuses before publication or disruption instead of treating a
+  filtered DMV as an empty database
+- **AND** preflight and rendered guards require the documented server permission
+  for the SQL major version without requesting an application account
