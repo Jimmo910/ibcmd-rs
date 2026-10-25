@@ -1,16 +1,15 @@
-- [x] 1. Confirm the current public token pair and selected chart flags with sanitized receipt ad631a807fe91fefa90a0e1655491ca4012cb53ad32f9deb213b1dc9a891d9fd (Refs #381).
-- [x] 2. Inspect the retained public PR #521 diff and prepare unmeasured source-owned chart fragments and a controlled experiment design.
-- [ ] 3. Establish a native-accepted minimal wrapper; verify imported levels and run paired shape/name-state controls with baseline repeats.
-- [ ] 4. Identify a supported observable target setting if required; obtain approval before a causal environment experiment.
-- [ ] 5. Choose and document a per-export profile entrypoint and eligibility rule only after evidence review.
-- [ ] 6. Add failing clean-room production-path tests, positive/rejection controls and wrapper coverage.
-- [ ] 7. Thread any approved policy without mutable global state or private-name heuristics.
-- [ ] 8. Run targeted tests, policy gates and the repository verification loop.
-- [ ] 9. Obtain independent review and serialized exact-head native byte/inventory comparison.
+- [x] 1. Confirm the retained 15-node automatic-name/palette facts; preserve source seals (Refs #381).
+- [x] 2. Check existing parser/format ownership and separate explicit publication policy from native autodetection.
+- [x] 3. Specify `stored|russian|english`, default Stored, with user-label and BSL/ScriptVariant preservation.
+- [x] 4. Reproduce the Palette8 explicit-English error on unchanged production and retain the semantic RED.
+- [x] 5. Pass immutable typed policy through export arguments, source assets and nested Gantt rendering; keep compatibility entrypoints Stored.
+- [x] 6. Run 14 focused projection/default/refusal controls and strict OpenSpec validation; obtain independent source review.
+- [ ] 7. Complete production checks and exact-head automatic CI for the new policy candidate.
+- [ ] 8. Compare the five retained original Template files in explicit English mode through the sole operator, without native recapture or raw-data transfer.
 
-
-Partial evidence for steps 3 and 6–8 is recorded in
-`evidence/local-validation.md`: one public wrapper name observation and an
-explicit-English-only correction with four RED/GREEN-tested controls. The full
-steps remain open because paired controls, default export selection and the
-complete verification loop are still pending. No native parity gate is closed.
+The earlier experiment design remains historical evidence, not a requirement to
+create more captures. This contract is an explicit representation choice; native
+publication-language autodetection is unresolved. Passing selected English does
+not establish default Stored parity, profile-wide parity or NamedItem ordering.
+The separate Form loop is already byte-exact at c45; status/selected module
+acceptance passed at e93. See evidence/explicit-policy-validation.md.

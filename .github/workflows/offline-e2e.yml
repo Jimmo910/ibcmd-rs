@@ -42,6 +42,7 @@ jobs:
           npx --yes @fission-ai/openspec@1.6.0 validate add-fast-parity-evidence --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate add-selected-cf-extract --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate implement-edt-project-conversion --strict --no-interactive
+          npx --yes @fission-ai/openspec@1.6.0 validate select-chart-series-name-profile --strict --no-interactive
 
   quality:
     name: Quality
@@ -221,6 +222,19 @@ jobs:
         run: |
           cargo test --locked -p ibcmd-rs --lib field_map_observer --no-default-features
           cargo test --locked -p ibcmd-rs --lib form_observer_shared_schema_tests --no-default-features
+
+      - name: Test explicit chart series-name policy
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: "2"
+          IBCMD_TEST_KEEP_FIXTURES: "1"
+          CARGO_NET_OFFLINE: "true"
+        run: |
+          cargo test --locked --lib chart_policy_ --no-default-features
+          cargo test --locked --lib explicit_english_projection_ --no-default-features
+          cargo test --locked --lib chart_series_names_ --no-default-features
+          cargo test --locked --lib changed_chart_names_ --no-default-features
+          cargo test --locked --lib nonstored_chart_labels_ --no-default-features
 
       - name: Test editor export read scope offline
         env:

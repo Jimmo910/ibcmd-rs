@@ -1521,9 +1521,9 @@ pub(super) struct MoxelChart {
     is_show_title: bool,
     is_show_legend: bool,
     /// Existing name-projection exclusion inferred from a named palette.
-    /// Preserve this exclusion pending separate evidence; it does not select
-    /// the native target or imply that an English extra name needs a real
-    /// series. See `push_moxel_chart_series_text_xml`.
+    /// This remains a real-series exclusion, not a target-language selector.
+    /// Explicit mandatory extra-series publication is independent of palette.
+    /// See `push_moxel_chart_series_text_xml`.
     has_extended_scales: bool,
     is_title_init: bool,
     ttl_border: MoxelChartBorder,
@@ -1988,6 +1988,22 @@ pub(crate) fn try_extract_moxel_spreadsheet_xml_with_generated_types(
     object_refs: &BTreeMap<String, String>,
     generated_types: &BTreeMap<String, String>,
 ) -> Result<String, MxlDiagnostic> {
+    try_extract_moxel_spreadsheet_xml_with_generated_types_and_policy(
+        bytes,
+        object_refs,
+        generated_types,
+        MoxelChartSeriesAutomaticName::Stored,
+    )
+}
+
+/// Decode the same source with an explicitly selected chart publication policy.
+/// The legacy/compiler entrypoints above retain Stored representation.
+pub(crate) fn try_extract_moxel_spreadsheet_xml_with_generated_types_and_policy(
+    bytes: &[u8],
+    object_refs: &BTreeMap<String, String>,
+    generated_types: &BTreeMap<String, String>,
+    policy: MoxelChartSeriesAutomaticName,
+) -> Result<String, MxlDiagnostic> {
     let body = crate::compiler::bodies::mxl::decode_compatible_mxl(bytes).map_err(|error| {
         MxlDiagnostic::decoder("mxl.decoder.binary-container", error.to_string())
     })?;
@@ -1996,7 +2012,7 @@ pub(crate) fn try_extract_moxel_spreadsheet_xml_with_generated_types(
         super::form::layout_8_5_1::rewrite_primitives_8_5_1_in_place(body.native_body_text());
     let _scope = SplitCacheScope::new(&text);
     let decoded = decode_moxel_spreadsheet_ir(&text, object_refs, generated_types, None)?;
-    write_moxel_spreadsheet_xml(&decoded)
+    write_moxel_spreadsheet_xml_with_policy(&decoded, policy)
 }
 
 pub(crate) fn extract_moxel_spreadsheet_xml_with_line_trace(
@@ -2073,7 +2089,14 @@ fn decode_moxel_spreadsheet_ir(
 }
 
 fn write_moxel_spreadsheet_xml(decoded: &DecodedMoxelSpreadsheet) -> Result<String, MxlDiagnostic> {
-    format_moxel_spreadsheet_xml_with_plan(&decoded.spreadsheet, &decoded.write_plan)
+    write_moxel_spreadsheet_xml_with_policy(decoded, MoxelChartSeriesAutomaticName::Stored)
+}
+
+fn write_moxel_spreadsheet_xml_with_policy(
+    decoded: &DecodedMoxelSpreadsheet,
+    policy: MoxelChartSeriesAutomaticName,
+) -> Result<String, MxlDiagnostic> {
+    format_moxel_spreadsheet_xml_with_plan(&decoded.spreadsheet, &decoded.write_plan, policy)
 }
 
 fn moxel_spreadsheet_write_plan(
@@ -11848,6 +11871,7 @@ pub(super) fn format_moxel_spreadsheet_xml(spreadsheet: &MoxelSpreadsheet) -> St
         spreadsheet,
         &output_format_indices,
         &output_format_index_map,
+        MoxelChartSeriesAutomaticName::Stored,
     )
 }
 
@@ -11905,6 +11929,7 @@ fn moxel_font_projection(
 fn format_moxel_spreadsheet_xml_with_plan(
     spreadsheet: &MoxelSpreadsheet,
     plan: &MxlSpreadsheetWritePlan,
+    policy: MoxelChartSeriesAutomaticName,
 ) -> Result<String, MxlDiagnostic> {
     // Palette slots and source-slot maps are retained for diagnostics and later
     // writer migration.  This renderer only receives their already-resolved
@@ -11914,6 +11939,7 @@ fn format_moxel_spreadsheet_xml_with_plan(
         spreadsheet,
         &plan.output_format_indices,
         &plan.output_format_index_map,
+        policy,
     ))
 }
 
@@ -11959,6 +11985,7 @@ fn render_moxel_spreadsheet_xml(
     spreadsheet: &MoxelSpreadsheet,
     output_format_indices: &[usize],
     output_format_index_map: &BTreeMap<usize, usize>,
+    policy: MoxelChartSeriesAutomaticName,
 ) -> String {
     let emit_first_row_format_index =
         moxel_column_format_slots(&spreadsheet.column_sets, spreadsheet.column_count) == 0;
@@ -12043,7 +12070,7 @@ fn render_moxel_spreadsheet_xml(
         );
     }
     for drawing in &spreadsheet.drawings {
-        push_moxel_drawing_xml(&mut xml, drawing, &output_format_index_map);
+        push_moxel_drawing_xml_with_policy(&mut xml, drawing, &output_format_index_map, policy);
     }
     if let Some(slots) = &spreadsheet.header_footer_slots {
         // A zero reference publishes `<f>0</f>` as stored. A non-zero one names
@@ -14023,10 +14050,25 @@ pub(super) fn push_moxel_picture_xml(xml: &mut String, picture: &MoxelPicture) {
     xml.push_str("\t</picture>\r\n");
 }
 
+#[cfg(test)]
 pub(super) fn push_moxel_drawing_xml(
     xml: &mut String,
     drawing: &MoxelDrawing,
     output_format_index_map: &BTreeMap<usize, usize>,
+) {
+    push_moxel_drawing_xml_with_policy(
+        xml,
+        drawing,
+        output_format_index_map,
+        MoxelChartSeriesAutomaticName::Stored,
+    );
+}
+
+fn push_moxel_drawing_xml_with_policy(
+    xml: &mut String,
+    drawing: &MoxelDrawing,
+    output_format_index_map: &BTreeMap<usize, usize>,
+    policy: MoxelChartSeriesAutomaticName,
 ) {
     xml.push_str("\t<drawing>\r\n");
     let drawing_type = match drawing.kind {
@@ -14147,8 +14189,12 @@ pub(super) fn push_moxel_drawing_xml(
         MoxelDrawingKind::Picture { picture_index, .. } => {
             _ = write!(xml, "\t\t<pictureIndex>{picture_index}</pictureIndex>\r\n");
         }
-        MoxelDrawingKind::Chart(chart) => push_moxel_chart_xml(xml, chart),
-        MoxelDrawingKind::GanttChart(gantt) => push_moxel_gantt_chart_xml(xml, gantt),
+        MoxelDrawingKind::Chart(chart) => {
+            push_moxel_chart_xml_with_automatic_name(xml, chart, policy)
+        }
+        MoxelDrawingKind::GanttChart(gantt) => {
+            push_moxel_gantt_chart_xml_with_policy(xml, gantt, policy)
+        }
     }
     xml.push_str("\t</drawing>\r\n");
 }
@@ -14168,12 +14214,10 @@ fn push_moxel_chart_xml_with_automatic_name(
     push_moxel_chart_text(xml, "seriesCurId", chart.series_cur_id);
     push_moxel_chart_text(xml, "pointsCurId", chart.points_cur_id);
     push_moxel_chart_bool(xml, "isSeriesDesign", chart.is_series_design);
-    // The explicit English projection also republishes the mandatory extra
-    // series when no real series exists. Keep the legacy exclusion and the
-    // Stored/default projection unchanged; this does not select a native target.
-    let automatic_names_apply = !chart.has_extended_scales
-        && (!chart.real_series.is_empty()
-            || automatic_name == MoxelChartSeriesAutomaticName::RepublishedInEnglish);
+    // Preserve the real-series eligibility contract. The mandatory extra
+    // series has its own generated name even with zero real series or Palette8;
+    // explicit publication selects its representation independently of these.
+    let automatic_names_apply = !chart.has_extended_scales && !chart.real_series.is_empty();
     push_moxel_chart_text(xml, "realSeriesCount", chart.real_series.len());
     for series in &chart.real_series {
         push_moxel_chart_series_xml(
@@ -14188,7 +14232,7 @@ fn push_moxel_chart_xml_with_automatic_name(
         xml,
         "realExSeriesData",
         &chart.real_extra_series,
-        automatic_names_apply,
+        automatic_names_apply || automatic_name != MoxelChartSeriesAutomaticName::Stored,
         automatic_name,
     );
     push_moxel_chart_bool(xml, "isPointsDesign", chart.is_points_design);
@@ -14465,9 +14509,13 @@ pub(crate) fn render_moxel_chart_object_xml(
 /// `push_moxel_chart_xml` because the two are otherwise byte-for-byte
 /// identical: native UT 11.5.27.75's two `GanttChart` templates' own
 /// `<d3p1:chart>` blocks decode through the exact same `parse_moxel_chart`.
-fn push_moxel_gantt_embedded_chart_xml(xml: &mut String, chart: &MoxelChart) {
+fn push_moxel_gantt_embedded_chart_xml(
+    xml: &mut String,
+    chart: &MoxelChart,
+    policy: MoxelChartSeriesAutomaticName,
+) {
     let mut inner = String::new();
-    push_moxel_chart_xml(&mut inner, chart);
+    push_moxel_chart_xml_with_automatic_name(&mut inner, chart, policy);
     let mut lines: Vec<&str> = inner.split("\r\n").collect();
     if lines.last() == Some(&"") {
         lines.pop();
@@ -14492,10 +14540,18 @@ fn push_moxel_gantt_embedded_chart_xml(xml: &mut String, chart: &MoxelChart) {
 /// which are literals no observation (either of the corpus's two records)
 /// varies.
 fn push_moxel_gantt_chart_xml(xml: &mut String, gantt: &MoxelGanttChart) {
+    push_moxel_gantt_chart_xml_with_policy(xml, gantt, MoxelChartSeriesAutomaticName::Stored);
+}
+
+fn push_moxel_gantt_chart_xml_with_policy(
+    xml: &mut String,
+    gantt: &MoxelGanttChart,
+    policy: MoxelChartSeriesAutomaticName,
+) {
     xml.push_str(
         "\t\t<object xmlns:d3p1=\"http://v8.1c.ru/8.2/data/chart\" xsi:type=\"d3p1:GanttChart\">\r\n",
     );
-    push_moxel_gantt_embedded_chart_xml(xml, &gantt.chart);
+    push_moxel_gantt_embedded_chart_xml(xml, &gantt.chart, policy);
 
     xml.push_str("\t\t\t<d3p1:points>\r\n");
     push_moxel_chart_bool_indented(xml, "testMode", false, 4);
@@ -14627,13 +14683,19 @@ fn push_moxel_gantt_chart_xml(xml: &mut String, gantt: &MoxelGanttChart) {
 const MOXEL_CHART_AUTOMATIC_SERIES_NAME: &str = "Pivot";
 
 /// An explicitly selected output representation, never an OS/build detector.
-/// Stored remains the compatibility default and the compiler source-roundtrip
-/// representation. Existing exclusions and user-changed names stay unchanged.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(super) enum MoxelChartSeriesAutomaticName {
+/// Stored remains the compatibility default and compiler source-roundtrip
+/// representation. User-changed names and real-series eligibility are preserved.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, clap::ValueEnum)]
+pub enum MoxelChartSeriesAutomaticName {
     /// Explicit English republication over an eligible unchanged name cache.
+    #[value(name = "english")]
     RepublishedInEnglish,
+    /// Explicit Russian republication; item language identifiers are preserved.
+    #[value(name = "russian")]
+    Russian,
     /// Preserve the document's localized name cache.
+    #[default]
+    #[value(name = "stored")]
     Stored,
 }
 
@@ -14683,7 +14745,16 @@ fn push_moxel_chart_series_text_xml_with_host(
         .iter()
         .map(|value| MoxelLocalizedValue {
             lang: value.lang.clone(),
-            content: MOXEL_CHART_AUTOMATIC_SERIES_NAME.to_string(),
+            content: match automatic_name {
+                MoxelChartSeriesAutomaticName::Russian => "Сводная",
+                MoxelChartSeriesAutomaticName::RepublishedInEnglish => {
+                    MOXEL_CHART_AUTOMATIC_SERIES_NAME
+                }
+                MoxelChartSeriesAutomaticName::Stored => {
+                    unreachable!("stored names returned above")
+                }
+            }
+            .to_string(),
         })
         .collect::<Vec<_>>();
     push_moxel_chart_localized_xml(xml, "text", &automatic, 4);

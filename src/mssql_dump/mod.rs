@@ -1177,12 +1177,13 @@ pub(crate) fn extract_standalone_metadata_source_xml(
     )
     .map(|extracted| (extracted.relative_path, extracted.xml))
 }
-pub use moxel::try_extract_moxel_spreadsheet_xml;
+pub use moxel::{MoxelChartSeriesAutomaticName, try_extract_moxel_spreadsheet_xml};
 pub(crate) use moxel::{
     MoxelLineTraceEvent, MoxelLineTraceSink,
     extract_inflated_moxel_spreadsheet_xml_with_line_trace, extract_moxel_spreadsheet_xml,
     extract_moxel_spreadsheet_xml_with_line_trace, render_moxel_chart_object_xml,
     try_extract_moxel_spreadsheet_xml_with_generated_types,
+    try_extract_moxel_spreadsheet_xml_with_generated_types_and_policy,
 };
 #[cfg(all(test, feature = "mssql-live-tests"))]
 pub(crate) use moxel::{
@@ -2553,6 +2554,18 @@ fn dump_config_with_options(
     editor_writer_scope: Option<bool>,
     requested_descriptor: Option<&str>,
 ) -> Result<MssqlDumpConfigReport> {
+    if args.chart_series_names != MoxelChartSeriesAutomaticName::Stored
+        && (args.base.is_some() || args.sync)
+    {
+        bail!(
+            "--chart-series-names=russian|english requires a full export without --base or --sync"
+        );
+    }
+    if args.chart_series_names != MoxelChartSeriesAutomaticName::Stored
+        && !args.extract_metadata_xml
+    {
+        bail!("--chart-series-names=russian|english requires --extract-metadata-xml");
+    }
     let password_marker = if args.sql_user.is_none() {
         password_source_marker(PASSWORD_SOURCE_NONE)
     } else if args.sql_pwd.as_ref().is_some_and(|value| !value.is_empty()) {
@@ -2833,6 +2846,7 @@ fn dump_config_inner(
             args.extract_module_text,
             args.extract_metadata_xml,
             source_version,
+            args.chart_series_names,
             args.collect_all_source_asset_diagnostics,
             model_export::requested(args.model_export, args.legacy_export),
             hooks.sink.clone(),
@@ -3102,6 +3116,7 @@ pub(crate) fn export_staged_state(
             true,
             true,
             source_version,
+            MoxelChartSeriesAutomaticName::Stored,
             false,
             model_export::requested(false, false),
             Some(sink),
@@ -3828,6 +3843,7 @@ struct DumpRowContext<'a> {
     output: &'a OutputWriter,
     table: &'a str,
     source_version: InfobaseConfigSourceVersion,
+    chart_series_names: MoxelChartSeriesAutomaticName,
     write_binary_rows: bool,
     inflate: bool,
     extract_module_text: bool,
@@ -4559,6 +4575,7 @@ fn dump_table_rows_with_options_mode(
         output_dir,
         table,
         source_version,
+        chart_series_names: MoxelChartSeriesAutomaticName::Stored,
         write_binary_rows,
         inflate,
         extract_module_text,
@@ -4868,6 +4885,7 @@ fn dump_table_rows_streamed(
     extract_module_text: bool,
     extract_metadata_xml: bool,
     source_version: InfobaseConfigSourceVersion,
+    chart_series_names: MoxelChartSeriesAutomaticName,
     collect_all_source_asset_diagnostics: bool,
     model_export: bool,
     sink: Option<Arc<dyn FileSink>>,
@@ -6306,6 +6324,7 @@ fn dump_table_rows_streamed(
         output_dir,
         table,
         source_version,
+        chart_series_names,
         write_binary_rows,
         inflate,
         extract_module_text,
@@ -47657,3 +47676,49 @@ mod tests;
 
 #[cfg(test)]
 mod external_data_source_tests;
+
+#[cfg(test)]
+mod chart_series_name_scope_tests {
+    use clap::Parser;
+
+    #[test]
+    fn nonstored_chart_labels_refuse_without_xml_before_journal_or_database_reads() {
+        let cli = crate::cli::Cli::try_parse_from([
+            "ibcmd-rs",
+            "mssql-dump-config",
+            "--database",
+            "unused",
+            "--output-dir",
+            "unused-output",
+            "--chart-series-names=russian",
+        ])
+        .unwrap();
+        let crate::cli::Commands::MssqlDumpConfig(args) = cli.command else {
+            panic!("wrong command");
+        };
+        let error = super::dump_config(&args).unwrap_err().to_string();
+        assert!(error.contains("requires --extract-metadata-xml"), "{error}");
+    }
+
+    #[test]
+    fn nonstored_chart_labels_refuse_incremental_before_journal_or_database_reads() {
+        for option in ["--base=previous.xml", "--sync"] {
+            let cli = crate::cli::Cli::try_parse_from([
+                "ibcmd-rs",
+                "mssql-dump-config",
+                "--database",
+                "unused",
+                "--output-dir",
+                "unused-output",
+                "--chart-series-names=english",
+                option,
+            ])
+            .unwrap();
+            let crate::cli::Commands::MssqlDumpConfig(args) = cli.command else {
+                panic!("wrong command");
+            };
+            let error = super::dump_config(&args).unwrap_err().to_string();
+            assert!(error.contains("--chart-series-names"), "{error}");
+        }
+    }
+}

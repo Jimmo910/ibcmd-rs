@@ -920,6 +920,7 @@ mod tests {
                 .as_nanos()
         ));
         let result = crate::mssql_dump::dump_config(&crate::cli::MssqlDumpConfigArgs {
+            chart_series_names: crate::mssql_dump::MoxelChartSeriesAutomaticName::Stored,
             sqlcmd: None,
             bcp_executable: None,
             runtime_journal: None,

@@ -3331,6 +3331,7 @@ fn write_source_asset_inner(
                 bytes,
                 context.object_refs,
                 context.moxel_generated_types,
+                context.chart_series_names,
                 &asset.primary_path,
             )?;
             let xml = if context.source_version == InfobaseConfigSourceVersion::V2_20 {
@@ -3403,15 +3404,21 @@ fn extract_moxel_source_asset_xml(
     bytes: &[u8],
     object_refs: &BTreeMap<String, String>,
     generated_types: &BTreeMap<String, String>,
+    chart_series_names: MoxelChartSeriesAutomaticName,
     source_path: &Path,
 ) -> Result<String> {
-    try_extract_moxel_spreadsheet_xml_with_generated_types(bytes, object_refs, generated_types)
-        .with_context(|| {
-            format!(
-                "failed to extract spreadsheet template from source asset {}",
-                source_path.display()
-            )
-        })
+    try_extract_moxel_spreadsheet_xml_with_generated_types_and_policy(
+        bytes,
+        object_refs,
+        generated_types,
+        chart_series_names,
+    )
+    .with_context(|| {
+        format!(
+            "failed to extract spreadsheet template from source asset {}",
+            source_path.display()
+        )
+    })
 }
 
 #[cfg(test)]
@@ -3424,6 +3431,7 @@ mod mxl_source_asset_tests {
             &[0],
             &BTreeMap::new(),
             &BTreeMap::new(),
+            MoxelChartSeriesAutomaticName::Stored,
             Path::new("Templates/Example/Ext/Template.xml"),
         )
         .unwrap_err();

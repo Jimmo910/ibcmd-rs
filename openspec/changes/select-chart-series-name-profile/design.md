@@ -1,37 +1,17 @@
 # Design
 
-The existing `MoxelChartSeriesAutomaticName` models two observed outcomes. Its
-current `host()` default is not an observed target-profile selector. An explicit
-immutable per-export representation policy is a proposal, not an implemented
-fix. The public entrypoint/configuration spelling remains unselected.
+## Contract
 
-Sanitized receipt `ad631a807fe91fefa90a0e1655491ca4012cb53ad32f9deb213b1dc9a891d9fd`
-confirms all 15 selected native names are `Pivot` versus stored `Сводная`, all
-unchanged, with three zero-real-series charts and mixed scale-element presence.
-It does not observe the internal binary scale flag. The old
-`!has_extended_scales && !real_series.is_empty()` predicate therefore cannot be
-promoted to a universal gate. Public macOS stored captures and mixed Windows
-captures also forbid an OS-derived default. English resources/help/en-US culture
-are observations, not a controlled language or installation experiment.
+`MoxelChartSeriesAutomaticName` is the existing typed representation policy. Expose its three CLI values `stored`, `russian` and `english`, with Stored as the default. Russian selects the public automatic label `Сводная`; English selects `Pivot`. The localized item identifier is unchanged. This is publication representation, not translation of BSL, ScriptVariant, user text or the program UI.
 
-Use the source-owned factorial design in
-`tests/fixtures/ut-chart-policy/README.md` before choosing a policy scope. Its
-inputs vary extra-series name-state, a coherent source scales profile, and actual
-series count; synthetic literal and repeat controls detect other explanations.
-They are structural fragments with no expected native output. A complete native-
-accepted wrapper and readback of input levels are prerequisites. Decompose a
-positive scales-profile contrast before assigning a particular-field rule.
+Pass the value as an ordinary per-export argument into source-asset rendering, including nested Gantt chart wrappers. No mutable global, thread-local override, environment or profile inference is used. Old decoder/compiler entrypoints remain Stored so source validation and caches do not depend on presentation policy.
 
-Only if evidence supports exposing a representation choice, thread it through
-an immutable operation-local export/write context, including nested chart
-wrappers. Do not use a mutable global, environment inference, private literal
-matching or corpus/object names. Unknown profiles must fail before publication;
-explicit profile selection must appear in parity evidence and any cache identity
-whose output depends on it. Keep stored default behavior pending separate review.
-No result from a selected profile establishes default-mode parity.
+## Eligibility and retained evidence
 
-The narrowest internal path to assess is export arguments through `DumpRowContext`
-and `write_source_asset` into the Moxel asset writer. This is a candidate internal
-threading path only; no CLI/editor configuration spelling is selected. Review
-PR #521 parser/format overlap before production changes. Form UseAlways marking
-is a separate investigation and must not share a chart policy heuristic.
+The retained 15-node observation (SHA256 `4d7c36cd6f6b9e22436b5e17fe9ceb625b98e892f1c5375bfba6ebd075b7ab55`) found all names unchanged, 14 Auto palettes and one Palette8. Palette kind and palette-description child agree. This identifies the derived Rust palette guard, not a separate raw flag. Native English publication includes the Palette8 mandatory extra-series. Public native evidence also includes zero-real-series English publication. Therefore explicit mandatory extra-series publication excludes neither case. User `strIsChanged` remains authoritative. Existing real-series eligibility remains unchanged; no broader native rule is inferred.
+
+Global `isAutoSeriesName` is true on 4 and false on 11 target nodes; it does not select the observed language. Existing native commands have no explicit language/settings flags. Native language causality remains unestablished. The explicit option replaces guessing; selecting English does not prove automatic parity for other native installations.
+
+## Refusals and compatibility
+
+The default produces existing Stored bytes. Unsupported CLI values fail during parsing. Non-Stored with base/sync is rejected before output because incremental inventories do not encode the presentation policy; silently retaining old differently formatted files would be incorrect. Unsupported extension overrides are also refused. Fresh full exports avoid mixing policies. Memory/editor reads and compiler source-roundtrips remain unchanged. No native recapture is required for comparison against the five frozen references.

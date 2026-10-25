@@ -1,25 +1,14 @@
-# Select the native chart automatic-series-name profile
+# Select chart automatic-series-name representation
 
 ## Why
 
-The six-file UT SQL export remainder includes spreadsheet chart text. Existing
-public native evidence already distinguishes stored automatic-series names from
-English republication. The same OS has produced both forms, so OS detection does
-not establish which bytes a target native capture requires. The current writer
-implements both forms internally but selects stored text unconditionally.
-
-Sanitized observations confirm the public token pair but contradict a universal
-positive-real-series-count gate. Controlled source-shape and target-setting
-evidence is still required before this proposal becomes a fix.
-No private content, normalization, or object-name exception is proposed.
+Refs #381. Five retained UT Template files contain 15 unchanged automatic extra-series names: native English publication uses `Pivot`, while stored caches contain Russian text. No reliable data/OS/build selector has been established. An explicit output representation makes this choice reproducible without claiming native autodetection.
 
 ## What changes
 
-- Select the known automatic-series-name representation explicitly in an export
-  profile, retaining the current stored representation by default.
-- Determine the eligible shape and name-state behavior with controlled public
-  seeds before specifying English republication; preserve proven excluded cases.
-- Keep profile choice scoped to one export, including nested chart wrappers.
-- Reject unsupported profile values before publication and record the selected
-  profile in parity evidence.
-- Qualify acceptance against the exact native profile; never discount byte diffs.
+- Add `--chart-series-names stored|russian|english` to configuration filesystem export; default `stored`.
+- Pass a typed immutable policy through the export and nested chart wrappers. Never infer it from BSL, ScriptVariant, host locale or object names.
+- Explicit Russian/English publication changes generated labels only. Preserve user-changed labels and item language identifiers.
+- Mandatory extra-series publication does not depend on real-series count or palette. Keep other existing eligibility behavior unchanged.
+- Refuse unsupported values, non-stored incremental/base exports and unsupported extension overrides before output publication.
+- Keep memory/editor/compiler source validation Stored. Record explicit policy in comparison evidence; it is not default-mode parity.

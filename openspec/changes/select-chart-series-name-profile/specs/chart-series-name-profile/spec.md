@@ -1,46 +1,41 @@
 ## ADDED Requirements
 
-### Requirement: Evidence precedes eligibility selection
-The implementation SHALL establish profile eligibility using reviewed controlled
-source-owned experiments before introducing a public entrypoint or new default.
-Zero real-series count and XML scale-element presence SHALL NOT independently be
-assumed to select stored names from the currently available observations.
+### Requirement: Explicit chart representation
+Configuration filesystem export SHALL accept `--chart-series-names stored|russian|english`, with default `stored`, as immutable per-operation policy. It SHALL NOT infer publication language from host, source-language, ScriptVariant or object names.
 
-#### Scenario: A native observation contradicts the old shape predicate
-- **GIVEN** an unchanged automatic name and zero real series with native English republication
-- **WHEN** profile eligibility is designed
-- **THEN** the old positive-count predicate is not treated as a universal gate
-- **AND** unknown target-setting behavior remains unresolved until controlled evidence exists
+#### Scenario: Stored compatibility
+- **GIVEN** an export without a representation override
+- **WHEN** a chart is rendered
+- **THEN** stored localized bytes are preserved
 
-### Requirement: Explicit chart automatic-name representation
-The export SHALL select the stored or English automatic-series-name representation
-from an explicit per-export profile, preserving stored behavior by default.
+#### Scenario: Explicit Russian and English labels
+- **GIVEN** an unchanged generated mandatory extra-series name, including zero real series or a named palette
+- **WHEN** Russian or English is explicitly selected
+- **THEN** its content is respectively `Сводная` or `Pivot`
+- **AND** localized item identifiers and unrelated chart data remain unchanged
 
-#### Scenario: Stored profile preserves the cache
-- **GIVEN** a chart eligible for automatic-name republication
-- **WHEN** the stored profile is selected or no override is supplied
-- **THEN** the writer preserves the stored localized text
+#### Scenario: User label preservation
+- **GIVEN** a name with `strIsChanged=true`
+- **WHEN** any supported policy is selected
+- **THEN** the complete stored localized text remains unchanged
 
-#### Scenario: English profile publishes an unchanged automatic name
-- **GIVEN** the evidenced chart shape and an unchanged automatic-series name
-- **WHEN** the English profile is selected
-- **THEN** the writer emits the publicly evidenced English automatic name
+### Requirement: Operation isolation and source compatibility
+The policy SHALL be passed explicitly through nested chart rendering. Memory/editor reads and compiler source validation SHALL retain Stored behavior.
 
-#### Scenario: User text and excluded shapes remain unchanged
-- **GIVEN** a user-changed name or a chart outside the evidenced shape
-- **WHEN** either supported profile is selected
-- **THEN** the writer preserves the stored text
+#### Scenario: Independent exports
+- **GIVEN** exports using different policies
+- **WHEN** rendering is interleaved or a request fails
+- **THEN** no policy affects another operation or default decoder call
 
-### Requirement: Profile isolation and refusal
-The export SHALL isolate policy per operation and refuse unknown profiles before
-publishing output.
+### Requirement: Refusal before publication
+Unknown values and unsupported non-Stored incremental/base or extension exports SHALL fail before publishing files or inventory.
 
-#### Scenario: Concurrent exports retain their profiles
-- **GIVEN** exports with different supported profile selections
-- **WHEN** their work overlaps or one request fails
-- **THEN** neither selection changes the other operation's output
+#### Scenario: Unknown value
+- **GIVEN** an unsupported policy value
+- **WHEN** CLI arguments are parsed
+- **THEN** export is refused without output publication
 
-#### Scenario: An unsupported profile is refused
-- **GIVEN** an unsupported profile value
+#### Scenario: Incremental policy cannot be established
+- **GIVEN** non-Stored policy with base/sync or an unsupported extension override
 - **WHEN** export is requested
-- **THEN** it fails before publishing any output file or inventory
+- **THEN** it fails before output publication

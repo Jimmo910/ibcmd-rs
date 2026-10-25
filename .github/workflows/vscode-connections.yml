@@ -62,6 +62,18 @@ jobs:
           cargo test --locked --lib field_map_observer --no-default-features
           cargo test --locked --lib query_identity_observer --no-default-features
           cargo test --locked --lib form_observer_shared_schema_tests --no-default-features
+      - name: Test explicit chart series-name policy
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: "2"
+          IBCMD_TEST_KEEP_FIXTURES: "1"
+        run: |
+          cargo test --locked --lib chart_policy_ --no-default-features
+          cargo test --locked --lib explicit_english_projection_ --no-default-features
+          cargo test --locked --lib chart_series_names_ --no-default-features
+          cargo test --locked --lib changed_chart_names_ --no-default-features
+          cargo test --locked --lib nonstored_chart_labels_ --no-default-features
+
       - name: Build read-only Windows Form observer
         if: runner.os == 'Windows'
         env:

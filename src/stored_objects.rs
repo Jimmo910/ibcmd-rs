@@ -1614,6 +1614,7 @@ fn export_args(
     file_names: Vec<String>,
 ) -> MssqlDumpConfigArgs {
     MssqlDumpConfigArgs {
+        chart_series_names: crate::mssql_dump::MoxelChartSeriesAutomaticName::Stored,
         sqlcmd: None,
         bcp_executable: None,
         runtime_journal: None,
