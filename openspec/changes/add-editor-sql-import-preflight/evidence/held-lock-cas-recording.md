@@ -140,3 +140,31 @@ All original anchor counts are restored (1/1/1 and two table-lock anchors).
 No parser, SQL, guard or test assertion changed. Independent source review CLEAR;
 the same local CAS suite passes 11/11 with the one live test still ignored.
 Actual corrected Windows CI/runtime remain separate pending observations.
+
+## Measured server-permission invocation correction
+
+Corrected checkout CI 40189346243 at 0746b58aff692381c97cca0d1f6a5ffebb3d29b6
+passed all seven jobs. Windows root tests: 4269 passed, zero failed, 17 ignored.
+Artifact 12598286457 contained only the executable and build receipt; source/tree,
+Rust 1.95.0, x64 PE and executable SHA256 were checked. The retained first EXE is
+0d7e39ec9340572cf196ddebb475d2600424383147b4314bc83db9d21e82e7fe.
+
+The sole operator stopped at SOURCE_PREFLIGHT before launching that EXE. One
+preflight connection closed; no held transaction, appDML or native call ran.
+A bounded own-permission SELECT then measured NULL for
+HAS_PERMS_BY_NAME(NULL,'SERVER',...), but 1 for the documented server-level
+HAS_PERMS_BY_NAME(NULL,NULL,...). The existing caller was
+WIN-LHDQGRLB1L1\Administrator, with sysadmin=1 and CONTROL SERVER=1; the permission
+was recognized. This was an invalid function invocation, not a missing right.
+No GRANT or other security change is needed or performed. Diagnostic FULL RELEASE
+SHA256: bf9679f2ceb998b80778d27d0f280bf19288c11960d1983209ec13873a72a074.
+
+The runtime closure now shares a canonical NULL,NULL query with the regression.
+Visibility still must equal 1; invalid NULL and denied 0 fail distinctly, and all
+idle/distinct-SPID/closed-session checks remain strict. Tests also refuse an
+existing session, the reader's own SPID, and a nonpositive held SPID. No production
+API changed. Local focused tests: 12 passed, zero failed, one live test ignored;
+38.42s compilation, 0.02s execution. Independent source review CLEAR. The operator
+owns the matching preflight correction. The old executable must not be used;
+a fresh changed-head Windows artifact and actual held-capture runtime remain
+required. Raw SQL and failure artifacts remain retained in the lab.

@@ -751,6 +751,72 @@ fn parameter_value_budget_rejects_below_and_accepts_exact_or_above() {
     }
 }
 
+// SQL16 measured control: NULL,'SERVER' yields NULL; NULL,NULL yields 1
+// for the existing lab administrator. Keep invalid checks distinct from DENY.
+const CLOSED_SESSION_SQL: &str = "SELECT @@SPID,@@TRANCOUNT,XACT_STATE(),HAS_PERMS_BY_NAME(NULL,NULL,'VIEW SERVER PERFORMANCE STATE'),(SELECT COUNT_BIG(*) FROM sys.dm_exec_sessions WHERE session_id=@P1)";
+fn require_closed_session_row(row: SqlRow, held_spid: i64) -> Result<()> {
+    ensure!(row.result_set == 0, "invalid closure result set");
+    let [
+        SqlValue::Int(reader),
+        SqlValue::Int(depth),
+        SqlValue::Int(state),
+        visible,
+        SqlValue::Int(remaining),
+    ]: [SqlValue; 5] = row
+        .values
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("invalid closure result shape"))?
+    else {
+        anyhow::bail!("invalid closure result types");
+    };
+    match visible {
+        SqlValue::Int(1) => {}
+        SqlValue::Int(0) => anyhow::bail!("server visibility permission is absent"),
+        SqlValue::Null => anyhow::bail!("server visibility permission check is invalid"),
+        _ => anyhow::bail!("invalid server visibility result"),
+    }
+    ensure!(
+        held_spid > 0
+            && reader > 0
+            && reader != held_spid
+            && depth == 0
+            && state == 0
+            && remaining == 0,
+        "dedicated session closure or idle reader not confirmed"
+    );
+    Ok(())
+}
+
+#[test]
+fn closure_permission_oracle_uses_server_scope_and_distinguishes_null_from_zero() {
+    // Bind the recorded SQL16 RED/GREEN function result to the exact runtime query.
+    assert!(
+        CLOSED_SESSION_SQL.contains("HAS_PERMS_BY_NAME(NULL,NULL,'VIEW SERVER PERFORMANCE STATE')")
+    );
+    assert!(!CLOSED_SESSION_SQL.contains("HAS_PERMS_BY_NAME(NULL,'SERVER'"));
+    let row = |visible, remaining| SqlRow {
+        result_set: 0,
+        values: vec![
+            SqlValue::Int(85),
+            SqlValue::Int(0),
+            SqlValue::Int(0),
+            visible,
+            SqlValue::Int(remaining),
+        ],
+    };
+    let invalid = require_closed_session_row(row(SqlValue::Null, 0), 86).unwrap_err();
+    assert_eq!(
+        invalid.to_string(),
+        "server visibility permission check is invalid"
+    );
+    let denied = require_closed_session_row(row(SqlValue::Int(0), 0), 86).unwrap_err();
+    assert_eq!(denied.to_string(), "server visibility permission is absent");
+    require_closed_session_row(row(SqlValue::Int(1), 0), 86).unwrap();
+    assert!(require_closed_session_row(row(SqlValue::Int(1), 1), 86).is_err());
+    assert!(require_closed_session_row(row(SqlValue::Int(1), 0), 85).is_err());
+    assert!(require_closed_session_row(row(SqlValue::Int(1), 0), 0).is_err());
+}
+
 // Operator-only read/rollback gate. No population, application DML or COMMIT.
 #[test]
 #[ignore = "sole operator: exact disposable public SQL identity, TLS and idle window required"]
@@ -861,18 +927,12 @@ fn public_sql_held_capture_rolls_back_and_closes_dedicated_session() -> Result<(
     // The original pooled reader remains open while the dedicated connection is
     // dropped, preventing its own fresh checkout from reusing that SPID.
     let mut closure_rows = 0usize;
-    client.read_rows("SELECT @@SPID,@@TRANCOUNT,XACT_STATE(),HAS_PERMS_BY_NAME(NULL,'SERVER','VIEW SERVER PERFORMANCE STATE'),(SELECT COUNT_BIG(*) FROM sys.dm_exec_sessions WHERE session_id=@P1)",
-        &[SqlParam::I64(spid)], &mut |row| {
-            ensure!(row.result_set == 0 && closure_rows == 0, "invalid closure result shape");
-            let [SqlValue::Int(reader),SqlValue::Int(depth),SqlValue::Int(state),SqlValue::Int(visible),SqlValue::Int(remaining)]: [SqlValue;5] = row.values.try_into()
-                .map_err(|_| anyhow::anyhow!("invalid closure result types"))? else {
-                    anyhow::bail!("invalid closure result types");
-                };
-            ensure!(reader > 0 && reader != spid && depth == 0 && state == 0 && visible == 1 && remaining == 0,
-                "dedicated session closure or idle reader not confirmed");
-            closure_rows += 1;
-            Ok(())
-        })?;
+    client.read_rows(CLOSED_SESSION_SQL, &[SqlParam::I64(spid)], &mut |row| {
+        ensure!(closure_rows == 0, "closure result repeated");
+        require_closed_session_row(row, spid)?;
+        closure_rows += 1;
+        Ok(())
+    })?;
     ensure!(closure_rows == 1, "closure result missing");
     let after = super::super::snapshot::capture(&client, &profile, limits, check.clone())?;
     before.require_equal(&after)?;
