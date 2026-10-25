@@ -230,6 +230,7 @@ fn ci_steps(root: &Path) -> Vec<Step> {
         "edt_release_audit_test",
         "linux_abi_test",
         "test_issue_claim_bot",
+        "test_ci_scope",
     ] {
         let path = format!("tests/scripts/{script}.py");
         steps.push(Step::new(format!("python {script}"), python, &[path.as_str()]).needs_program());
@@ -237,17 +238,6 @@ fn ci_steps(root: &Path) -> Vec<Step> {
     steps.push(Step::cargo(
         "test -p ibcmd-schema",
         &["test", "--locked", "-p", "ibcmd-schema"],
-    ));
-    steps.push(Step::cargo(
-        "check (all targets)",
-        &[
-            "check",
-            "--locked",
-            "--workspace",
-            "--all-targets",
-            "--no-default-features",
-            "--message-format=short",
-        ],
     ));
     steps.push(Step::cargo(
         "test (workspace crates)",
@@ -266,14 +256,13 @@ fn ci_steps(root: &Path) -> Vec<Step> {
         ],
     ));
     steps.push(Step::cargo(
-        "test (root configuration contracts)",
+        "test (root library)",
         &[
             "test",
             "--locked",
             "-p",
             ROOT_PACKAGE,
             "--lib",
-            "configuration_",
             "--no-default-features",
         ],
     ));
