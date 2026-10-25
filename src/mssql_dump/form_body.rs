@@ -1465,10 +1465,9 @@ pub(super) struct FormAttribute {
     /// the following member. This is narrower than the top-level list
     /// universe, which intentionally knows nothing about valid dereferences.
     pub(super) invalid_nested_field_item_ids: BTreeSet<String>,
-    /// The localized twin the field map remembers beside a field's own name,
-    /// for the ids that carry one and spell it differently. A marked path names
-    /// both, exactly as `<UseAlways>` already writes them.
-    pub(super) field_item_twins: BTreeMap<String, String>,
+    /// A remembered localized twin, or the proven canonical output name of
+    /// an implicit system field. Only remembered twins produce doubled marked paths.
+    pub(super) field_item_twins: BTreeMap<String, FormFieldItemName>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -6506,6 +6505,12 @@ pub(super) fn parse_form_attribute_use_always(
         .unwrap_or_default()
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(super) enum FormFieldItemName {
+    RememberedTwin(String),
+    ResolvedName(String),
+}
+
 /// What a dynamic list's settings bag says about the list's fields, read once
 /// per attribute: every reader of the attribute asks the same questions of
 /// the same text.
@@ -6518,6 +6523,7 @@ struct FormDynamicListFieldFacts<'s> {
     secondary_names: BTreeMap<String, String>,
     shadowed_item_ids: BTreeSet<String>,
     universe: Option<BTreeSet<String>>,
+    deletion_mark_names: Option<FormDynamicListDeletionMarkNames>,
     /// Lower-case spellings of the universe, each with its spellings in
     /// universe order: names are matched case-insensitively.
     universe_by_lowercase: HashMap<String, Vec<String>>,
@@ -6547,13 +6553,17 @@ impl<'s> FormDynamicListFieldFacts<'s> {
         let secondary_names =
             parse_form_dynamic_list_field_secondary_name_by_item_id(&settings_fields);
         let shadowed_item_ids = parse_form_dynamic_list_shadowed_field_item_ids(&settings_fields);
-        let universe = form_dynamic_list_use_always_universe(
+        let built = form_dynamic_list_use_always_universe(
             settings,
             &settings_fields,
             object_refs,
             declarations,
             object_ref_index,
         );
+        let (universe, deletion_mark_names) = match built {
+            Some(built) => (Some(built.names), built.handled),
+            None => (None, None),
+        };
         let mut universe_by_lowercase = HashMap::<String, Vec<String>>::new();
         for name in universe.iter().flatten() {
             universe_by_lowercase
@@ -6568,6 +6578,7 @@ impl<'s> FormDynamicListFieldFacts<'s> {
             secondary_names,
             shadowed_item_ids,
             universe,
+            deletion_mark_names,
             universe_by_lowercase,
         })
     }
@@ -6575,15 +6586,49 @@ impl<'s> FormDynamicListFieldFacts<'s> {
     /// Whether a remembered name (or its twin) is a field of the list, and no
     /// earlier entry of the map claimed that name already: the set form of
     /// `form_dynamic_list_field_name_is_resolvable`.
+    fn resolved_name(
+        &self,
+        item_id: &str,
+        field_name: &str,
+        secondary: Option<&str>,
+    ) -> Option<String> {
+        if self.shadowed_item_ids.contains(item_id) {
+            return None;
+        }
+        let primary = field_name.to_lowercase();
+        if let Some(handled) = &self.deletion_mark_names
+            && let Some(canonical) = handled.aliases.get(&primary)
+        {
+            // Explicit result aliases and stored twins keep their old output
+            // spelling. Only the implicit system field supplies a canonical name.
+            if std::iter::once(field_name).chain(secondary).any(|name| {
+                handled.lexical.iter().any(|candidate| {
+                    form_data_path_name_eq_ignore_case(candidate, name)
+                        && self
+                            .universe
+                            .as_ref()
+                            .is_some_and(|universe| universe.contains(candidate))
+                })
+            }) {
+                return Some(field_name.to_string());
+            }
+            return (handled.implicit.contains(canonical)
+                && self
+                    .universe
+                    .as_ref()
+                    .is_some_and(|universe| universe.contains(canonical)))
+            .then(|| canonical.clone());
+        }
+        (self.universe_by_lowercase.contains_key(&primary)
+            || secondary.is_some_and(|name| {
+                self.universe_by_lowercase
+                    .contains_key(&name.to_lowercase())
+            }))
+        .then(|| field_name.to_string())
+    }
+
     fn resolves(&self, item_id: &str, field_name: &str, secondary: Option<&str>) -> bool {
-        !self.shadowed_item_ids.contains(item_id)
-            && (self
-                .universe_by_lowercase
-                .contains_key(&field_name.to_lowercase())
-                || secondary.is_some_and(|secondary| {
-                    self.universe_by_lowercase
-                        .contains_key(&secondary.to_lowercase())
-                }))
+        self.resolved_name(item_id, field_name, secondary).is_some()
     }
 
     /// The list's `<UseAlways>` entries, in required order, without repeats.
@@ -6608,7 +6653,7 @@ impl<'s> FormDynamicListFieldFacts<'s> {
                 main_table,
                 settings.is_some_and(|settings| settings.manual_query),
                 self.universe.is_some(),
-                |item_id, field_name, secondary| self.resolves(item_id, field_name, secondary),
+                |item_id, field_name, secondary| self.resolved_name(item_id, field_name, secondary),
             ) else {
                 continue;
             };
@@ -6663,12 +6708,17 @@ impl<'s> FormDynamicListFieldFacts<'s> {
 
     /// The localized twin of each field-map id, overridden by the universe's
     /// own spelling where that differs only in case.
-    fn field_item_twins(&self) -> BTreeMap<String, String> {
+    fn field_item_twins(&self) -> BTreeMap<String, FormFieldItemName> {
         let mut twins = self
             .secondary_names
             .iter()
             .filter(|(item_id, secondary)| self.field_names.get(*item_id) != Some(*secondary))
-            .map(|(item_id, secondary)| (item_id.clone(), secondary.clone()))
+            .map(|(item_id, secondary)| {
+                (
+                    item_id.clone(),
+                    FormFieldItemName::RememberedTwin(secondary.clone()),
+                )
+            })
             .collect::<BTreeMap<_, _>>();
         if self.universe.is_some() {
             for (item_id, field_name) in &self.field_names {
@@ -6679,7 +6729,24 @@ impl<'s> FormDynamicListFieldFacts<'s> {
                         spellings.iter().find(|candidate| *candidate != field_name)
                     })
                 {
-                    twins.insert(item_id.clone(), canonical.clone());
+                    twins.insert(
+                        item_id.clone(),
+                        FormFieldItemName::RememberedTwin(canonical.clone()),
+                    );
+                }
+            }
+        }
+        if let Some(handled) = &self.deletion_mark_names {
+            for (item_id, name) in &self.field_names {
+                if handled.aliases.contains_key(&name.to_lowercase())
+                    && let Some(winner) = self.resolved_name(
+                        item_id,
+                        name,
+                        self.secondary_names.get(item_id).map(String::as_str),
+                    )
+                    && winner.as_str() != name.as_str()
+                {
+                    twins.insert(item_id.clone(), FormFieldItemName::ResolvedName(winner));
                 }
             }
         }
@@ -7256,7 +7323,7 @@ fn form_dynamic_list_use_always_field_name(
     main_table: Option<&str>,
     manual_query: bool,
     has_universe: bool,
-    resolves: impl Fn(&str, &str, Option<&str>) -> bool,
+    resolves: impl Fn(&str, &str, Option<&str>) -> Option<String>,
 ) -> Option<String> {
     let has_main_table = main_table.is_some();
     match item_id {
@@ -7272,8 +7339,8 @@ fn form_dynamic_list_use_always_field_name(
         "-1" => None,
         _ => field_name_by_item_id.get(item_id).map(|field_name| {
             let secondary = secondary_name_by_item_id.get(item_id);
-            let unresolvable =
-                has_universe && !resolves(item_id, field_name, secondary.map(String::as_str));
+            let resolved = resolves(item_id, field_name, secondary.map(String::as_str));
+            let unresolvable = has_universe && resolved.is_none();
             if unresolvable {
                 // A marked field keeps only its last segment: no `~` field of
                 // the stand spells a dotted path, and ЛИМС КОРП
@@ -7289,7 +7356,10 @@ fn form_dynamic_list_use_always_field_name(
                     _ => format!("~{attribute_name}.{field_name}"),
                 }
             } else {
-                format!("{attribute_name}.{field_name}")
+                format!(
+                    "{attribute_name}.{}",
+                    resolved.as_deref().unwrap_or(field_name)
+                )
             }
         }),
     }
@@ -7520,8 +7590,8 @@ fn form_dynamic_list_query_nested_group_columns(query_text: &str) -> BTreeSet<St
 /// * `ManualQuery=1` with `AutoFillAvailableFields` unset or true: the result
 ///   column names of the query's final `SELECT` batch, plus the main table's
 ///   standard attributes and register dimensions the platform re-adds on its
-///   own — each under the Russian spelling only, and each unless the query
-///   already selects that main-table field under a different alias.
+///   own. The implicit DeletionMark uses its canonical English identity;
+///   the remaining legacy contribution retains its prior naming/key policy.
 /// * `ManualQuery=1` with `AutoFillAvailableFields=false`: only the names the
 ///   query's `{ВЫБРАТЬ ...}` extension lists.
 /// * In every mode: the `dataPath` of each `CalculatedField` the list's
@@ -7530,14 +7600,28 @@ fn form_dynamic_list_query_nested_group_columns(query_text: &str) -> BTreeSet<St
 /// A `*` selection item is read where the query itself says what it stands
 /// for -- see [`form_dynamic_list_star_source_fields`]; where it does not, and
 /// on an unparseable input, the universe is a refusal (`None`).
-pub(super) fn form_dynamic_list_use_always_universe(
+#[derive(Default)]
+struct FormDynamicListUniverse {
+    names: BTreeSet<String>,
+    handled: Option<FormDynamicListDeletionMarkNames>,
+}
+
+#[derive(Default)]
+struct FormDynamicListDeletionMarkNames {
+    aliases: BTreeMap<String, String>,
+    implicit: BTreeSet<String>,
+    lexical: BTreeSet<String>,
+}
+
+fn form_dynamic_list_use_always_universe(
     settings: Option<&FormDynamicListSettings>,
     settings_fields: &[&str],
     object_refs: &BTreeMap<String, String>,
     declarations: Option<&MetadataFieldDeclarationIndex>,
     object_ref_index: Option<&FormObjectRefIndex<'_>>,
-) -> Option<BTreeSet<String>> {
+) -> Option<FormDynamicListUniverse> {
     let settings = settings?;
+    let mut handled = None;
     let mut universe;
     let mut undeclared_selected = BTreeSet::<String>::new();
     if settings.manual_query {
@@ -7581,13 +7665,27 @@ pub(super) fn form_dynamic_list_use_always_universe(
                     )?);
                 }
                 if let Some(main_table) = settings.main_table.as_deref() {
-                    universe.extend(form_dynamic_list_main_table_auto_fields(
+                    let mut automatic = form_dynamic_list_main_table_auto_fields(
                         main_table,
                         &selection,
                         object_refs,
                         declarations,
                         object_ref_index,
-                    )?);
+                    )?;
+                    if selection.stars.is_empty()
+                        && let Some(contribution) = form_dynamic_list_deletion_mark_names(
+                            main_table,
+                            &selection,
+                            declarations,
+                        )
+                    {
+                        automatic.retain(|name| {
+                            !contribution.aliases.contains_key(&name.to_lowercase())
+                        });
+                        universe.extend(contribution.implicit.iter().cloned());
+                        handled = Some(contribution);
+                    }
+                    universe.extend(automatic);
                 }
             }
         }
@@ -7663,14 +7761,19 @@ pub(super) fn form_dynamic_list_use_always_universe(
         universe.remove(name);
     }
     if let Some(server_state_xml) = &settings.server_state_xml {
-        universe.extend(form_dynamic_list_calculated_field_data_paths(
-            server_state_xml,
-        ));
+        let calculated = form_dynamic_list_calculated_field_data_paths(server_state_xml);
+        if let Some(handled) = &mut handled {
+            handled.lexical.extend(calculated.iter().cloned());
+        }
+        universe.extend(calculated);
     }
     if let (Some(main_table), Some(declarations)) = (settings.main_table.as_deref(), declarations) {
         universe.retain(|field| !declarations.field_uses_password_mode(main_table, field));
     }
-    Some(universe)
+    Some(FormDynamicListUniverse {
+        names: universe,
+        handled,
+    })
 }
 
 /// Whether a plain field selected from a final-scope metadata source is not a
@@ -8380,6 +8483,81 @@ const FORM_DYNAMIC_LIST_REGISTER_KINDS: &[&str] = &[
     "CalculationRegister",
 ];
 
+/// The implicit DeletionMark system field is independent of the selected Ref
+/// alias and script language. A main-source projection of that physical field
+/// replaces its implicit identity with the lexical result alias (native A-F,
+/// 8.3.27.2342). Unbound sources and stars retain the legacy policy.
+fn form_dynamic_list_deletion_mark_names(
+    main_table: &str,
+    selection: &FormDynamicListQuerySelection,
+    declarations: Option<&MetadataFieldDeclarationIndex>,
+) -> Option<FormDynamicListDeletionMarkNames> {
+    if main_table.matches('.').count() != 1 || !selection.stars.is_empty() {
+        return None;
+    }
+    let (kind, _) = main_table.split_once('.')?;
+    let pairs = form_dynamic_list_std_attribute_pairs(kind)?;
+    let matching = selection
+        .sources
+        .iter()
+        .filter(|(reference, _)| {
+            reference
+                .as_deref()
+                .is_some_and(|reference| form_data_path_name_eq_ignore_case(reference, main_table))
+        })
+        .collect::<Vec<_>>();
+    if matching.len() != 1 {
+        return None;
+    }
+    let alias = matching[0].1.as_deref()?;
+    if selection
+        .sources
+        .iter()
+        .filter(|(_, candidate)| {
+            candidate
+                .as_deref()
+                .is_some_and(|candidate| form_data_path_name_eq_ignore_case(candidate, alias))
+        })
+        .count()
+        != 1
+    {
+        return None;
+    }
+    let mut result = FormDynamicListDeletionMarkNames {
+        lexical: selection.aliases.clone(),
+        ..Default::default()
+    };
+    for (ru, en) in form_dynamic_list_declared_std_attribute_pairs(pairs, main_table, declarations)
+    {
+        if *en != "DeletionMark" {
+            continue;
+        }
+        let projected = selection.paths.keys().any(|(source, field)| {
+            form_data_path_name_eq_ignore_case(source, alias)
+                && (form_data_path_name_eq_ignore_case(field, ru)
+                    || form_data_path_name_eq_ignore_case(field, en))
+        });
+        // A different expression can already own this result name. Its
+        // physical identity is unproved, so preserve the existing behavior.
+        if !projected
+            && selection
+                .aliases
+                .iter()
+                .any(|name| form_data_path_name_eq_ignore_case(name, en))
+        {
+            return None;
+        }
+        result.aliases.insert(ru.to_lowercase(), en.to_string());
+        result.aliases.insert(en.to_lowercase(), en.to_string());
+        if !projected {
+            result.implicit.insert(en.to_string());
+        }
+    }
+    (!result.aliases.is_empty()).then_some(result)
+}
+
+/// Legacy contribution for unrelated standard fields and register dimensions.
+/// The narrower implicit DeletionMark contribution is handled separately.
 /// Main-table fields the platform adds to a manual query's available-field
 /// list on its own: the standard attributes of the family, plus dimensions
 /// for a register — each unless the query already selects that very
@@ -8400,6 +8578,7 @@ const FORM_DYNAMIC_LIST_REGISTER_KINDS: &[&str] = &[
 /// writes `~Список.Ref` beside a plain `Список.Ссылка` for a query that selects
 /// `Ссылка КАК Ссылка`. Not one list on any of the eight configurations of the
 /// stand needs an English spelling from here.
+
 fn form_dynamic_list_main_table_auto_fields(
     main_table: &str,
     selection: &FormDynamicListQuerySelection,
@@ -8477,6 +8656,263 @@ fn form_dynamic_list_reference_alias_loses_key(
 #[cfg(test)]
 mod reference_alias_tests {
     use super::*;
+
+    fn deletion_mark_control_paths(arm: &str) -> (Vec<String>, String, String) {
+        let query = match arm {
+            "A" | "F" => "ВЫБРАТЬ T.Ссылка КАК Ссылка ИЗ Справочник.CorpusList КАК T",
+            "B" | "E" => "ВЫБРАТЬ T.Ссылка КАК OwnedRef ИЗ Справочник.CorpusList КАК T",
+            "C" => {
+                "ВЫБРАТЬ T.Ссылка КАК OwnedRef, T.ПометкаУдаления КАК ПометкаУдаления ИЗ Справочник.CorpusList КАК T"
+            }
+            "D" => "ВЫБРАТЬ 1 КАК Marker ИЗ Справочник.CorpusList КАК T",
+            _ => panic!("unknown public arm"),
+        };
+        let refs = BTreeMap::from([(
+            "a4d6ccbb-a666-4217-ad1a-174221faba2b".into(),
+            "Catalog.CorpusList".into(),
+        )]);
+        let declarations = declarations_for_script(if arm == "E" { "0" } else { "1" }, &refs);
+        let mut properties = vec![
+            r#""ManualQuery",{"B",1}"#.to_string(),
+            format!(r#""QueryText",{{"S","{query}"}}"#),
+            r#""AutoFillAvailableFields",{"B",1}"#.to_string(),
+        ];
+        for (suffix, id, name, twin) in [
+            (
+                0,
+                3,
+                if arm == "F" {
+                    "Description"
+                } else {
+                    "Наименование"
+                },
+                None,
+            ),
+            (1, 4, "Code", Some("Код")),
+            (2, 9, "SortKey", None),
+            (3, 13, "Ref", Some("Ссылка")),
+            (
+                4,
+                14,
+                if arm == "F" {
+                    "ПометкаУдаления"
+                } else {
+                    "DeletionMark"
+                },
+                None,
+            ),
+        ] {
+            properties.push(format!(r#""FieldsMapItemId{suffix}",{{"N",{id}}}"#));
+            properties.push(format!(r#""FieldsMapItemName{suffix}",{{"S","{name}"}}"#));
+            if let Some(twin) = twin {
+                properties.push(format!(
+                    r#""FieldsMapItemSecondaryName{suffix}",{{"S","{twin}"}}"#
+                ));
+            }
+        }
+        properties.push(r#""ReqMapFieldId0",{"N",3}"#.into());
+        properties.push(r#""ReqMapFieldId1",{"N",14}"#.into());
+        let bag = format!("{{0,{},{}}}", properties.len(), properties.join(","));
+        let mut settings = parse_form_dynamic_list_settings(&bag, &refs).unwrap();
+        settings.main_table = Some("Catalog.CorpusList".into());
+        let facts = FormDynamicListFieldFacts::read(
+            &bag,
+            Some(&settings),
+            &refs,
+            Some(&declarations),
+            None,
+        )
+        .unwrap();
+        let mut paths = facts.use_always("Список", Some(&settings));
+        paths.sort(); // unchanged production final attribute ordering, line4990
+        let owners = BTreeMap::from([(
+            "26".into(),
+            FormAttributeMetadataOwner {
+                name: "Список".into(),
+                type_references: vec!["cfg:DynamicList".into()],
+                exact_single_type_reference: Some("cfg:DynamicList".into()),
+                has_dynamic_list_settings: true,
+                main_table: Some("Catalog.CorpusList".into()),
+                manual_query: true,
+                additional_columns: vec![],
+            },
+        )]);
+        let mut bindings = FormOwnerScopedBindingIndexes::default();
+        bindings.dynamic_list_attribute_ids.insert("26".into());
+        for (id, name) in &facts.field_names {
+            bindings.attribute_columns.insert(
+                FormAttributeColumnKey {
+                    attribute_id: "26".into(),
+                    column_id: id.clone(),
+                },
+                Some(name.clone()),
+            );
+        }
+        for id in facts.unresolvable_item_ids() {
+            bindings
+                .unresolvable_columns
+                .insert(FormAttributeColumnKey {
+                    attribute_id: "26".into(),
+                    column_id: id,
+                });
+        }
+        for (id, name) in facts.field_item_twins() {
+            bindings.column_twins.insert(
+                FormAttributeColumnKey {
+                    attribute_id: "26".into(),
+                    column_id: id,
+                },
+                name,
+            );
+        }
+        let path = |id| match resolve_form_attribute_column_data_path(
+            &format!("{{2,{{26}},{{{id}}}}}"),
+            &owners,
+            &bindings,
+        ) {
+            FormOwnerScopedDataPath::Resolved(path) => path,
+            _ => panic!("public column must remain explicitly bound"),
+        };
+        (paths, path(4), path(13))
+    }
+
+    // Native 8.3.27.2342 A-F: DeletionMark is the target of this correction.
+    // A/D deliberately preserve the existing, separate Description behavior;
+    // Code/Ref assertions below freeze unrelated production output, not parity.
+    // Full observations: public-form-six-arm-comparison-001, SHA48b28c51…dbde08.
+    #[test]
+    fn implicit_deletion_mark_matches_native_six_arm_controls() {
+        for arm in ["A", "B", "C", "D", "E", "F"] {
+            let (paths, code, reference) = deletion_mark_control_paths(arm);
+            let expected = match arm {
+                "A" | "D" => vec!["Список.DeletionMark", "Список.Наименование"],
+                "B" | "E" => vec!["~Список.Наименование", "Список.DeletionMark"],
+                "C" => vec!["~Список.DeletionMark", "~Список.Наименование"],
+                "F" => vec!["~Список.Description", "Список.DeletionMark"],
+                _ => unreachable!(),
+            };
+            assert_eq!(paths, expected, "DeletionMark native control {arm}");
+            assert_eq!(
+                code,
+                if matches!(arm, "B" | "C") {
+                    "~Список.Code~Список.Код"
+                } else {
+                    "Список.Code"
+                },
+                "unrelated Code behavior {arm}"
+            );
+            assert_eq!(
+                reference,
+                if matches!(arm, "B" | "C") {
+                    "~Список.Ref~Список.Ссылка"
+                } else {
+                    "Список.Ref"
+                },
+                "unrelated Ref behavior {arm}"
+            );
+        }
+    }
+
+    #[test]
+    fn implicit_deletion_mark_cannot_unshadow_a_later_map_entry() {
+        let refs = BTreeMap::from([(
+            "a4d6ccbb-a666-4217-ad1a-174221faba2b".into(),
+            "Catalog.CorpusList".into(),
+        )]);
+        let declarations = declarations_for_script("1", &refs);
+        let bag = r#"{0,7,"ManualQuery",{"B",1},"QueryText",{"S","SELECT 1 AS Marker FROM Catalog.CorpusList AS T"},"FieldsMapItemId0",{"N",1},"FieldsMapItemName0",{"S","ПометкаУдаления"},"FieldsMapItemId1",{"N",2},"FieldsMapItemName1",{"S","ПометкаУдаления"},"ReqMapFieldId0",{"N",2}}"#;
+        let mut settings = parse_form_dynamic_list_settings(bag, &refs).unwrap();
+        settings.main_table = Some("Catalog.CorpusList".into());
+        let facts =
+            FormDynamicListFieldFacts::read(bag, Some(&settings), &refs, Some(&declarations), None)
+                .unwrap();
+        assert!(facts.shadowed_item_ids.contains("2"));
+        assert_eq!(
+            facts.use_always("List", Some(&settings)),
+            ["~List.ПометкаУдаления"]
+        );
+
+        // Explicit aliases keep the existing casefold spelling in DataPath.
+        let bag = r#"{0,5,"ManualQuery",{"B",1},"QueryText",{"S","SELECT T.ПометкаУдаления AS DeletionMark FROM Catalog.CorpusList AS T"},"FieldsMapItemId0",{"N",14},"FieldsMapItemName0",{"S","deletionmark"},"ReqMapFieldId0",{"N",14}}"#;
+        let mut settings = parse_form_dynamic_list_settings(bag, &refs).unwrap();
+        settings.main_table = Some("Catalog.CorpusList".into());
+        let facts =
+            FormDynamicListFieldFacts::read(bag, Some(&settings), &refs, Some(&declarations), None)
+                .unwrap();
+        let owners = BTreeMap::from([(
+            "26".into(),
+            FormAttributeMetadataOwner {
+                name: "List".into(),
+                type_references: vec!["cfg:DynamicList".into()],
+                exact_single_type_reference: Some("cfg:DynamicList".into()),
+                has_dynamic_list_settings: true,
+                main_table: Some("Catalog.CorpusList".into()),
+                manual_query: true,
+                additional_columns: vec![],
+            },
+        )]);
+        let key = FormAttributeColumnKey {
+            attribute_id: "26".into(),
+            column_id: "14".into(),
+        };
+        let mut bindings = FormOwnerScopedBindingIndexes::default();
+        bindings.dynamic_list_attribute_ids.insert("26".into());
+        bindings
+            .attribute_columns
+            .insert(key.clone(), Some("deletionmark".into()));
+        bindings
+            .column_twins
+            .insert(key, facts.field_item_twins().remove("14").unwrap());
+        assert!(
+            matches!(resolve_form_attribute_column_data_path("{2,{26},{14}}", &owners, &bindings),
+            FormOwnerScopedDataPath::Resolved(path) if path == "List.DeletionMark")
+        );
+    }
+
+    #[test]
+    fn implicit_deletion_mark_requires_an_unambiguous_main_source() {
+        let declarations = declarations_for_script("1", &BTreeMap::new());
+        fn parse(query: &str) -> FormDynamicListQuerySelection {
+            parse_form_dynamic_list_query_selection(query).unwrap()
+        }
+        let other = parse(
+            "SELECT X.ПометкаУдаления AS OtherMark FROM Catalog.CorpusList AS T LEFT JOIN Catalog.Other AS X ON T.Ссылка = X.Ссылка",
+        );
+        let names = form_dynamic_list_deletion_mark_names(
+            "Catalog.CorpusList",
+            &other,
+            Some(&declarations),
+        )
+        .unwrap();
+        assert!(names.implicit.contains("DeletionMark"));
+        for member in ["ПометкаУдаления", "DeletionMark"] {
+            let selected = parse(&format!(
+                "SELECT T.{member} AS SelectedMark FROM Catalog.CorpusList AS T"
+            ));
+            let names = form_dynamic_list_deletion_mark_names(
+                "Catalog.CorpusList",
+                &selected,
+                Some(&declarations),
+            )
+            .unwrap();
+            assert!(names.implicit.is_empty());
+            assert!(names.lexical.contains("SelectedMark"));
+        }
+        for query in [
+            "SELECT T.Ref AS SelectedRef FROM Catalog.CorpusList AS T JOIN Catalog.CorpusList AS U ON T.Ref = U.Ref",
+            "SELECT T.* FROM Catalog.CorpusList AS T",
+            "SELECT 1 AS DeletionMark FROM Catalog.CorpusList AS T",
+        ] {
+            assert!(
+                form_dynamic_list_deletion_mark_names(
+                    "Catalog.CorpusList",
+                    &parse(query),
+                    Some(&declarations)
+                )
+                .is_none()
+            );
+        }
+    }
 
     #[test]
     fn renamed_reference_removes_auto_fields_in_both_script_variants() {
@@ -8582,7 +9018,7 @@ mod reference_alias_tests {
     }
 
     #[test]
-    fn use_always_script_and_auto_fill_discriminate_missing_deletion_mark() {
+    fn use_always_auto_fill_controls_implicit_deletion_mark() {
         for auto_fill in [None, Some(true)] {
             assert_eq!(
                 deletion_mark_paths("0", auto_fill, None, None),
@@ -8590,7 +9026,7 @@ mod reference_alias_tests {
             );
             assert_eq!(
                 deletion_mark_paths("1", auto_fill, None, None),
-                ["~List.DeletionMark"],
+                ["List.DeletionMark"],
             );
         }
         for script_code in ["0", "1"] {
@@ -11593,7 +12029,7 @@ pub(super) struct FormOwnerScopedBindingIndexes {
     invalid_nested_columns: BTreeSet<FormAttributeColumnKey>,
     /// The localized twin the field map remembers beside a column's own name.
     /// A marked path names both, the same pair `<UseAlways>` writes.
-    column_twins: BTreeMap<FormAttributeColumnKey, String>,
+    column_twins: BTreeMap<FormAttributeColumnKey, FormFieldItemName>,
     /// Attribute ids whose single declared type is a catalogue the
     /// configuration declares no `<Owners>` member for. Such a catalogue has no
     /// `Owner` standard attribute, so a terminal that names one is a name the
@@ -27375,11 +27811,15 @@ fn resolve_form_attribute_column_data_path(
     // written `~Список.РегистрационныйНомерЕРУЗ`, while the same field name
     // under a list that does resolve it is written without the marker.
     if !owner_scoped_bindings.unresolvable_columns.contains(&key) {
-        let source_name = owner_scoped_bindings
-            .column_twins
-            .get(&key)
-            .filter(|candidate| form_data_path_name_eq_ignore_case(candidate, column_name))
-            .unwrap_or(column_name);
+        let source_name = match owner_scoped_bindings.column_twins.get(&key) {
+            Some(FormFieldItemName::ResolvedName(name)) => name,
+            Some(FormFieldItemName::RememberedTwin(name))
+                if form_data_path_name_eq_ignore_case(name, column_name) =>
+            {
+                name
+            }
+            _ => column_name,
+        };
         return FormOwnerScopedDataPath::Resolved(format!("{}.{}", attribute.name, source_name));
     }
     // A marked field the map remembers a localized twin for is written under
@@ -27393,10 +27833,12 @@ fn resolve_form_attribute_column_data_path(
     // nine `<Field>` values that carry two names, every one of them the same
     // shape read through the use-always route.
     match owner_scoped_bindings.column_twins.get(&key) {
-        Some(twin) if twin != column_name => FormOwnerScopedDataPath::Resolved(format!(
-            "~{0}.{1}~{0}.{twin}",
-            attribute.name, column_name
-        )),
+        Some(FormFieldItemName::RememberedTwin(twin)) if twin != column_name => {
+            FormOwnerScopedDataPath::Resolved(format!(
+                "~{0}.{1}~{0}.{twin}",
+                attribute.name, column_name
+            ))
+        }
         _ => FormOwnerScopedDataPath::Resolved(format!("~{}.{}", attribute.name, column_name)),
     }
 }
