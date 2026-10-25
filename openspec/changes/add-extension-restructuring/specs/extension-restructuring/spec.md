@@ -23,3 +23,25 @@ The updater SHALL reject unsupported or destructive plans before writes and SHAL
 - **GIVEN** an already applied extension image
 - **WHEN** the same update is applied again
 - **THEN** no duplicate objects, records or allocations are created
+
+### Requirement: Accompanying data-owning objects are classified
+The updater SHALL classify accompanying metadata by its measured physical effects, including non-predefined scheduled-job tables and their service mapping, and SHALL apply measured base data-separation contributions to extension-owned objects.
+
+#### Scenario: Full application update
+- **GIVEN** an extension update with new catalogs, registers, a common module, HTTP service, subsystem and non-predefined scheduled job
+- **WHEN** its complete source tree is imported and applied
+- **THEN** all required tables and metadata are published atomically
+- **AND** existing control records and references remain available in a fresh session
+
+#### Scenario: Unmodeled predefined job instance
+- **GIVEN** a new predefined scheduled job requiring a persistent activation-condition instance
+- **WHEN** its update is proposed without an evidenced instance writer
+- **THEN** the command names the unsupported job before staging or publication
+- **AND** no database mutation is performed
+
+#### Scenario: Legacy structural container
+- **GIVEN** an active or staged extension outside the measured structural format/profile pairing
+- **WHEN** its update requires new SQL schema records
+- **THEN** the updater reports the active and staged formats before staging or publication
+- **AND** no manifest version is silently changed
+- **AND** previously supported body-only overlays retain their prior format support

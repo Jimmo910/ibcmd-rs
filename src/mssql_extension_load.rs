@@ -295,6 +295,11 @@ pub fn load_extensions(args: &MssqlLoadExtensionArgs) -> Result<MssqlExtensionLo
             })?;
             if schema.is_some() {
                 require_restructure_scope(extension.scope)?;
+                require_restructure_formats(
+                    args.platform_profile,
+                    manifest.identity().storage_format,
+                    manifest.identity().storage_format,
+                )?;
             }
         }
         prepared.push(PreparedLoad {
@@ -571,7 +576,7 @@ pub(crate) fn activate_staged_extension_verified(
     )?;
     let schema = if !plan.is_no_op() {
         let root = CasHash::parse_hex(&extension.active_cas_root)?;
-        let (active, _) = fetch_cas_storage_image_with_manifest(
+        let (active, active_manifest) = fetch_cas_storage_image_with_manifest(
             &sql,
             &args.database,
             MssqlStorageTable::ConfigCas,
@@ -594,7 +599,7 @@ pub(crate) fn activate_staged_extension_verified(
         {
             None
         } else {
-            crate::mssql_extension_restructure::prepare(
+            let schema = crate::mssql_extension_restructure::prepare(
                 &sql,
                 &args.database,
                 args.platform_profile,
@@ -602,7 +607,15 @@ pub(crate) fn activate_staged_extension_verified(
                 &active,
                 &stage,
             )
-            .context("extension schema transition is not publishable; nothing was published")?
+            .context("extension schema transition is not publishable; nothing was published")?;
+            if schema.is_some() {
+                require_restructure_formats(
+                    args.platform_profile,
+                    active_manifest.identity().storage_format,
+                    plan.storage_format(),
+                )?;
+            }
+            schema
         }
     } else {
         None
@@ -666,6 +679,31 @@ pub(crate) fn activate_staged_extension_verified(
         script: Some(script),
         recovery: Some(recovery),
     })
+}
+
+/// Legacy body overlays retain their existing format support. New metadata
+/// records need an independently measured writer/storage-format pairing.
+fn require_restructure_formats(
+    profile: crate::mssql_platform_profile::MssqlNativePlatformProfile,
+    active: u32,
+    proposed: u32,
+) -> Result<()> {
+    use crate::mssql_platform_profile::MssqlNativePlatformProfile;
+    let expected = match profile {
+        MssqlNativePlatformProfile::Platform8_3_27_2214 => 80_327,
+        MssqlNativePlatformProfile::Platform8_5_1_1150 => 80_501,
+        _ => bail!(
+            "extension restructuring is not measured for {}",
+            profile.id()
+        ),
+    };
+    if active != expected || proposed != expected {
+        bail!(
+            "extension restructuring on {} requires the measured configinfo format {expected}; active={active}, staged={proposed}; no format upgrade was performed and nothing was changed",
+            profile.id()
+        );
+    }
+    Ok(())
 }
 
 /// Base data separation is supported. The installation scope of the
@@ -1322,6 +1360,23 @@ fn resolve_password(args: &MssqlLoadExtensionArgs) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structural_formats_are_exact_without_narrowing_legacy_body_overlays() {
+        use crate::mssql_platform_profile::MssqlNativePlatformProfile::{
+            Platform8_3_27_2214 as P27, Platform8_5_1_1150 as P85,
+        };
+        require_restructure_formats(P27, 80_327, 80_327).unwrap();
+        require_restructure_formats(P85, 80_501, 80_501).unwrap();
+        for legacy in [80_310, 80_314, 80_321, 80_324] {
+            assert!(require_restructure_formats(P27, legacy, legacy).is_err());
+            P27.require_extension_storage_format(legacy).unwrap();
+        }
+        assert!(require_restructure_formats(P85, 80_327, 80_327).is_err());
+        P85.require_extension_storage_format(80_327).unwrap();
+        assert!(require_restructure_formats(P85, 80_501, 80_327).is_err());
+        assert!(require_restructure_formats(P27, 80_327, 80_501).is_err());
+    }
 
     #[test]
     fn structural_scope_admission_is_distinct_from_base_data_separation() {

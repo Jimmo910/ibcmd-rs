@@ -1,0 +1,8 @@
+{
+  "equal": [
+    "CovRestructureBaseline",
+    "CovRestructureUpdate",
+    "CovRestructureTwoJobs",
+    "CovRestructureTwoPlainJobs"
+  ]
+}

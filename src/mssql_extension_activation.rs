@@ -1,7 +1,8 @@
 //! Fail-closed direct MSSQL publication for one verified extension.
 //!
 //! Only transactions observed in independent exact-build native controls are
-//! rendered here. Derived platform caches are deliberately outside its scope.
+//! rendered here. An independently validated schema phase shares the same
+//! transaction as CAS and registry publication.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -101,6 +102,7 @@ pub struct ExtensionActivationPlan {
     staged_rows: Vec<(String, i16, Vec<u8>, i32)>,
     cas_rows: Vec<CasRow>,
     staged_bytes: u64,
+    storage_format: u32,
     service_marker: ExtensionServiceMarkerSnapshot,
     no_op: bool,
     own_ras_processes: Vec<crate::mssql_platform_profile::OwnRasProcess>,
@@ -146,6 +148,10 @@ impl Display for ExtensionActivationError {
 impl Error for ExtensionActivationError {}
 
 impl ExtensionActivationPlan {
+    pub(crate) fn storage_format(&self) -> u32 {
+        self.storage_format
+    }
+
     pub fn is_no_op(&self) -> bool {
         self.no_op
     }
@@ -483,6 +489,7 @@ fn prepare_extension_activation_impl(
         staged_rows,
         cas_rows,
         staged_bytes,
+        storage_format: manifest.storage_format,
         service_marker,
         no_op: old_root == new_root,
         own_ras_processes: Vec::new(),
