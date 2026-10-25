@@ -95,29 +95,10 @@ impl Drop for Scratch {
 ///
 /// One extension per process: the offline staging compiler reads its base rows
 /// from a process-wide table.
-pub(crate) fn compile_tree_edit(
-    sql: &SqlExec,
-    database: &str,
-    source_version: InfobaseConfigSourceVersion,
-    input_dir: &Path,
-    active: &StorageImage,
-    prefixes: &[String],
-) -> Result<Option<TreeEdit>> {
-    compile_tree_edit_with_policy(
-        sql,
-        database,
-        source_version,
-        input_dir,
-        active,
-        prefixes,
-        false,
-    )
-}
-
-/// Compiles a proposed schema update, without authorising its publication.
-/// The caller must validate every resulting row with the extension schema
-/// planner before staging or activating it. The ordinary entry point retains
-/// its nonstructural policy.
+///
+/// Compiles a proposed schema update without authorising publication. The
+/// caller must prove it nonstructural or validate its physical schema plan
+/// before staging or activating any row.
 pub(crate) fn compile_tree_edit_for_restructure(
     sql: &SqlExec,
     database: &str,
@@ -125,26 +106,6 @@ pub(crate) fn compile_tree_edit_for_restructure(
     input_dir: &Path,
     active: &StorageImage,
     prefixes: &[String],
-) -> Result<Option<TreeEdit>> {
-    compile_tree_edit_with_policy(
-        sql,
-        database,
-        source_version,
-        input_dir,
-        active,
-        prefixes,
-        true,
-    )
-}
-
-fn compile_tree_edit_with_policy(
-    sql: &SqlExec,
-    database: &str,
-    source_version: InfobaseConfigSourceVersion,
-    input_dir: &Path,
-    active: &StorageImage,
-    prefixes: &[String],
-    for_restructure: bool,
 ) -> Result<Option<TreeEdit>> {
     let base_export = Scratch::new("base");
     let report = crate::mssql_dump::extension::export_extension_image_to_source(
@@ -191,36 +152,17 @@ fn compile_tree_edit_with_policy(
             std::fs::read_to_string(input_dir.join("Configuration.xml")),
         ) {
             (Ok(active_root), Ok(tree_root)) => {
-                version_edit =
-                    root_version_edit_for_policy(&active_root, &tree_root, for_restructure);
-                root_children_change(&active_root, &tree_root, for_restructure)
-                    || version_edit.is_some()
+                version_edit = root_version_edit_for_policy(&active_root, &tree_root, true);
+                root_children_change(&active_root, &tree_root, true) || version_edit.is_some()
             }
             _ => false,
         };
-    let refused = if for_restructure {
-        // Compilation constructs the complete proposal. The SQL planner, not
-        // this source-path classifier, proves its physical transition. Root
-        // edits still admit only the modelled Version and child collections.
-        if diff.changed.iter().any(|path| path == "Configuration.xml") && !root_edit_supported {
-            vec!["Configuration.xml (unmodeled root property change)".to_owned()]
-        } else {
-            Vec::new()
-        }
-    } else {
-        structural_refusals(&diff, root_edit_supported)
-    };
-    if !refused.is_empty() {
-        if for_restructure {
-            bail!(
-                "unsupported extension root transition, nothing was staged: {}",
-                list_paths(&refused)
-            );
-        }
+    // Compilation constructs the complete proposal. The SQL planner, not
+    // this source-path classifier, proves its physical transition. Root
+    // edits still admit only the modelled Version and child collections.
+    if diff.changed.iter().any(|path| path == "Configuration.xml") && !root_edit_supported {
         bail!(
-            "these changes are not loaded (activation restructures nothing, so an edit of what a \
-             table holds is the platform's own load): {}",
-            list_paths(&refused)
+            "unsupported extension root transition, nothing was staged: Configuration.xml (unmodeled root property change)"
         );
     }
 
