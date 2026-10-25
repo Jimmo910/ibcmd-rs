@@ -750,3 +750,136 @@ fn parameter_value_budget_rejects_below_and_accepts_exact_or_above() {
         }
     }
 }
+
+// Operator-only read/rollback gate. No population, application DML or COMMIT.
+#[test]
+#[ignore = "sole operator: exact disposable public SQL identity, TLS and idle window required"]
+fn public_sql_held_capture_rolls_back_and_closes_dedicated_session() -> Result<()> {
+    use crate::sql::{SqlLogin, SqlTarget, mssql::MssqlClient};
+    use std::time::{Duration, Instant};
+    ensure!(
+        cfg!(windows),
+        "public integrated-auth acceptance requires Windows"
+    );
+    const DATABASE: &str = "IBCMDLAB_PUBLIC_SQL_151c08962516426e96ccf4e48d240ff9";
+    const GUID: &str = "9000716B-B12F-45BE-BB5B-27FB88534F95";
+    ensure!(
+        std::env::var("IBCMD_SQL_IMPORT_PUBLIC_FIXTURE").as_deref() == Ok(GUID),
+        "explicit disposable public fixture opt-in required"
+    );
+    let endpoint = std::env::var("IBCMD_SQL_IMPORT_PUBLIC_ENDPOINT")
+        .context("operator-measured certificate-valid TCP endpoint required")?;
+    ensure!(
+        !endpoint.trim().is_empty() && !endpoint.contains(['\0', '\r', '\n']),
+        "invalid public SQL endpoint"
+    );
+    let profile = Profile {
+        identity: DatabaseIdentity {
+            server: "WIN-LHDQGRLB1L1".into(),
+            database: DATABASE.into(),
+            database_guid: GUID.into(),
+            family_guid: "DF1E79FC-77D9-4DF6-AF59-C753F3AF6EFC".into(),
+            recovery_fork: "DF1E79FC-77D9-4DF6-AF59-C753F3AF6EFC".into(),
+        },
+        sql_version: "16.0.1000.6".into(),
+        schema: [
+            0xad, 0xa2, 0x1b, 0x51, 0x3d, 0xe5, 0x5c, 0x54, 0x3d, 0xed, 0x7d, 0xe7, 0x24, 0xd1,
+            0x34, 0x41, 0x52, 0x31, 0x78, 0xd0, 0x78, 0xd5, 0xf8, 0x58, 0xc9, 0x1d, 0xce, 0x0c,
+            0xac, 0x10, 0xb6, 0x26,
+        ],
+    };
+    let client = MssqlClient::new(
+        SqlTarget {
+            server: endpoint,
+            database: Some(DATABASE.into()),
+            login: SqlLogin::Integrated,
+            trust_server_certificate: false,
+        },
+        1,
+    )?;
+    let started = Instant::now();
+    let check: Check = Arc::new(move || {
+        ensure!(
+            started.elapsed() < Duration::from_secs(30),
+            "held capture deadline exceeded"
+        );
+        Ok(())
+    });
+    let limits = Limits {
+        max_parts: 1024,
+        max_part_bytes: 1024 * 1024,
+        max_payload_bytes: 8 * 1024 * 1024,
+        max_metadata_bytes: 262144,
+        max_name_units: 128,
+    };
+    let before = super::super::snapshot::capture(&client, &profile, limits, check.clone())?;
+    ensure!(
+        before.parts(Table::Config).count() == 8
+            && before.parts(Table::ConfigSave).count() == 0
+            && before
+                .parts(Table::Config)
+                .map(|(_, p)| p.binary.len())
+                .sum::<usize>()
+                == 3313,
+        "public fixture differs from the measured baseline"
+    );
+    let mut held_spid = None;
+    let mut rollback_ack = false;
+    let mut entries = 0usize;
+    client.with_dedicated_session(&mut |session| {
+        ensure!(entries == 0, "dedicated callback repeated");
+        entries += 1;
+        check()?;
+        session.run_batch(&begin(&profile))?;
+        let reads = (|| -> Result<()> {
+            let first = capture_held(session, &profile, limits, check.clone())?;
+            before.require_equal(&first.readset)?;
+            let second = capture_held(session, &profile, limits, check.clone())?;
+            ensure!(
+                first.session_id > 0 && first.session_id == second.session_id,
+                "held captures changed SQL sessions"
+            );
+            first.readset.require_equal(&second.readset)?;
+            held_spid = Some(first.session_id);
+            check()?;
+            Ok(())
+        })();
+        // Even a failed comparison gets one terminal cleanup attempt. An unusable
+        // stream may refuse it; success is never claimed without acknowledgement.
+        let rollback = session.rollback_only();
+        reads?;
+        rollback?;
+        rollback_ack = true;
+        Ok(())
+    })?;
+    ensure!(
+        entries == 1 && rollback_ack,
+        "held rollback was not acknowledged"
+    );
+    let spid = held_spid.context("held session seal missing")?;
+    check()?;
+    // The original pooled reader remains open while the dedicated connection is
+    // dropped, preventing its own fresh checkout from reusing that SPID.
+    let mut closure_rows = 0usize;
+    client.read_rows("SELECT @@SPID,@@TRANCOUNT,XACT_STATE(),HAS_PERMS_BY_NAME(NULL,'SERVER','VIEW SERVER PERFORMANCE STATE'),(SELECT COUNT_BIG(*) FROM sys.dm_exec_sessions WHERE session_id=@P1)",
+        &[SqlParam::I64(spid)], &mut |row| {
+            ensure!(row.result_set == 0 && closure_rows == 0, "invalid closure result shape");
+            let [SqlValue::Int(reader),SqlValue::Int(depth),SqlValue::Int(state),SqlValue::Int(visible),SqlValue::Int(remaining)]: [SqlValue;5] = row.values.try_into()
+                .map_err(|_| anyhow::anyhow!("invalid closure result types"))? else {
+                    anyhow::bail!("invalid closure result types");
+                };
+            ensure!(reader > 0 && reader != spid && depth == 0 && state == 0 && visible == 1 && remaining == 0,
+                "dedicated session closure or idle reader not confirmed");
+            closure_rows += 1;
+            Ok(())
+        })?;
+    ensure!(closure_rows == 1, "closure result missing");
+    let after = super::super::snapshot::capture(&client, &profile, limits, check.clone())?;
+    before.require_equal(&after)?;
+    check()?;
+    drop(client);
+    println!(
+        "PUBLIC_SQL_HELD_CAPTURE_ROLLBACK_PASS captures=2 same_session=true transaction_seals=true rollback_ack=true session_closed=true readsets_unchanged=true application_dml=false"
+    );
+    Ok(())
+}

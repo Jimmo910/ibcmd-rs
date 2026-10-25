@@ -61,3 +61,52 @@ Document-only cohort. Full #382 acceptance, confirmation routing, real SQL
 atomicity and native stage/apply acceptance remain incomplete. The diagnostic
 observer branch policy-registration failure remains open; no baseline or guard
 was changed and this branch is not publication-ready.
+
+## Operator-only held-capture test prepared
+
+`transaction_tests.rs` now contains one ignored test:
+`server::sql_import::transaction::tests::public_sql_held_capture_rolls_back_and_closes_dedicated_session`.
+No production API changed. A Windows-only gate and explicit existing disposable
+GUID/endpoint opt-in precede product TDS/TLS connection creation. The profile and
+bounded initial snapshot must match the existing public 8-part/3313-byte fixture.
+The existing pooled reader remains open while one owned dedicated connection
+acquires the normal LIVE guard, begins a transaction and performs two held
+captures. Both seals require TX depth 1, XACT_STATE 1 and the same positive SPID.
+Both complete readsets equal the initial capture. One terminal rollback is
+attempted even if a comparison fails; PASS requires acknowledgement.
+
+After the dedicated callback returns, the pooled reader requires an idle session,
+a distinct SPID, existing VIEW SERVER PERFORMANCE STATE permission and zero DMV
+rows for the old dedicated SPID. It does not grant that permission. A fresh
+bounded capture must still equal the entire initial physical readset. No temp
+population, application DML, COMMIT or native call is in this ignored test.
+
+Local Rust 1.95.0 test compilation passed in 40.64s: 11 recording tests passed and
+this one live test remained ignored. Independent source re-review CLEAR after
+adding the DMV visibility requirement. Existing 40 lib-test warnings unchanged;
+no source-owned warning. Log: logs/issue-382-held-capture-compile.log, fixtures
+retained. This is Mac compilation, not Windows execution or real SQL acceptance.
+
+Once an actual Windows lib-test executable with checked source commit and SHA256
+is available, the sole operator uses the existing ordinary SSH/PowerShell path:
+
+```powershell
+$env:IBCMD_SQL_IMPORT_PUBLIC_FIXTURE = '9000716B-B12F-45BE-BB5B-27FB88534F95'
+# Endpoint and existing certificate configuration come from the current lab
+# binding; do not substitute a guessed endpoint or certificate bypass.
+& .\ibcmd_rs-lib-test.exe --ignored --exact server::sql_import::transaction::tests::public_sql_held_capture_rolls_back_and_closes_dedicated_session --nocapture --test-threads=1
+```
+
+Before dispatch, verify the exact hash/source binding, current identity/schema,
+TLS, authorized integrated principal, idle window and absence of an uncertain
+previous attempt. Require exactly one test passed; zero tests is not acceptance.
+Raw failure details remain VM-local. No automatic retry or write-route enabling.
+
+Windows artifact preparation is blocked: automatic approval review rejected the
+proposed change that would upload the test executable and build metadata through
+the existing Windows CI artifact step. The workflow edit did not execute; the
+workflow is unchanged, with no push/dispatch or alternative artifact transport.
+The explicit reason was missing trusted end-user authorization for that exact
+external artifact egress/workflow side effect. A new specific authorization is
+required before retrying that action. Windows Rust/MSVC availability on the lab VM
+is not established; no toolchain was installed or new launcher created.
