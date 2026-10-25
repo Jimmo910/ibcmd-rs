@@ -1116,6 +1116,27 @@ mod compatibility_tests {
 
     #[test]
     fn compatibility_probe_reads_a_completed_stage_over_empty_config() {
+        const CHILD: &str = "IBCMD_RS_COMPLETED_STAGE_PROBE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // Other unit tests temporarily install process-wide offline rows.
+            // This probe must exercise its SQL client, not their row provider.
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "mssql_dump::model_export::compatibility_tests::compatibility_probe_reads_a_completed_stage_over_empty_config",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let root =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase/tiny-source");
         let path = root.join("Configuration.xml");
