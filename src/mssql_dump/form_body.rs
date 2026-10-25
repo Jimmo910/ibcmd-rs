@@ -6521,6 +6521,9 @@ struct FormDynamicListFieldFacts<'s> {
     /// The same map with the list's own fields added where it is silent.
     field_names_with_settings: BTreeMap<String, String>,
     secondary_names: BTreeMap<String, String>,
+    /// Unique ordinary self-bindings choose spelling only after availability
+    /// is independently established; remembered map entries do not declare it.
+    declared_output_spellings: BTreeSet<String>,
     shadowed_item_ids: BTreeSet<String>,
     universe: Option<BTreeSet<String>>,
     deletion_mark_names: Option<FormDynamicListDeletionMarkNames>,
@@ -6564,6 +6567,12 @@ impl<'s> FormDynamicListFieldFacts<'s> {
             Some(built) => (Some(built.names), built.handled),
             None => (None, None),
         };
+        let declared_output_spellings = deletion_mark_names
+            .as_ref()
+            .filter(|names| !names.implicit.is_empty())
+            .and(settings)
+            .map(form_dynamic_list_declared_output_spellings)
+            .unwrap_or_default();
         let mut universe_by_lowercase = HashMap::<String, Vec<String>>::new();
         for name in universe.iter().flatten() {
             universe_by_lowercase
@@ -6576,6 +6585,7 @@ impl<'s> FormDynamicListFieldFacts<'s> {
             field_names,
             field_names_with_settings,
             secondary_names,
+            declared_output_spellings,
             shadowed_item_ids,
             universe,
             deletion_mark_names,
@@ -6617,7 +6627,13 @@ impl<'s> FormDynamicListFieldFacts<'s> {
                     .universe
                     .as_ref()
                     .is_some_and(|universe| universe.contains(canonical)))
-            .then(|| canonical.clone());
+            .then(|| {
+                if self.declared_output_spellings.contains(field_name) {
+                    field_name.to_string()
+                } else {
+                    canonical.clone()
+                }
+            });
         }
         (self.universe_by_lowercase.contains_key(&primary)
             || secondary.is_some_and(|name| {
@@ -6752,6 +6768,36 @@ impl<'s> FormDynamicListFieldFacts<'s> {
         }
         twins
     }
+}
+
+/// Ordinary direct declarations can preserve a field's spelling without
+/// making that field available. Read the same branch the writer emits;
+/// ServerState replaces the parsed bag declarations rather than augmenting them.
+fn form_dynamic_list_declared_output_spellings(
+    settings: &FormDynamicListSettings,
+) -> BTreeSet<String> {
+    let fields = match &settings.server_state_xml {
+        Some(fragment) => {
+            ibcmd_xml::dcs::form_dynamic_list_direct_field_bindings(fragment).unwrap_or_default()
+        }
+        None => settings
+            .explicit_fields
+            .iter()
+            .map(|field| (field.data_path.clone(), field.field.clone()))
+            .collect(),
+    };
+    let mut counts = BTreeMap::<String, (usize, usize)>::new();
+    for (path, name) in &fields {
+        counts.entry(path.to_lowercase()).or_default().0 += 1;
+        counts.entry(name.to_lowercase()).or_default().1 += 1;
+    }
+    fields
+        .into_iter()
+        .filter(|(path, name)| {
+            path == name && !name.contains('.') && counts.get(&name.to_lowercase()) == Some(&(1, 1))
+        })
+        .map(|(_, name)| name)
+        .collect()
 }
 
 pub(super) fn parse_form_dynamic_list_field_name_by_item_id(
@@ -8659,6 +8705,21 @@ mod reference_alias_tests {
     use super::*;
 
     fn deletion_mark_control_paths(arm: &str) -> (Vec<String>, String, String) {
+        deletion_mark_control_paths_with_bindings(arm, &[])
+    }
+
+    fn deletion_mark_control_paths_with_bindings(
+        arm: &str,
+        bindings: &[(&str, &str)],
+    ) -> (Vec<String>, String, String) {
+        deletion_mark_control_paths_with_field_sources(arm, bindings, None)
+    }
+
+    fn deletion_mark_control_paths_with_field_sources(
+        arm: &str,
+        bindings: &[(&str, &str)],
+        server_state: Option<&str>,
+    ) -> (Vec<String>, String, String) {
         let query = match arm {
             "A" | "F" => "ВЫБРАТЬ T.Ссылка КАК Ссылка ИЗ Справочник.CorpusList КАК T",
             "B" | "E" => "ВЫБРАТЬ T.Ссылка КАК OwnedRef ИЗ Справочник.CorpusList КАК T",
@@ -8711,11 +8772,15 @@ mod reference_alias_tests {
                 ));
             }
         }
+        for (path, name) in bindings {
+            properties.push(format!(r#""Field",{{"{path}","{name}"}}"#));
+        }
         properties.push(r#""ReqMapFieldId0",{"N",3}"#.into());
         properties.push(r#""ReqMapFieldId1",{"N",14}"#.into());
         let bag = format!("{{0,{},{}}}", properties.len(), properties.join(","));
         let mut settings = parse_form_dynamic_list_settings(&bag, &refs).unwrap();
         settings.main_table = Some("Catalog.CorpusList".into());
+        settings.server_state_xml = server_state.map(str::to_string);
         let facts = FormDynamicListFieldFacts::read(
             &bag,
             Some(&settings),
@@ -8812,6 +8877,93 @@ mod reference_alias_tests {
                 "unrelated Ref behavior {arm}"
             );
         }
+    }
+
+    #[test]
+    fn implicit_deletion_mark_preserves_unique_declared_output_spelling() {
+        // The retained UT groups carry a direct ordinary RU -> RU Field
+        // declaration; public F has only a remembered map with that name.
+        let undeclared = deletion_mark_control_paths("F");
+        let declared = deletion_mark_control_paths_with_bindings(
+            "F",
+            &[("ПометкаУдаления", "ПометкаУдаления")],
+        );
+        assert_eq!(
+            declared.0,
+            vec!["~Список.Description", "Список.ПометкаУдаления"]
+        );
+        assert_eq!(
+            undeclared.0,
+            vec!["~Список.Description", "Список.DeletionMark"]
+        );
+        assert_eq!((&declared.1, &declared.2), (&undeclared.1, &undeclared.2));
+        for bindings in [
+            vec![("Description", "Description")],
+            vec![("ПометкаУдаления", "DeletionMark")],
+            vec![("Ref.ПометкаУдаления", "Ref.ПометкаУдаления")],
+            vec![
+                ("ПометкаУдаления", "ПометкаУдаления"),
+                ("ПометкаУдаления", "DeletionMark"),
+            ],
+            vec![
+                ("ПометкаУдаления", "ПометкаУдаления"),
+                ("ПометкаУдаления", "ПометкаУдаления"),
+            ],
+            vec![
+                ("ПометкаУдаления", "ПометкаУдаления"),
+                ("пометкаудаления", "пометкаудаления"),
+            ],
+        ] {
+            assert_eq!(
+                deletion_mark_control_paths_with_bindings("F", &bindings),
+                undeclared,
+                "a renamed, dotted or ambiguous binding cannot select the spelling"
+            );
+        }
+        // A declaration cannot make an explicitly projected-away name available.
+        assert_eq!(
+            deletion_mark_control_paths_with_bindings(
+                "C",
+                &[("ПометкаУдаления", "ПометкаУдаления")],
+            ),
+            deletion_mark_control_paths("C")
+        );
+    }
+
+    #[test]
+    fn implicit_deletion_mark_uses_only_emitted_server_state_bindings() {
+        let declaration = r#"<Field xsi:type="dcssch:DataSetFieldField"><dcssch:dataPath>ПометкаУдаления</dcssch:dataPath><dcssch:field>ПометкаУдаления</dcssch:field></Field>"#;
+        let declared = deletion_mark_control_paths_with_field_sources(
+            "F",
+            &[("ПометкаУдаления", "DeletionMark")],
+            Some(declaration),
+        );
+        assert_eq!(
+            declared.0,
+            vec!["~Список.Description", "Список.ПометкаУдаления"]
+        );
+        let undeclared = deletion_mark_control_paths("F");
+        assert_eq!((&declared.1, &declared.2), (&undeclared.1, &undeclared.2));
+        for fragment in [
+            "<Parameter/>",
+            &format!("<Container>{declaration}</Container>"),
+            &format!("{declaration}{declaration}"),
+            &declaration.replace("DataSetFieldField", "CalculatedField"),
+        ] {
+            assert_eq!(
+                deletion_mark_control_paths_with_field_sources(
+                    "F",
+                    &[("ПометкаУдаления", "ПометкаУдаления")],
+                    Some(fragment),
+                ),
+                undeclared,
+                "the emitted fragment replaces the bag; only a unique ordinary direct binding counts"
+            );
+        }
+        assert_eq!(
+            deletion_mark_control_paths_with_field_sources("C", &[], Some(declaration)),
+            deletion_mark_control_paths("C"),
+        );
     }
 
     #[test]
