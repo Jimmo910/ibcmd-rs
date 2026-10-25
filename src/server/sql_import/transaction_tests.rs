@@ -1710,3 +1710,238 @@ fn public_sql_nonempty_stage_cancel_and_stale_preserve_neighbors() -> Result<()>
 
 #[path = "transaction_selected_acceptance.rs"]
 mod selected_acceptance;
+
+// Operator-only PUBLICFORM experiment. Fill these measured bindings ONLY after
+// the native CF eaf574099239a975adb2a301b7e3d73743da00617e5c721a919329e6b5533bad
+// has a fresh SQL load/apply/export baseline. Empty/zero placeholders refuse
+// before any connection; this test is not runnable acceptance evidence yet.
+#[test]
+#[ignore = "sole operator: new native-CF PUBLICFORM baseline and separate staging opt-in required; native writer profile unadmitted"]
+fn public_sql_existing_form_module_stage_experiment() -> Result<()> {
+    use crate::{
+        compiler::bodies::form::{ManagedFormCodecProfile, decode_managed_form},
+        server::sql_import::{
+            selected::form::{DocumentFormProfile, prepare_form_module},
+            snapshot,
+        },
+        sql::{SqlLogin, SqlTarget, mssql::MssqlClient},
+    };
+    use sha2::{Digest, Sha256};
+    use std::time::{Duration, Instant};
+
+    const SERVER: &str = ""; // Actual new PUBLICFORM identity pending.
+    const DATABASE: &str = "";
+    const GUID: &str = "";
+    const FAMILY: &str = "";
+    const FORK: &str = "";
+    const SQL_VERSION: &str = "";
+    const PACKED_FORM_BODY_SHA256: [u8; 32] = [0; 32];
+    const PATH: &str = "Documents/ImportDocument/Forms/Main/Ext/Form/Module.bsl";
+    const BODY_KEY: &str = "60000000-0000-4000-8000-000000000200.0";
+    ensure!(
+        cfg!(windows),
+        "public integrated-auth acceptance requires Windows"
+    );
+    ensure!(
+        [SERVER, DATABASE, GUID, FAMILY, FORK, SQL_VERSION]
+            .iter()
+            .all(|value| !value.is_empty())
+            && DATABASE.starts_with("IBCMDLAB_PUBLIC_FORM_SQL_")
+            && PACKED_FORM_BODY_SHA256 != [0; 32],
+        "measured fresh PUBLICFORM baseline bindings are not installed"
+    );
+    for value in [GUID, FAMILY, FORK] {
+        uuid::Uuid::parse_str(value)?;
+    }
+    ensure!(
+        std::env::var("IBCMD_SQL_IMPORT_PUBLIC_FORM_FIXTURE").as_deref() == Ok(GUID)
+            && std::env::var("IBCMD_SQL_IMPORT_PUBLIC_FORM_STAGE_CONFIRM").as_deref() == Ok(GUID),
+        "separate fresh PUBLICFORM fixture and staging opt-ins required"
+    );
+    let endpoint = std::env::var("IBCMD_SQL_IMPORT_PUBLIC_ENDPOINT")
+        .context("operator-measured certificate-valid TCP endpoint required")?;
+    ensure!(
+        !endpoint.trim().is_empty() && !endpoint.contains(['\0', '\r', '\n']),
+        "invalid public SQL endpoint"
+    );
+    let started = Instant::now();
+    let check: Check = Arc::new(move || {
+        ensure!(
+            started.elapsed() < Duration::from_secs(60),
+            "PUBLICFORM experiment deadline exceeded"
+        );
+        Ok(())
+    });
+    let limits = Limits {
+        max_parts: 1024,
+        max_part_bytes: 1024 * 1024,
+        max_payload_bytes: 8 * 1024 * 1024,
+        max_metadata_bytes: 262144,
+        max_name_units: 128,
+    };
+    let client = MssqlClient::new(
+        SqlTarget {
+            server: endpoint,
+            database: Some(DATABASE.into()),
+            login: SqlLogin::Integrated,
+            trust_server_certificate: false,
+        },
+        1,
+    )?;
+    // Existing private canonical observer validates only physical schema and
+    // execution context; its CommonModule name grants no Form/native admission.
+    let observed =
+        snapshot::observe_common_module_profile(&client, DATABASE, limits, check.clone())?;
+    let profile = observed.snapshot_profile();
+    let expected_identity = DatabaseIdentity {
+        server: SERVER.into(),
+        database: DATABASE.into(),
+        database_guid: GUID.into(),
+        family_guid: FAMILY.into(),
+        recovery_fork: FORK.into(),
+    };
+    ensure!(
+        profile.identity == expected_identity && profile.sql_version == SQL_VERSION,
+        "PUBLICFORM observed identity or SQL version differs from measured baseline"
+    );
+    let before = snapshot::capture(&client, profile, limits, check.clone())?;
+    ensure!(
+        before.parts(Table::ConfigSave).count() == 0,
+        "fresh PUBLICFORM native-applied baseline unexpectedly has staging"
+    );
+    let selected = before
+        .parts(Table::Config)
+        .filter(|(key, _)| key.file_name == BODY_KEY)
+        .collect::<Vec<_>>();
+    ensure!(
+        selected.len() == 1 && selected[0].0.part_no == 0,
+        "PUBLICFORM baseline selected body is not one existing part"
+    );
+    let old_packed = selected[0].1.binary.as_slice();
+    let actual_hash: [u8; 32] = Sha256::digest(old_packed).into();
+    ensure!(
+        actual_hash == PACKED_FORM_BODY_SHA256,
+        "PUBLICFORM native body pin changed"
+    );
+    let registry = crate::profile_registry::load_bundled_profile_registry()?;
+    let codec_id = ibcmd_core::artifact::ProfileId::parse("platform-8.3.27.1989")?;
+    let effective = registry
+        .get(&codec_id)
+        .context("experimental Form codec missing")?;
+    let codec = DocumentFormProfile::from_effective(effective)?;
+    let body_codec = ManagedFormCodecProfile::from_effective(effective)?;
+    let old = decode_managed_form(&body_codec, old_packed)?;
+    let old_text = old.module_text();
+    ensure!(
+        old_text.matches("Номер = 1;").count() == 1
+            && old_text.contains("Процедура ПриСозданииНаСервере(")
+            && old_text.contains("&НаСервере"),
+        "PUBLICFORM tiny native handler is not the measured starting module"
+    );
+    let edited = old_text.replacen("Номер = 1;", "Номер = 2;", 1);
+    ensure!(
+        edited != old_text && edited.replace("Номер = 2;", "Номер = 1;") == old_text,
+        "PUBLICFORM edit changed more than the selected statement"
+    );
+    // Immutable decoded storage text, NOT filesystem/source-custody admission.
+    // Native consumer2342 and experimental codec1989 remain distinct coordinates.
+    let edit = prepare_form_module(
+        &before,
+        PATH,
+        edited.as_bytes(),
+        &codec,
+        super::super::selected::Limits::default(),
+        &check,
+    )?;
+    ensure!(
+        edit.replacements().keys().cloned().collect::<BTreeSet<_>>()
+            == BTreeSet::from([BODY_KEY.into(), "versions".into()]),
+        "PUBLICFORM compiler changed an unselected row"
+    );
+    let changed = decode_managed_form(&body_codec, &edit.replacements()[BODY_KEY])?;
+    ensure!(
+        changed.module_text() == edited
+            && old.parsed().revision == changed.parsed().revision
+            && old.parsed().layout == changed.parsed().layout
+            && old.parsed().trailing == changed.parsed().trailing
+            && old.parsed().trailing_fields == changed.parsed().trailing_fields,
+        "PUBLICFORM compiler changed non-module Form state"
+    );
+    // The pinned native body carries the proven event; exact non-module IR
+    // equality preserves its layout/event/attributes without rebuilding Form.xml.
+    let versions = before
+        .parts(Table::Config)
+        .filter(|(key, _)| key.file_name == "versions")
+        .collect::<Vec<_>>();
+    ensure!(
+        versions.len() == 1 && versions[0].0.part_no == 0,
+        "PUBLICFORM baseline versions is not one existing part"
+    );
+    crate::mssql_dump::validate_sql_versions_change(
+        &crate::module_blob::inflate_raw(&versions[0].1.binary)?,
+        &crate::module_blob::inflate_raw(&edit.replacements()["versions"])?,
+        &BTreeSet::from([BODY_KEY.into()]),
+    )?;
+    let policy = WritePolicy::existing_single_part(1024 * 1024, 4 * 1024 * 1024)?;
+    let expected = physical_plan(&before, &edit, &policy, &check)?.expected;
+    let report = stage(
+        &client,
+        &before,
+        &edit,
+        profile,
+        &policy,
+        check.clone(),
+        &|| Ok(()),
+    );
+    // Print before assertions: Unknown requires reconciliation, never retry.
+    println!(
+        "PUBLIC_SQL_FORM_EXPERIMENTAL_STAGE_OUTCOME state={:?} cleanup_uncertain={} automatic_retry=false",
+        report.state, report.cleanup_uncertain
+    );
+    ensure!(
+        report.state == State::Committed,
+        "PUBLICFORM commit not confirmed; reconcile before any other write; automatic retry forbidden"
+    );
+    ensure!(
+        report.error.is_none() && !report.cleanup_uncertain,
+        "PUBLICFORM committed outcome needs reconciliation"
+    );
+    let after = snapshot::capture(&client, profile, limits, check.clone())?;
+    expected.require_equal(&after)?;
+    ensure!(
+        before.parts(Table::Config).eq(after.parts(Table::Config)),
+        "PUBLICFORM staging changed CONFIG before native apply"
+    );
+    ensure!(
+        before
+            .parts(Table::ConfigSave)
+            .filter(|(key, _)| key.file_name != BODY_KEY && key.file_name != "versions")
+            .eq(after
+                .parts(Table::ConfigSave)
+                .filter(|(key, _)| key.file_name != BODY_KEY && key.file_name != "versions")),
+        "PUBLICFORM staging changed an unselected staging entry"
+    );
+    let staged = after
+        .parts(Table::ConfigSave)
+        .filter(|(key, _)| key.file_name == BODY_KEY)
+        .collect::<Vec<_>>();
+    ensure!(
+        staged.len() == 1 && staged[0].0.part_no == 0,
+        "PUBLICFORM staged body is not one part"
+    );
+    ensure!(
+        staged[0].1.binary.as_slice() == edit.replacements()[BODY_KEY].as_slice(),
+        "PUBLICFORM staged body bytes differ from planned compiler output"
+    );
+    let actual = decode_managed_form(&body_codec, &staged[0].1.binary)?;
+    ensure!(
+        actual.parsed() == changed.parsed(),
+        "PUBLICFORM staged typed body differs from verified plan"
+    );
+    check()?;
+    drop(client);
+    println!(
+        "PUBLIC_SQL_FORM_EXPERIMENTAL_STAGE_PASS experimental_staging_only=true codec_profile=platform-8.3.27.1989 actual_native_build=8.3.27.2342 target_platform_admitted=false native_apply_verified=false form_xml_supported=false initial_staging_empty=true automatic_retry=false"
+    );
+    Ok(())
+}
