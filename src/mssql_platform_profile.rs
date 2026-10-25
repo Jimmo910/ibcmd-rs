@@ -665,12 +665,33 @@ fn exclusive_ras_processes(
     })
 }
 
+/// Server-wide DMV visibility is necessary before an empty session result
+/// can prove absence. SQL2012+ exposes the columns these queries use; newer
+/// numeric majors follow Microsoft's SQL2022-and-later permission rule.
+/// CASE always returns 0/1, including NULL version/role/permission results.
+/// Source: Microsoft sys.dm_exec_sessions and HAS_PERMS_BY_NAME documentation.
+pub(crate) const SESSION_VISIBILITY_PREDICATE: &str = r#"CASE WHEN TRY_CONVERT(int, SERVERPROPERTY(N'ProductMajorVersion')) >= 11 AND (
+    IS_SRVROLEMEMBER(N'sysadmin') = 1
+    OR (TRY_CONVERT(int, SERVERPROPERTY(N'ProductMajorVersion')) BETWEEN 11 AND 15 AND HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW SERVER STATE') = 1)
+    OR (TRY_CONVERT(int, SERVERPROPERTY(N'ProductMajorVersion')) >= 16 AND HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW SERVER PERFORMANCE STATE') = 1)
+) THEN 1 ELSE 0 END"#;
+
+pub(crate) const SESSION_VISIBILITY_ERROR: &str = "SQL session visibility cannot be proven: require sysadmin or VIEW SERVER STATE (SQL2012-2019) / VIEW SERVER PERFORMANCE STATE (SQL2022 and later); NULL or unsupported SQL version refuses. No infobase application account is required";
+
+/// No DECLARE statements: the same guard may be repeated in one SQL batch.
+pub(crate) fn session_visibility_gate(code: u32) -> String {
+    format!(
+        "IF ({SESSION_VISIBILITY_PREDICATE}) <> 1 THROW {code}, N'{SESSION_VISIBILITY_ERROR}', 1;\n"
+    )
+}
+
 /// Direct LIVE cannot use an unbound RAS inventory to admit target SQL handles.
 /// This counts idle sessions too, and is never bypassed by --interrupt-sessions.
 pub(crate) fn unbound_live_session_gate(database: &str) -> String {
     let database = database.replace('\'', "''");
     format!(
-        "IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID(N'{database}')) THROW 57239, 'unbound RAS summary cannot exempt actual SQL target sessions, including idle; live operation refused', 1;\n"
+        "{}IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID(N'{database}')) THROW 57239, 'unbound RAS summary cannot exempt actual SQL target sessions, including idle; live operation refused', 1;\n",
+        session_visibility_gate(57270)
     )
 }
 
@@ -706,7 +727,8 @@ pub(crate) fn refuse_unbound_live_sessions(sql: &SqlExec, database: &str) -> Res
 pub fn exclusive_session_gate(code: u32, message: &str, own: &[OwnRasProcess]) -> String {
     let exempt = session_exemption(own);
     format!(
-        "IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID(){exempt}) THROW {code}, '{}', 1;",
+        "{}IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID(){exempt}) THROW {code}, '{}', 1;",
+        session_visibility_gate(57270),
         message.replace('\'', "''")
     )
 }
@@ -746,7 +768,8 @@ pub(crate) fn session_exemption(own: &[OwnRasProcess]) -> String {
 /// status`. Same condition as [`exclusive_session_gate`].
 pub fn foreign_sessions_query(database: &str, own: &[OwnRasProcess]) -> String {
     format!(
-        "SELECT session_id, ISNULL(login_name,N''), ISNULL(host_name,N''), ISNULL(program_name,N''), status FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID(N'{}'){} ORDER BY session_id",
+        "{}SELECT session_id, ISNULL(login_name,N''), ISNULL(host_name,N''), ISNULL(program_name,N''), status FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID(N'{}'){} ORDER BY session_id",
+        session_visibility_gate(57270),
         database.replace('\'', "''"),
         session_exemption(own)
     )
@@ -1294,6 +1317,30 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn session_visibility_precedes_every_zero_session_admission_read() {
+        for sql in [
+            unbound_live_session_gate("lab"),
+            exclusive_session_gate(57209, "no other sessions", &[]),
+            foreign_sessions_query("lab", &[]),
+        ] {
+            let permission = sql.find("VIEW SERVER PERFORMANCE STATE").expect(
+                "an empty DMV result must not admit a caller that sees only its own session",
+            );
+            assert!(permission < sql.find("FROM sys.dm_exec_sessions").unwrap());
+            assert!(sql.contains("VIEW SERVER STATE"));
+            assert!(sql.contains("IS_SRVROLEMEMBER"));
+            assert!(
+                sql.contains("THEN 1 ELSE 0 END"),
+                "NULL permission/version must refuse"
+            );
+            assert!(
+                !sql.contains("DECLARE"),
+                "gate may occur more than once in a batch"
+            );
+        }
+    }
+
+    #[test]
     fn the_pre_stage_query_counts_what_the_gate_counts() {
         let own = [own("DESKTOP-SMI5N4O", 22608)];
         let gate = exclusive_session_gate(57209, "m", &own);
@@ -1305,7 +1352,12 @@ pub(crate) mod tests {
             .map(|(condition, _)| condition.replace("DB_ID()", "DB_ID(N'lab''db')"))
             .unwrap();
         assert!(query.contains(&condition), "{query}\n{condition}");
-        assert!(query.starts_with("SELECT session_id, ISNULL(login_name,N'')"));
+        assert!(
+            query
+                .strip_prefix(&session_visibility_gate(57270))
+                .unwrap()
+                .starts_with("SELECT session_id, ISNULL(login_name,N'')")
+        );
         assert!(query.ends_with(" ORDER BY session_id"));
         // No process named: every session.
         let plain = foreign_sessions_query("db", &[]);
@@ -1321,7 +1373,10 @@ pub(crate) mod tests {
                 "exclusive activation requires no other database sessions",
                 &[]
             ),
-            "IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID()) THROW 57209, 'exclusive activation requires no other database sessions', 1;"
+            format!(
+                "{}IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID()) THROW 57209, 'exclusive activation requires no other database sessions', 1;",
+                session_visibility_gate(57270)
+            )
         );
         let text = exclusive_session_gate(
             57209,

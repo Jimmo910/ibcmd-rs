@@ -1175,3 +1175,9 @@ SQL-базы. Исключение для собственных idle RAS-сеа
 циклом восстановления; `--interrupt-sessions` это требование не отменяет.
 Примеры и измеренные границы:
 [extensions/parity.md](extensions/parity.md#sql-extension-import-and-apply-on-exact-builds).
+
+Проверка отсутствия SQL-сеансов требует видимости всех сеансов сервера:
+`sysadmin` либо `VIEW SERVER STATE` для SQL2012–2019,
+`VIEW SERVER PERFORMANCE STATE` для SQL2022 и новее. Неизвестные версия
+или права приводят к отказу; владение базой и право RESTORE эту проверку
+не заменяют. Это права SQL-логина, пользователь ИБ не требуется.

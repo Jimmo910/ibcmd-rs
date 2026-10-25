@@ -811,3 +811,19 @@ strict policy. Only an in-process managed physical-registration verification
 retains the earlier idle-handle policy. Read-only/already-complete continuation
 and no-op publication do not claim a required interruption or add this gate.
 Dry-run reports expose `requires_empty_actual_sql_sessions`.
+
+### SQL session visibility
+
+An empty `sys.dm_exec_sessions` result establishes no other sessions only
+when the SQL login can see all server sessions. Admission queries and rendered
+exclusive/LIVE guards require a known SQL2012+ major version and either
+`sysadmin`, `VIEW SERVER STATE` on major11–15 (SQL2012–2019), or
+`VIEW SERVER PERFORMANCE STATE` on major16 and later (SQL2022+). Unknown
+version/permission results refuse; database ownership and RESTORE rights do
+not substitute for this permission. These are SQL login permissions, with
+no infobase application account. The shared guard declares no variables, so
+repeated checks in one batch cannot conflict. Read-only/already-complete
+continuation without session admission keeps its existing behavior.
+
+Sources: [Microsoft session DMV permissions](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-exec-sessions-transact-sql),
+[HAS_PERMS_BY_NAME NULL behavior](https://learn.microsoft.com/en-us/sql/t-sql/functions/has-perms-by-name-transact-sql).

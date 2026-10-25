@@ -2001,6 +2001,12 @@ mod tests {
             }
             .unwrap();
             let promotion = script.sql.find("DELETE FROM dbo.Config WHERE").unwrap();
+            let visibility = script
+                .sql
+                .find("VIEW SERVER PERFORMANCE STATE")
+                .expect("SQL absence proof requires server-wide session visibility");
+            assert!(visibility < promotion);
+            assert!(visibility < script.sql.find("BACKUP DATABASE [model]").unwrap());
             let message =
                 "unbound RAS summary cannot exempt actual SQL target sessions, including idle";
             let guard = script.sql.find(message).expect("direct live must gate actual target SQL sessions, even with interrupt acknowledgment");

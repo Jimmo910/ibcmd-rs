@@ -376,7 +376,8 @@ fn render_continuation_sessions_check(database: &str, interrupt: bool) -> String
     }
     let condition = crate::mssql_live_gate::active_work_condition(&quote_string(database));
     format!(
-        "IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions s WHERE {condition}) THROW 57239, 'live continuation refused: sessions of the database started work; cycle 2 was not started; committed promotion/cycle 1 is retained. Retry when sessions are idle', 1;\n"
+        "{}IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions s WHERE {condition}) THROW 57239, 'live continuation refused: sessions of the database started work; cycle 2 was not started; committed promotion/cycle 1 is retained. Retry when sessions are idle', 1;\n",
+        crate::mssql_platform_profile::session_visibility_gate(57270)
     )
 }
 
@@ -1045,6 +1046,7 @@ mod tests {
             .find("unbound RAS summary cannot exempt actual SQL target sessions, including idle")
             .expect("summary cannot establish an empty actual target client inventory");
         assert!(guard < sql.find("SET SINGLE_USER").unwrap());
+        assert!(sql.find("VIEW SERVER PERFORMANCE STATE").unwrap() < guard);
         assert!(sql[..guard].contains("session_id<>@@SPID"));
         let read_only = render_continue(&fixture(), true, false).unwrap();
         assert!(

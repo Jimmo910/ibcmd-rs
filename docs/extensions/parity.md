@@ -761,3 +761,9 @@ See [the immutable #582 measurement](../../openspec/changes/add-extension-restru
 and the pinned `extensions/restructuring` corpus. Predefined scheduled jobs
 remain an explicit refusal because their persistent activation-condition
 instance writer is not implemented.
+
+Exclusive session admission verifies server-wide SQL DMV visibility:
+`sysadmin` or the version-appropriate `VIEW SERVER STATE` (SQL2012–2019) /
+`VIEW SERVER PERFORMANCE STATE` (SQL2022+) permission. A missing/NULL
+permission or unknown/older SQL version refuses before using an empty session
+result. This requires no infobase application account.
