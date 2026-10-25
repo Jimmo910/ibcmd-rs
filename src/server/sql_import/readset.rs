@@ -258,6 +258,59 @@ impl Readset {
         }
         .iter()
     }
+    /// Compares complete captured values, never just digests or selected rows.
+    /// This is the pure CAS predicate, NOT a transactional capability. A future
+    /// publisher must collect `current` on its ONE dedicated session while all
+    /// CONFIG/CONFIGSAVE locks remain held through DML and COMMIT. In particular
+    /// snapshot::capture rolls back before returning and cannot establish that.
+    pub fn require_equal(&self, current: &Readset) -> Result<()> {
+        (self.check)()?;
+        (current.check)()?;
+        anyhow::ensure!(
+            self.identity.server == current.identity.server
+                && self.identity.database == current.identity.database
+                && self.identity.database_guid == current.identity.database_guid
+                && self.identity.family_guid == current.identity.family_guid
+                && self.identity.recovery_fork == current.identity.recovery_fork,
+            "SQL readset target identity changed"
+        );
+        anyhow::ensure!(self.schema == current.schema, "SQL readset schema changed");
+        let bytes_equal = |a: &[u8], b: &[u8]| -> Result<()> {
+            anyhow::ensure!(a.len() == b.len(), "SQL readset byte length changed");
+            for (a, b) in a.chunks(64 * 1024).zip(b.chunks(64 * 1024)) {
+                (self.check)()?;
+                (current.check)()?;
+                anyhow::ensure!(a == b, "SQL readset bytes changed");
+            }
+            Ok(())
+        };
+        for (expected, actual) in [
+            (&self.config, &current.config),
+            (&self.saved, &current.saved),
+        ] {
+            (self.check)()?;
+            (current.check)()?;
+            anyhow::ensure!(
+                expected.len() == actual.len(),
+                "SQL readset physical coverage changed"
+            );
+            for ((a, part_a), (b, part_b)) in expected.iter().zip(actual) {
+                (self.check)()?;
+                (current.check)()?;
+                anyhow::ensure!(a == b, "SQL readset physical key changed");
+                anyhow::ensure!(
+                    part_a.data_size == part_b.data_size,
+                    "SQL readset total size changed"
+                );
+                bytes_equal(&part_a.header, &part_b.header)?;
+                bytes_equal(part_a.binary.as_slice(), part_b.binary.as_slice())?;
+            }
+        }
+        (self.check)()?;
+        (current.check)()?;
+        Ok(())
+    }
+
     /// Local plan binding/fault oracle only; not SQL transaction authorization.
     pub fn digest(&self) -> Result<[u8; 32]> {
         let mut hash = Sha256::new();
@@ -364,4 +417,118 @@ fn feed(hash: &mut Sha256, bytes: &[u8], check: &Check) -> Result<()> {
     }
     check()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod exact_readset_tests {
+    use super::*;
+    fn fixture() -> Readset {
+        let identity = DatabaseIdentity {
+            server: "synthetic".into(),
+            database: "synthetic".into(),
+            database_guid: uuid::Uuid::from_u128(1).to_string(),
+            family_guid: uuid::Uuid::from_u128(2).to_string(),
+            recovery_fork: uuid::Uuid::from_u128(3).to_string(),
+        };
+        let mut builder =
+            Builder::new(identity, [4; 32], Limits::default(), Arc::new(|| Ok(()))).unwrap();
+        for table in [Table::Config, Table::ConfigSave] {
+            builder
+                .push(
+                    table,
+                    Input {
+                        key: Key {
+                            file_name: "neighbour".into(),
+                            part_no: 0,
+                        },
+                        part: Part {
+                            data_size: 128 * 1024,
+                            header: vec![1, 2, 3],
+                            binary: Arc::new(vec![9; 128 * 1024]),
+                        },
+                    },
+                )
+                .unwrap();
+        }
+        builder.finish().unwrap()
+    }
+    #[test]
+    fn exact_readset_accepts_identical_rows_without_digest_authority() {
+        let a = fixture();
+        let b = fixture();
+        a.require_equal(&b).unwrap();
+        assert_eq!(a.digest().unwrap(), b.digest().unwrap());
+    }
+    #[test]
+    fn exact_readset_refuses_identity_schema_coverage_headers_and_payload_changes() {
+        let mutations: [fn(&mut Readset); 12] = [
+            |r| r.identity.server.push('x'),
+            |r| r.identity.database.push('x'),
+            |r| r.identity.database_guid = uuid::Uuid::from_u128(5).to_string(),
+            |r| r.identity.family_guid = uuid::Uuid::from_u128(5).to_string(),
+            |r| r.identity.recovery_fork = uuid::Uuid::from_u128(5).to_string(),
+            |r| r.schema[0] ^= 1,
+            |r| {
+                r.config.clear();
+            },
+            |r| {
+                let part = r.saved.values().next().unwrap().clone();
+                r.saved.insert(
+                    Key {
+                        file_name: "added".into(),
+                        part_no: 0,
+                    },
+                    part,
+                );
+            },
+            |r| {
+                let (mut key, part) = r.saved.pop_first().unwrap();
+                key.part_no = 1;
+                r.saved.insert(key, part);
+            },
+            |r| r.saved.values_mut().next().unwrap().data_size += 1,
+            |r| r.saved.values_mut().next().unwrap().header[0] ^= 1,
+            |r| Arc::make_mut(&mut r.saved.values_mut().next().unwrap().binary)[100_000] ^= 1,
+        ];
+        for mutation in mutations {
+            let a = fixture();
+            let mut b = fixture();
+            mutation(&mut b);
+            assert!(a.require_equal(&b).is_err());
+        }
+        let a = fixture();
+        let mut b = fixture();
+        let (mut key, part) = b.config.pop_first().unwrap();
+        key.file_name = "Neighbour".into();
+        b.config.insert(key, part);
+        assert!(a.require_equal(&b).is_err());
+    }
+    #[derive(Debug)]
+    struct Cancelled;
+    impl std::fmt::Display for Cancelled {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "synthetic cancellation")
+        }
+    }
+    impl std::error::Error for Cancelled {}
+    #[test]
+    fn exact_readset_preserves_typed_cancellation_during_comparison() {
+        let mut a = fixture();
+        let b = fixture();
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = count.clone();
+        a.check = Arc::new(move || {
+            if seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 3 {
+                return Err(anyhow::Error::new(Cancelled));
+            }
+            Ok(())
+        });
+        assert!(
+            a.require_equal(&b)
+                .unwrap_err()
+                .downcast_ref::<Cancelled>()
+                .is_some()
+        );
+        assert!(count.load(std::sync::atomic::Ordering::SeqCst) > 3);
+    }
 }

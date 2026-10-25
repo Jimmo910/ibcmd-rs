@@ -174,3 +174,60 @@ fetches or granting publication authority.
 - **THEN** every unselected entry including trailing generations, all service
   generations, pair order and declared count remain exact; omission, addition or
   mutation of any such entry refuses.
+
+### Requirement: Existing Form module edits retain complete declared ownership
+A Document-owned Form module candidate SHALL resolve original Configuration,
+Document and Form occurrences through admitted typed codecs before lookup-map
+reduction. Unexamined root families SHALL refuse. Compilation SHALL retain every
+unselected Form field and metadata descriptor.
+
+#### Scenario: Existing managed Form module changes
+- **GIVEN** one unique root-to-Document-to-Form chain and a supported body/profile
+- **WHEN** its exact registered FormModule source is compiled from captured bytes
+- **THEN** only that body and the validated versions delta are returned, with
+  identical revision, layout and trailing sections and no SQL contact.
+
+#### Scenario: Competing owner or identity
+- **GIVEN** duplicate membership, multiple parents, a generated/child identity
+  collision, mismatched descriptor UUID or case-colliding owner/Form paths
+- **WHEN** the Form module is prepared
+- **THEN** it refuses before creating a replacement or contacting SQL.
+
+### Requirement: Transaction admission compares complete physical readsets
+The SQL publisher SHALL compare identity, schema, complete CONFIG/CONFIGSAVE
+coverage, physical keys, sizes, headers and raw bytes while locks remain held on
+its one dedicated transaction session. A pure readset comparison or a capture
+whose batch rolled back SHALL NOT authorize later writes on another session.
+
+#### Scenario: Unselected physical state changes
+- **GIVEN** a confirmed plan and a later changed neighbour/header/part/schema or
+  target identity, including additions and deletions outside the selected keys
+- **WHEN** transaction admission compares the current full readset
+- **THEN** it refuses before application DML rather than trusting a selected-only
+  comparison or a digest.
+
+#### Scenario: COMMIT acknowledgement is lost
+- **GIVEN** COMMIT was dispatched but transport ended before its acknowledgement
+- **WHEN** the operation reports its outcome
+- **THEN** it reports unknown, preserves reconciliation evidence and never retries
+  or reports an unproven no-write cancellation.
+
+
+### Requirement: Dedicated session work cannot escape into pool reuse or replay
+The SQL session seam SHALL invoke work once on an owned existing-target
+connection, default to Unsupported for other clients and refuse further
+application work after failed requests. A poisoned session SHALL NOT return
+success because its callback swallowed the failure.
+
+#### Scenario: Failed or unwound request
+- **GIVEN** a failed driver or row callback request, including a panic caught by
+  the outer callback
+- **WHEN** more application work or callback success is attempted
+- **THEN** it refuses without replay or pool reuse, and closes the owned connection.
+
+#### Scenario: Explicit rollback-only cleanup
+- **GIVEN** a usable dedicated connection with an active transaction
+- **WHEN** rollback-only cleanup succeeds
+- **THEN** the rollback was acknowledged and the session is terminal. An absent
+  transaction, unusable protocol state or missing acknowledgement SHALL NOT be
+  reported as a successful rollback.

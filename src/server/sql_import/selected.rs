@@ -25,6 +25,8 @@ use std::{
 };
 use uuid::Uuid;
 
+pub mod form;
+
 type Rows = BTreeMap<String, Vec<u8>>;
 
 /// Cumulative checked packed-input/plaintext caps, not RPC arguments.
@@ -149,28 +151,23 @@ fn plain_key(key: &str) -> Result<()> {
     Ok(())
 }
 
-/// Compiles one selected module from a coherent captured snapshot and immutable
-/// original-census source bytes. Other file roles, aliases and incomplete stage
-/// inventories refuse. Unselected CONFIGSAVE payloads/headers are never rebuilt.
-pub fn prepare_module(
+struct CapturedView<'a> {
+    rows: Rows,
+    members: Vec<(String, String)>,
+    configuration: String,
+    old_versions: Vec<u8>,
+    budget: Budget<'a>,
+}
+fn captured_view<'a>(
     snapshot: &Readset,
-    selected_path: &str,
-    text: &[u8],
-    profile: &CommonModuleProfile,
     limits: Limits,
-    check: &Check,
-) -> Result<ModuleEdit> {
+    check: &'a Check,
+) -> Result<CapturedView<'a>> {
     check()?;
     ensure!(
         limits.packed_bytes > 0 && limits.inflated_bytes > 0 && limits.source_bytes > 0,
         "invalid SQL compiler limits"
     );
-    ensure!(
-        text.len() <= limits.source_bytes,
-        "SQL module source budget exceeded"
-    );
-    std::str::from_utf8(text).context("SQL module source is not UTF-8")?;
-    ensure!(!text.contains(&0), "SQL module source contains NUL");
     let mut left = limits.packed_bytes;
     let config = assemble(snapshot, Table::Config, &mut left, check)?;
     let saved = assemble(snapshot, Table::ConfigSave, &mut left, check)?;
@@ -213,6 +210,47 @@ pub fn prepare_module(
         "SQL Configuration descriptor identity changed"
     );
     let members = configuration_objects(&root_row)?;
+    Ok(CapturedView {
+        rows: effective,
+        members,
+        configuration,
+        old_versions,
+        budget,
+    })
+}
+
+/// Compiles one selected module from a coherent captured snapshot and immutable
+/// original-census source bytes. Other file roles, aliases and incomplete stage
+/// inventories refuse. Unselected CONFIGSAVE payloads/headers are never rebuilt.
+pub fn prepare_module(
+    snapshot: &Readset,
+    selected_path: &str,
+    text: &[u8],
+    profile: &CommonModuleProfile,
+    limits: Limits,
+    check: &Check,
+) -> Result<ModuleEdit> {
+    check()?;
+    ensure!(
+        limits.packed_bytes > 0 && limits.inflated_bytes > 0 && limits.source_bytes > 0,
+        "invalid SQL compiler limits"
+    );
+    ensure!(
+        text.len() <= limits.source_bytes,
+        "SQL module source budget exceeded"
+    );
+    std::str::from_utf8(text).context("SQL module source is not UTF-8")?;
+    ensure!(!text.contains(&0), "SQL module source contains NUL");
+    let CapturedView {
+        rows: effective,
+        members,
+        old_versions,
+        mut budget,
+        ..
+    } = captured_view(snapshot, limits, check)?;
+    let versions = effective
+        .get("versions")
+        .expect("captured versions inventory");
     let mut ids = BTreeSet::new();
     let mut paths = BTreeSet::new();
     let mut selected = None;
@@ -308,12 +346,12 @@ mod tests {
     use flate2::{Compression, write::DeflateEncoder};
     use std::io::Write;
     use std::sync::{Arc, OnceLock};
-    fn pack(bytes: &[u8]) -> Vec<u8> {
+    pub(super) fn pack(bytes: &[u8]) -> Vec<u8> {
         let mut e = DeflateEncoder::new(Vec::new(), Compression::default());
         e.write_all(bytes).unwrap();
         e.finish().unwrap()
     }
-    fn fixture() -> Rows {
+    pub(super) fn fixture() -> Rows {
         static ROWS: OnceLock<Rows> = OnceLock::new();
         ROWS.get_or_init(|| {
             // Existing public tiny fixture only; retained unconditionally.
@@ -343,10 +381,10 @@ mod tests {
         )
         .unwrap()
     }
-    fn check() -> Check {
+    pub(super) fn check() -> Check {
         Arc::new(|| Ok(()))
     }
-    fn snapshot(config: &Rows, saved: &Rows) -> Readset {
+    pub(super) fn snapshot(config: &Rows, saved: &Rows) -> Readset {
         let identity = crate::mssql_live_continue::DatabaseIdentity {
             server: "synthetic".into(),
             database: "synthetic".into(),
@@ -615,7 +653,7 @@ mod tests {
     fn configuration_key(rows: &Rows) -> String {
         root_configuration_uuid(&parse_row(&inflate(&rows["root"])).unwrap()).unwrap()
     }
-    fn change_members(node: &mut Brace, id: &str, replacement: Option<&str>) -> bool {
+    pub(super) fn change_members(node: &mut Brace, id: &str, replacement: Option<&str>) -> bool {
         let Some(items) = node.as_list_mut() else {
             return false;
         };

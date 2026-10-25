@@ -205,3 +205,96 @@ part is modified, and no editor route calls this compiler. Document/form support
 profile admission for actual targets, source-bound confirmation tokens and the
 same-session transactional publisher remain separate unfinished #382 work. The
 unpublished diagnostic observer is not a dependency of this implementation.
+
+## Direct Document-owned Form module slice
+
+The snapshot compiler now resolves Configuration -> Document -> Form through
+existing strict codecs before constructing a source-path lookup. The first
+cohort requires every root member to be an examined Document; mixed/unexamined
+families refuse, including a potentially competing Catalog parent. This is an
+explicit capability restriction, not proof that ignored families cannot own a
+Form. All declared child/generated identities are compared across Documents,
+not only the Form list, and source-path case collisions refuse.
+
+Only the exact registry FormModule role is currently compiled. The existing
+base-aware module overlay must preserve the decoded Form revision, layout and
+all trailing sections exactly while matching the requested module. Document and
+Form descriptors and unrelated physical staging stay unchanged. Form.xml and
+other owners/layouts remain unsupported by this slice; no broader Form capability
+is advertised. The three profiles are constructed together from one effective
+profile. Native SQL/profile acceptance remains separate from codec admission.
+
+## Same-session CAS contract for the next transaction adapter
+
+`Readset::require_equal` implements the pure comparison predicate: exact target
+identity (server/database/GUID/family/fork), schema, both physical key sets,
+PartNo, total sizes, complete headers and raw payload bytes. Comparisons check
+both cancellation callbacks, including during 64-KiB payload/header chunks.
+No selected-only check or digest equality substitutes for this predicate.
+It produces no transaction capability and is not called by an SQL writer.
+
+The minimal session seam is now implemented as one object-safe callback on
+SqlClient, default Unsupported for clients without dedicated session support:
+`fn with_dedicated_session(&self, work: &mut dyn FnMut(&mut dyn SqlSession)
+-> Result<()>) -> Result<()>`.
+Its MSSQL implementation owns one successfully opened existing-target
+`TdsPool::dedicated()` connection, invokes the callback once, and closes
+it on success, error or unwind; it never returns it to the ordinary pool or reconnects
+inside the callback. The driver's existing connection-establishment policy before
+callback entry remains unchanged; no application work is replayed. Source ownership
+alone does not prove actual connection counts, SPID or socket cleanup at runtime. Session methods must fully drain results, retain session
+state and reject further application/CAS/DML/COMMIT work after any failed request.
+An explicit rollback-only cleanup path may be attempted once on that same owned
+connection, including after poisoning, only when the driver establishes usable
+protocol state. A partially drained/failed stream must not be treated as usable;
+if rollback cannot safely be sent or is not acknowledged, close the connection
+and retain cleanup-uncertain/reconciliation evidence. Cleanup never unpoisons or
+reuses the session. A swallowed request error must not turn the outer operation
+into success. Methods may expose internal batch execution, parameterized
+row/statement execution and this rollback-only cleanup; no new RPC,
+CLI target, credentials, trust override or verification switch is introduced.
+
+Transaction sequence on that same owned connection:
+
+1. Validate the session-bound one-use plan, epoch, TTL and source witnesses before
+   starting application DML. Acquire the existing pending-LIVE exclusion and
+   CONFIG then CONFIGSAVE transaction locks in the established order.
+2. Re-read identity/schema and the complete physical rows under those locks.
+   Build the bounded current Readset, call require_equal, and fully drain the
+   reader before final client-side source/policy/cancellation guards. Retain
+   locks after this read: existing snapshot::capture cannot be used because its
+   batch rolls back before returning the seal.
+3. Replace only the compiler-derived selected body keys and validated versions.
+   Preserve every other CONFIGSAVE header/part and all CONFIG rows. Selected
+   multipart encoding/header semantics still require measured adapter admission;
+   do not reuse FileDb headers or the legacy replace_config_save writer.
+4. Verify the proposed merged state, run final guards immediately before COMMIT,
+   dispatch COMMIT once and record its acknowledgement. No separate pool call,
+   run_script/read-then-execute pair, retry, fallback or dynamic apply is allowed.
+
+The session implementation must distinguish batch execution from sp_executesql:
+parent-scope temporary tables, BEGIN/SET and final COMMIT need a session-level
+batch where their lifetime is guaranteed. Parameterized nested calls may use
+that existing state; they must not create a CAS table in an execution scope that
+ends before the next call. No USE or target rebinding belongs in this operation.
+
+Outcomes must distinguish not dispatched, confirmed rollback, acknowledged commit
+and unknown outcome. Before COMMIT, errors/cancellation attempt rollback on this
+same connection; report rollback only with acknowledgement. Once COMMIT has been
+dispatched, transport loss without its acknowledgement is unknown, never a
+no-write cancellation or automatic replay. Cancellation after acknowledged COMMIT
+cannot revoke the published outcome. Unknown or cleanup-uncertain attempts retain
+recovery evidence and require reconciliation. TDS cancellation alone is not proof
+of rollback.
+
+The session seam has source review, pure poison/terminal/default-refusal tests
+and a compile check, but no real-session acceptance. Driver request failure is
+conservatively treated as unusable protocol state, so rollback SQL is refused
+and the owned connection closes. Healthy client-side guard failures may use the
+terminal rollback-only path, which refuses an absent transaction rather than
+acknowledging a no-op after COMMIT. No producer calls the new seam yet.
+
+Transactional locking/CAS/DML, the physical selected-row writer, confirmation
+routing and real SQL import -> native apply -> re-export acceptance remain
+unimplemented. The pure comparison method and snapshot compilers cannot enable
+them by themselves.

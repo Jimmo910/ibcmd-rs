@@ -37,3 +37,17 @@
   focused tests and production lib-check passed. No observer dependency or SQL
   route/publisher. See evidence/selected-module-snapshot.md; this is not F.7 or
   completion of SQL preparation/publication.
+
+- [x] F.9 Document-only root-cohort Form module compiler from immutable snapshots;
+  exact complete declared owner/child identity checks and unchanged non-module
+  body state. 17 selected-module/Form tests and integrated lib-check passed.
+  Form.xml and unexamined owners remain unsupported; see
+  evidence/form-module-and-cas-contract.md.
+- [x] F.10 Pure exact full physical-readset comparison plus 3 mutation/cancellation
+  tests; concrete dedicated-session/rollback/COMMIT-unknown contract reviewed.
+  This does not implement transactional SQL CAS/publication or complete F.7.
+
+- [x] F.11 Minimal dedicated-session backend seam, unsupported default, owned MSSQL
+  connection, poison/terminal rollback guards; 4 pure state/default-refusal tests
+  passed and source review cleared. No production caller or real-session proof;
+  held-lock CAS/DML/COMMIT outcome handling still belongs to unfinished 2.3.
