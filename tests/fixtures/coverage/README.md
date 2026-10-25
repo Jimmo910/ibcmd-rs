@@ -10,8 +10,8 @@ Do not remove an equal variant or path to accommodate a corpus update.
 ```text
 git submodule update --init --recursive
 python tools/coverage/fixture_paths.py
-cargo test --locked --no-default-features --test coverage_corpus
+cargo test --locked -p ibcmd-rs --test integration coverage_corpus:: --no-default-features
 ```
 
-Source probe refusal expectations remain in
+Source probe refusal and native parity expectations remain in
 `../coverage-records/source-probe-expectations.json`, keyed by stable probe ID.
