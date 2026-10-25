@@ -62,3 +62,19 @@ validation, and SHALL state the evidence actually used for RAS registration.
 - **GIVEN** an unverified build or missing selected RAS registration
 - **WHEN** the operation is prepared without application credentials
 - **THEN** it refuses before staging and preserves existing data
+### Requirement: Nested dialogs of existing own data processors
+Whole-tree extension import SHALL compile additions of nested managed forms
+on existing own DataProcessor objects together with a Version increment and
+new tableless root children. The compiler SHALL verify the complete proposed
+source image and SHALL NOT treat a form-only edit as a physical table change.
+
+#### Scenario: Version, common module and processor dialog in one update
+- **GIVEN** an extension containing an own processor with an existing form
+- **WHEN** a higher-version source tree adds a managed dialog and common module
+- **THEN** import compiles and stages the complete faithful image on both builds
+- **AND** apply preserves the existing data schema and prior source objects
+
+#### Scenario: Unrelated root property changes
+- **GIVEN** an unmodeled semantic change to a root property
+- **WHEN** it accompanies a nested-form addition
+- **THEN** the compiler refuses before staging and identifies the changed property
