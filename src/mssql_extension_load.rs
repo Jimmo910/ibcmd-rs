@@ -279,7 +279,7 @@ pub fn load_extensions(args: &MssqlLoadExtensionArgs) -> Result<MssqlExtensionLo
         )
         .is_err()
         {
-            crate::mssql_extension_restructure::prepare(
+            let schema = crate::mssql_extension_restructure::prepare(
                 &sql,
                 &args.database,
                 args.platform_profile,
@@ -293,6 +293,9 @@ pub fn load_extensions(args: &MssqlLoadExtensionArgs) -> Result<MssqlExtensionLo
                     extension.name,
                 )
             })?;
+            if schema.is_some() {
+                require_restructure_scope(extension.scope)?;
+            }
         }
         prepared.push(PreparedLoad {
             extension: extension.clone(),
@@ -605,6 +608,7 @@ pub(crate) fn activate_staged_extension_verified(
         None
     };
     let plan = if let Some(schema) = &schema {
+        require_restructure_scope(extension.scope)?;
         plan.with_restructuring(schema)?
     } else {
         plan
@@ -662,6 +666,17 @@ pub(crate) fn activate_staged_extension_verified(
         script: Some(script),
         recovery: Some(recovery),
     })
+}
+
+/// Base data separation is supported. The installation scope of the
+/// extension is a distinct protocol and is admitted only where measured.
+fn require_restructure_scope(scope: crate::mssql_extensions::MssqlExtensionScope) -> Result<()> {
+    if scope != crate::mssql_extensions::MssqlExtensionScope::Infobase {
+        bail!(
+            "structural publication is measured for extensions installed for the whole infobase; a data-separation-scoped extension needs a separately verified protocol; nothing was changed"
+        );
+    }
+    Ok(())
 }
 
 /// Replanning creates fresh DBNames version identifiers. Keep each exact
@@ -1307,6 +1322,19 @@ fn resolve_password(args: &MssqlLoadExtensionArgs) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structural_scope_admission_is_distinct_from_base_data_separation() {
+        use crate::mssql_extensions::MssqlExtensionScope;
+        require_restructure_scope(MssqlExtensionScope::Infobase).unwrap();
+        let error = require_restructure_scope(MssqlExtensionScope::DataSeparation).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("data-separation-scoped extension")
+        );
+        assert!(error.to_string().contains("nothing was changed"));
+    }
 
     #[test]
     fn default_activation_artifacts_distinguish_replanned_schema_versions() {
