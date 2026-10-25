@@ -369,3 +369,42 @@ Actual Rust1.95/jobs1/KEEP_FIXTURES=1 external-target transaction filter:
 test is compiled but has not run on SQL or Windows. Native neighbour preparation,
 Windows artifact verification and actual execution remain prerequisites.
 Retained log: logs/issue-382-neighbour-acceptance-compile.log.
+
+
+## Directory-census integration, separate from the SQL runtime candidate
+
+The exact twelve-commit source-custody donor chain was integrated with original
+cherry-pick provenance at 91ddc3cab175f0e6e0e2bd63db8066322da9e5d8, over the
+separately frozen 9d04a5f1 SQL runtime candidate. The six resulting source/test
+blobs match the independently reviewed donor receipt exactly; fourteen additional
+paths are its OpenSpec documentation. No SQL, workflow, Cargo, policy baseline or
+FileDB publication path was changed. Existing public HeldSourceRoot/inventory
+signatures are preserved. SourceAdmission inherits the bounded anchored directory
+census and rejects empty-directory membership changes during revalidation; it
+does not claim an atomic filesystem freeze or defeat all ABA races.
+
+Fresh integration/applicability review APPROVE. Actual Rust1.95/jobs1/external
+retained target at 91dd: directory census 14 passed; Unix directory witnesses nine
+passed; editor_partial_import 14 passed; editor_sql_import 29 passed, one live test
+ignored; production library check passed. Root test/library warnings remained
+40/97. Logs retained as issue-382-integrated-census.log,
+issue-382-integrated-directory-witness.log, issue-382-census-filedb-compat.log,
+issue-382-census-sql-admission.log and issue-382-census-libcheck.log under the
+external logs directory. All processes exited. A following documentation-only
+correction removes the obsolete SourceAdmission empty-directory disclaimer.
+
+The 9d04a5f1 Windows/runtime evidence and earlier a666 one-module native success
+retain their exact source attribution. This donor integration does not inherit
+that SQL runtime acceptance, admit a writer profile, or enable an editor write
+route. The unrelated diagnostic observer policy-registration blocker is unchanged;
+no baseline growth, whitelist or relocation exception is introduced.
+
+
+The unchanged normal physical-adapter policy guard was run after integration and
+still refuses the existing unregistered diagnostic observer, file-path hash
+5574a62490168322556d12d020d387ae765a939f0f12587067ea69e930825999.
+This is retained as a full-branch readiness blocker, not a passing guard or a
+new directory-census failure. Log SHA-256:
+3a9d27cd753c39d45b59801fd3fbf8e6de6b4e6097c939c6df87e49bb1954ba1.
+No baseline/scanner/whitelist was changed or rerun with an exception. Formatting,
+diff checks and all four affected OpenSpec changes validate strictly.
