@@ -16,11 +16,15 @@ cargo xtask affected   # the test commands your diff needs, and what else to run
 cargo xtask ci         # local mirror of the required merge checks; before a PR leaves draft
 cargo fmt --all
 cargo test --locked -p ibcmd-filedb <name>                               # one crate, one test
-cargo test --locked -p ibcmd-rs --test cf_export --no-default-features   # one root suite
+cargo test --locked -p ibcmd-rs --test integration cf_export:: --no-default-features   # one root suite
 cargo test --locked -p ibcmd-rs --lib <module> --no-default-features     # root unit tests, filtered
 cargo build --locked --profile iter                                      # binary for corpus runs
 ```
 
+- Root suites are modules of `tests/integration.rs` (one test binary, tests
+  named `<suite>::<test>`). A suite that changes process-global engine state
+  in the test process gets its own `[[test]]` in Cargo.toml and runs with
+  `--test <suite>`.
 - xtask prints one line per step and only the tail of a failing step; full
   logs are in `target/xtask/<step>.log`. Read the log before guessing.
 - `clippy -D warnings` covers `crates/*`. The root package (`src/`, `tests/`)
@@ -56,7 +60,7 @@ cargo build --locked --profile iter                                      # binar
    (ERP, Бухгалтерия, БСП…) is first reproduced as a coverage variant and seen
    red in `tests/coverage_corpus.rs` (skill `coverage-case`); only then fixed.
    The variant also enters the platform's combined configuration: rebuild it
-   with `tools/coverage/combine.py` (the coverage test fails until you do).
+   with `tests/fixtures/1c-fixtures/tools/coverage/combine.py` (the coverage test fails until you do).
 3. Change in small steps; after each, run the narrowest test that covers it.
 4. `cargo xtask check` until green. A failure is pre-existing only after you
    reproduce it on the merge base and say so, with the command.

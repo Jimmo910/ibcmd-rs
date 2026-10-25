@@ -8,7 +8,7 @@ description: Turn a mismatch found on a typical configuration (ERP, Бухгал
 A typical configuration finds a problem; the coverage sets keep it from coming
 back. The fix is never made against the typical configuration's object: it
 is made against a generated, platform-proven variant that reproduces the same
-rule (`tests/fixtures/coverage/README.md`).
+rule (`tests/fixtures/1c-fixtures/coverage/README.md`).
 
 ## 1. Pin the symptom
 
@@ -38,15 +38,16 @@ source `observed:<configuration>`. Its objects, modules and texts never do.
 
 ## 3. Prove the case on the platform
 
-Rebuild the set and run it through the native platform of the build that showed
+Initialize the submodule with `git submodule update --init --recursive`.
+Work on a feature branch in Untru/1c-fixtures, then rebuild the set and run it through the native platform of the build that showed
 the mismatch:
 
 ```text
-python3 tools/coverage/generate.py <set> <scratch>/tree
-python3 tools/coverage/native_round_trip.py --ibcmd <ibcmd> --platform <build> \
+python3 tests/fixtures/1c-fixtures/tools/coverage/generate.py <set> <scratch>/tree
+python3 tests/fixtures/1c-fixtures/tools/coverage/native_round_trip.py --ibcmd <ibcmd> --platform <build> \
   --xml-version <version> --set <set> --tree <scratch>/tree --work <scratch>/rt
-python3 tools/coverage/combine.py --ibcmd <ibcmd> --platform <build> \
-  --xml-version <version> --root tests/fixtures/coverage/<build> --work <scratch>/combined
+python3 tests/fixtures/1c-fixtures/tools/coverage/combine.py --ibcmd <ibcmd> --platform <build> \
+  --xml-version <version> --root tests/fixtures/1c-fixtures/coverage/<build> --work <scratch>/combined
 ```
 
 The variant must come out `platform_proven`. If the platform refuses it, its
@@ -56,7 +57,7 @@ variant instead.
 ## 4. See it red
 
 ```text
-cargo test --locked -p ibcmd-rs --test coverage_corpus --no-default-features -- --nocapture
+cargo test --locked -p ibcmd-rs --test integration coverage_corpus:: --no-default-features -- --nocapture
 ```
 
 The new variant must be reported `different` or `refused` with the same
@@ -71,7 +72,9 @@ mismatch: go back to step 2.
   baseline regressed.
 - Add it to the baseline:
   `cargo test … -- --nocapture | python3 tools/coverage/update_baseline.py`.
-- Commit the set, the combined set and the fix together. The PR names the
+- Publish the proven corpus change first. In ibcmd-rs, commit its gitlink,
+  the fix and converter-owned baselines together; never update a moving branch.
+  The PR names the
   typical-configuration symptom, the variant that reproduces it and the rule.
 
 ## 6. Close the loop

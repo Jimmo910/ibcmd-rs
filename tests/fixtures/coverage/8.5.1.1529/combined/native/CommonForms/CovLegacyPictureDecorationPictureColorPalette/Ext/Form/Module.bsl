@@ -1,3 +1,0 @@
-﻿&AtClient
-Procedure CoverageProbe()
-EndProcedure

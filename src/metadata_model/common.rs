@@ -8,7 +8,7 @@
 //! row into the same struct.
 //!
 //! Empty ExternalDataSource is measured against a native 8.3.27.2214 CF;
-//! its nonempty child families and Interface require separate layouts.
+//! its nonempty child families require separate layouts. Interface has its own model.
 
 #[path = "common_export.rs"]
 pub(crate) mod export;
@@ -37,6 +37,7 @@ pub fn compile(object: &ObjectXml<'_>, context: &DescriptorContext) -> Result<Br
 
 fn compile_tree(object: &ObjectXml<'_>, context: &DescriptorContext) -> Result<Brace> {
     Ok(match object.kind {
+        "Interface" => super::interface::Interface::from_xml(object)?.to_brace(),
         "CommonModule" => CommonModule::from_xml(object)?.to_brace(),
         "CommonPicture" => CommonPicture::from_xml(object)?.to_brace(),
         "CommonTemplate" => Template::from_xml(object)?.to_common_brace(),

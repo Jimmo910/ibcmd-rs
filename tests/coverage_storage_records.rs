@@ -1,6 +1,9 @@
 //! Stored records which an XML -> CF round trip cannot express separately.
 //! The surrounding configuration is the public, platform-proven coverage set.
 //! The inserted body is the ten-byte, data-free empty HTML record.
+#[path = "common/coverage_paths.rs"]
+mod coverage_paths;
+
 use ibcmd_cf::payload::{PayloadEncoding, encode_payload};
 use ibcmd_core::limits::ResourceLimits;
 use ibcmd_v8::reader::StreamingReader;
@@ -44,8 +47,8 @@ fn minimized_selected_rows_group_profile_keeps_its_known_failure() {
     // bag. Modern XML cannot express that internal panel as a named group.
     // Retain a public native group's common fields and instantiate only this
     // data-free kind and bag; this is a parser probe, not a native-built CF.
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let set = root.join("tests/fixtures/coverage/8.5.1.1150/corpus-compatible-form-layouts");
+    let root = coverage_paths::root();
+    let set = root.join("coverage/8.5.1.1150/corpus-compatible-form-layouts");
     let metadata =
         fs::read_to_string(set.join("native/CommonForms/CovCompatibleTable.xml")).unwrap();
     let owner = metadata
@@ -252,7 +255,7 @@ fn tree(root: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
 
 #[test]
 fn clean_room_corpus_stored_row_route_holds_its_baseline() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/coverage");
+    let root = coverage_paths::root().join("coverage");
     let mut sets = Vec::new();
     for platform in fs::read_dir(&root).unwrap() {
         let p = platform.unwrap().path();
@@ -349,7 +352,12 @@ fn clean_room_corpus_stored_row_route_holds_its_baseline() {
                 differences.push(serde_json::json!({"path":path,"status":status}));
             }
         }
-        if let Ok(bytes) = fs::read(set.join("storage-baseline.json")) {
+        if let Ok(bytes) = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/coverage")
+                .join(set.strip_prefix(&root).unwrap())
+                .join("storage-baseline.json"),
+        ) {
             let baseline: Value = serde_json::from_slice(&bytes).unwrap();
             for path in baseline["equal"].as_array().unwrap() {
                 let path = path.as_str().unwrap();
@@ -375,16 +383,112 @@ fn clean_room_corpus_stored_row_route_holds_its_baseline() {
     fs::remove_dir_all(temp).unwrap();
 }
 
+fn assert_native_interface_descriptor_parity(
+    source: &std::path::Path,
+    xml: &std::path::Path,
+    target: &str,
+    work: &std::path::Path,
+) {
+    use ibcmd_rs::metadata_model::{
+        DescriptorContext, brace::parse_row, compile_descriptor, export::object_names,
+    };
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(source.join("manifest.json")).unwrap()).unwrap();
+    let version = manifest["evidence"]["source_version"].as_str().unwrap();
+    let context = DescriptorContext::new(xml, version).unwrap();
+    let compiled = compile_descriptor(
+        "Interface",
+        &xml.join(target),
+        &fs::read(xml.join(target)).unwrap(),
+        &context,
+    )
+    .unwrap();
+    let descriptor = parse_row(&compiled).unwrap();
+    let names =
+        object_names("Interface", &descriptor).expect("compiled native Interface has an identity");
+    let cf = decode(&fs::read(source.join("configuration.cf.b64")).unwrap());
+    let mut reader = StreamingReader::open_default(Cursor::new(cf)).unwrap();
+    let position = reader
+        .index()
+        .entries
+        .iter()
+        .position(|entry| entry.name == names.uuid)
+        .expect("native CF contains the Interface descriptor");
+    let stored = reader.read_entry_data(position).unwrap().unwrap();
+    let stored = ibcmd_cf::payload::decode_payload(
+        PayloadEncoding::RawDeflate,
+        &stored,
+        ResourceLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        descriptor,
+        parse_row(stored.bytes()).unwrap(),
+        "the complete descriptor compiled from native XML must match the native CF record"
+    );
+    let packed = encode_payload(
+        PayloadEncoding::RawDeflate,
+        &compiled,
+        ResourceLimits::default(),
+    )
+    .unwrap();
+    let archive =
+        ibcmd_v8::writer::write_format15_to_vec(&ibcmd_v8::writer::Format15Document::new(
+            7,
+            vec![ibcmd_v8::writer::Format15Element::named(
+                &names.uuid,
+                Some(packed),
+            )],
+        ))
+        .unwrap();
+    let cf = work.join("compiled-interface.cf");
+    fs::write(&cf, archive).unwrap();
+    let output = work.join("compiled-interface-xml");
+    let result = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+        .args(["cf", "export"])
+        .arg(cf)
+        .arg(&output)
+        .args(["--source-version", version, "--fail-on-opaque"])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        tree(&output),
+        BTreeMap::from([(
+            target.to_owned(),
+            fs::read(source.join("native").join(target)).unwrap()
+        )]),
+        "the compiled descriptor must export the complete native Interface XML byte-for-byte"
+    );
+}
+
 #[test]
-fn minimized_xml_probes_keep_their_precise_known_failures() {
+fn minimized_xml_probes_keep_their_precise_contracts() {
     // Current native normalizes three properties away and refuses two legacy
     // commands. Probe only these generated XML fragments in a proven native
     // context. They are deliberately not presented as CF or SQL parity.
-    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let fixtures = coverage_paths::root();
     let document: Value = serde_json::from_slice(
         &fs::read(fixtures.join("coverage-records/source-probes.json")).unwrap(),
     )
     .unwrap();
+    let expectations: Value = serde_json::from_slice(
+        &fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/coverage-records/source-probe-expectations.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        document["cases"].as_array().unwrap().len(),
+        expectations["cases"].as_object().unwrap().len()
+    );
     let temp = std::env::temp_dir().join(format!(
         "coverage-source-probes-{}-{}",
         std::process::id(),
@@ -394,7 +498,15 @@ fn minimized_xml_probes_keep_their_precise_known_failures() {
             .as_nanos()
     ));
     let mut reports = Vec::new();
-    for (index, case) in document["cases"].as_array().unwrap().iter().enumerate() {
+    for (index, definition) in document["cases"].as_array().unwrap().iter().enumerate() {
+        let mut case = definition.clone();
+        let expected = expectations["cases"]
+            .get(case["id"].as_str().unwrap())
+            .expect("missing converter refusal expectation")
+            .as_object()
+            .unwrap()
+            .clone();
+        case.as_object_mut().unwrap().extend(expected);
         let set = case["set"].as_str().unwrap();
         let source = fixtures.join("coverage").join(set);
         assert_eq!(
@@ -486,14 +598,33 @@ fn minimized_xml_probes_keep_their_precise_known_failures() {
             .flat_map(|(_, rows)| rows.as_array().unwrap())
             .filter(|row| row["source"] == case["failure_source"])
             .collect();
-        assert!(
-            rows.iter().any(|row| row["detail"]
-                .as_str()
-                .unwrap()
-                .contains(case["expected_failure"].as_str().unwrap())),
-            "{}: retain the precise known refusal; replace this assertion with an equivalence check when supported: {rows:?}",
-            case["id"]
-        );
+        match case["expected_parity"].as_str() {
+            Some("native_interface_descriptor") => {
+                assert_eq!(case["operation"]["kind"], "identity");
+                assert!(
+                    rows.is_empty(),
+                    "{}: supported metadata refused: {rows:?}",
+                    case["id"]
+                );
+                assert_native_interface_descriptor_parity(
+                    &source,
+                    &xml,
+                    case["target"].as_str().unwrap(),
+                    &work,
+                );
+            }
+            None => {
+                assert!(
+                    rows.iter().any(|row| row["detail"]
+                        .as_str()
+                        .unwrap()
+                        .contains(case["expected_failure"].as_str().unwrap())),
+                    "{}: retain the precise known refusal; replace this assertion with equivalence when supported: {rows:?}",
+                    case["id"]
+                );
+            }
+            Some(other) => panic!("unsupported parity contract: {other}"),
+        }
         reports.push(serde_json::json!({"case":case,"failures":rows}));
     }
     if let Some(path) = std::env::var_os("IBCMD_COVERAGE_SOURCE_REPORT") {
@@ -504,8 +635,8 @@ fn minimized_xml_probes_keep_their_precise_known_failures() {
 
 #[test]
 fn coverage_empty_html_stored_record_has_a_precise_known_gap() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let fixture = root.join("tests/fixtures/coverage/8.3.27.2342/commontemplates");
+    let root = coverage_paths::root();
+    let fixture = root.join("coverage/8.3.27.2342/commontemplates");
     let temp = std::env::temp_dir().join(format!(
         "coverage-empty-html-{}-{}",
         std::process::id(),
@@ -539,10 +670,14 @@ fn coverage_empty_html_stored_record_has_a_precise_known_gap() {
         .split('"')
         .next()
         .unwrap();
-    let body = include_bytes!("fixtures/coverage-records/empty-html.txt");
+    let body = fs::read(coverage_paths::root().join("coverage-records/empty-html.txt")).unwrap();
     assert_eq!(body, b"\xef\xbb\xbf{5,0,0}");
-    let encoded =
-        encode_payload(PayloadEncoding::RawDeflate, body, ResourceLimits::default()).unwrap();
+    let encoded = encode_payload(
+        PayloadEncoding::RawDeflate,
+        &body,
+        ResourceLimits::default(),
+    )
+    .unwrap();
     fs::write(
         temp.join("rows").join(format!("{uuid}.0__part0.bin")),
         encoded,

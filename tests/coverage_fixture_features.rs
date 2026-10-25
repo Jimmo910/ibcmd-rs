@@ -1,12 +1,15 @@
 //! A successful native import may discard an inapplicable property. Such a
 //! round trip must not be counted as coverage of the requested feature.
-use std::{fs, path::PathBuf};
+#[path = "common/coverage_paths.rs"]
+mod coverage_paths;
+
+use std::fs;
 
 use serde_json::Value;
 
 #[test]
 fn corpus_features_are_retained_by_the_native_round_trip() {
-    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let fixtures = coverage_paths::root();
     let cases: Value = serde_json::from_slice(
         &fs::read(fixtures.join("coverage-records/native-features.json")).unwrap(),
     )
