@@ -4076,6 +4076,9 @@ fn dump_table_rows_with_options_mode(
         MetadataTextRowsAudit::default()
     };
     let metadata_texts = &metadata_audit.rows;
+    if extract_metadata_xml && inventory_scope == RootMetadataInventoryScope::Full {
+        validate_interface_descriptors(metadata_texts)?;
+    }
     let metadata_texts_by_file_name = metadata_texts
         .iter()
         .map(|row| (row.file_name.as_str(), row))
@@ -5413,6 +5416,9 @@ fn dump_table_rows_streamed(
         Vec::new()
     };
     timings.prepare_metadata_texts_ms += elapsed_ms(metadata_texts_started);
+    if extract_metadata_xml && inventory_scope == RootMetadataInventoryScope::Full {
+        validate_interface_descriptors(&index_metadata_texts)?;
+    }
     // `--model-export`: what each row is, from the rows alone and before the
     // legacy indexes, so the ones only the legacy descriptor converters of
     // modelled kinds read are left out. The index needs the whole row set;
@@ -14346,6 +14352,14 @@ fn extract_metadata_source_xml_from_text_row_with_owner_graph_diagnostic(
         let document_numerator = parse_document_numerator_properties_from_text(text, uuid)?;
         format_document_numerator_source_xml(&header, &document_numerator, source_version)
             .into_bytes()
+    } else if kind == ibcmd_schema::interface::InterfaceLayout::KIND {
+        let row = crate::metadata_model::brace::parse_row(text.as_bytes()).ok()?;
+        let interface = crate::metadata_model::interface::Interface::from_brace(&row).ok()?;
+        crate::metadata_model::export::write_document(
+            &interface.to_xml().ok()?,
+            source_version.as_str(),
+        )
+        .into_bytes()
     } else if kind == ibcmd_schema::websocket_client::WebSocketClientLayout::KIND {
         let row = crate::metadata_model::brace::parse_row(text.as_bytes()).ok()?;
         let client =
@@ -37713,9 +37727,11 @@ pub(crate) fn style_web_color_name(code: i32) -> Option<&'static str> {
         77 => Some("web:LightSlateGray"),
         78 => Some("web:LightSteelBlue"),
         79 => Some("web:LightYellow"),
+        82 => Some("web:Linen"),
         84 => Some("web:Maroon"),
         86 => Some("web:MediumBlue"),
         87 => Some("web:MediumGray"),
+        88 => Some("web:MediumGreen"),
         94 => Some("web:Orange"),
         105 => Some("web:Orange"),
         97 => Some("web:MintCream"),
@@ -37735,6 +37751,7 @@ pub(crate) fn style_web_color_name(code: i32) -> Option<&'static str> {
         130 => Some("web:SlateBlue"),
         131 => Some("web:SlateGray"),
         134 => Some("web:SteelBlue"),
+        138 => Some("web:Tomato"),
         140 => Some("web:Violet"),
         141 => Some("web:VioletRed"),
         143 => Some("web:White"),
@@ -39043,7 +39060,7 @@ fn parse_1c_quoted_string_with_len(input: &str) -> Option<(String, usize)> {
     None
 }
 
-fn parse_1c_quoted_string(input: &str) -> Option<String> {
+pub(crate) fn parse_1c_quoted_string(input: &str) -> Option<String> {
     parse_1c_quoted_string_with_len(input).map(|(value, _)| value)
 }
 
@@ -47670,6 +47687,8 @@ mod catalog_tabular_section_wrapper_tests {
 
 #[cfg(test)]
 mod configuration_interface_pair_tests;
+#[cfg(test)]
+mod interface_root_tests;
 
 #[cfg(test)]
 mod tests;
@@ -47720,5 +47739,21 @@ mod chart_series_name_scope_tests {
             let error = super::dump_config(&args).unwrap_err().to_string();
             assert!(error.contains("--chart-series-names"), "{error}");
         }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn extension_activation_web_colors_share_the_native_dictionary() {
+    for (code, name) in [(82, "Linen"), (88, "MediumGreen"), (138, "Tomato")] {
+        assert_eq!(
+            style_web_color_name(code),
+            Some(format!("web:{name}").as_str())
+        );
+        assert!(
+            crate::compiler::bodies::form_native::WEB_COLOR_CODES
+                .iter()
+                .any(|(n, c)| *n == name && c.parse::<i32>().ok() == Some(code))
+        );
     }
 }

@@ -216,14 +216,24 @@ def audit_infobase_mode(binary: pathlib.Path, environment: dict) -> None:
             raise SystemExit(f"release `infobase config {command}` is not refused as unknown")
     # What only the platform does is refused by name with exit code 1.
     # `config apply` is served without the platform since 0.4, including
-    # explicit dynamic force since 0.5. Extension apply remains unsupported.
+    # explicit dynamic force since 0.5. Extension writes have a target guard.
     for args in (
         ("create", "--dbms=MSSQLServer", "--db-name=audit"),
-        ("config", "apply", "--dbms=MSSQLServer", "--db-name=audit", "--extension=E"),
     ):
         refused = run(*args)
         if refused.returncode != 1 or "не поддерживается в этой версии ibcmd-rs" not in refused.stderr:
             raise SystemExit(f"release `infobase {' '.join(args[:2])}` is not refused by name with exit code 1")
+
+    # A supported extension route must reach its pre-I/O binding guard even
+    # when neither SQL tooling nor the native platform is available on PATH.
+    failed_operation = 0xFFFFFFFF if os.name == "nt" else 255
+    for command in ("import", "apply"):
+        args = ["config", command, "--dbms=MSSQLServer", "--db-name=audit", "--extension=E"]
+        if command == "import":
+            args.append("audit-nonexistent-extension-source")
+        refused = run(*args)
+        if refused.returncode != failed_operation or "extension writes require --cluster-id" not in refused.stderr:
+            raise SystemExit(f"release extension `config {command}` did not enforce its pre-I/O target guard")
 
 
 def audit_sbom(sbom_path: pathlib.Path) -> dict:

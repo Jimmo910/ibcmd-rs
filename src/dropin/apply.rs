@@ -104,6 +104,9 @@ pub fn run(mut request: ApplyRequest) -> i32 {
     if let Err(message) = read_requested_password(&mut request.common) {
         return APPLY.fail_with(&message, report.as_deref());
     }
+    if request.common.extension.is_some() {
+        return super::extension::run_apply(&request);
+    }
     tell(execute(&request), report.as_deref())
 }
 

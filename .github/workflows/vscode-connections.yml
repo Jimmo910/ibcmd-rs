@@ -31,6 +31,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 jobs:
   client:
     strategy:
@@ -40,6 +42,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.95.0"
@@ -61,7 +65,7 @@ jobs:
         run: |
           cargo test --locked --lib field_map_observer --no-default-features
           cargo test --locked --lib query_identity_observer --no-default-features
-          cargo test --locked --lib form_observer_shared_schema_tests --no-default-features
+          cargo test --locked -p ibcmd-form-schema --lib form_observer_shared_schema_tests
       - name: Test explicit chart series-name policy
         shell: bash
         env:

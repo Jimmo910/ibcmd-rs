@@ -32,9 +32,11 @@ Native MSSQL write policy is declared by these profiles, not by code.
 supported, because activation, live, worker and load parity were measured on it.
 `8.3.27.1989` keeps its read evidence and declares no write capability, so
 writes selecting it fail closed. The 8.5.1 profile records the exact live SQL
-fingerprint and extension-registry read evidence; main and extension writes
-remain explicitly unsupported because the native generation-selection protocol
-is not yet reproduced.
+fingerprint and extension-registry evidence. Exact `8.5.1.1150` admits
+`mssql.extension.write` for verified nonstructural edits of an existing extension
+and exclusive publication (#578); main writes remain unsupported. Extension
+registry/version and legacy service-marker handling are build-specific. Online
+and worker publication on 8.5 remain refused. See [extension parity](../docs/extensions/parity.md#sql-extension-import-and-apply-on-exact-builds).
 
 The own exclusive `config apply` (`mssql-config-apply`, `docs/apply/own-apply.md`)
 has a capability of its own, `mssql.config.apply`: it moves a stage that needs no

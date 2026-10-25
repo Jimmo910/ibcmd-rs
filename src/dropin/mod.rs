@@ -32,6 +32,7 @@
 
 pub mod apply;
 mod export_queries;
+mod extension;
 pub mod help;
 pub mod parse;
 
@@ -706,6 +707,9 @@ fn run_import(mut request: ImportRequest) -> i32 {
     if let Err(message) = read_requested_password(&mut request.common) {
         IMPORT.start();
         return IMPORT.fail_with(&message, report.as_deref());
+    }
+    if request.common.extension.is_some() {
+        return extension::run_import(&request);
     }
     let args = import_args(&request);
     IMPORT.start();

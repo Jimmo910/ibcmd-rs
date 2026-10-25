@@ -19,9 +19,10 @@ The matrix fetches the locked dependency set once and then sets
 `CARGO_NET_OFFLINE=true` for compilation, tests, release build, and SBOM
 generation. It runs:
 
-1. `cargo check --locked --workspace --all-targets --no-default-features`;
-2. all tests in the standalone workspace crates;
-3. all root integration targets (`--test '*'`) with default features disabled;
+1. all tests in the standalone workspace crates;
+2. all root integration targets (`--test '*'`) with default features disabled;
+3. every unit test of the root library (`--lib`), and on Windows clippy of the
+   standalone crates;
 4. clean-environment XML to CF, CF to XML, same-profile, and cross-profile
    conversion for the registered Format15/Format16 and XCF 2.20/2.21 routes;
 5. malformed/truncated input and unknown-profile cases, which must fail before
@@ -32,10 +33,12 @@ generation. It runs:
 8. a release-binary boundary audit with an empty child-process `PATH` and all
    known 1C/Java discovery variables removed.
 
-The legacy root unit harness contains database-export research tests and is not
-part of the standalone product contract. Its targets are compile-checked; the
-portable root behavior is covered by integration suites. Live database and
-external-corpus features remain opt-in and are never enabled by these gates.
+On a pull request the matrix skips the steps the changed files cannot
+affect (`scripts/ci_scope.py`, see `docs/testing.md`); the job always runs,
+so the four required checks always report. The root library's unit tests
+run in full on every target; the research
+probes and the live database tests are behind the `research-corpus-tests` and
+`mssql-live-tests` features, which these gates never enable.
 
 GitHub Actions can report these checks but cannot make them mandatory by
 itself. After the workflow exists on the default branch, the branch protection
@@ -84,7 +87,9 @@ The offline and release matrices cover these targets:
 | `aarch64-unknown-linux-gnu` | Ubuntu 22.04 ARM64 |
 | `x86_64-pc-windows-msvc` | Windows x64 |
 | `aarch64-apple-darwin` | macOS 15 ARM64 |
-| `x86_64-apple-darwin` | macOS 15 Intel |
+
+`x86_64-apple-darwin` (macOS Intel) is no longer built or tested after
+v0.4.1; v0.4.1 and older releases keep their Intel archives.
 
 Linux binaries are built and executed on Ubuntu 22.04. Before packaging,
 `scripts/audit_linux_abi.py` verifies ELF64 architecture and rejects GLIBC
@@ -156,9 +161,9 @@ From a checkout with the locked crates already fetched:
 ```powershell
 $env:CARGO_NET_OFFLINE = "true"
 cargo fmt --all --check
-cargo check --locked --workspace --all-targets --no-default-features
 cargo test --locked --workspace --exclude ibcmd-rs
 cargo test --locked -p ibcmd-rs --test '*' --no-default-features
+cargo test --locked -p ibcmd-rs --lib --no-default-features
 cargo build --locked --release --no-default-features
 
 python scripts/generate_sbom.py `

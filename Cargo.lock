@@ -707,6 +707,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-form-native"
+version = "0.1.0"
+
+[[package]]
+name = "ibcmd-form-schema"
+version = "0.1.0"
+dependencies = [
+ "uuid",
+]
+
+[[package]]
 name = "ibcmd-number-format"
 version = "0.1.0"
 
@@ -733,10 +744,13 @@ dependencies = [
  "ibcmd-core",
  "ibcmd-edt",
  "ibcmd-filedb",
+ "ibcmd-form-native",
+ "ibcmd-form-schema",
  "ibcmd-postgres",
  "ibcmd-schema",
  "ibcmd-v8",
  "ibcmd-xml",
+ "memchr",
  "mimalloc",
  "quick-xml 0.38.4",
  "rayon",
