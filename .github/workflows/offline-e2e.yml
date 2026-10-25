@@ -12,7 +12,9 @@ permissions:
 
 concurrency:
   group: offline-e2e-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push supersedes a pull request's run; a run of master finishes,
+  # so every merged commit gets a complete result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
