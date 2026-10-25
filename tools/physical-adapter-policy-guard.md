@@ -12,9 +12,9 @@ of them (`$GuardedCrateFiles`: the five files of `crates/ibcmd-1c-text/src/`, th
 that leaves the slice for a crate takes the slice with it: its file is listed
 there and its baseline entries move to the new path in the same change, never
 dropped.  Only listed files are scanned: a file added to such a crate later is
-guarded once it is listed there too.  The MOXCEL decoder itself (`crates/ibcmd-moxel`, formerly
-`src/mssql_dump/moxel.rs` and `mxl_ir.rs`) was outside the slice and stays
-outside it; its root entry points in `src/mssql_dump/moxel_entry.rs` are guarded.
+guarded once it is listed there too.  The MOXCEL decoder itself
+(`crates/ibcmd-moxel`, formerly `src/mssql_dump/moxel.rs` and `mxl_ir.rs`) was
+outside the slice and stays outside it; its root entry points in `src/mssql_dump/moxel_entry.rs` are guarded.
 A module the compiler reads only for tests is not production and is left out
 with every file below its directory: the guard finds it from the declaration
 `#[cfg(test)] mod name;` (also `pub`, or with other attributes) in a scoped
