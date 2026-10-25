@@ -67,6 +67,7 @@ pub struct LiveArtifact {
     pub identity: DatabaseIdentity,
     pub tail: String,
     pub recovery_token: String,
+    /// Logical cluster registration; not a proof of its physical SQL mapping.
     pub cluster_id: String,
     pub infobase_id: String,
     pub recovery: MainActivationRecoverySnapshot,
@@ -77,6 +78,8 @@ pub struct LiveContinueReport {
     pub artifact: PathBuf,
     pub state: String,
     pub cycle_2_executed: Option<bool>,
+    pub identity_source: &'static str,
+    pub physical_database_binding_verified: bool,
     /// Warm clients need a restart to refresh client-side code; no zero-error promise.
     pub client_restart_required: bool,
     pub detail: String,
@@ -289,26 +292,30 @@ pub fn require_idle_ras(
     rac: &Path,
     endpoint: &str,
     artifact: &LiveArtifact,
-    user: Option<&str>,
-    pwd: Option<&str>,
+    _user: Option<&str>,
+    _pwd: Option<&str>,
 ) -> Result<()> {
     let version = rac_bounded(rac, &["agent", "version", endpoint], Duration::from_secs(5))?;
     let build = crate::mssql_platform_profile::parse_rac_agent_build(&version)?;
     require_saved_build(&artifact.verified_platform_profile, &build)?;
     let cluster = format!("--cluster={}", artifact.cluster_id);
     let ib = format!("--infobase={}", artifact.infobase_id);
-    let mut args = vec!["infobase", "info", cluster.as_str(), ib.as_str()];
-    let userarg = user.map(|user| format!("--infobase-user={user}"));
-    let pwdarg = user.map(|_| format!("--infobase-pwd={}", pwd.unwrap_or_default()));
-    if let Some(user) = &userarg {
-        args.push(user);
-    }
-    if let Some(pwd) = &pwdarg {
-        args.push(pwd);
-    }
-    args.push(endpoint);
-    let binding = rac_bounded(rac, &args, Duration::from_secs(5))?;
-    validate_ras_binding(&binding, artifact)?;
+    let registration = rac_bounded(
+        rac,
+        &[
+            "infobase",
+            "summary",
+            "info",
+            cluster.as_str(),
+            ib.as_str(),
+            endpoint,
+        ],
+        Duration::from_secs(5),
+    )?;
+    crate::mssql_platform_profile::require_infobase_summary(
+        &registration,
+        Uuid::parse_str(&artifact.infobase_id)?,
+    )?;
     let text = rac_bounded_bytes(
         rac,
         &[
@@ -435,46 +442,8 @@ fn validated_state(
     Ok((count, executed == 1))
 }
 
-fn validate_ras_binding(text: &str, artifact: &LiveArtifact) -> Result<()> {
-    let mut values = std::collections::BTreeMap::new();
-    for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        let (key, value) = line
-            .split_once(':')
-            .context("unrecognized RAS binding output")?;
-        ensure!(
-            values
-                .insert(key.trim(), value.trim().trim_matches('"'))
-                .is_none(),
-            "ambiguous RAS registration"
-        );
-    }
-    fn server(s: &str) -> String {
-        let s = s.trim().to_ascii_lowercase();
-        let host = std::env::var("COMPUTERNAME")
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        if matches!(s.as_str(), "localhost" | "." | "(local)" | "127.0.0.1")
-            || (!host.is_empty() && s == host)
-        {
-            "local".to_owned()
-        } else {
-            s
-        }
-    }
-    ensure!(
-        values.get("infobase") == Some(&artifact.infobase_id.as_str())
-            && values.get("dbms") == Some(&"MSSQLServer")
-            && values.get("db-name") == Some(&artifact.identity.database.as_str())
-            && values
-                .get("db-server")
-                .is_some_and(|v| server(v) == server(&artifact.identity.server)),
-        "RAS registration does not bind to the recorded SQL database"
-    );
-    Ok(())
-}
-
 fn report(path: &Path, state: &str, executed: bool) -> LiveContinueReport {
-    LiveContinueReport { artifact: path.to_owned(), state: state.to_owned(), cycle_2_executed: Some(executed), client_restart_required: true, detail: "Empty RAS user-session readiness only; active/warm cohort readiness and zero-error switching are not established".to_owned() }
+    LiveContinueReport { artifact: path.to_owned(), state: state.to_owned(), cycle_2_executed: Some(executed), identity_source: "rac_cluster_summary_plus_saved_sql_checkpoint", physical_database_binding_verified: false, client_restart_required: true, detail: "Empty RAS user-session readiness only; active/warm cohort readiness and zero-error switching are not established".to_owned() }
 }
 
 pub fn unresolved(path: &Path, error: &anyhow::Error) -> LiveContinueReport {
@@ -482,6 +451,8 @@ pub fn unresolved(path: &Path, error: &anyhow::Error) -> LiveContinueReport {
         artifact: path.to_owned(),
         state: "continuation_required".to_owned(),
         cycle_2_executed: None,
+        identity_source: "rac_cluster_summary_plus_saved_sql_checkpoint",
+        physical_database_binding_verified: false,
         client_restart_required: true,
         detail: format!(
             "completion not established; inspect retained artifact before retry: {error:#}"
@@ -889,22 +860,65 @@ mod tests {
     }
 
     #[test]
-    fn ras_binding_rejects_foreign_database_server_and_ambiguous_registrations() {
-        let artifact = fixture();
-        let good = format!(
-            "infobase : {}\ndbms : MSSQLServer\ndb-name : lab]db\ndb-server : localhost\n",
-            artifact.infobase_id
-        );
-        validate_ras_binding(&good, &artifact).unwrap();
-        for bad in [
-            good.replace("lab]db", "foreign"),
-            good.replace("localhost", "foreign"),
-            good.replace("MSSQLServer", "PostgreSQL"),
-            good.replace("dbms : MSSQLServer\n", ""),
-            format!("{good}\n{good}"),
-        ] {
-            assert!(validate_ras_binding(&bad, &artifact).is_err());
+    fn continuation_summary_needs_no_infobase_account() {
+        use crate::mssql_platform_profile::tests::{
+            ProfileToolsDir, fake_profile_tool, run_isolated_profile_test,
+        };
+        if run_isolated_profile_test(
+            "mssql_live_continue::tests::continuation_summary_needs_no_infobase_account",
+        ) {
+            return;
         }
+        let artifact = fixture();
+        let scratch = ProfileToolsDir::new();
+        let rac = fake_profile_tool(
+            &scratch.0,
+            "rac",
+            &format!(
+                "infobase : {}\nname : logical-cluster-name\n",
+                artifact.infobase_id
+            ),
+            true,
+        );
+        let script = std::fs::read_to_string(&rac)
+            .unwrap()
+            .replace("8.5.1.1150", "8.3.27.2214");
+        // The readiness inventory is successful and empty; other unexpected
+        // commands and all forwarded infobase credentials remain refused.
+        #[cfg(windows)]
+        let script = script.replacen(
+            "@echo off\r\n",
+            "@echo off\r\nif \"%~1 %~2\"==\"session list\" exit /b 0\r\n",
+            1,
+        );
+        #[cfg(unix)]
+        let script = script.replacen(
+            "#!/bin/sh\n",
+            "#!/bin/sh\nif [ \"$1 $2\" = 'session list' ]; then exit 0; fi\n",
+            1,
+        );
+        std::fs::write(&rac, script).unwrap();
+        for (user, password) in [
+            (None, None),
+            (None, Some("unused-password")),
+            (Some("unused-user"), Some("unused-password")),
+        ] {
+            require_idle_ras(&rac, "localhost:2545", &artifact, user, password).expect(
+                "SQL checkpoint continuation uses cluster summary without application login",
+            );
+        }
+    }
+
+    #[test]
+    fn continuation_report_never_claims_summary_proves_sql_mapping() {
+        let report = report(Path::new("checkpoint.json"), "complete", true);
+        assert!(!report.physical_database_binding_verified);
+        assert_eq!(
+            report.identity_source,
+            "rac_cluster_summary_plus_saved_sql_checkpoint"
+        );
+        let unresolved = unresolved(Path::new("checkpoint.json"), &anyhow::anyhow!("pending"));
+        assert!(!unresolved.physical_database_binding_verified);
     }
 
     #[test]

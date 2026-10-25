@@ -696,8 +696,17 @@ Other separator contexts remain unchanged. Own extension common attributes
 use the existing S1 catalog/document model; their contribution to new registers
 requires a separate measurement.
 
-Both commands require explicit cluster/infobase IDs. RAS verifies that the SQL
-connection actually belongs to that infobase and exact platform build. For example:
+Both commands require explicit cluster/infobase IDs. Direct SQL commands use
+`rac infobase summary info`, which requires no infobase application account.
+The agent's exact build and the selected SQL database's storage fingerprint
+remain independently checked. Summary confirms the registration UUID exists
+in the selected cluster; it does **not** expose or verify its physical SQL
+server/database mapping. The caller selects that SQL target. Reports explicitly
+set `physical_database_binding_verified=false` and identify the summary evidence.
+Legacy `--infobase-user` / `--infobase-pwd` are accepted but ignored on direct
+SQL routes, even when only the password is supplied. The owned managed-worker
+route retains its authenticated exact database-registration check and reports
+`physical_database_binding_verified=true`. For example:
 
 ```text
 ibcmd-rs infobase config import --dbms=MSSQLServer --db-server=localhost --db-name=lab --platform=8.5.1.1150 --extension=MyExtension --rac=rac --ras-endpoint=localhost:1545 --cluster-id=<uuid> --infobase-id=<uuid> F:\src\MyExtension
