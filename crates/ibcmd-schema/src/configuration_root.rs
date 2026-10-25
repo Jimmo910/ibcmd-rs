@@ -121,6 +121,40 @@ impl V76InterfaceCompatibility {
     }
 }
 
+/// Measured extension root envelope and properties layouts. These coordinates
+/// belong to the native schema, independently of XML 2.20/2.21 selection.
+pub struct ExtensionRootVersionLayout;
+
+impl ExtensionRootVersionLayout {
+    pub const ROOT_FIELDS: usize = 11;
+    pub const ROOT_TAG: usize = 0;
+    pub const ROOT_IDENTITY: usize = 1;
+    pub const ROOT_SECTIONS: usize = 2;
+    pub const ROOT_PROPERTIES_SECTION: usize = 3;
+    pub const SECTION_FIELDS: usize = 2;
+    pub const SECTION_CLASS: usize = 0;
+    pub const SECTION_PAYLOAD: usize = 1;
+    pub const PAYLOAD_TAG: usize = 0;
+    pub const PAYLOAD_PROPERTIES: usize = 1;
+    pub const PAYLOAD_MEMBERS: usize = 2;
+    pub const PROPERTIES_TAG: usize = 0;
+    pub const VERSION: usize = 15;
+
+    /// The complete V68 legacy tuple and the native V76 8.5 tuple are
+    /// independently witnessed. The discriminator is not a member count.
+    pub fn accepts(
+        payload_fields: usize,
+        members: &str,
+        properties_fields: usize,
+        tag: &str,
+    ) -> bool {
+        matches!(
+            (payload_fields, members, properties_fields, tag),
+            (28, "25", 61, "68") | (29, "26", 77, "76")
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

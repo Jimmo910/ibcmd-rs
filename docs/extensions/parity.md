@@ -488,8 +488,9 @@ One writer rule came out of it: an ExtPicture with `LoadTransparent` true and no
 `TransparentPixel` is stored `{1,0,-1,-1}` (6 of 6 pictures of the extensions;
 the main-configuration corpora never have it, and the compiler refused it).
 
-Only platform 8.3.27.2214 supports the SQL extension staging and activation
-described here (8.5 is declared unsupported for those database writes).
+The original SQL staging and activation measurements in this section cover
+8.3.27.2214. Exact 8.5.1.1150 now has the separate measured exclusive route
+described under [SQL extension import and apply](#sql-extension-import-and-apply-on-exact-builds).
 This restriction does not describe standalone CFE file compilation.
 
 The root Version adapter preserves the existing component count and every
@@ -623,10 +624,8 @@ These are read off a single native sample; the evidence is in the lab folder
 ## Not covered yet
 
 * the ERP УХ 8.5 corpus for the 8.5 readers (no such clone was made);
-* SQL activation of an 8.5 extension; source-only CFE compilation and file
-  editing are separate routes described above, and do not establish this;
-* the whole-tree load on the 8.5 clone (extension writes are declared
-  unsupported for 8.5) and of a binary template (`Template.bin`): no case ran;
+* SQL extension publication on 8.5 builds other than exact 8.5.1.1150,
+  online/worker publication on 8.5, and binary-template (`Template.bin`) edits;
 * adopted-form interceptor writes beyond the measured 8.3.27 no-base common
   form handler edits, including no-base After/Override command actions;
 * root Version edits outside the measured numeric dotted format/layout, other
@@ -647,8 +646,8 @@ version (`--platform`) and the output directory (empty or absent, as for the
 configuration) are the ones of `infobase config export`; the image is the
 staged one when the extension has staged rows, else the active one
 (`--image auto`). An unknown name fails; so does an extension with an opaque or
-failed storage row, after writing the tree. `infobase config import` still
-refuses `--extension`. Measured 2026-09-30: `_ДемоРасширение` of the БСП 8.3.27
+failed storage row, after writing the tree. SQL import/apply now have the
+verified route below. Measured 2026-09-30: `_ДемоРасширение` of the БСП 8.3.27
 clone (`--platform=8.3.27`) equals the native export in all 185 files, and
 `ServiceDesk` of the БСП 8.5 clone (`--platform=8.5.1`) in all 633 files
 (`ConfigDumpInfo.xml` included, compared byte for byte).
@@ -666,3 +665,44 @@ python -X utf8 F:/ibcmd/lab/05/ext/tools/left.py <run>
 # the ordinary export must not move
 bash F:/ibcmd/lab/05/ext/tools/main_regress.sh bsp8327 <run>
 ```
+
+
+## SQL extension import and apply on exact builds
+
+Issue #578 adds standard `infobase config import/apply --extension` on exact
+8.5.1.1150 and 8.3.27.2214, using the existing verified overlay and SQL CAS
+publisher. The extension must already exist and be active. Maintain its Version.
+Supported edits retain the metadata structure and change supported bodies,
+forms, templates or the measured dotted Version property. A complete proposed
+image is re-exported and compared before staging. Schema changes and unknown
+records fail closed; this route does not restructure extension data tables.
+
+Both commands require explicit cluster/infobase IDs. RAS verifies that the SQL
+connection actually belongs to that infobase and exact platform build. For example:
+
+```text
+ibcmd-rs infobase config import --dbms=MSSQLServer --db-server=localhost --db-name=lab --platform=8.5.1.1150 --extension=MyExtension --rac=rac --ras-endpoint=localhost:1545 --cluster-id=<uuid> --infobase-id=<uuid> F:\src\MyExtension
+ibcmd-rs infobase config apply --dbms=MSSQLServer --db-server=localhost --db-name=lab --platform=8.5.1.1150 --extension=MyExtension --rac=rac --ras-endpoint=localhost:1545 --cluster-id=<uuid> --infobase-id=<uuid> --dynamic=disable
+```
+
+Use the matching exact platform and RAS target for 8.3.27.2214. Import writes
+only the selected ConfigCASSave namespace. Apply uses exclusive publication;
+`auto`, `disable` and `prompt` select it. Active client sessions, forced dynamic
+mode, forced session termination, an assumed session guard, a file infobase,
+base-free import and skipped source verification are refused. Applying with no
+stage succeeds without writing. Other extensions and the main configuration
+are preserved. No native `ibcmd` is invoked by the implementation.
+
+8.5 uses its measured registry Version and previous-rowversion transition.
+It refreshes an existing legacy `dbStruFinal` marker, but does not create one
+when absent; 8.3 retains its measured marker creation rule. Recovery retains
+this distinction. A CAS collision or stale registry rolls back the transaction.
+
+Synthetic native/own SQL twins change Version, own-object BSL, a form color and
+a text template while retaining an adopted object. Native re-export compares
+source bytes separately from ConfigDumpInfo.xml storage hashes. A real
+ServiceDesk twin additionally checks two successive versioned publications and
+fresh session visibility. See the immutable measurement summary in
+[the OpenSpec evidence](../../openspec/changes/enable-extension-apply-851150/evidence/native-publication.md).
+These measurements do not imply byte equality of compressed CAS records or of
+platform-maintained licensing, mobile and user-cache records.

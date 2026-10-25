@@ -96,25 +96,15 @@ fn released_infobase_mode_refuses_rather_than_runs_the_platform() {
     // What only the platform does is refused by name, with no PATH to find
     // it on and nothing launched. `config apply` itself is served by
     // ibcmd-rs (without the platform) since 0.4, and its dynamic update since 0.5 (#347); its
-    // extensions are not.
-    for args in [
-        &[
-            "infobase",
-            "create",
-            "--dbms=MSSQLServer",
-            "--db-server=localhost",
-            "--db-name=ibcmd_rs_boundary",
-        ][..],
-        &[
-            "infobase",
-            "config",
-            "apply",
-            "--dbms=MSSQLServer",
-            "--db-server=localhost",
-            "--db-name=ibcmd_rs_boundary",
-            "--extension=E",
-        ][..],
-    ] {
+    // extension writes require an explicit verified target.
+    for args in [&[
+        "infobase",
+        "create",
+        "--dbms=MSSQLServer",
+        "--db-server=localhost",
+        "--db-name=ibcmd_rs_boundary",
+    ][..]]
+    {
         let output = run(args);
         assert_eq!(output.status.code(), Some(1), "{args:?}");
         let stderr = String::from_utf8(output.stderr).unwrap();
@@ -123,6 +113,18 @@ fn released_infobase_mode_refuses_rather_than_runs_the_platform() {
             "{args:?}: {stderr}"
         );
     }
+    // With no PATH, the extension route fails its binding guard before any
+    // SQL connection or external program, rather than invoking the platform.
+    let output = run(&["infobase", "config", "apply", "--extension=E"]);
+    assert_eq!(
+        output.status.code(),
+        Some(if cfg!(windows) { -1 } else { 255 })
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("extension writes require --cluster-id")
+    );
 }
 
 #[test]
