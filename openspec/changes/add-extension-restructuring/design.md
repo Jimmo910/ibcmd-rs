@@ -1,0 +1,11 @@
+# Design
+
+The native platform is the oracle. Use synthetic versioned Coverage extension updates with multiple new catalogs, independent information registers and associated tableless metadata. Existing catalogs and registers contain control records before either updater runs. Source input versions must increase, and built CFE versions must match their sources.
+
+Separate pure layout/planning from SQL execution. Reuse the S1 DBNames allocator, schema readers, DDL renderer and transaction/CAS mechanisms when extension measurements demonstrate identical semantics. New self-contained logic belongs in a portable workspace crate; physical record slots are supplied by schema-owned facts. Capture extension DBNames, SchemaStorage and DBSchema, registry and service/cache effects before choosing adapters.
+
+Apply must validate the entire proposed image and physical plan before publishing. DDL, metadata, registry, names, schema and cache changes are one atomic transaction, protected by exclusive ownership and optimistic guards. A failed command, trial or concurrent change leaves the old usable extension and its data intact. No schema gates are removed without an evidenced replacement.
+
+The initial public regression represents the real update pattern without private application code. Verification includes multiple new objects in one update, preserved existing rows/references, writes and reads of new objects in a fresh platform session, native re-export and subsequent native apply. Exercise both measured builds independently. Unsupported destructive or unmeasured plans fail before mutation with concrete diagnostics; they do not silently drop data.
+
+Rejected alternatives: delegating product commands to native ibcmd (breaks standalone architecture); staging new CFE without schema publication (unusable database); emptying existing data or reseeding after apply (cannot prove preservation); SQL-only table comparison without a platform runtime probe (misses registry/cache problems).
