@@ -409,4 +409,90 @@ mod moxel_exact_parity_tests {
         );
         assert_eq!(error.code(), "mxl.decoder.binary-container");
     }
+
+    /// A template whose only format declares the value type "any catalog
+    /// reference". Its stored descriptor `{"#",e61ef7b8-…}` is the built-in
+    /// `cfg:CatalogRef` type id, which only the root's `builtin_type_reference`
+    /// names, so the type set comes back only when every entry point hands the
+    /// decoder that table.
+    const CATALOG_REF_VALUE_TYPE_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<document xmlns="http://v8.1c.ru/8.2/data/spreadsheet" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<columns>
+		<size>1</size>
+	</columns>
+	<rowsItem>
+		<index>0</index>
+		<row>
+			<c>
+				<c>
+					<f>1</f>
+				</c>
+			</c>
+		</row>
+	</rowsItem>
+	<vgRows>0</vgRows>
+	<format>
+		<valueType>
+			<v8:TypeSet xmlns:d4p1="http://v8.1c.ru/8.1/data/enterprise/current-config">d4p1:CatalogRef</v8:TypeSet>
+		</valueType>
+	</format>
+</document>"#;
+
+    #[test]
+    fn every_entry_point_names_the_catalog_ref_type_set_through_the_root_table() {
+        let source = r#"<document xmlns="http://v8.1c.ru/8.2/data/spreadsheet" xmlns:v8="http://v8.1c.ru/8.1/data/core">
+	<columns><size>1</size></columns>
+	<rowsItem><index>0</index><row><c><c><f>1</f></c></c></row></rowsItem>
+	<format><valueType><v8:TypeSet xmlns:d4p1="http://v8.1c.ru/8.1/data/enterprise/current-config">d4p1:CatalogRef</v8:TypeSet></valueType></format>
+</document>"#;
+        let body =
+            crate::compiler::bodies::mxl_native::write_native_moxel_body(source.as_bytes(), None)
+                .unwrap();
+        assert!(
+            body.replace("\r\n", "")
+                .contains("{\"Pattern\",{\"#\",e61ef7b8-f3e1-4f4b-8ac7-676e90524997}}"),
+            "{body}"
+        );
+        let plain = format!("MOXCEL\0\u{8}\0\u{1}\0\u{c}\0\u{feff}{body}");
+        let blob = crate::compiler::families::native::deflate_bytes(plain.as_bytes()).unwrap();
+        let object_refs = BTreeMap::new();
+
+        let exported = try_extract_moxel_spreadsheet_xml(&blob, &object_refs).unwrap();
+        assert_eq!(
+            exported,
+            format!(
+                "\u{feff}{}",
+                CATALOG_REF_VALUE_TYPE_XML.replace('\n', "\r\n")
+            )
+        );
+        assert_eq!(
+            try_extract_moxel_spreadsheet_xml_with_generated_types(
+                &blob,
+                &object_refs,
+                &BTreeMap::new()
+            )
+            .unwrap(),
+            exported
+        );
+        assert_eq!(
+            extract_moxel_spreadsheet_xml_with_line_trace(&blob, &object_refs, None).unwrap(),
+            exported
+        );
+        assert_eq!(
+            extract_inflated_moxel_spreadsheet_xml_with_line_trace(
+                plain.as_bytes(),
+                &object_refs,
+                None
+            )
+            .unwrap(),
+            exported
+        );
+        let spreadsheet = parse_moxel_spreadsheet_text(&body, &object_refs).unwrap();
+        assert!(
+            spreadsheet.value_types
+                == vec![MoxelValueType {
+                    items: vec![MoxelValueTypeItem::ConfigTypeSet("CatalogRef")],
+                }]
+        );
+    }
 }
