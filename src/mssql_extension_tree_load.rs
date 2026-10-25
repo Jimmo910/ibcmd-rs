@@ -9,10 +9,9 @@
 //! again and must equal the tree, `ConfigDumpInfo.xml` aside: an edit the
 //! compiler does not write faithfully is refused by name and nothing is staged.
 //!
-//! Activation publishes rows and restructures nothing, so an edit that changes
-//! what a database table holds is refused here too: only the bodies of an
-//! object (module, form, template, picture, rights, help) and the descriptors
-//! of the families that own no table are taken.
+//! The ordinary route admits nonstructural changes. The schema-planned route
+//! can compile structural changes as a proposal, but its caller must prove the
+//! physical transition before staging or publishing any row.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -104,6 +103,49 @@ pub(crate) fn compile_tree_edit(
     active: &StorageImage,
     prefixes: &[String],
 ) -> Result<Option<TreeEdit>> {
+    compile_tree_edit_with_policy(
+        sql,
+        database,
+        source_version,
+        input_dir,
+        active,
+        prefixes,
+        false,
+    )
+}
+
+/// Compiles a proposed schema update, without authorising its publication.
+/// The caller must validate every resulting row with the extension schema
+/// planner before staging or activating it. The ordinary entry point retains
+/// its nonstructural policy.
+pub(crate) fn compile_tree_edit_for_restructure(
+    sql: &SqlExec,
+    database: &str,
+    source_version: InfobaseConfigSourceVersion,
+    input_dir: &Path,
+    active: &StorageImage,
+    prefixes: &[String],
+) -> Result<Option<TreeEdit>> {
+    compile_tree_edit_with_policy(
+        sql,
+        database,
+        source_version,
+        input_dir,
+        active,
+        prefixes,
+        true,
+    )
+}
+
+fn compile_tree_edit_with_policy(
+    sql: &SqlExec,
+    database: &str,
+    source_version: InfobaseConfigSourceVersion,
+    input_dir: &Path,
+    active: &StorageImage,
+    prefixes: &[String],
+    for_restructure: bool,
+) -> Result<Option<TreeEdit>> {
     let base_export = Scratch::new("base");
     let report = crate::mssql_dump::extension::export_extension_image_to_source(
         active,
@@ -149,13 +191,32 @@ pub(crate) fn compile_tree_edit(
             std::fs::read_to_string(input_dir.join("Configuration.xml")),
         ) {
             (Ok(active_root), Ok(tree_root)) => {
-                version_edit = root_version_edit(&active_root, &tree_root);
-                root_children_only_change(&active_root, &tree_root) || version_edit.is_some()
+                version_edit =
+                    root_version_edit_for_policy(&active_root, &tree_root, for_restructure);
+                root_children_change(&active_root, &tree_root, for_restructure)
+                    || version_edit.is_some()
             }
             _ => false,
         };
-    let refused = structural_refusals(&diff, root_edit_supported);
+    let refused = if for_restructure {
+        // Compilation constructs the complete proposal. The SQL planner, not
+        // this source-path classifier, proves its physical transition. Root
+        // edits still admit only the modelled Version and child collections.
+        if diff.changed.iter().any(|path| path == "Configuration.xml") && !root_edit_supported {
+            vec!["Configuration.xml (unmodeled root property change)".to_owned()]
+        } else {
+            Vec::new()
+        }
+    } else {
+        structural_refusals(&diff, root_edit_supported)
+    };
     if !refused.is_empty() {
+        if for_restructure {
+            bail!(
+                "unsupported extension root transition, nothing was staged: {}",
+                list_paths(&refused)
+            );
+        }
         bail!(
             "these changes are not loaded (activation restructures nothing, so an edit of what a \
              table holds is the platform's own load): {}",
@@ -192,7 +253,10 @@ pub(crate) fn compile_tree_edit(
         let packed = base_rows
             .get(key)
             .context("the active image has no root row")?;
-        Some((key.clone(), patch_root_version(packed, key, old, new)?))
+        // Keep the base only as a fallback. Added child descriptors cause
+        // compile_edit to rewrite the root's collections; Version must be
+        // applied to that result rather than replacing it with the old root.
+        Some((key.clone(), packed.clone(), old.clone(), new.clone()))
     } else {
         None
     };
@@ -210,7 +274,9 @@ pub(crate) fn compile_tree_edit(
             }
         })
         .context("failed to compile the changed objects")?;
-    if let Some((key, packed)) = version_row {
+    if let Some((key, base, old, new)) = version_row {
+        let current = edit.rows.get(&key).unwrap_or(&base);
+        let packed = patch_root_version(current, &key, &old, &new)?;
         edit.rows.insert(key, packed);
         edit.prefixes.insert("Configuration.xml".to_owned());
     }
@@ -278,19 +344,7 @@ pub(crate) fn require_nonstructural_stage(
     active: &StorageImage,
     stage: &crate::mssql_extension_stage::ExtensionStagePlan,
 ) -> Result<()> {
-    let rows: BTreeMap<_, _> = stage
-        .rows()
-        .iter()
-        .filter(|r| r.logical_name != "configinfo")
-        .map(|r| (r.logical_name.clone(), r.binary_data.clone()))
-        .collect();
-    let dropped = active
-        .entries()
-        .iter()
-        .map(|e| e.logical_key().as_str().to_owned())
-        .filter(|key| !rows.contains_key(key))
-        .collect();
-    let proposed = proposed_image(active, &rows, &dropped)?;
+    let proposed = stage_image(active, stage)?;
     let base = Scratch::new("activation-base");
     let next = Scratch::new("activation-next");
     for (image, dir) in [(active, &base.0), (&proposed, &next.0)] {
@@ -321,6 +375,28 @@ pub(crate) fn require_nonstructural_stage(
         );
     }
     Ok(())
+}
+
+/// Materialises the stage's content rows as an extension image. The caller
+/// must first verify the stage's manifest/CAS graph; this helper intentionally
+/// provides no schema-safety or publication authorisation.
+pub(crate) fn stage_image(
+    active: &StorageImage,
+    stage: &crate::mssql_extension_stage::ExtensionStagePlan,
+) -> Result<StorageImage> {
+    let rows: BTreeMap<_, _> = stage
+        .rows()
+        .iter()
+        .filter(|r| r.logical_name != "configinfo")
+        .map(|r| (r.logical_name.clone(), r.binary_data.clone()))
+        .collect();
+    let dropped = active
+        .entries()
+        .iter()
+        .map(|e| e.logical_key().as_str().to_owned())
+        .filter(|key| !rows.contains_key(key))
+        .collect();
+    proposed_image(active, &rows, &dropped)
 }
 
 /// Two files of a tree are the same file: byte for byte, and a module
@@ -545,7 +621,7 @@ fn list_paths(paths: &[String]) -> String {
 /// object's table holds (a descriptor of a family that owns one, an object or
 /// a body added or removed) belongs to the platform's own load. Each is named
 /// with the reason. The root is accepted only after comparing it with the
-/// active export: table-less child lists alone, or its Version text alone.
+/// active export: table-less child lists, its Version, or both together.
 pub(crate) fn structural_refusals(diff: &TreeDiff, root_edit_supported: bool) -> Vec<String> {
     let mut refused = Vec::new();
     let mut check = |path: &str, moved: Option<&str>| {
@@ -624,7 +700,11 @@ fn refusal(path: &str, moved: Option<&str>, root_edit_supported: bool) -> Option
 /// The root descriptors differ in the `<ChildObjects>` lines of table-less
 /// families and nowhere else.
 pub(crate) fn root_children_only_change(active: &str, tree: &str) -> bool {
-    fn without_tableless_children(text: &str) -> Option<String> {
+    root_children_change(active, tree, false)
+}
+
+fn root_children_change(active: &str, tree: &str, all_families: bool) -> bool {
+    fn without_children(text: &str, all_families: bool) -> Option<String> {
         let open = "<ChildObjects>";
         let close = "</ChildObjects>";
         let start = text.find(open)? + open.len();
@@ -633,10 +713,17 @@ pub(crate) fn root_children_only_change(active: &str, tree: &str) -> bool {
             .lines()
             .filter(|line| {
                 let line = line.trim();
-                !TABLELESS_FAMILIES.iter().any(|(_, tag)| {
-                    line.strip_prefix(&format!("<{tag}>"))
-                        .is_some_and(|rest| rest.ends_with(&format!("</{tag}>")))
-                })
+                let Some((tag, value)) =
+                    line.strip_prefix('<').and_then(|rest| rest.split_once('>'))
+                else {
+                    return true;
+                };
+                let known_family = if all_families {
+                    crate::mssql_dump::root_family_folder(tag).is_some()
+                } else {
+                    TABLELESS_FAMILIES.iter().any(|(_, child)| *child == tag)
+                };
+                !(known_family && value.ends_with(&format!("</{tag}>")))
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -644,18 +731,25 @@ pub(crate) fn root_children_only_change(active: &str, tree: &str) -> bool {
     }
     let (active, tree) = (active.replace("\r\n", "\n"), tree.replace("\r\n", "\n"));
     match (
-        without_tableless_children(&active),
-        without_tableless_children(&tree),
+        without_children(&active, all_families),
+        without_children(&tree, all_families),
     ) {
         (Some(a), Some(b)) => a == b,
         _ => false,
     }
 }
 
-/// A canonical root descriptor changes only its dotted numeric Version,
-/// preserving the active version's component count. Every other byte,
-/// including adopted state, identity and child lists, must remain unchanged.
+/// A canonical Version edit may accompany child collection updates admitted
+/// by the source policy. Other properties, identity and adoption stay intact.
 fn root_version_edit(active: &str, tree: &str) -> Option<(String, String)> {
+    root_version_edit_for_policy(active, tree, false)
+}
+
+fn root_version_edit_for_policy(
+    active: &str,
+    tree: &str,
+    all_families: bool,
+) -> Option<(String, String)> {
     fn version_and_mask(text: &str) -> Option<(String, String)> {
         let xml = ibcmd_xml::XmlReader::from_slice(text.as_bytes()).ok()?;
         fn elements(node: &ibcmd_xml::XmlElement) -> Vec<&ibcmd_xml::XmlElement> {
@@ -729,10 +823,10 @@ fn root_version_edit(active: &str, tree: &str) -> Option<(String, String)> {
         ))
     }
     match (version_and_mask(active), version_and_mask(tree)) {
-        (Some((old, a)), Some((new, b))) => {
-            (old != new && old.split('.').count() == new.split('.').count() && a == b)
-                .then_some((old, new))
-        }
+        (Some((old, a)), Some((new, b))) => (old != new
+            && old.split('.').count() == new.split('.').count()
+            && (a == b || root_children_change(&a, &b, all_families)))
+        .then_some((old, new)),
         _ => None,
     }
 }
@@ -1074,5 +1168,74 @@ mod tests {
             );
         }
         assert!(root_version_edit(root, root).is_none());
+    }
+    #[test]
+    fn version_and_tableless_child_edits_compose() {
+        let before = "<MetaDataObject><Configuration uuid=\"root\"><Properties><ObjectBelonging>Adopted</ObjectBelonging><Name>Coverage</Name><Version>1.1.0.0</Version><Unknown>keep</Unknown></Properties><ChildObjects>\n<CommonModule>Existing</CommonModule>\n<Catalog>ExistingData</Catalog>\n</ChildObjects></Configuration></MetaDataObject>";
+        let after = before.replace("1.1.0.0", "1.1.0.1").replace(
+            "<CommonModule>Existing</CommonModule>",
+            "<CommonModule>Existing</CommonModule>\n<CommonModule>Added</CommonModule>",
+        );
+        assert_eq!(
+            root_version_edit(before, &after),
+            Some(("1.1.0.0".to_owned(), "1.1.0.1".to_owned()))
+        );
+        assert!(
+            root_version_edit(
+                before,
+                &after.replace("<Unknown>keep</Unknown>", "<Unknown>changed</Unknown>")
+            )
+            .is_none()
+        );
+        assert!(
+            root_version_edit(
+                before,
+                &after.replace(
+                    "<Catalog>ExistingData</Catalog>",
+                    "<Catalog>OtherData</Catalog>"
+                )
+            )
+            .is_none()
+        );
+    }
+    #[test]
+    fn restructure_root_policy_admits_collections_without_other_properties() {
+        let before = "<MetaDataObject><Configuration uuid=\"root\"><Properties><Name>Coverage</Name><Version>1.1.0.1</Version><Unknown>keep</Unknown></Properties><ChildObjects>\n<Catalog>Existing</Catalog>\n</ChildObjects></Configuration></MetaDataObject>";
+        let after = before.replace("1.1.0.1", "1.1.0.2").replace("<Catalog>Existing</Catalog>", "<Catalog>Existing</Catalog>\n<Catalog>Added</Catalog>\n<InformationRegister>AddedRegister</InformationRegister>\n<HTTPService>AddedService</HTTPService>");
+        assert!(root_version_edit(before, &after).is_none());
+        assert_eq!(
+            root_version_edit_for_policy(before, &after, true),
+            Some(("1.1.0.1".to_owned(), "1.1.0.2".to_owned()))
+        );
+        assert!(
+            root_version_edit_for_policy(
+                before,
+                &after.replace("<Unknown>keep</Unknown>", "<Unknown>changed</Unknown>"),
+                true
+            )
+            .is_none()
+        );
+        assert!(
+            root_version_edit_for_policy(
+                before,
+                &after.replace("uuid=\"root\"", "uuid=\"other\""),
+                true
+            )
+            .is_none()
+        );
+        assert!(
+            root_version_edit_for_policy(
+                before,
+                &after.replace(
+                    "<HTTPService>AddedService</HTTPService>",
+                    "<Unmodeled>New</Unmodeled>"
+                ),
+                true
+            )
+            .is_none()
+        );
+        let children_only = after.replace("1.1.0.2", "1.1.0.1");
+        assert!(!root_children_only_change(before, &children_only));
+        assert!(root_children_change(before, &children_only, true));
     }
 }
