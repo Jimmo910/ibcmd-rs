@@ -552,6 +552,11 @@ pub fn render_extension_recovery_sql(
     after[4..24].copy_from_slice(&old_root);
     after[30] = 0;
     after[31..35].copy_from_slice(&current_version[4..8]);
+    let after = crate::mssql_extensions::restore_extension_registry_version(
+        &after,
+        &recovery.prior_registry_blob,
+    )
+    .map_err(|e| ExtensionActivationError::Recovery(e.to_string()))?;
     decode_extension_zipped_info(&after)
         .map_err(|e| ExtensionActivationError::Recovery(e.to_string()))?;
     let marker = format!("dbStruFinal{}", recovery.namespace_prefix);
@@ -920,6 +925,78 @@ mod platform85_tests {
             ExtensionStagePlan::from_complete_rows(id, rows).unwrap(),
             decode(after),
         )
+    }
+
+    #[test]
+    fn review_579_recovery_restores_prior_version_and_envelope_on_both_builds() {
+        let native27 = native_fixture_parts(
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-83272214/registry-snapshot.json"
+            ),
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-83272214/registry-before.hex"
+            ),
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-83272214/native-stage.json"
+            ),
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-83272214/registry-applied.hex"
+            ),
+        );
+        for (profile, (snapshot, stage, _)) in [
+            (
+                MssqlNativePlatformProfile::Platform8_5_1_1150,
+                native_fixture(),
+            ),
+            (MssqlNativePlatformProfile::Platform8_3_27_2214, native27),
+        ] {
+            let prior_blob = snapshot.zipped_info.clone();
+            let prior = decode_extension_zipped_info(&prior_blob).unwrap();
+            let plan = prepare_extension_activation_for_profile(
+                profile,
+                ExtensionActivationMode::Exclusive,
+                snapshot,
+                &stage,
+                ExtensionServiceMarkerSnapshot { present: true },
+                true,
+            )
+            .unwrap();
+            let recovery = plan.recovery();
+            assert_ne!(
+                decode_extension_zipped_info(&recovery.published_registry_blob)
+                    .unwrap()
+                    .version,
+                prior.version
+            );
+            let current_version = [0, 0, 0, 0, 0, 1, 2, 3];
+            let sql = render_extension_recovery_sql(
+                "synthetic",
+                &recovery,
+                current_version,
+                &recovery.published_registry_blob,
+                true,
+            )
+            .unwrap();
+            let after_hex = sql
+                .split("DECLARE @After varbinary(max)=0x")
+                .nth(1)
+                .unwrap()
+                .split(';')
+                .next()
+                .unwrap();
+            let after = after_hex
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|pair| (digit(pair[0]).unwrap() << 4) | digit(pair[1]).unwrap())
+                .collect::<Vec<_>>();
+            let decoded = decode_extension_zipped_info(&after).unwrap();
+            assert_eq!(decoded.version, prior.version, "{}", profile.id());
+            assert_eq!(decoded.active_cas_root, prior.active_cas_root);
+            let mut expected = prior_blob;
+            expected[30] = 0;
+            expected[31..35].copy_from_slice(&current_version[4..8]);
+            assert_eq!(after, expected, "{}", profile.id());
+        }
     }
 
     #[test]

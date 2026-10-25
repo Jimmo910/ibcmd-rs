@@ -266,15 +266,9 @@ pub(crate) fn replace_extension_registry_version(bytes: &[u8], version: &str) ->
     if version.len() > u8::MAX as usize {
         anyhow::bail!("extension registry Version exceeds its native encoding");
     }
-    let body_header = ENVELOPE_PREFIX_BYTES + L::BODY_HEADER_BYTES;
-    let units = usize::from(bytes[ENVELOPE_PREFIX_BYTES + L::METADATA_UNITS]);
-    let width = if bytes[ENVELOPE_PREFIX_BYTES + L::METADATA_ENCODING] == L::UTF16_MARKER {
-        2
-    } else {
-        1
-    };
-    let start = body_header + units * width;
-    let end = bytes.len() - L::TRAILER_BYTES;
+    let range = registry_version_range(bytes);
+    let start = range.start;
+    let end = range.end;
     let mut output = bytes[..start].to_vec();
     if version.is_empty() {
         output.push(L::EMPTY_STRING_MARKER);
@@ -288,6 +282,33 @@ pub(crate) fn replace_extension_registry_version(bytes: &[u8], version: &str) ->
         anyhow::bail!("registry Version rewrite failed its decoder");
     }
     Ok(output)
+}
+
+/// Restore the original encoded Version field, retaining the current root,
+/// rowversion and flags. UTF-8 and empty fields keep their native bytes.
+pub(crate) fn restore_extension_registry_version(bytes: &[u8], prior: &[u8]) -> Result<Vec<u8>> {
+    decode_extension_zipped_info(bytes)?;
+    let expected = decode_extension_zipped_info(prior)?;
+    let range = registry_version_range(bytes);
+    let previous = registry_version_range(prior);
+    let mut output = bytes[..range.start].to_vec();
+    output.extend_from_slice(&prior[previous]);
+    output.extend_from_slice(&bytes[range.end..]);
+    if decode_extension_zipped_info(&output)?.version != expected.version {
+        anyhow::bail!("registry Version restore failed its decoder");
+    }
+    Ok(output)
+}
+
+// Only called after the full envelope decoder establishes these bounds.
+fn registry_version_range(bytes: &[u8]) -> std::ops::Range<usize> {
+    let units = usize::from(bytes[ENVELOPE_PREFIX_BYTES + L::METADATA_UNITS]);
+    let width = if bytes[ENVELOPE_PREFIX_BYTES + L::METADATA_ENCODING] == L::UTF16_MARKER {
+        2
+    } else {
+        1
+    };
+    (ENVELOPE_PREFIX_BYTES + L::BODY_HEADER_BYTES + units * width)..(bytes.len() - L::TRAILER_BYTES)
 }
 
 fn decode_bool(
@@ -900,6 +921,59 @@ mod tests {
     const SERVICE_DESK_HEX: &str = "43C29A14E1A4957CD700E47CEA9AD20E66D489F9E5B0BAC2A19A080000000000015EC281819A437B2223222C38373032343733382D666332612D343433362D616461312D6466373964333935633432342C0A7B312C227275222C22536572766963654465736B227D0A7D9A07312E372E302E30828120";
     const DEMO_EMPTY_HEX: &str = "43C29A144D6D417AD243F0CB8ECC3969CBD7AA2B429FD1AFA19A0800000001000000008181974F7B002200230022002C00380037003000320034003700330038002D0066006300320061002D0034003400330036002D0061006400610031002D006400660037003900640033003900350063003400320034002C000A007B0031002C0022007200750022002C002200140435043C043E043A0020001F044304410442043E043504200040043004410448043804400435043D043804350422007D000A007D009A07312E302E312E31828120";
     const AI_AGENT_EMPTY_VERSION_HEX: &str = "43C29A144A5D722F8572778E07ECD4315F5A4612EF27BC54A19A0800000000000127F28181973F7B002200230022002C00380037003000320034003700330038002D0066006300320061002D0034003400330036002D0061006400610031002D006400660037003900640033003900350063003400320034002C000A007B0031002C0022007200750022002C002200100418041004330435043D04420422007D000A007D0081828220";
+
+    #[test]
+    fn review_579_recovery_preserves_supported_versions_and_rejects_unknown_encoding() {
+        let original = decode_hex(
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-851150/registry-before.hex"
+            )
+            .trim(),
+        )
+        .unwrap();
+        let range = registry_version_range(&original);
+        let long = "Версия".repeat(25);
+        let units = long.encode_utf16().collect::<Vec<_>>();
+        assert!(long.len() > u8::MAX as usize);
+        let mut utf16 = vec![L::UTF16_MARKER, units.len() as u8];
+        for unit in units {
+            utf16.extend(unit.to_le_bytes());
+        }
+        let mut unsupported = original[..range.start].to_vec();
+        unsupported.extend(utf16);
+        unsupported.extend_from_slice(&original[range.end..]);
+        assert!(restore_extension_registry_version(&original, &unsupported).is_err());
+        let mut longest_utf8 = vec![L::UTF8_MARKER, u8::MAX];
+        longest_utf8.extend(std::iter::repeat_n(b'9', u8::MAX as usize));
+        for encoded in [
+            vec![L::EMPTY_STRING_MARKER],
+            original[range.clone()].to_vec(),
+            longest_utf8,
+        ] {
+            let mut prior = original[..range.start].to_vec();
+            prior.extend_from_slice(&encoded);
+            prior.extend_from_slice(&original[range.end..]);
+            let mut current = replace_extension_registry_version(&prior, "2.0.0.0").unwrap();
+            current[4..24].fill(0x55);
+            let current_range = registry_version_range(&current);
+            let expected = [
+                current[..current_range.start].to_vec(),
+                encoded,
+                current[current_range.end..].to_vec(),
+            ]
+            .concat();
+            let restored = restore_extension_registry_version(&current, &prior).unwrap();
+            assert_eq!(restored, expected);
+            assert_eq!(
+                decode_extension_zipped_info(&restored).unwrap().version,
+                decode_extension_zipped_info(&prior).unwrap().version
+            );
+            assert!(
+                restore_extension_registry_version(&current, &prior[..prior.len() - 1]).is_err()
+            );
+            assert!(restore_extension_registry_version(&[], &prior).is_err());
+        }
+    }
 
     #[test]
     fn decodes_observed_8_3_27_utf8_registry_fixture() {

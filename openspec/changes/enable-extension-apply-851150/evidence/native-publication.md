@@ -104,3 +104,39 @@ The second own-side attempt also refused before staging: the SQL extension expor
 | ServiceDesk 8.5.1.1150 final | fb859eb4d65a6fe18c4820725d7b2578a02908649def16c378e39df039bf8c31 | eb9450a2e876f4dd2ac8f75725643af01098ef20c7f85d957825a1f3f8b02014 | 5cfe6890263341d08d093ebdb09a8b5726abbc22699cf985fddabda618d67ae3 |
 
 Different raw tree hashes include ConfigDumpInfo.xml; source comparisons above remain byte-exact. Full command receipts, the captured source tree and SQL snapshots are retained locally.
+
+
+## PR review follow-up
+
+The external review exposed two gaps after the initial approval: recovery
+restored the prior CAS root while retaining the published Version, and the
+8.5 profile admitted legacy staging formats without exact-build evidence.
+Both new regression tests fail on 6d6b248f: recovery reports 1.0.0.2 instead
+of 1.0.0.1, and format 80310 is admitted for the 8.5 profile.
+
+Recovery now copies the prior encoded Version field into the restored
+registry envelope, preserving the current optimistic rowversion and every
+other field. Complete native-fixture envelopes are checked on both exact
+builds. Empty, UTF-8, maximum-length and malformed encoded fields have
+separate codec controls; unsupported UTF-16 Version encoding remains refused
+(the registry metadata has its independent UTF-16 support).
+
+Exact 8.5.1.1150 publication admits 80327 and 80501. The 8.3.27.2214 format
+set is preserved. This write gate does not narrow standalone container reads.
+The CLI documentation now distinguishes unconditional pid/remote refusals
+from the main-configuration sqlcmd refusal.
+
+The original SQL/native source comparisons above remain historical controls
+of the import/publication paths. These follow-up fixes change recovery and
+write admission; no new application database is used for their tests.
+
+
+The follow-up regression suite passes all three cases. The previous remote
+Linux/ARM/macOS failures were isolated to the release audit's obsolete
+unsupported-extension expectation; compilation, integration, root units and
+native micro-corpus had passed. The audit now requires the supported import
+and apply commands to fail their target-binding guard with an empty PATH,
+while unknown platform operations still require exit 1. Python controls fail
+before that change and pass afterward (17 tests); the actual pinned executable
+also passes the complete clean-PATH boundary audit. Full final gate results
+supersede the original verification counts when completed.

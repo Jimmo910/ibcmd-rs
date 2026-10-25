@@ -162,8 +162,11 @@ impl MssqlNativePlatformProfile {
 
     /// XML dialect does not authorize a different CAS storage format.
     pub(crate) fn require_extension_storage_format(self, format: u32) -> Result<()> {
-        let legacy = [80_310, 80_314, 80_321, 80_324, 80_327].contains(&format);
-        if legacy || (self == Self::Platform8_5_1_1150 && format == 80_501) {
+        let admitted = match self {
+            Self::Platform8_5_1_1150 => [80_327, 80_501].contains(&format),
+            _ => [80_310, 80_314, 80_321, 80_324, 80_327].contains(&format),
+        };
+        if admitted {
             Ok(())
         } else {
             bail!(
@@ -331,6 +334,29 @@ pub(crate) fn verify_mssql_native_profile_managed_observation(
 #[cfg(test)]
 mod managed_auth_tests {
     use super::*;
+
+    #[test]
+    fn review_579_extension_formats_are_bound_to_the_exact_profile() {
+        let v85 = MssqlNativePlatformProfile::Platform8_5_1_1150;
+        let v27 = MssqlNativePlatformProfile::Platform8_3_27_2214;
+        for format in [80_310, 80_314, 80_321, 80_324] {
+            assert!(
+                v85.require_extension_storage_format(format).is_err(),
+                "{format}"
+            );
+            assert!(
+                v27.require_extension_storage_format(format).is_ok(),
+                "{format}"
+            );
+        }
+        assert!(v85.require_extension_storage_format(80_327).is_ok());
+        assert!(v85.require_extension_storage_format(80_501).is_ok());
+        assert!(v27.require_extension_storage_format(80_327).is_ok());
+        assert!(v27.require_extension_storage_format(80_501).is_err());
+        for profile in [v85, v27] {
+            assert!(profile.require_extension_storage_format(80_328).is_err());
+        }
+    }
 
     #[test]
     fn exact_851150_extension_write_is_admitted() {
