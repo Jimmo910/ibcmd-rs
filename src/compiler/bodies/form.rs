@@ -83,7 +83,52 @@ pub fn decode_managed_form(
     blob: &[u8],
 ) -> Result<ManagedFormBody, ManagedFormCodecError> {
     let _ = profile;
+    decode_managed_form_layout(blob)
+}
+
+/// Decode the existing reader layout, including its legacy upgrade behavior.
+/// Success is not platform, SQL schema or write admission.
+pub fn decode_managed_form_layout(blob: &[u8]) -> Result<ManagedFormBody, ManagedFormCodecError> {
     decode_strict(blob)
+}
+
+/// Validate the original managed Form layout before any legacy reader upgrade.
+pub fn validate_original_managed_form_layout(
+    blob: &[u8],
+) -> Result<ManagedFormBody, ManagedFormCodecError> {
+    original_layout(blob).map(|(body, _)| body)
+}
+
+fn original_layout(
+    blob: &[u8],
+) -> Result<(ManagedFormBody, std::ops::Range<usize>), ManagedFormCodecError> {
+    let plain = inflate(blob)?;
+    if !plain.starts_with(UTF8_BOM) {
+        return Err(ManagedFormCodecError::MissingBom);
+    }
+    let text = std::str::from_utf8(&plain)
+        .map_err(|error| ManagedFormCodecError::NativeBody(error.to_string()))?;
+    let (parsed, range) = crate::module_blob::parse_original_form_body_plain(text)
+        .map_err(|error| ManagedFormCodecError::NativeBody(error.to_string()))?;
+    validate_layout(&parsed)?;
+    // The field scanner includes whitespace; only the quoted token may change.
+    let field = &text[range.clone()];
+    let start = range.start + field.len() - field.trim_start().len();
+    let end = range.end - (field.len() - field.trim_end().len());
+    Ok((ManagedFormBody { plain, parsed }, start..end))
+}
+
+/// Require exact original UTF-8 bytes outside the quoted module token.
+/// Both containers must satisfy the original admitted layout; this grants no write authority.
+pub fn verify_module_only_edit(old: &[u8], new: &[u8]) -> Result<(), ManagedFormCodecError> {
+    let (old, a) = original_layout(old)?;
+    let (new, b) = original_layout(new)?;
+    if old.plain[..a.start] != new.plain[..b.start] || old.plain[a.end..] != new.plain[b.end..] {
+        return Err(ManagedFormCodecError::InvalidShape(
+            "Form edit changed bytes outside the quoted module".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Transitional reader for historic synthetic fixtures that did not carry a
@@ -390,6 +435,63 @@ mod tests {
             }
         }
         output
+    }
+
+    #[test]
+    fn original_layout_and_module_edit_witnesses_preserve_raw_bytes() {
+        let profile = ManagedFormCodecProfile::fixture();
+        let old = compile_managed_form(&profile, SIMPLE_FORM, Some(b"old"), None).unwrap();
+        assert_eq!(
+            decode_managed_form_layout(&old).unwrap(),
+            decode_managed_form(&profile, &old).unwrap()
+        );
+        assert_eq!(
+            validate_original_managed_form_layout(&old).unwrap(),
+            decode_managed_form_layout(&old).unwrap()
+        );
+        let new = crate::module_blob::pack_form_body_blob_from_module_text(&old, b"new\"text")
+            .unwrap()
+            .blob;
+        verify_module_only_edit(&old, &new).unwrap();
+        let (body, range) = original_layout(&new).unwrap();
+        let text = std::str::from_utf8(body.plaintext()).unwrap();
+        // Semantic IR equality must not hide whitespace edits outside the token.
+        let mut trailing_space = text.to_owned();
+        trailing_space.insert(text.rfind("{0}").unwrap(), ' ');
+        for changed in [
+            format!("{} {}", &text[..range.start], &text[range.start..]),
+            text.replacen(",{50,", ", {50,", 1),
+            trailing_space,
+            format!("{} ", text),
+        ] {
+            let blob = deflate_bytes(changed.as_bytes()).unwrap();
+            assert_eq!(
+                decode_managed_form_layout(&blob).unwrap().parsed(),
+                body.parsed()
+            );
+            assert!(verify_module_only_edit(&old, &blob).is_err());
+        }
+        let changed = text.replacen("{50,", "{59,", 1);
+        assert!(
+            verify_module_only_edit(&old, &deflate_bytes(changed.as_bytes()).unwrap()).is_err()
+        );
+    }
+
+    #[test]
+    fn original_layout_refuses_root_42_before_reader_upgrade() {
+        let plain = concat!(
+            "\u{feff}{3,{42,0,0,0,0,1,0,0,00000000-0000-0000-0000-000000000000,1,{1,0},0,0,1,1,1,0,0,0,",
+            "{1,9f2e5ddb-3492-4f5d-8f0d-416b8d1d5c5b,\"ПриСозданииНаСервере\",0,0},{0},1,",
+            "{21,{-1,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,1,{0,{0,{\"B\",1},0}},9,\"ФормаКоманднаяПанель\",",
+            "{1,0},{1,0},0,1,0,0,0,2,2,{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{0,0,1},0,1,0,0,0,3,3},",
+            "0,\"\",\"\",1,{21,{0},0,0,0,7,\"Navigator\",{1,0},{1,0},0,1,0,0,0,2,2,{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{0,0,1},0,1,0,0,0,3,3},",
+            "1,\"\",0,0,0,0,0,0,3,3,0,0,0},\"\",{0,0},{0,0},{0,0},{0,0},0,0}"
+        );
+        let blob = deflate_bytes(plain.as_bytes()).unwrap();
+        let parsed = crate::module_blob::parse_form_body_blob(&blob).unwrap();
+        assert!(parsed.layout.starts_with("{50,"));
+        assert!(matches!(validate_original_managed_form_layout(&blob),
+            Err(ManagedFormCodecError::UnsupportedLayout(marker)) if marker == "42"));
     }
 
     #[test]

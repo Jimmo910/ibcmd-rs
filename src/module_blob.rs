@@ -25875,21 +25875,31 @@ pub(crate) fn parse_form_body_plain(plain: &str) -> Result<ParsedFormBodyBlob> {
     // An older platform's root-`42` form is read as 8.3.27 re-saves it.
     let upgraded = form_root_42::upgrade_root_42_body(plain);
     let plain = upgraded.as_deref().unwrap_or(plain);
-    let container = FormBodyContainer::parse(&plain)?;
+    parse_original_form_body_plain(plain).map(|(parsed, _)| parsed)
+}
+
+/// Parse the original container without legacy upgrades, retaining its module span.
+pub(crate) fn parse_original_form_body_plain(
+    plain: &str,
+) -> Result<(ParsedFormBodyBlob, Range<usize>)> {
+    let container = FormBodyContainer::parse(plain)?;
     let layout = plain[container.layout_range.clone()].trim().to_string();
     let module_text = parse_1c_quoted_string(plain[container.module_range.clone()].trim())
         .context("Form body module text field is not a quoted string")?;
-    Ok(ParsedFormBodyBlob {
-        revision: container.revision,
-        layout,
-        module_text,
-        trailing: container
-            .trailing_ranges
-            .into_iter()
-            .map(|range| plain[range].trim().to_string())
-            .collect(),
-        trailing_fields: container.trailing_fields,
-    })
+    Ok((
+        ParsedFormBodyBlob {
+            revision: container.revision,
+            layout,
+            module_text,
+            trailing: container
+                .trailing_ranges
+                .into_iter()
+                .map(|range| plain[range].trim().to_string())
+                .collect(),
+            trailing_fields: container.trailing_fields,
+        },
+        container.module_range,
+    ))
 }
 
 /// The container revision a Form body declares in its own first slot.
