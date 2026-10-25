@@ -1090,7 +1090,7 @@ use form_ref_index::FormObjectRefIndex;
 use forms::*;
 use metadata::*;
 use moxel::*;
-pub(crate) use output_writer::FileSink;
+pub(crate) use output_writer::{FileSink, native_module_file_bytes};
 use output_writer::OutputWriter;
 use refs::*;
 use role_rights::*;
