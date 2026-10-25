@@ -35,7 +35,14 @@ pub fn allocate_names(
         if !is_uuid(&request.uuid)
             || !matches!(
                 request.kind.as_str(),
-                "Reference" | "Document" | "Enum" | "InfoRg" | "Fld" | "VT" | "LineNo"
+                "Reference"
+                    | "Document"
+                    | "Enum"
+                    | "InfoRg"
+                    | "Fld"
+                    | "VT"
+                    | "LineNo"
+                    | "ScheduledJobs"
             )
         {
             bail!(
@@ -91,7 +98,14 @@ pub fn allocate_extension_names(
                 if !is_uuid(&request.uuid)
                     || !matches!(
                         request.kind.as_str(),
-                        "Reference" | "Document" | "Enum" | "InfoRg" | "Fld" | "VT" | "LineNo"
+                        "Reference"
+                            | "Document"
+                            | "Enum"
+                            | "InfoRg"
+                            | "Fld"
+                            | "VT"
+                            | "LineNo"
+                            | "ScheduledJobs"
                     )
                     || target.number_of(&request.uuid, &request.kind).is_some()
                 {
@@ -300,7 +314,7 @@ impl TablePlan {
             sql.push_str(&format!("IF OBJECT_ID(N'dbo.{target}',N'U') IS NOT NULL OR OBJECT_ID(N'dbo.{temporary}',N'U') IS NOT NULL THROW 57501,N'New extension table already exists',1;\n"));
         } else {
             sql.push_str(&format!("IF OBJECT_ID(N'dbo.{target}',N'U') IS NULL OR OBJECT_ID(N'dbo.{temporary}',N'U') IS NOT NULL THROW 57501,N'Extension rebuild table state changed',1;\n"));
-            sql.push_str(&format!("IF EXISTS(SELECT 1 FROM sys.triggers WHERE parent_id=OBJECT_ID(N'dbo.{target}')) OR EXISTS(SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.{target}') OR referenced_object_id=OBJECT_ID(N'dbo.{target}')) OR EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.{target}')) OR EXISTS(SELECT 1 FROM sys.default_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.{target}')) OR EXISTS(SELECT 1 FROM sys.database_permissions WHERE class=1 AND major_id=OBJECT_ID(N'dbo.{target}')) OR EXISTS(SELECT 1 FROM sys.extended_properties WHERE class=1 AND major_id=OBJECT_ID(N'dbo.{target}')) OR EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.{target}') AND (has_filter=1 OR is_hypothetical=1)) OR EXISTS(SELECT 1 FROM sys.index_columns WHERE object_id=OBJECT_ID(N'dbo.{target}') AND is_included_column=1) OR EXISTS(SELECT 1 FROM sys.tables WHERE object_id=OBJECT_ID(N'dbo.{target}') AND temporal_type<>0) OR EXISTS(SELECT 1 FROM sys.partitions WHERE object_id=OBJECT_ID(N'dbo.{target}') AND data_compression<>0) THROW 57507,N'Unmodeled SQL constraints, permissions, triggers or indexes on extension table',1;\n"));
+            sql.push_str(&format!("IF EXISTS(SELECT 1 FROM sys.triggers WHERE parent_id=OBJECT_ID(N'dbo.{target}')) OR EXISTS(SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'dbo.{target}') OR referenced_object_id=OBJECT_ID(N'dbo.{target}')) OR EXISTS(SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.{target}')) OR EXISTS(SELECT 1 FROM sys.default_constraints WHERE parent_object_id=OBJECT_ID(N'dbo.{target}')) OR EXISTS(SELECT 1 FROM sys.database_permissions WHERE class=1 AND major_id=OBJECT_ID(N'dbo.{target}')) OR EXISTS(SELECT 1 FROM sys.extended_properties WHERE class=1 AND major_id=OBJECT_ID(N'dbo.{target}')) OR EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.{target}') AND (has_filter=1 OR is_hypothetical=1 OR is_disabled=1 OR type NOT IN(0,1,2))) OR EXISTS(SELECT 1 FROM sys.index_columns WHERE object_id=OBJECT_ID(N'dbo.{target}') AND (is_included_column=1 OR is_descending_key=1)) OR EXISTS(SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.{target}') AND (is_computed=1 OR is_identity=1 OR is_sparse=1 OR is_column_set=1 OR is_rowguidcol=1 OR is_hidden=1 OR generated_always_type<>0 OR encryption_type IS NOT NULL OR is_masked=1 OR (collation_name IS NOT NULL AND collation_name<>CONVERT(nvarchar(128),DATABASEPROPERTYEX(DB_NAME(),'Collation'))))) OR EXISTS(SELECT 1 FROM sys.tables WHERE object_id=OBJECT_ID(N'dbo.{target}') AND temporal_type<>0) OR EXISTS(SELECT 1 FROM sys.partitions WHERE object_id=OBJECT_ID(N'dbo.{target}') AND data_compression<>0) THROW 57507,N'Unmodeled SQL constraints, permissions, triggers or indexes on extension table',1;\n"));
         }
         if let Some(old) = &self.before {
             assert_structure(&mut sql, old, "X1");

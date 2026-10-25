@@ -9,6 +9,7 @@ description = "Portable native database schema and extension migration planning"
 [dependencies]
 anyhow = "1.0"
 flate2 = "1.1"
+ibcmd-schema = { path = "../ibcmd-schema" }
 
 [lints.rust]
 unsafe_code = "forbid"

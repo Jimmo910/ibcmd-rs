@@ -13,6 +13,8 @@ use ibcmd_core::storage::StorageImage;
 use ibcmd_restructure::extension::{
     NameRequest, NameStep, SchemaPlan, TableChange, allocate_extension_names,
 };
+use ibcmd_restructure::scheduled_jobs::{Job as ScheduledJob, Service as JobService};
+use ibcmd_schema::extension_schema::ExtensionScheduledJobsLayout as JobsLayout;
 use sha2::{Digest, Sha256};
 
 use crate::metadata_model::DescriptorContext;
@@ -45,7 +47,13 @@ const TABLELESS: &[&str] = &[
     "SessionParameters",
     "Languages",
 ];
-const DATA: &[&str] = &["Catalogs", "Documents", "Enums", "InformationRegisters"];
+const DATA: &[&str] = &[
+    "Catalogs",
+    "Documents",
+    "Enums",
+    "InformationRegisters",
+    "ScheduledJobs",
+];
 
 #[derive(Clone, Debug)]
 pub struct ExtensionRestructurePlan {
@@ -55,6 +63,7 @@ pub struct ExtensionRestructurePlan {
     pub after_schema: Vec<u8>,
     pub after_names: Vec<u8>,
     pub after_system_names: Vec<u8>,
+    pub after_scheduled_jobs: Option<Vec<u8>>,
 }
 impl ExtensionRestructurePlan {
     pub fn phase_sql(&self) -> &str {
@@ -125,6 +134,7 @@ impl Object {
             "Catalog" => "Reference",
             "Document" => "Document",
             "Enum" => "Enum",
+            "ScheduledJob" => JobsLayout::TABLE_KIND,
             _ => "InfoRg",
         }
     }
@@ -178,6 +188,7 @@ fn objects(root: &Path, image: &StorageImage) -> Result<Vec<Object>> {
         ("Documents", "Document"),
         ("Enums", "Enum"),
         ("InformationRegisters", "InformationRegister"),
+        ("ScheduledJobs", "ScheduledJob"),
     ] {
         for c in children.children_named(kind) {
             let doc = MetadataXml::parse(&std::fs::read(
@@ -285,7 +296,11 @@ fn classify(base: &Path, next: &Path, old: &[Object], new: &[Object]) -> Result<
                 if let Some(o) = old.iter().find(|o| o.uuid == n.uuid) {
                     validate_object_update(o, n)?;
                 } else {
-                    if n.adopted()? || !matches!(n.kind.as_str(), "Catalog" | "InformationRegister")
+                    if n.adopted()?
+                        || !matches!(
+                            n.kind.as_str(),
+                            "Catalog" | "InformationRegister" | "ScheduledJob"
+                        )
                     {
                         bail!("new {} is not a measured own data object", n.label());
                     }
@@ -295,6 +310,16 @@ fn classify(base: &Path, next: &Path, old: &[Object], new: &[Object]) -> Result<
                 continue;
             }
             if path.contains("/Ext/") {
+                if family == "ScheduledJobs" {
+                    let owner = new
+                        .iter()
+                        .find(|o| {
+                            o.kind == "ScheduledJob"
+                                && Some(o.name.as_str()) == parts.get(1).copied()
+                        })
+                        .context("scheduled-job resource has no owner")?;
+                    validate_new(owner)?;
+                }
                 continue;
             }
             if parts.iter().any(|p| matches!(*p, "Forms" | "Templates")) {
@@ -318,6 +343,12 @@ fn validate_new(n: &Object) -> Result<()> {
     let fields = n.field_ids()?;
     if fields.iter().collect::<BTreeSet<_>>().len() != fields.len() {
         bail!("{} repeats a field identity", n.label());
+    }
+    if n.kind == "ScheduledJob" && p.child_text("Predefined") != Some("false") {
+        bail!(
+            "{}: predefined scheduled-job instances require an unmodeled native ActivationCondition writer; nothing was staged or published",
+            n.label()
+        );
     }
     if p.child_text("DataHistory") == Some("Use") {
         bail!("{} enables unmeasured data history", n.label());
@@ -533,7 +564,10 @@ fn reference_tables(
     let p = param(s, "a07b62f0-1f01-484a-93d9-d42764cedac0.si")?;
     let text = inflate(&p.data).unwrap_or_else(|_| p.data.clone());
     let mut refs = RefTables::build(&NamesTables::parse(&text)?);
-    for o in objects.iter().filter(|o| o.kind != "InformationRegister") {
+    for o in objects
+        .iter()
+        .filter(|o| matches!(o.kind.as_str(), "Catalog" | "Document" | "Enum"))
+    {
         let facts = ObjectFacts::parse(&o.kind, &o.row)?;
         if let Some(n) = names.number_of(&o.uuid, o.table_kind()) {
             refs = refs.with_table(
@@ -576,7 +610,20 @@ fn table_entry(
     context: &DescriptorContext,
     common: &CommonAttributes,
 ) -> Result<Brace> {
+    if o.kind == "ScheduledJob" {
+        return Ok(ibcmd_restructure::scheduled_jobs::table_entry(
+            names
+                .number_of(&o.uuid, JobsLayout::TABLE_KIND)
+                .context("scheduled job has no DBNames entry")?,
+        ));
+    }
     if o.kind == "InformationRegister" {
+        if !common.applying(&o.uuid).is_empty() {
+            bail!(
+                "{} has unmodeled extension common-attribute contributions",
+                o.label()
+            );
+        }
         return information_register_entry(o, names, refs, context);
     }
     let facts = ObjectFacts::parse(&o.kind, &o.row)?;
@@ -693,31 +740,34 @@ fn allocation_steps(
             }));
         }
     }
-    for o in new
-        .iter()
-        .filter(|o| matches!(o.kind.as_str(), "Catalog" | "Document"))
-    {
-        if !old_ids.contains(o.uuid.as_str()) {
-            steps.push(NameStep::ReserveCatalog);
-            continue;
-        }
-        if !changed.contains(&o.uuid) {
-            continue;
-        }
-        let before = old
-            .iter()
-            .find(|n| n.uuid == o.uuid)
-            .context("changed object missing before")?;
-        let before: BTreeSet<_> = before.field_ids()?.into_iter().collect();
-        for uuid in o
-            .field_ids()?
-            .into_iter()
-            .filter(|uuid| !before.contains(uuid))
-        {
-            steps.push(NameStep::Allocate(NameRequest {
-                uuid,
-                kind: "Fld".into(),
-            }));
+    for kind in ["Catalog", "ScheduledJob", "Document"] {
+        for o in new.iter().filter(|o| o.kind == kind) {
+            if !old_ids.contains(o.uuid.as_str()) {
+                match kind {
+                    "Catalog" => steps.push(NameStep::ReserveCatalog),
+                    "ScheduledJob" => steps.push(alloc(o, JobsLayout::TABLE_KIND)),
+                    _ => bail!("new documents are not a measured extension transition"),
+                }
+                continue;
+            }
+            if !changed.contains(&o.uuid) {
+                continue;
+            }
+            let before = old
+                .iter()
+                .find(|n| n.uuid == o.uuid)
+                .context("changed object missing before")?;
+            let before: BTreeSet<_> = before.field_ids()?.into_iter().collect();
+            for uuid in o
+                .field_ids()?
+                .into_iter()
+                .filter(|uuid| !before.contains(uuid))
+            {
+                steps.push(NameStep::Allocate(NameRequest {
+                    uuid,
+                    kind: "Fld".into(),
+                }));
+            }
         }
     }
     Ok(steps)
@@ -833,11 +883,21 @@ pub fn plan_from_source_trees(
     let common = common(base, active)?;
     let mut changes = Vec::new();
     let mut deferred = Vec::new();
+    let mut job_changes = Vec::new();
     let mut enums = Vec::new();
     let mut labels = Vec::new();
     for n in new.iter().filter(|n| changed.contains(&n.uuid)) {
         labels.push(n.label());
         let o = old.iter().find(|o| o.uuid == n.uuid);
+        if n.kind == "ScheduledJob" {
+            if o.is_none() {
+                job_changes.push(TableChange {
+                    before: None,
+                    after: table_entry(n, &new_names, &refs, &new_context, &common)?,
+                });
+            }
+            continue;
+        }
         if n.kind == "Enum" {
             let o = o.context("new enums are not measured")?;
             enums.push((o, n));
@@ -870,7 +930,7 @@ pub fn plan_from_source_trees(
             });
         }
     }
-    if changes.is_empty() && deferred.is_empty() && enums.is_empty() {
+    if changes.is_empty() && deferred.is_empty() && enums.is_empty() && job_changes.is_empty() {
         return Ok(None);
     }
     // The platform moves this unchanged system definition before rebuilt own
@@ -883,6 +943,7 @@ pub fn plan_from_source_trees(
         });
     }
     changes.extend(deferred);
+    changes.extend(job_changes);
     for (_, n) in &enums {
         let name = format!(
             "Enum{}",
@@ -948,6 +1009,85 @@ pub fn plan_from_source_trees(
             tables.push(table);
         }
     }
+    let mut after_scheduled_jobs = None;
+    if new
+        .iter()
+        .any(|o| o.kind == "ScheduledJob" && changed.contains(&o.uuid))
+    {
+        let id = uuid::Uuid::parse_str(JobsLayout::SERVICE_ID)?.to_bytes_le();
+        let existing = s
+            .services
+            .iter()
+            .find(|(key, _, _, _)| key.as_slice() == id);
+        let before = if let Some((_, data, int, kind)) = existing {
+            if *int != 0 || *kind != 0 {
+                bail!("unmodeled scheduled-job service numeric flags");
+            }
+            JobService::parse(data)?
+        } else {
+            JobService::default()
+        };
+        let old_jobs = old
+            .iter()
+            .filter(|o| o.kind == "ScheduledJob")
+            .map(|o| {
+                Ok((
+                    o.uuid.clone(),
+                    format!(
+                        "{}{}",
+                        JobsLayout::TABLE_KIND,
+                        names
+                            .number_of(&o.uuid, JobsLayout::TABLE_KIND)
+                            .context("old scheduled job has no DBNames entry")?
+                    ),
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        let mapped = before
+            .groups
+            .iter()
+            .find(|g| {
+                g.extension
+                    .eq_ignore_ascii_case(&extension_namespace_prefix(extension_id))
+            })
+            .map(|g| {
+                g.jobs
+                    .iter()
+                    .map(|j| (j.uuid.clone(), j.table.clone()))
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default();
+        if old_jobs != mapped {
+            bail!(
+                "active scheduled-job service mapping disagrees with extension metadata and names"
+            );
+        }
+        let jobs = new
+            .iter()
+            .filter(|o| o.kind == "ScheduledJob")
+            .map(|o| {
+                Ok(ScheduledJob {
+                    uuid: o.uuid.clone(),
+                    table: format!(
+                        "{}{}",
+                        JobsLayout::TABLE_KIND,
+                        new_names
+                            .number_of(&o.uuid, JobsLayout::TABLE_KIND)
+                            .context("scheduled job has no DBNames entry")?
+                    ),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let row = before
+            .with_group(&extension_namespace_prefix(extension_id), jobs)?
+            .to_bytes();
+        after_scheduled_jobs = Some(row.clone());
+        if let Some((_, old, _, _)) = existing {
+            writeln!(phase,"UPDATE dbo._ExtensionsRestruct SET _RestructData=0x{} WHERE _ExtDataID=0x{} AND _RestructDataInt=0 AND _RestructDataType=0 AND DATALENGTH(_RestructData)={} AND HASHBYTES('SHA2_256',_RestructData)=0x{}; IF @@ROWCOUNT<>1 THROW 57505,N'Scheduled-job mapping changed before publication',1;",hex_upper(&row),hex_upper(&id),old.len(),digest(old)).unwrap();
+        } else {
+            writeln!(phase,"IF EXISTS(SELECT 1 FROM dbo._ExtensionsRestruct WITH(UPDLOCK,HOLDLOCK) WHERE _ExtDataID=0x{}) THROW 57505,N'Scheduled-job mapping appeared after planning',1; INSERT dbo._ExtensionsRestruct(_ExtDataID,_RestructData,_RestructDataInt,_RestructDataType) VALUES(0x{},0x{},0,0);",hex_upper(&id),hex_upper(&id),hex_upper(&row)).unwrap();
+        }
+    }
     replace_param(&mut phase, target, &new_names.to_row()?);
     replace_param(&mut phase, system, &new_system.to_row()?);
     for name in [&target_name, system_name] {
@@ -981,6 +1121,7 @@ pub fn plan_from_source_trees(
         after_schema: plan.after,
         after_names: new_names.to_row()?,
         after_system_names: new_system.to_row()?,
+        after_scheduled_jobs,
     }))
 }
 
@@ -1010,6 +1151,43 @@ mod tests {
             row: Brace::List(vec![]),
         }
     }
+    #[test]
+    fn predefined_job_instances_refuse_before_schema_planning() {
+        let mut job = enumeration(&[]);
+        job.kind = "ScheduledJob".into();
+        job.family = "ScheduledJobs".into();
+        job.element.name = "ScheduledJob".into();
+        let p = job
+            .element
+            .children
+            .iter_mut()
+            .find(|c| c.name == "Properties")
+            .unwrap();
+        p.children.push(Element {
+            name: "Predefined".into(),
+            text: "true".into(),
+            ..Element::default()
+        });
+        assert!(
+            validate_new(&job)
+                .unwrap_err()
+                .to_string()
+                .contains("predefined scheduled-job")
+        );
+        let p = job
+            .element
+            .children
+            .iter_mut()
+            .find(|c| c.name == "Properties")
+            .unwrap();
+        p.children
+            .iter_mut()
+            .find(|c| c.name == "Predefined")
+            .unwrap()
+            .text = "false".into();
+        assert!(validate_new(&job).is_ok());
+    }
+
     #[test]
     fn retained_paths_cannot_replace_old_data_object_identities() {
         let before = enumeration(&["A"]);

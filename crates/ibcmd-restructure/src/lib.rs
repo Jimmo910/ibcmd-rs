@@ -5,3 +5,5 @@ pub mod names;
 pub mod schema;
 
 pub mod extension;
+
+pub mod scheduled_jobs;
