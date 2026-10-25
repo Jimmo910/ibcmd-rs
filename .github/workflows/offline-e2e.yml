@@ -18,6 +18,9 @@ env:
   CARGO_TERM_COLOR: always
   OPENSPEC_TELEMETRY: "0"
   RUST_VERSION: "1.95.0"
+  # Test builds keep line tables only: full debug info made the debug
+  # executable ~700 MB and linking dominated the test steps.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   spec:
@@ -42,6 +45,7 @@ jobs:
           npx --yes @fission-ai/openspec@1.6.0 validate add-fast-parity-evidence --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate add-selected-cf-extract --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate implement-edt-project-conversion --strict --no-interactive
+          npx --yes @fission-ai/openspec@1.6.0 validate add-issue-self-service --strict --no-interactive
 
   quality:
     name: Quality
@@ -77,6 +81,11 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
+      - name: Test the lane selection of the offline matrix
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 tests/scripts/test_ci_scope.py
+
       - name: Lint standalone workspace crates offline
         env:
           CARGO_NET_OFFLINE: "true"
@@ -106,13 +115,12 @@ jobs:
             os: macos-15
             target: aarch64-apple-darwin
             binary: target/release/ibcmd-rs
-          - name: macOS Intel
-            os: macos-15-intel
-            target: x86_64-apple-darwin
-            binary: target/release/ibcmd-rs
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # The base of a pull request, for the lane selection below.
+          fetch-depth: 0
 
       - name: Select a physical temporary directory
         shell: pwsh
@@ -165,6 +173,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      # A pull request runs only the lanes its changed files can affect
+      # (scripts/ci_scope.py); pushes and manual runs run every lane. The
+      # job itself always runs, so the required checks always report.
+      - name: Select the lanes this change needs
+        id: scope
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            python scripts/ci_scope.py --base "origin/${{ github.base_ref }}" | tee -a "$GITHUB_OUTPUT"
+          else
+            python scripts/ci_scope.py --all | tee -a "$GITHUB_OUTPUT"
+          fi
+
       - name: Test installed-EDT oracle guards without the platform
         shell: pwsh
         run: |
@@ -182,86 +203,48 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'coverage generator tests failed' }
 
       - name: Cache Cargo artifacts
+        if: steps.scope.outputs.rust == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           # Native dependency objects must not cross runner ABI boundaries.
           key: abi-v1-${{ matrix.os }}-${{ matrix.target }}
 
       - name: Fetch locked dependencies
+        if: steps.scope.outputs.rust == 'true'
         run: cargo fetch --locked
 
       - name: Validate bundled schema corpus
+        if: steps.scope.outputs.crates == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo test --locked -p ibcmd-schema
 
-      - name: Compile every standalone target offline
+      - name: Lint standalone workspace crates on Windows
+        if: steps.scope.outputs.rust == 'true' && runner.os == 'Windows'
         env:
           CARGO_NET_OFFLINE: "true"
-        run: cargo check --locked --workspace --all-targets --no-default-features
+        run: cargo clippy --locked --workspace --exclude ibcmd-rs --all-targets -- -D warnings
 
       - name: Test standalone workspace crates offline
+        if: steps.scope.outputs.crates == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo test --locked --workspace --exclude ibcmd-rs
 
       - name: Test root integration suites offline
+        if: steps.scope.outputs.rust == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo test --locked -p ibcmd-rs --test '*' --no-default-features
 
-      - name: Test Configuration root contracts offline
+      # Every unit test of the root library (the converters and the load and
+      # export engines). Their paths are built portably, so all five targets
+      # run them.
+      - name: Test the root library offline
+        if: steps.scope.outputs.lib == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
-        run: cargo test --locked -p ibcmd-rs --lib configuration_ --no-default-features
-
-      - name: Test editor export read scope offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib read_scope_tests --no-default-features
-
-      - name: Test scoped active-generation rows offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib snapshot_uses_active_generation_and_preserves_no_marker_semantics --no-default-features
-
-      - name: Test export SQL certificate policy offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib export_sql_constructor_validates_certificates --no-default-features
-
-      - name: Test editor SQL certificate policy offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib editor_sql_sessions_validate_server_certificates --no-default-features
-
-      - name: Test objects SQL certificate policy offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib object_sql_constructor_validates_certificates --no-default-features
-
-      - name: Test explicit certificate trust policy offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib explicit_certificate_trust_policy --no-default-features
-
-      - name: Test empty CommonCommand help routing offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib common_command_empty_help --no-default-features
-
-      - name: Test registered Help compilation route offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib help_compilation_uses_the_exact_registered_graph_route --no-default-features
+        run: cargo test --locked -p ibcmd-rs --lib --no-default-features
 
       - name: Retain binary for failed release boundary investigation
         if: failure()
@@ -275,27 +258,32 @@ jobs:
           retention-days: 3
 
       - name: Build the release-shaped binary offline
+        if: steps.scope.outputs.rust == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo build --locked --release --no-default-features
 
       - name: Verify Ubuntu 22.04 GLIBC compatibility
-        if: runner.os == 'Linux'
+        if: steps.scope.outputs.rust == 'true' && runner.os == 'Linux'
         run: python scripts/audit_linux_abi.py --binary ${{ matrix.binary }} --target ${{ matrix.target }} --output target/offline-evidence/${{ matrix.target }}.abi.json
 
       - name: Verify native micro-corpus parity offline
+        if: steps.scope.outputs.rust == 'true'
         shell: pwsh
         run: ./tools/verify-native-evidence.ps1 -RepositoryRoot . -BinaryPath ${{ matrix.binary }}
 
       - name: Generate deterministic runtime SBOM
+        if: steps.scope.outputs.rust == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
         run: python scripts/generate_sbom.py --manifest-path Cargo.toml --output target/offline-evidence/${{ matrix.target }}.sbom.cdx.json --target ${{ matrix.target }}
 
       - name: Audit clean-environment release boundary
+        if: steps.scope.outputs.rust == 'true'
         run: python scripts/audit_release.py --binary ${{ matrix.binary }} --sbom target/offline-evidence/${{ matrix.target }}.sbom.cdx.json
 
       - name: Package and audit the exact tested binary
+        if: steps.scope.outputs.rust == 'true'
         shell: pwsh
         env:
           CARGO_NET_OFFLINE: "true"
@@ -310,6 +298,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Packaged release audit failed' }
 
       - name: Upload evidence
+        if: steps.scope.outputs.rust == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: offline-evidence-${{ matrix.target }}
