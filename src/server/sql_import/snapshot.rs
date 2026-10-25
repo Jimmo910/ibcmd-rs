@@ -6,7 +6,7 @@
 use super::readset::{Builder, Check, Input, Key, Limits, Part, Readset, Table};
 use crate::{
     mssql_live_continue::DatabaseIdentity,
-    sql::{Dbms, SqlClient, SqlParam, SqlRow, SqlValue},
+    sql::{Dbms, SqlClient, SqlParam, SqlRow, SqlSession, SqlValue},
 };
 use anyhow::{Result, bail, ensure};
 use std::sync::Arc;
@@ -39,6 +39,76 @@ pub fn capture(
         client.detached_reason().is_none(),
         "snapshot requires a connected SQL client"
     );
+    Ok(
+        capture_inner(profile, limits, check, false, |query, params, each| {
+            client.read_rows(query, params, each)
+        })?
+        .readset,
+    )
+}
+
+pub(super) struct HeldReadset {
+    pub readset: Readset,
+    pub session_id: i64,
+}
+struct Captured {
+    readset: Readset,
+    session_id: Option<i64>,
+}
+
+pub(super) fn capture_held(
+    session: &mut dyn SqlSession,
+    profile: &Profile,
+    limits: Limits,
+    check: Check,
+) -> Result<HeldReadset> {
+    let captured = capture_inner(profile, limits, check, true, |query, params, each| {
+        session.read_rows(query, params, each)
+    })?;
+    Ok(HeldReadset {
+        readset: captured.readset,
+        session_id: captured
+            .session_id
+            .ok_or_else(|| anyhow::anyhow!("held SQL session seal is missing"))?,
+    })
+}
+
+fn held_query() -> Result<String> {
+    // Reuse the exact schema/row producer. Fail closed if a canonical control
+    // anchor changes; never silently fork its serializer or rollback behavior.
+    let mut sql = include_str!("snapshot.sql").to_owned();
+    for (from, to, count) in [
+        ("USE __DATABASE__;\n", "", 1),
+        (
+            "IF @@TRANCOUNT <> 0 THROW 57620, 'snapshot requires an idle session', 1;",
+            "IF @@TRANCOUNT <> 1 OR XACT_STATE() <> 1 THROW 57620, 'held snapshot requires one committable transaction', 1;",
+            1,
+        ),
+        (" BEGIN TRANSACTION;\n", "", 1),
+        ("WITH (TABLOCK,HOLDLOCK)", "WITH (TABLOCKX,HOLDLOCK)", 2),
+        (
+            " ROLLBACK TRANSACTION;\n SELECT @P7,@NC,@NS,@BC,@BS;",
+            " SELECT @P7,@NC,@NS,@BC,@BS,@@TRANCOUNT,XACT_STATE(),@@SPID;",
+            1,
+        ),
+    ] {
+        ensure!(
+            sql.matches(from).count() == count,
+            "canonical snapshot control anchor changed"
+        );
+        sql = sql.replace(from, to);
+    }
+    Ok(sql)
+}
+
+fn capture_inner(
+    profile: &Profile,
+    limits: Limits,
+    check: Check,
+    held: bool,
+    run: impl FnOnce(&str, &[SqlParam<'_>], &mut dyn FnMut(SqlRow) -> Result<()>) -> Result<()>,
+) -> Result<Captured> {
+    check()?;
     let db = &profile.identity.database;
     ensure!(
         !db.is_empty() && !db.contains('\0') && db.encode_utf16().count() <= 128,
@@ -81,8 +151,12 @@ pub fn capture(
     let name = i64::try_from(limits.max_name_units)?;
     ensure!(name <= 128, "snapshot name limit exceeds storage profile");
     let nonce = uuid::Uuid::new_v4().to_string();
-    let query = include_str!("snapshot.sql")
-        .replace("__DATABASE__", &format!("[{}]", db.replace(']', "]]")));
+    let query = if held {
+        held_query()?
+    } else {
+        include_str!("snapshot.sql")
+            .replace("__DATABASE__", &format!("[{}]", db.replace(']', "]]")))
+    };
     let params = [
         SqlParam::Binary(&profile.schema),
         SqlParam::I64(count),
@@ -109,9 +183,11 @@ pub fn capture(
         counts: [0; 2],
         bytes: [0; 2],
         sealed: false,
+        held,
+        session_id: None,
     };
     let mut failed = None;
-    let outcome = client.read_rows(&query, &params, &mut |row| {
+    let outcome = run(&query, &params, &mut |row| {
         if failed.is_some() {
             bail!("SQL snapshot stream was invalidated");
         }
@@ -129,10 +205,15 @@ pub fn capture(
     outcome?;
     (decoder.check)()?;
     ensure!(decoder.sealed, "SQL snapshot stream has no completion seal");
-    decoder
+    let session_id = decoder.session_id;
+    let readset = decoder
         .builder
         .ok_or_else(|| anyhow::anyhow!("SQL snapshot identity is missing"))?
-        .finish()
+        .finish()?;
+    Ok(Captured {
+        readset,
+        session_id,
+    })
 }
 
 struct Decoder<'a> {
@@ -145,6 +226,8 @@ struct Decoder<'a> {
     counts: [u64; 2],
     bytes: [u64; 2],
     sealed: bool,
+    held: bool,
+    session_id: Option<i64>,
 }
 impl Decoder<'_> {
     fn accept(&mut self, row: SqlRow) -> Result<()> {
@@ -233,6 +316,18 @@ impl Decoder<'_> {
                     )?;
             }
             3 => {
+                let mut row = row;
+                if self.held {
+                    ensure!(row.values.len() == 8, "held SQL seal shape is invalid");
+                    let spid = integer(row.values.pop().unwrap())?;
+                    let state = integer(row.values.pop().unwrap())?;
+                    let count = integer(row.values.pop().unwrap())?;
+                    ensure!(
+                        count == 1 && state == 1 && spid > 0,
+                        "held SQL transaction/session state changed"
+                    );
+                    self.session_id = Some(spid);
+                }
                 let [nonce, nc, ns, bc, bs]: [SqlValue; 5] = row
                     .values
                     .try_into()

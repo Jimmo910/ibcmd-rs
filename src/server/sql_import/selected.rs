@@ -112,6 +112,14 @@ pub struct ModuleEdit {
     readset_digest: [u8; 32],
     replacements: Rows,
 }
+#[cfg(test)]
+pub(super) fn recording_edit(snapshot: &Readset, replacements: Rows) -> ModuleEdit {
+    ModuleEdit {
+        readset_digest: snapshot.digest().unwrap(),
+        replacements,
+    }
+}
+
 impl ModuleEdit {
     pub fn readset_digest(&self) -> &[u8; 32] {
         &self.readset_digest

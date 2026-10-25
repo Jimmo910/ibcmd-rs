@@ -242,6 +242,7 @@ fn validate_parts(rows: &Parts, check: &Check) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone)]
 pub struct Readset {
     identity: DatabaseIdentity,
     schema: [u8; 32],
@@ -251,6 +252,16 @@ pub struct Readset {
     check: Check,
 }
 impl Readset {
+    pub(super) fn limits(&self) -> Limits {
+        self.limits
+    }
+    pub(super) fn identity(&self) -> &DatabaseIdentity {
+        &self.identity
+    }
+    pub(super) fn schema(&self) -> [u8; 32] {
+        self.schema
+    }
+
     pub fn parts(&self, table: Table) -> impl Iterator<Item = (&Key, &Part)> {
         match table {
             Table::Config => &self.config,

@@ -1,13 +1,14 @@
 //! Bounded source admission for SQL editor preparation.
 //!
-//! This module does not execute SQL or make a plan publishable. Target snapshot,
-//! shared compiler verification and same-session transactional publication are
-//! separate gates; the RPC SQL route remains closed until those are established.
+//! Source admission, snapshot compilers and a library-only guarded transaction
+//! primitive are separate from user dispatch. No RPC route calls the transaction;
+//! native writer/profile and end-to-end acceptance remain required before wiring.
 pub mod compiler_diagnostic;
 pub mod coverage;
 pub mod readset;
 pub mod selected;
 pub mod snapshot;
+pub mod transaction;
 
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 

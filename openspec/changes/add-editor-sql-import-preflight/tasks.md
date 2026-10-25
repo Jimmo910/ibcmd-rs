@@ -49,5 +49,11 @@
 
 - [x] F.11 Minimal dedicated-session backend seam, unsupported default, owned MSSQL
   connection, poison/terminal rollback guards; 4 pure state/default-refusal tests
-  passed and source review cleared. No production caller or real-session proof;
-  held-lock CAS/DML/COMMIT outcome handling still belongs to unfinished 2.3.
+  passed and source review cleared at bbb1929; real-session proof remains open.
+  The later library transaction primitive is tracked separately below.
+
+- [x] F.12 Library held-lock CAS/DML and explicit transaction outcomes with 11
+  recording tests, 29 existing SQL-contract regressions and lib-check passed;
+  source review CLEAR. No real SQL session/write or user route was executed.
+  See evidence/held-lock-cas-recording.md. Real lock/native writer admission and
+  end-to-end acceptance remain unfinished 2.3/3.2, not a completed SQL capability.
