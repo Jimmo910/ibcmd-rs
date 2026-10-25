@@ -11,3 +11,11 @@ The three focused writer regressions cover the exact 43-byte public native oracl
 The seven ChartPolicySeed template text differences are separately owned by #529 and are not changed here. This fix does not establish full-tree parity, SQL import authority, same-session CAS, or publication readiness. Raw SQL rows and native XML remain in the VM.
 
 The full branch physical-adapter guard currently refuses the inherited, unchanged `src/mssql_dump/import_evidence.rs` donor as an unbaselined file (path SHA-256 `5574a62490168322556d12d020d387ae765a939f0f12587067ea69e930825999`). That separate gate was reported to its owner; no baseline was edited or check suppressed. This three-file module-format donor excludes the observer. The guard self-test was not run locally because it permanently removes its temporary fixtures, contrary to the lab retention constraint.
+
+## Integrated Windows runtime result
+
+The unchanged native baseline was compared with common product `c45d1bb2a9ea260dd5d7bb32f3143eea7ab29076`, executable SHA-256 `3f2ae372b411e1c552395ca5745c9e46b31c2d43fe0121ab6fde32e446e4df32`, workflow `40151625588`. Independently verified combined release receipt SHA-256 `3ead95f368c8419a67644b601e82aa3b5a0702fc07f439cad7985edd7ab5ccda` records a natural code-0 full public SQL export in 2.848 seconds, no forced termination, no SQL writes or native invocation, unchanged source fingerprints and FULL RELEASE.
+
+`Module.bsl` now matches native exactly: 43 bytes and SHA-256 `f6c91e7f53f80656a0a726cf13fc3ae8fdfd54ace2fbd26069885a101b611e48`. ConfigDumpInfo is also byte-exact, including all five ordered ID/version tuples. The complete SQL comparison is **5/6 byte-exact, not a full pass**: ChartPolicySeed's template still differs at seven text positions and is owned by #529. Missing and unexpected file counts are both zero.
+
+The status/selected-export follow-up remains required: its expected filesystem representation must share the formatter while memory/source-read and actual source custody hashes remain raw. This runtime result validates the original filesystem-format donor included in `c45`; it does not establish runtime acceptance of later helper/consumer commits, SQL import, CAS or publication.
