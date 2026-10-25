@@ -23,7 +23,7 @@ DataProcessor. These objects do not own persistent SQL tables. The same native
 pair changes Version and adds a common module; the complete compiled image,
 including every root child and nested form asset, must re-export faithfully.
 Root comparison uses XML semantics for syntax-only differences while retaining
-leaf text, element ordering, identity, namespace bindings and unknown properties.
+leaf text, element ordering, identity, default namespaces, used prefix bindings and unknown properties.
 
 Direct SQL writes use SQL Server authorization, without an application-account
 login. Profile preflight reads the exact RAS build and selected cluster-level
@@ -34,3 +34,6 @@ retain their stronger known physical mapping evidence. Direct live continuation
 keeps the persisted SQL identity/backup-chain/schema guards while using the same
 account-free registration check; an old checkpoint is not reported as a newly
 verified physical registration mapping.
+Prefixed namespace declarations unused throughout both compared documents are
+lexical only. Prefix use includes element/attribute names and decoded QName-like
+text/attribute values; default namespace declarations remain strict.

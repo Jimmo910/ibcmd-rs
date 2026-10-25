@@ -95,4 +95,10 @@ unknown properties and object identities instead of accepting arbitrary drift.
 - **GIVEN** recognized metadata XML differing only in declaration, BOM or indentation
 - **WHEN** the complete proposal is compared to its native-shaped source image
 - **THEN** lexical differences do not prevent import
-- **AND** changed values, identities, child order or namespace bindings still refuse
+- **AND** changed values, identities, child order, default namespaces or used prefix bindings still refuse
+#### Scenario: Native export declares an unused metadata prefix
+- **GIVEN** a metadata descriptor without an unused palette prefix declaration
+- **WHEN** native-shaped export includes that declaration without using the prefix
+- **THEN** the source comparison treats the addition as lexical XML only
+- **AND** prefixes used by element names, attribute names or QName-like values
+  retain their declared namespace bindings, including inherited bindings
