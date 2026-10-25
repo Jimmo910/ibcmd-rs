@@ -37,15 +37,15 @@ BEGIN TRY
            ORDER BY ic.index_column_id FOR JSON PATH,INCLUDE_NULL_VALUES)) AS columns
          FROM sys.indexes i WHERE i.object_id=t.object_id
          ORDER BY i.index_id FOR JSON PATH,INCLUDE_NULL_VALUES)) AS indexes,
-       JSON_QUERY((SELECT ck.name,ck.definition,ck.is_disabled,ck.is_not_trusted,
+       JSON_QUERY(COALESCE((SELECT ck.name,ck.definition,ck.is_disabled,ck.is_not_trusted,
          ck.is_not_for_replication FROM sys.check_constraints ck
          WHERE ck.parent_object_id=t.object_id ORDER BY ck.name
-         FOR JSON PATH,INCLUDE_NULL_VALUES)) AS checks,
-       JSON_QUERY((SELECT tr.name,tr.is_disabled,tr.is_instead_of_trigger,
+         FOR JSON PATH,INCLUDE_NULL_VALUES),N'[]')) AS checks,
+       JSON_QUERY(COALESCE((SELECT tr.name,tr.is_disabled,tr.is_instead_of_trigger,
          tr.is_not_for_replication,sm.definition FROM sys.triggers tr
          LEFT JOIN sys.sql_modules sm ON sm.object_id=tr.object_id
          WHERE tr.parent_id=t.object_id ORDER BY tr.name
-         FOR JSON PATH,INCLUDE_NULL_VALUES)) AS triggers
+         FOR JSON PATH,INCLUDE_NULL_VALUES),N'[]')) AS triggers
        FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id
        WHERE s.name=N'dbo' AND t.name IN (N'Config',N'ConfigSave')
        ORDER BY t.name COLLATE Latin1_General_100_BIN2
