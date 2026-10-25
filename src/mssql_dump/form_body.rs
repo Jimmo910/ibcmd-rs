@@ -39378,7 +39378,7 @@ fn parse_form_chart_settings_xml(
 /// `<Attribute>`. Exists so `tests.rs` can assert platform-proven raw records
 /// round-trip to byte-identical native `<Settings xsi:type="d4p1:Chart">`
 /// XML without exposing this module's private parsing functions, mirroring
-/// `moxel.rs`'s `parse_and_render_moxel_chart_for_test`.
+/// `ibcmd-moxel`'s `parse_and_render_moxel_chart_for_test`.
 #[cfg(test)]
 pub(super) fn parse_and_render_form_chart_settings_for_test(text: &str) -> Option<String> {
     let value_types = [ConstantValueType::Reference {
@@ -39986,9 +39986,9 @@ const FORM_CHART_SERIES_FIELDS: usize = 11;
 const FORM_CHART_POINT_FIELDS: usize = 11;
 /// The tail length at `series_count=0, point_count=0` -- the shape both
 /// original 197-tail proofs carried. `format_form_chart_settings_xml` grows
-/// this by the same formula `moxel.rs` uses for its own chart record.
+/// this by the same formula `ibcmd-moxel` uses for its own chart record.
 const FORM_CHART_TAIL_FIELDS_BASE: usize = 197;
-/// Mirrors `moxel.rs`'s own `MAX_MOXEL_CHART_SERIES` bound for the same
+/// Mirrors `ibcmd-moxel`'s own `MAX_MOXEL_CHART_SERIES` bound for the same
 /// spreadsheet-document chart record family.
 const MAX_FORM_CHART_SERIES: usize = 64;
 const MAX_FORM_CHART_POINTS: usize = 4096;
@@ -40671,7 +40671,7 @@ fn format_form_chart_settings_body_xml(
 ) -> Option<String> {
     // Revision 75 is revision 74 plus eight trailing colours, all automatic
     // wherever the platform prints nothing for them -- the relation
-    // `moxel.rs` records for a template's chart, and the shape the 21 charts
+    // `ibcmd-moxel` records for a template's chart, and the shape the 21 charts
     // of one 8.3.27 corpus stored by 8.5 carry (`DataProcessors/
     // ДиспетчированиеГрафикаПроизводства/Forms/ДиагностикаФормированияГрафика`).
     let mut owned = Vec::new();
@@ -40712,12 +40712,12 @@ fn format_form_chart_settings_body_xml(
     // The scale-id list right after `rebuildTime` grows the tail by three
     // members per real series (a count field plus two `series_count+1`-long
     // lists) -- the same `197 + 3*series_count + point_count*(1+4*
-    // series_count)` formula `moxel.rs`'s spreadsheet-document chart proved
+    // series_count)` formula `ibcmd-moxel`'s spreadsheet-document chart proved
     // for `series_count`/`point_count`, cross-checked here at
     // `series_count=1` and, directly against native UT XML with no seed, at
     // `series_count=4`.
     // Version 73 is version 74 minus six trailing zeros -- the same relation
-    // `moxel.rs`'s spreadsheet-document chart records, and the same one
+    // `ibcmd-moxel`'s spreadsheet-document chart records, and the same one
     // `uh` `Reports/МатрицаРисков/Forms/ФормаОтчета` shows here: its tail is
     // 191 members where the 74s carry 197, and `t[0..=190]` are slot for
     // slot the 74 layout, down to the five-member show-mode tuple at
