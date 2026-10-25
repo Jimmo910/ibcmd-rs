@@ -47998,7 +47998,8 @@ fn accepts_short_configuration_root_property_header() {
             (39, &roles_raw),
         ],
     );
-    let object_refs = BTreeMap::from([
+    let mut object_refs = flat_configuration_fixture().2;
+    object_refs.extend([
         (role_uuids[0].to_string(), "Role.FullRights".to_string()),
         (role_uuids[1].to_string(), "Role.SystemAdmin".to_string()),
     ]);
@@ -48193,10 +48194,11 @@ fn flat_configuration_children_fail_closed_for_unproven_references() {
             &uuid,
             &refs,
             InfobaseConfigSourceVersion::V2_20,
-        )
-        .unwrap();
-        assert!(xml.contains("<InternalInfo>"), "{case}: {xml}");
-        assert!(!xml.contains("<ChildObjects"), "{case}: {xml}");
+        );
+        assert!(
+            xml.is_none(),
+            "{case}: an unresolved inventory must refuse the root"
+        );
     }
 }
 
@@ -48262,7 +48264,7 @@ fn extracts_configuration_use_purposes_for_proven_layouts() {
         let xml = extract_configuration_source_xml(
             &text,
             &uuid,
-            &BTreeMap::new(),
+            &flat_configuration_fixture().2,
             InfobaseConfigSourceVersion::V2_20,
         )
         .unwrap();
@@ -48331,7 +48333,7 @@ fn configuration_use_purposes_fail_closed() {
         let xml = extract_configuration_source_xml(
             &text,
             &uuid,
-            &BTreeMap::new(),
+            &flat_configuration_fixture().2,
             InfobaseConfigSourceVersion::V2_20,
         )
         .unwrap();
@@ -48384,7 +48386,8 @@ fn extracts_configuration_default_roles_for_proven_layouts() {
         "50000000-0000-4000-8000-000000000003",
     ];
     let raw = configuration_default_roles_raw(3, &role_uuids);
-    let object_refs = BTreeMap::from([
+    let mut object_refs = flat_configuration_fixture().2;
+    object_refs.extend([
         (role_uuids[0].to_string(), "Role.FullRights".to_string()),
         (role_uuids[1].to_string(), "Role.SystemAdmin".to_string()),
         (role_uuids[2].to_string(), "Role.ExternalOpen".to_string()),
@@ -48438,7 +48441,8 @@ fn configuration_default_roles_fail_closed() {
         "{{\"#\",157fa490-4ce9-11d4-9415-008048da11f9,{{1,{}}}}}",
         role_uuids[0]
     );
-    let object_refs = BTreeMap::from([
+    let mut object_refs = flat_configuration_fixture().2;
+    object_refs.extend([
         (role_uuids[0].to_string(), "Role.FullRights".to_string()),
         (role_uuids[1].to_string(), "Role.SystemAdmin".to_string()),
         (role_uuids[2].to_string(), "Role.ExternalOpen".to_string()),
@@ -48661,7 +48665,7 @@ fn extracts_atomic_configuration_localized_properties_for_proven_layouts() {
         let xml = extract_configuration_source_xml(
             &text,
             &uuid,
-            &BTreeMap::new(),
+            &flat_configuration_fixture().2,
             InfobaseConfigSourceVersion::V2_20,
         )
         .unwrap();
@@ -48757,7 +48761,7 @@ fn configuration_localized_properties_fail_closed_atomically() {
         let xml = extract_configuration_source_xml(
             &text,
             &uuid,
-            &BTreeMap::new(),
+            &flat_configuration_fixture().2,
             InfobaseConfigSourceVersion::V2_20,
         )
         .unwrap();
@@ -48891,7 +48895,7 @@ fn extracts_configuration_used_mobile_application_functionalities_for_proven_lay
         let v20_xml = extract_configuration_source_xml(
             &v20_text,
             &uuid,
-            &BTreeMap::new(),
+            &flat_configuration_fixture().2,
             InfobaseConfigSourceVersion::V2_20,
         )
         .unwrap();
@@ -48947,7 +48951,7 @@ fn extracts_configuration_used_mobile_application_functionalities_for_proven_lay
         let v21_xml = extract_configuration_source_xml(
             &v21_text,
             &uuid,
-            &BTreeMap::new(),
+            &flat_configuration_fixture().2,
             InfobaseConfigSourceVersion::V2_21,
         )
         .unwrap();
@@ -49028,7 +49032,7 @@ fn configuration_used_mobile_application_functionalities_fail_closed() {
         let xml = extract_configuration_source_xml(
             &text,
             &uuid,
-            &BTreeMap::new(),
+            &flat_configuration_fixture().2,
             InfobaseConfigSourceVersion::V2_20,
         )
         .unwrap();
@@ -49112,7 +49116,7 @@ fn configuration_used_mobile_application_functionalities_fail_closed() {
     let xml = extract_configuration_source_xml(
         &decoy,
         &uuid,
-        &BTreeMap::new(),
+        &flat_configuration_fixture().2,
         InfobaseConfigSourceVersion::V2_20,
     )
     .unwrap();
