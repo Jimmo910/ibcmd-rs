@@ -1209,8 +1209,13 @@ pub fn plan_from_source_trees(
             writeln!(phase,"IF EXISTS(SELECT 1 FROM dbo._ExtensionsRestruct WITH(UPDLOCK,HOLDLOCK) WHERE _ExtDataID=0x{} AND {}) THROW 57505,N'Scheduled-job mapping appeared after planning',1; INSERT dbo._ExtensionsRestruct(_ExtDataID,_RestructData,_RestructDataInt,_RestructDataType{}) SELECT 0x{},0x{},0,0{} FROM dbo._ExtensionsInfo ctx WITH(UPDLOCK,HOLDLOCK) WHERE {}; IF @@ROWCOUNT<>1 THROW 57505,N'Scheduled-job context copy lost race',1;",hex_upper(&id),scope.predicate("_ExtensionsRestruct"),scope.insert_columns(),hex_upper(&id),hex_upper(&row),scope.insert_values(),scope.registry_predicate()).unwrap();
         }
     }
-    replace_param(&mut phase, target, &new_names.to_row()?);
-    replace_param(&mut phase, system, &new_system.to_row()?);
+    let after_names = new_names.to_row()?;
+    let after_system_names = new_system.to_row()?;
+    if target.data != after_names || system.data != after_system_names {
+        tables.push("Params".to_owned());
+    }
+    replace_param(&mut phase, target, &after_names);
+    replace_param(&mut phase, system, &after_system_names);
     for name in [&target_name, system_name] {
         let old = param(&s, &format!("DBNamesVersion-{name}"))?;
         let changed = if name == system_name {
@@ -1235,13 +1240,17 @@ pub fn plan_from_source_trees(
         &plan.after,
         "",
     );
+    tables.push("SchemaStorage".to_owned());
+    if after_scheduled_jobs.is_some() {
+        tables.push("_ExtensionsRestruct".to_owned());
+    }
     Ok(Some(ExtensionRestructurePlan {
         sql: phase,
         objects: labels,
         tables,
         after_schema: plan.after,
-        after_names: new_names.to_row()?,
-        after_system_names: new_system.to_row()?,
+        after_names,
+        after_system_names,
         after_scheduled_jobs,
     }))
 }
