@@ -11367,6 +11367,82 @@
           ]
         ]
       ]
+    },
+    {
+      "id": "8.3.27.2214-Legacy37HTMLWidth",
+      "source": "native retained container 2 / layout 37 / field record 32; exact missing dimension with intact widget",
+      "set": "8.3.27.2214/corpus-legacy-html-layout37",
+      "variant": "CovContextHTMLBound",
+      "file": "CommonForms/CovContextHTMLBound/Ext/Form.xml",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}HTMLDocumentField",
+        "name": "Probe"
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}Width",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}Width",
+        [],
+        "90",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.3.27.2214-Legacy37HTMLHeight",
+      "source": "native retained container 2 / layout 37 / field record 32; exact missing dimension with intact widget",
+      "set": "8.3.27.2214/corpus-legacy-html-layout37",
+      "variant": "CovContextHTMLBound",
+      "file": "CommonForms/CovContextHTMLBound/Ext/Form.xml",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}HTMLDocumentField",
+        "name": "Probe"
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}Height",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}Height",
+        [],
+        "40",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.5.1.1150-Legacy37HTMLWidth",
+      "source": "native retained container 2 / layout 37 / field record 32; exact missing dimension with intact widget",
+      "set": "8.5.1.1150/corpus-legacy-html-layout37",
+      "variant": "CovContextHTMLBound",
+      "file": "CommonForms/CovContextHTMLBound/Ext/Form.xml",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}HTMLDocumentField",
+        "name": "Probe"
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}Width",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}Width",
+        [],
+        "90",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.5.1.1150-Legacy37HTMLHeight",
+      "source": "native retained container 2 / layout 37 / field record 32; exact missing dimension with intact widget",
+      "set": "8.5.1.1150/corpus-legacy-html-layout37",
+      "variant": "CovContextHTMLBound",
+      "file": "CommonForms/CovContextHTMLBound/Ext/Form.xml",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}HTMLDocumentField",
+        "name": "Probe"
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}Height",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}Height",
+        [],
+        "40",
+        []
+      ],
+      "known_symptom": null
     }
   ]
 }
