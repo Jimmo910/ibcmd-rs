@@ -241,7 +241,7 @@ pub fn load_extensions(args: &MssqlLoadExtensionArgs) -> Result<MssqlExtensionLo
         // The whole tree, or a selection of more than module bodies: compared
         // with the export of the active image, only the objects of changed
         // files are compiled.
-        let Some(edit) = crate::mssql_extension_tree_load::compile_tree_edit(
+        let Some(edit) = crate::mssql_extension_tree_load::compile_tree_edit_for_restructure(
             &sql,
             &args.database,
             args.source_version,
@@ -268,6 +268,32 @@ pub fn load_extensions(args: &MssqlLoadExtensionArgs) -> Result<MssqlExtensionLo
             edit.rows,
         )
         .with_context(|| format!("failed to prepare extension {:?}", extension.name))?;
+        // Compilation is only a proposal. Prove every structural transition
+        // before the first ConfigCASSave write, including --all-extensions.
+        if crate::mssql_extension_tree_load::require_nonstructural_stage(
+            &sql,
+            &args.database,
+            args.source_version,
+            &active,
+            &plan,
+        )
+        .is_err()
+        {
+            crate::mssql_extension_restructure::prepare(
+                &sql,
+                &args.database,
+                args.platform_profile,
+                extension.physical_registry_id,
+                &active,
+                &plan,
+            )
+            .with_context(|| {
+                format!(
+                    "unsupported schema transition of extension {:?}; nothing was staged",
+                    extension.name,
+                )
+            })?;
+        }
         prepared.push(PreparedLoad {
             extension: extension.clone(),
             input_dir,
@@ -482,6 +508,7 @@ pub(crate) fn activate_staged_extension_verified(
                 live_cache_invalidation_verified: false,
                 existing_sessions_retain_generation: false,
                 recovery_token: String::new(),
+                restructured_objects: Vec::new(),
             },
             script: None,
             recovery: None,
@@ -539,7 +566,7 @@ pub(crate) fn activate_staged_extension_verified(
         },
         args.allow_non_lab,
     )?;
-    if !plan.is_no_op() {
+    let schema = if !plan.is_no_op() {
         let root = CasHash::parse_hex(&extension.active_cas_root)?;
         let (active, _) = fetch_cas_storage_image_with_manifest(
             &sql,
@@ -547,19 +574,41 @@ pub(crate) fn activate_staged_extension_verified(
             MssqlStorageTable::ConfigCas,
             root,
         )?;
-        crate::mssql_extension_tree_load::require_nonstructural_stage(
+        let source_version = match args.platform_profile {
+            crate::mssql_platform_profile::MssqlNativePlatformProfile::Platform8_5_1_1150 => {
+                crate::cli::InfobaseConfigSourceVersion::V2_21
+            }
+            _ => crate::cli::InfobaseConfigSourceVersion::V2_20,
+        };
+        if crate::mssql_extension_tree_load::require_nonstructural_stage(
             &sql,
             &args.database,
-            match args.platform_profile {
-                crate::mssql_platform_profile::MssqlNativePlatformProfile::Platform8_5_1_1150 => {
-                    crate::cli::InfobaseConfigSourceVersion::V2_21
-                }
-                _ => crate::cli::InfobaseConfigSourceVersion::V2_20,
-            },
+            source_version,
             &active,
             &stage,
-        )?;
-    }
+        )
+        .is_ok()
+        {
+            None
+        } else {
+            crate::mssql_extension_restructure::prepare(
+                &sql,
+                &args.database,
+                args.platform_profile,
+                extension.physical_registry_id,
+                &active,
+                &stage,
+            )
+            .context("extension schema transition is not publishable; nothing was published")?
+        }
+    } else {
+        None
+    };
+    let plan = if let Some(schema) = &schema {
+        plan.with_restructuring(schema)?
+    } else {
+        plan
+    };
     // The tool's own RAS verification made the cluster open idle SQL sessions on
     // this database; the session gate of an exclusive activation must not count
     // them (#409 F-3), and an infobase that has clients is refused before any
