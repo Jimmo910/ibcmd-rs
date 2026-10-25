@@ -343,3 +343,29 @@ of initially nonempty neighbour staging, prove live conflict/cancellation
 controls, or cover native FormModule acceptance. The editor SQL write route
 remains closed. Recording and real-compiler bridge tests retain their separate
 attribution; no policy baseline was enlarged.
+
+
+## Next nonempty-stage/cancel/stale experiment (compiled, not executed)
+
+A separate ignored operator test requires the same confirmed active public
+fixture (CONFIG eight parts/3327 bytes), a distinct neighbour-confirm GUID opt-in,
+and a native-prepared unselected CONFIGSAVE payload that actually differs from
+CONFIG or adds an object. An unchanged overlay is not accepted. Existing fixed
+identity/schema/TLS and stage opt-ins remain; no production API/route is added.
+
+Two real selected CommonModule edits are prepared against the same immutable
+snapshot. The first attempt refuses at the fourth, pre-COMMIT guard with typed
+cancellation, requires acknowledged rollback and exact full original readset.
+The next attempt commits the first edit and verifies full expected physical rows,
+unchanged CONFIG and exact unselected staging headers/parts. The second original
+plan must then fail at the held full-readset CAS, matching the exact comparison
+failure derived from the confirmed postcommit state. Final rows must still equal
+the first committed expected readset. Outcome markers precede assertions; an
+uncertain/committed-without-PASS outcome never grants replay or native action.
+
+Independent source review APPROVE after tightening the stale-error oracle.
+Actual Rust1.95/jobs1/KEEP_FIXTURES=1 external-target transaction filter:
+33 passed, zero failed, THREE SQL tests ignored (0.06s runtime). The new ignored
+test is compiled but has not run on SQL or Windows. Native neighbour preparation,
+Windows artifact verification and actual execution remain prerequisites.
+Retained log: logs/issue-382-neighbour-acceptance-compile.log.

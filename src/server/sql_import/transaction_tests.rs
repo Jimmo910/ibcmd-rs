@@ -1244,13 +1244,11 @@ fn public_sql_held_capture_rolls_back_and_closes_dedicated_session() -> Result<(
     Ok(())
 }
 
-// Operator-only, separate permission and opt-in AFTER the corrected held gate.
-// Never executed by CI. No native activation or production route is enabled.
-#[test]
-#[ignore = "sole operator AFTER held PASS: explicit public staging experiment, native writer profile unadmitted"]
-fn public_sql_existing_module_stage_experiment() -> Result<()> {
+fn public_stage_context(
+    deadline: std::time::Duration,
+) -> Result<(crate::sql::mssql::MssqlClient, Profile, Limits, Check)> {
     use crate::sql::{SqlLogin, SqlTarget, mssql::MssqlClient};
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
     ensure!(
         cfg!(windows),
         "public integrated-auth acceptance requires Windows"
@@ -1298,7 +1296,7 @@ fn public_sql_existing_module_stage_experiment() -> Result<()> {
     let started = Instant::now();
     let check: Check = Arc::new(move || {
         ensure!(
-            started.elapsed() < Duration::from_secs(30),
+            started.elapsed() < deadline,
             "held capture deadline exceeded"
         );
         Ok(())
@@ -1310,6 +1308,16 @@ fn public_sql_existing_module_stage_experiment() -> Result<()> {
         max_metadata_bytes: 262144,
         max_name_units: 128,
     };
+    Ok((client, profile, limits, check))
+}
+
+// Operator-only, separate permission and opt-in AFTER the corrected held gate.
+// Never executed by CI. No native activation or production route is enabled.
+#[test]
+#[ignore = "sole operator AFTER held PASS: explicit public staging experiment, native writer profile unadmitted"]
+fn public_sql_existing_module_stage_experiment() -> Result<()> {
+    let (client, profile, limits, check) =
+        public_stage_context(std::time::Duration::from_secs(30))?;
     let before = super::super::snapshot::capture(&client, &profile, limits, check.clone())?;
     ensure!(
         before.parts(Table::Config).count() == 8
@@ -1398,6 +1406,199 @@ fn public_sql_existing_module_stage_experiment() -> Result<()> {
     drop(client);
     println!(
         "PUBLIC_SQL_EXPERIMENTAL_STAGE_PASS experimental_staging_only=true codec_profile=platform-8.3.27.1989 actual_native_build=8.3.27.2342 target_platform_admitted=false native_apply_verified=false nonempty_staging_preservation_measured=false automatic_retry=false"
+    );
+    Ok(())
+}
+
+// Needs a native-prepared real neighbour change. Never seed arbitrary SQL rows
+// or count an unchanged overlay as a changed neighbouring object.
+#[test]
+#[ignore = "sole operator: prepared public neighbour stage, explicit opt-in and exact prestate review"]
+fn public_sql_nonempty_stage_cancel_and_stale_preserve_neighbors() -> Result<()> {
+    use std::cell::Cell;
+    ensure!(
+        std::env::var("IBCMD_SQL_IMPORT_PUBLIC_NEIGHBOUR_CONFIRM").as_deref()
+            == Ok("9000716B-B12F-45BE-BB5B-27FB88534F95"),
+        "separate nonempty-neighbour experiment opt-in required"
+    );
+    let (client, profile, limits, check) =
+        public_stage_context(std::time::Duration::from_secs(60))?;
+    let before = super::super::snapshot::capture(&client, &profile, limits, check.clone())?;
+    ensure!(
+        before.parts(Table::Config).count() == 8
+            && before
+                .parts(Table::Config)
+                .map(|(_, part)| part.binary.len())
+                .sum::<usize>()
+                == 3327,
+        "active public fixture differs from confirmed native activation"
+    );
+    let route = crate::compiler::families::assets::SourceAssetRegistry
+        .route(
+            "CommonModule",
+            crate::compiler::families::assets::SourceAssetRole::Module,
+        )
+        .context("CommonModule body route missing")?;
+    let body = format!("20000000-0000-4000-8000-000000000001{}", route.suffix());
+    let selected = BTreeSet::from([body.clone(), "versions".to_owned()]);
+    let neighbours: Vec<_> = before
+        .parts(Table::ConfigSave)
+        .filter(|(key, _)| !selected.contains(&key.file_name))
+        .collect();
+    ensure!(
+        !neighbours.is_empty(),
+        "nonempty unselected staging is required"
+    );
+    ensure!(
+        neighbours.iter().any(|(key, part)| {
+            before
+                .parts(Table::Config)
+                .find(|(old, _)| old == key)
+                .is_none_or(|(_, old)| old.binary != part.binary || old.data_size != part.data_size)
+        }),
+        "neighbour staging must contain a real payload change or added object"
+    );
+    let registry = crate::profile_registry::load_bundled_profile_registry()?;
+    let codec = crate::compiler::families::modules::CommonModuleProfile::from_effective(
+        registry
+            .get(&ibcmd_core::artifact::ProfileId::parse(
+                "platform-8.3.27.1989",
+            )?)
+            .context("seed codec profile missing")?,
+    )?;
+    let prepare = |text: &[u8]| {
+        super::super::selected::prepare_module(
+            &before,
+            "CommonModules/Portable/Ext/Module.bsl",
+            text,
+            &codec,
+            super::super::selected::Limits::default(),
+            &check,
+        )
+    };
+    let edit = prepare(b"Procedure PublicNeighbourStage() Export\nEndProcedure\n")?;
+    let stale_edit = prepare(b"Procedure PublicStalePlan() Export\nEndProcedure\n")?;
+    ensure!(
+        edit.replacements().keys().cloned().collect::<BTreeSet<_>>() == selected
+            && stale_edit
+                .replacements()
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>()
+                == selected,
+        "experiment may replace only selected body and versions"
+    );
+    let policy = WritePolicy::new(1024 * 1024, 4 * 1024 * 1024)?;
+    let expected = physical_plan(&before, &edit, &policy, &check)?.expected;
+
+    // The fourth synchronous guard is after DML/post-readset equality and
+    // immediately before COMMIT. Refuse there, not after acknowledgement.
+    let guards = Cell::new(0usize);
+    let cancelled = stage(
+        &client,
+        &before,
+        &edit,
+        &profile,
+        &policy,
+        check.clone(),
+        &|| {
+            let call = guards.get() + 1;
+            guards.set(call);
+            if call == 4 {
+                return Err(crate::cancel::Cancelled.into());
+            }
+            ensure!(call < 4, "unexpected cancellation guard sequence");
+            Ok(())
+        },
+    );
+    println!(
+        "PUBLIC_SQL_NEIGHBOUR_CANCEL_OUTCOME state={:?} cleanup_uncertain={} automatic_retry=false",
+        cancelled.state, cancelled.cleanup_uncertain
+    );
+    ensure!(
+        guards.get() == 4
+            && cancelled.state == State::RolledBack
+            && !cancelled.cleanup_uncertain
+            && cancelled
+                .error
+                .as_ref()
+                .is_some_and(crate::cancel::is_cancelled),
+        "precommit cancellation did not acknowledge rollback"
+    );
+    let after_cancel = super::super::snapshot::capture(&client, &profile, limits, check.clone())?;
+    before.require_equal(&after_cancel)?;
+
+    let committed = stage(
+        &client,
+        &before,
+        &edit,
+        &profile,
+        &policy,
+        check.clone(),
+        &|| Ok(()),
+    );
+    println!(
+        "PUBLIC_SQL_NEIGHBOUR_STAGE_OUTCOME state={:?} cleanup_uncertain={} automatic_retry=false",
+        committed.state, committed.cleanup_uncertain
+    );
+    ensure!(
+        committed.state == State::Committed
+            && committed.error.is_none()
+            && !committed.cleanup_uncertain,
+        "neighbour staging commit needs reconciliation"
+    );
+    let after = super::super::snapshot::capture(&client, &profile, limits, check.clone())?;
+    expected.require_equal(&after)?;
+    ensure!(
+        before.parts(Table::Config).eq(after.parts(Table::Config)),
+        "CONFIG changed before native apply"
+    );
+    ensure!(
+        neighbours.iter().all(|(key, part)| after
+            .parts(Table::ConfigSave)
+            .any(|(found, actual)| found == *key && actual == *part)),
+        "an unselected staged header/part/payload changed"
+    );
+
+    let expected_conflict = before
+        .require_equal(&after)
+        .err()
+        .context("first commit did not invalidate the old readset")?
+        .to_string();
+    // A second genuine plan was prepared against the same original snapshot.
+    // The acknowledged first commit makes it stale. The held readset CAS must
+    // fail before TEMP/population/the third (pre-DML) guard is reached.
+    let stale_guards = Cell::new(0usize);
+    let rejected = stage(
+        &client,
+        &before,
+        &stale_edit,
+        &profile,
+        &policy,
+        check.clone(),
+        &|| {
+            stale_guards.set(stale_guards.get() + 1);
+            Ok(())
+        },
+    );
+    println!(
+        "PUBLIC_SQL_NEIGHBOUR_STALE_OUTCOME state={:?} cleanup_uncertain={} automatic_retry=false",
+        rejected.state, rejected.cleanup_uncertain
+    );
+    ensure!(
+        stale_guards.get() == 2
+            && rejected.state == State::RolledBack
+            && rejected.error.as_ref().map(ToString::to_string).as_deref()
+                == Some(expected_conflict.as_str())
+            && !rejected.cleanup_uncertain,
+        "stale plan did not refuse at held full-readset CAS"
+    );
+    let final_state = super::super::snapshot::capture(&client, &profile, limits, check.clone())?;
+    expected.require_equal(&final_state)?;
+    check()?;
+    drop(client);
+    println!(
+        "PUBLIC_SQL_NEIGHBOUR_CASES_PASS cancellation_rollback=true stale_refused=true unselected_stage_exact=true native_apply_verified=false target_platform_admitted=false automatic_retry=false"
     );
     Ok(())
 }
