@@ -7706,7 +7706,7 @@ fn dump_table_row_bytes(
                         }
                         context
                             .output
-                            .write(&path, text)
+                            .write_module(&path, text, !context.write_binary_rows)
                             .with_context(|| format!("failed to write {}", path.display()))?;
                         module_text_rows = 1;
                         timings.module_text_cpu_ms += elapsed_ms(started);
