@@ -223,13 +223,22 @@ const UTF8_BOM: &[u8] = &[0xef, 0xbb, 0xbf];
 pub(crate) fn module_text(edited: &Path, rel: &str) -> std::result::Result<Vec<u8>, String> {
     let bytes =
         fs::read(edited.join(rel)).map_err(|error| format!("failed to read {rel}: {error}"))?;
-    let body = bytes.strip_prefix(UTF8_BOM).unwrap_or(&bytes);
+    module_text_from_bytes(&bytes, rel)
+}
+
+/// Apply the same storage-text policy to bytes already held by a source guard.
+/// The source path is only an error label; this function never reopens it.
+pub(crate) fn module_text_from_bytes(
+    bytes: &[u8],
+    rel: &str,
+) -> std::result::Result<Vec<u8>, String> {
+    let body = bytes.strip_prefix(UTF8_BOM).unwrap_or(bytes);
     if std::str::from_utf8(body).is_err() {
         return Err(format!(
             "{rel}: module text must be UTF-8 (save the file as UTF-8)"
         ));
     }
-    Ok(crlf(&bytes))
+    Ok(crlf(bytes))
 }
 
 /// How many refused paths a message names before it only counts the rest.
@@ -1201,6 +1210,29 @@ mod tests {
         );
         assert!(plan.edits.is_empty(), "{:?}", plan.edits);
         assert_eq!(plan.unsupported.len(), 2, "{:?}", plan.unsupported);
+    }
+
+    #[test]
+    fn held_module_text_uses_existing_storage_policy() {
+        for (input, expected) in [
+            (b"// line\n".as_slice(), b"// line\r\n".as_slice()),
+            (
+                b"\xef\xbb\xbf// line\n".as_slice(),
+                b"\xef\xbb\xbf// line\r\n".as_slice(),
+            ),
+            (b"// line\r\n".as_slice(), b"// line\r\n".as_slice()),
+            ("А\n".as_bytes(), "А\r\n".as_bytes()),
+            (b"tail\r".as_slice(), b"tail\r".as_slice()),
+        ] {
+            assert_eq!(
+                super::module_text_from_bytes(input, "Ext/Module.bsl").unwrap(),
+                expected
+            );
+        }
+        assert_eq!(
+            super::module_text_from_bytes(&[0xff], "Ext/Module.bsl").unwrap_err(),
+            "Ext/Module.bsl: module text must be UTF-8 (save the file as UTF-8)"
+        );
     }
 
     #[test]
