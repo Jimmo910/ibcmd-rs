@@ -7,12 +7,58 @@ import argparse
 import base64
 import collections
 import hashlib
+import io
+import re
 import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
+
+
+
+XSI_TYPE = '{http://www.w3.org/2001/XMLSchema-instance}type'
+# XML 1.0 NCName, excluding the colon reserved for the QName prefix separator.
+NAME_START = (
+    r'A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF'
+    r'\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F'
+    r'\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD'
+    r'\U00010000-\U000EFFFF'
+)
+NCNAME = re.compile('[' + NAME_START + '][' + NAME_START
+                    + r'\-.0-9\u00B7\u0300-\u036F\u203F-\u2040]*\Z')
+
+
+def parse_xml(data):
+    """Retain xsi:type meaning before ElementTree discards prefix bindings."""
+    parser = ET.iterparse(io.BytesIO(data), events=('start-ns', 'start', 'end'))
+    scopes, pending = [], {}
+    for event, value in parser:
+        if event == 'start-ns':
+            prefix, uri = value
+            pending[prefix or ''] = uri
+        elif event == 'start':
+            scope = dict(scopes[-1]) if scopes else {'xml': 'http://www.w3.org/XML/1998/namespace'}
+            scope.update(pending)
+            pending.clear()
+            scopes.append(scope)
+            lexical = value.get(XSI_TYPE)
+            if lexical is not None:
+                parts = lexical.strip(' \t\r\n').split(':')
+                if len(parts) not in (1, 2) or any(NCNAME.fullmatch(part) is None for part in parts):
+                    raise ValueError('invalid xsi:type QName')
+                if len(parts) == 2:
+                    prefix, local = parts
+                    if not scope.get(prefix):
+                        raise ValueError('undeclared xsi:type namespace prefix')
+                    uri = scope[prefix]
+                else:
+                    local, uri = parts[0], scope.get('', '')
+                value.set(XSI_TYPE, '{' + uri + '}' + local if uri else local)
+        else:
+            scopes.pop()
+    return parser.root
 
 
 def canonical(element):
@@ -28,9 +74,30 @@ def canonical(element):
 
 
 def condition(root, case):
-    anchors = [node for node in root.iter()
-               if node.tag == case['anchor']['tag']
-               and node.get('name') == case['anchor']['name']]
+    anchor = case['anchor']
+    child = anchor.get('child')
+    if child is not None:
+        values = (case['native'], case['known_symptom'])
+        if any(not isinstance(value, list) or len(value) != 4
+               or value[0] != case['property'] or value[1] or value[3]
+               or not isinstance(value[2], str) or not value[2] for value in values):
+            raise ValueError('child identity requires two exact scalar text conditions')
+        aliases = child['texts']
+        if child['tag'] != case['property'] or len(aliases) != 2 or set(aliases) != {value[2] for value in values}:
+            raise ValueError('child identity must contain exactly the native and known names')
+    elif 'name' not in anchor:
+        raise ValueError('witness anchor requires a name or child identity')
+    anchors = []
+    for node in root.iter():
+        if node.tag != anchor['tag']:
+            continue
+        if 'name' in anchor and node.get('name') != anchor['name']:
+            continue
+        if any(node.get(key) != value for key, value in anchor.get('attributes', {}).items()):
+            continue
+        if child is not None and not any(item.tag == child['tag'] and item.text in aliases for item in node):
+            continue
+        anchors.append(node)
     if len(anchors) != 1:
         raise ValueError(f"{case['id']}: expected one intact widget, got {len(anchors)}")
     children = [node for node in anchors[0] if node.tag == case['property']]
@@ -75,7 +142,7 @@ def validate_cases(corpus, ledger):
         data = target.read_bytes()
         if hashlib.sha256(data).hexdigest() != files[0]['sha256']:
             raise ValueError(f"{case['id']}: native file hash differs")
-        if condition(ET.fromstring(data), case) != case['native']:
+        if condition(parse_xml(data), case) != case['native']:
             raise ValueError(f"{case['id']}: native condition is not present")
 
 
@@ -105,8 +172,8 @@ def run(corpus, ledger, binary):
                 file = case['file']
                 if file not in trees:
                     # Missing files fail here rather than being called a symptom.
-                    trees[file] = (ET.parse(source / 'native' / file).getroot(),
-                                   ET.parse(output / file).getroot())
+                    trees[file] = (parse_xml((source / 'native' / file).read_bytes()),
+                                   parse_xml((output / file).read_bytes()))
                 counts[classify(*trees[file], case)] += 1
     print('Observed problem witnesses: ' + ', '.join(f'{key}={value}' for key, value in sorted(counts.items())))
 
