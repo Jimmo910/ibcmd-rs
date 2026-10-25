@@ -41,7 +41,7 @@
 			<UsePurposes>
 				<v8:Value xsi:type="app:ApplicationUsePurpose">PlatformApplication</v8:Value>
 			</UsePurposes>
-			<ScriptVariant>Russian</ScriptVariant>
+			<ScriptVariant>English</ScriptVariant>
 			<DefaultRoles/>
 			<Vendor/>
 			<Version/>
@@ -229,6 +229,15 @@
 					<app:functionality>TextToSpeech</app:functionality>
 					<app:use>false</app:use>
 				</app:functionality>
+				<app:permissionMessage>
+					<app:permission>Biometrics</app:permission>
+					<app:description>
+						<v8:item>
+							<v8:lang>ru</v8:lang>
+							<v8:content>Coverage permission</v8:content>
+						</v8:item>
+					</app:description>
+				</app:permissionMessage>
 			</UsedMobileApplicationFunctionalities>
 			<StandaloneConfigurationRestrictionRoles/>
 			<MobileApplicationURLs/>
@@ -241,7 +250,7 @@
 			<Caption/>
 			<ShortCaption/>
 			<DefaultStyle/>
-			<DefaultLanguage/>
+			<DefaultLanguage>Language.English</DefaultLanguage>
 			<BriefInformation/>
 			<DetailedInformation/>
 			<Copyright/>
@@ -259,11 +268,19 @@
 		</Properties>
 		<ChildObjects>
 			<Language>Русский</Language>
+			<Language>English</Language>
+			<Subsystem>CovRightsTree</Subsystem>
+			<Subsystem>CovNetworkSubsystem</Subsystem>
+			<Subsystem>CovSubsystemContentTemplate</Subsystem>
 			<Subsystem>CovTemplate</Subsystem>
 			<Subsystem>CovIncludeHelpInContents_false</Subsystem>
 			<Subsystem>CovIncludeInCommandInterface_false</Subsystem>
 			<Subsystem>CovUseOneCommand_true</Subsystem>
 			<Subsystem>CovExplanation_Cov</Subsystem>
+			<StyleItem>CovStyleColorTemplate</StyleItem>
+			<StyleItem>CovStyleColorTomato</StyleItem>
+			<StyleItem>CovStyleColorMediumGreen</StyleItem>
+			<StyleItem>CovStyleColorLinen</StyleItem>
 			<StyleItem>CovTemplate</StyleItem>
 			<StyleItem>CovType_Font</StyleItem>
 			<Style>CovTemplate</Style>
@@ -273,6 +290,9 @@
 			<Interface>CovTemplate</Interface>
 			<Interface>CovSwitchable_false</Interface>
 			<SessionParameter>CovTemplate</SessionParameter>
+			<Role>CovNetworkRights</Role>
+			<Role>CovNestedSubsystemRights</Role>
+			<Role>CovObjectRights</Role>
 			<Role>CovTemplate</Role>
 			<CommonTemplate>CovTemplate</CommonTemplate>
 			<CommonTemplate>CovTemplateType_AddIn</CommonTemplate>
@@ -281,8 +301,29 @@
 			<CommonTemplate>CovTemplateType_DataCompositionSchema</CommonTemplate>
 			<CommonTemplate>CovTemplateType_HTMLDocument</CommonTemplate>
 			<CommonTemplate>CovTemplateType_TextDocument</CommonTemplate>
+			<CommonTemplate>CovEnglishComposition</CommonTemplate>
+			<CommonTemplate>CovGraphicalSchemaImage</CommonTemplate>
+			<CommonTemplate>CovGraphicalSchemaPng</CommonTemplate>
+			<CommonTemplate>CovGraphicalSchemaGif</CommonTemplate>
+			<CommonTemplate>CovSpreadsheetFacetTemplate</CommonTemplate>
+			<CommonTemplate>CovSheetVerticalPageBreak</CommonTemplate>
+			<CommonTemplate>CovSheetPageSizeA4</CommonTemplate>
+			<CommonTemplate>CovSheetAutoFontHeight</CommonTemplate>
+			<CommonTemplate>CovSheetOEMFixedFont</CommonTemplate>
+			<CommonTemplate>CovSheetSandyBrown</CommonTemplate>
+			<CommonTemplate>CovSheetDashDotted</CommonTemplate>
+			<CommonTemplate>CovSheetGapLine</CommonTemplate>
+			<CommonTemplate>CovSheetValueListDetail</CommonTemplate>
+			<CommonTemplate>CovSheetAppearanceCheckIcon</CommonTemplate>
+			<CommonTemplate>CovSpreadsheetStandardPicture</CommonTemplate>
+			<CommonTemplate>CovBodyTemplate</CommonTemplate>
+			<CommonTemplate>CovGraphicalSchemaBody</CommonTemplate>
+			<CommonTemplate>CovDataCompositionParameters</CommonTemplate>
+			<CommonTemplate>CovSpreadsheetMergedCells</CommonTemplate>
+			<CommonTemplate>CovVerticalBrackets</CommonTemplate>
 			<FilterCriterion>CovTemplate</FilterCriterion>
 			<FilterCriterion>CovUseStandardCommands_false</FilterCriterion>
+			<CommonModule>CovRecordsetHandlers</CommonModule>
 			<CommonModule>CovHandlers</CommonModule>
 			<CommonModule>CovTemplate</CommonModule>
 			<CommonModule>CovGlobal_true</CommonModule>
@@ -331,6 +372,10 @@
 			<WebSocketClient>CovAutoConnect_true</WebSocketClient>
 			<WebSocketClient>CovUseOSProxy_true</WebSocketClient>
 			<WebSocketClient>CovUseOSAuthentication_true</WebSocketClient>
+			<EventSubscription>CovRsSources</EventSubscription>
+			<EventSubscription>CovRsOneIndependent</EventSubscription>
+			<EventSubscription>CovRsOneSubordinate</EventSubscription>
+			<EventSubscription>CovNetworkSubscription</EventSubscription>
 			<EventSubscription>CovTemplate</EventSubscription>
 			<EventSubscription>CovEvent_BeforeDelete</EventSubscription>
 			<EventSubscription>CovEvent_FillCheckProcessing</EventSubscription>
@@ -349,13 +394,18 @@
 			<ScheduledJob>CovRestartIntervalOnFailure_25</ScheduledJob>
 			<ScheduledJob>CovRestartIntervalOnFailure_60</ScheduledJob>
 			<SettingsStorage>CovTemplate</SettingsStorage>
+			<FunctionalOption>CovNetworkOption</FunctionalOption>
 			<FunctionalOption>CovTemplate_FO</FunctionalOption>
 			<FunctionalOption>CovPrivilegedGetMode_false_FO</FunctionalOption>
 			<FunctionalOptionsParameter>CovTemplate</FunctionalOptionsParameter>
+			<DefinedType>CovResourceType</DefinedType>
+			<DefinedType>CovOwnedProductType</DefinedType>
+			<DefinedType>CovNetworkMixed</DefinedType>
 			<DefinedType>CovTemplate</DefinedType>
 			<Bot>CovTemplate</Bot>
 			<Bot>CovPredefined_false</Bot>
 			<PaletteColor>CovTemplate</PaletteColor>
+			<CommonCommand>CovNetworkCommand</CommonCommand>
 			<CommonCommand>CovTemplate</CommonCommand>
 			<CommonCommand>CovGroup_ActionsPanelCreate</CommonCommand>
 			<CommonCommand>CovGroup_ActionsPanelReports</CommonCommand>
@@ -371,6 +421,7 @@
 			<CommonCommand>CovIncludeHelpInContents_true</CommonCommand>
 			<CommonCommand>CovParameterUseMode_Multiple</CommonCommand>
 			<CommonCommand>CovModifiesData_true</CommonCommand>
+			<CommandGroup>CovNetworkGroup</CommandGroup>
 			<CommandGroup>CovTemplate</CommandGroup>
 			<CommandGroup>CovRepresentation_Picture</CommandGroup>
 			<CommandGroup>CovToolTip_Cov</CommandGroup>
@@ -395,6 +446,81 @@
 			<CommonForm>CovIncludeHelpInContents_true</CommonForm>
 			<CommonForm>CovUseStandardCommands_false</CommonForm>
 			<CommonForm>CovExplanation_Cov</CommonForm>
+			<CommonForm>CovLayoutTemplate</CommonForm>
+			<CommonForm>CovCompatibleFormTemplate</CommonForm>
+			<CommonForm>CovCompatibleTable</CommonForm>
+			<CommonForm>CovCompatiblePictureFont</CommonForm>
+			<CommonForm>CovDeepBindingTemplate</CommonForm>
+			<CommonForm>CovDeepProductBinding</CommonForm>
+			<CommonForm>CovDeepComposerBinding</CommonForm>
+			<CommonForm>CovFacetTemplate</CommonForm>
+			<CommonForm>CovFacetConversationsRepresentation</CommonForm>
+			<CommonForm>CovFacetCollapseItemsByImportanceVariant</CommonForm>
+			<CommonForm>CovFacetRootURLProcessing</CommonForm>
+			<CommonForm>CovFacetRootOnLoadDataFromSettingsAtServer</CommonForm>
+			<CommonForm>CovFacetRootFillCheckProcessingAtServer</CommonForm>
+			<CommonForm>CovFacetRootNotificationProcessing</CommonForm>
+			<CommonForm>CovFacetChartMaxWidth</CommonForm>
+			<CommonForm>CovFacetChartAutoMaxWidth</CommonForm>
+			<CommonForm>CovFacetChartAutoMaxHeight</CommonForm>
+			<CommonForm>CovFacetChartOnActivate</CommonForm>
+			<CommonForm>CovFacetPlannerBeforeCreate</CommonForm>
+			<CommonForm>CovFacetPlannerCommandGenerateProcessing</CommonForm>
+			<CommonForm>CovFacetPlannerBeforeStartQuickEdit</CommonForm>
+			<CommonForm>CovFacetPlannerSelection</CommonForm>
+			<CommonForm>CovFacetCommandSpace</CommonForm>
+			<CommonForm>CovFacetTableExcludesAddAutoSelectedField</CommonForm>
+			<CommonForm>CovFacetTableExcludesSelectAll</CommonForm>
+			<CommonForm>CovFacetTableExcludesDeselectAll</CommonForm>
+			<CommonForm>CovSettingsFormTemplate</CommonForm>
+			<CommonForm>CovVerticalScrollAlways</CommonForm>
+			<CommonForm>CovPictureTitleFontStyleItem</CommonForm>
+			<CommonForm>CovCommandPictureGotoURL</CommonForm>
+			<CommonForm>CovCommandPictureAppearanceStarHalfFilled</CommonForm>
+			<CommonForm>CovCommandPictureFormattedString</CommonForm>
+			<CommonForm>CovCommandPictureQueryWizardTempTableDescription</CommonForm>
+			<CommonForm>CovCommandPictureToday</CommonForm>
+			<CommonForm>CovCommandPictureAccountingRegister</CommonForm>
+			<CommonForm>CovCommandPictureNewConversation</CommonForm>
+			<CommonForm>CovBoundTableExcludesSelectAll</CommonForm>
+			<CommonForm>CovDynamicListRowNumber</CommonForm>
+			<CommonForm>CovRootEventChoiceProcessing</CommonForm>
+			<CommonForm>CovRootCollapseImportance</CommonForm>
+			<CommonForm>CovPictureTitleFontEnterOnInput</CommonForm>
+			<CommonForm>CovTablePictureTitleFont</CommonForm>
+			<CommonForm>CovManagedFormTemplate</CommonForm>
+			<CommonForm>CovPeriodField</CommonForm>
+			<CommonForm>CovLabelDecorationTextColorTomato</CommonForm>
+			<CommonForm>CovLabelDecorationTextColorMediumGreen</CommonForm>
+			<CommonForm>CovLabelFieldTextColorTomato</CommonForm>
+			<CommonForm>CovLabelFieldTextColorMediumGreen</CommonForm>
+			<CommonForm>CovUsualGroupBackColorTomato</CommonForm>
+			<CommonForm>CovUsualGroupBackColorMediumGreen</CommonForm>
+			<CommonForm>CovGraphicalSchemaFieldBorderColorTomato</CommonForm>
+			<CommonForm>CovGraphicalSchemaFieldBorderColorMediumGreen</CommonForm>
+			<CommonForm>CovButtonPictureGotoURL</CommonForm>
+			<CommonForm>CovButtonPictureAppearanceStarHalfFilled</CommonForm>
+			<CommonForm>CovButtonPictureFormattedString</CommonForm>
+			<CommonForm>CovButtonPictureQueryWizardTempTableDescription</CommonForm>
+			<CommonForm>CovButtonPictureToday</CommonForm>
+			<CommonForm>CovButtonPictureAccountingRegister</CommonForm>
+			<CommonForm>CovButtonPictureNewConversation</CommonForm>
+			<CommonForm>CovFormEventOnOpen</CommonForm>
+			<CommonForm>CovFormCommandSpace</CommonForm>
+			<CommonForm>CovEmbeddedSpreadsheetCells</CommonForm>
+			<CommonForm>CovValueTableChildDataPath</CommonForm>
+			<CommonForm>CovChartField</CommonForm>
+			<CommonForm>CovPlannerField</CommonForm>
+			<CommonForm>CovMobilePermissionMessages</CommonForm>
+			<Catalog>CovBindingGoods</Catalog>
+			<Catalog>CovBindingProducts</Catalog>
+			<Catalog>CovBindingUnits</Catalog>
+			<Catalog>CovNetworkAlpha</Catalog>
+			<Catalog>CovNetworkBeta</Catalog>
+			<Catalog>CovNetworkConsumer</Catalog>
+			<Catalog>CovNetworkGamma</Catalog>
+			<Catalog>CovRightsCatalog</Catalog>
+			<Catalog>CovReferencedCatalog</Catalog>
 			<Catalog>CovTemplate</Catalog>
 			<Catalog>CovHierarchical_true</Catalog>
 			<Catalog>CovHierarchyType_HierarchyOfItems</Catalog>
@@ -438,10 +564,22 @@
 			<Catalog>CovExecuteAfterWriteDataHistoryVersionProcessing_true</Catalog>
 			<Catalog>CovCodeLength_0__InputByStringDescription</Catalog>
 			<Catalog>CovDescriptionLength_0__InputByStringCode</Catalog>
+			<Catalog>CovIndexedCatalog</Catalog>
+			<Catalog>CovCatalogPictureTemplate</Catalog>
+			<Catalog>CovOrphanCatalogTemplate</Catalog>
+			<Catalog>CovOrphanCharacteristics</Catalog>
+			<Catalog>CovOwnedCatalogTemplate</Catalog>
+			<Catalog>CovOwnedUnits</Catalog>
+			<Catalog>CovOwnedProducts</Catalog>
+			<Catalog>CovOwnedBindingCatalog</Catalog>
+			<Catalog>CovOwnedProductsAlt</Catalog>
+			<Catalog>CovOwnedDefinedCatalog</Catalog>
+			<Catalog>CovOwnedUnionCatalog</Catalog>
 			<Document>CovAccountingRecorder</Document>
 			<Document>CovAccumulationRecorder</Document>
 			<Document>CovCalculationRecorder</Document>
 			<Document>CovRecorder</Document>
+			<Document>CovRsRecorder</Document>
 			<Document>CovTemplate</Document>
 			<Document>CovUseStandardCommands_false</Document>
 			<Document>CovNumberLength_11</Document>
@@ -484,6 +622,7 @@
 			<Enum>CovChoiceMode_QuickChoice</Enum>
 			<Enum>CovExplanation_Cov</Enum>
 			<Enum>CovChoiceHistoryOnInput_DontUse</Enum>
+			<Report>CovBindingReport</Report>
 			<Report>CovTemplate</Report>
 			<Report>CovUseStandardCommands_false</Report>
 			<Report>CovIncludeHelpInContents_true</Report>
@@ -494,6 +633,14 @@
 			<DataProcessor>CovIncludeHelpInContents_true</DataProcessor>
 			<DataProcessor>CovExtendedPresentation_Cov</DataProcessor>
 			<DataProcessor>CovExplanation_Cov</DataProcessor>
+			<InformationRegister>CovRsAlpha</InformationRegister>
+			<InformationRegister>CovRsBeta</InformationRegister>
+			<InformationRegister>CovRsDelta</InformationRegister>
+			<InformationRegister>CovRsEpsilon</InformationRegister>
+			<InformationRegister>CovRsGamma</InformationRegister>
+			<InformationRegister>CovNetworkOptions</InformationRegister>
+			<InformationRegister>CovDefinedResourceTemplate</InformationRegister>
+			<InformationRegister>CovResourceStorageTemplate</InformationRegister>
 			<InformationRegister>CovTemplate</InformationRegister>
 			<InformationRegister>CovUseStandardCommands_false</InformationRegister>
 			<InformationRegister>CovEditType_BothWays</InformationRegister>
@@ -571,6 +718,7 @@
 			<CalculationRegister>CovUseStandardCommands_false_Calc</CalculationRegister>
 			<CalculationRegister>CovBasePeriod_true_Calc</CalculationRegister>
 			<CalculationRegister>CovIncludeHelpInContents_true_Calc</CalculationRegister>
+			<BusinessProcess>CovAddressedProcess</BusinessProcess>
 			<BusinessProcess>CovTemplate</BusinessProcess>
 			<BusinessProcess>CovUseStandardCommands_false</BusinessProcess>
 			<BusinessProcess>CovNumberLength_11</BusinessProcess>
@@ -582,7 +730,14 @@
 			<BusinessProcess>CovExplanation_Cov</BusinessProcess>
 			<BusinessProcess>CovUpdateDataHistoryImmediatelyAfterWrite_true</BusinessProcess>
 			<BusinessProcess>CovExecuteAfterWriteDataHistoryVersionProcessing_true</BusinessProcess>
+			<BusinessProcess>CovFlowchartProcess</BusinessProcess>
+			<BusinessProcess>CovCompoundFlowchart</BusinessProcess>
+			<BusinessProcess>CovGifFlowchart</BusinessProcess>
+			<BusinessProcess>CovProcessingFlowchart</BusinessProcess>
+			<BusinessProcess>CovPrintedFlowchart</BusinessProcess>
 			<Task>CovTask</Task>
+			<Task>CovAddressedTask</Task>
+			<Task>CovEventTask</Task>
 			<Task>CovTemplate</Task>
 			<Task>CovUseStandardCommands_false</Task>
 			<Task>CovNumberLength_14</Task>

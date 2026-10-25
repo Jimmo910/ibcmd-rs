@@ -17,6 +17,7 @@ import argparse
 import base64
 import datetime
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -45,12 +46,50 @@ def configuration_sets(root):
             yield manifest.parent, data
 
 
+def merge_root_files(source, target):
+    """Configuration sidecars are sources, not metadata descriptors."""
+    for path in sorted(source.rglob("*")):
+        if not path.is_file():
+            continue
+        destination = target / path.relative_to(source)
+        if destination.exists() and destination.read_bytes() != path.read_bytes():
+            raise SystemExit(f"two sets disagree on configuration sidecar {path.relative_to(source)}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(path.read_bytes())
+
+
+def declared_configuration_properties(set_dir):
+    space = json.loads((set_dir / "input" / "values.json").read_text(encoding="utf-8"))
+    text = (set_dir / "input" / "base" / "Configuration.xml").read_text(encoding="utf-8-sig")
+    result = {}
+    for name in space.get("configuration_properties", []):
+        matches = re.findall(rf"<{re.escape(name)}(?:\s[^<>]*?)?(?:/>|>.*?</{re.escape(name)}>)", text, re.S)
+        if len(matches) != 1:
+            raise SystemExit(f"{set_dir.name}: declared configuration property {name} is not unique")
+        result[name] = matches[0]
+    return result
+
+
+def configuration_base(text):
+    """Keep properties intact while replacing only the root object roster."""
+    def keep_languages(match):
+        languages = re.findall(r"<Language>[^<]+</Language>", match.group(2))
+        return match.group(1) + "\n" + "".join("\t\t\t" + value + "\n" for value in languages) + "\t\t" + match.group(3)
+
+    result, count = re.subn(r"(<ChildObjects>)(.*?)(</ChildObjects>)", keep_languages, text, flags=re.S)
+    if count != 1:
+        raise SystemExit("configuration must have one root ChildObjects roster")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--ibcmd", required=True)
     parser.add_argument("--platform", required=True)
     parser.add_argument("--xml-version", required=True)
     parser.add_argument("--root", required=True, type=pathlib.Path)
+    parser.add_argument("--include-root", action="append", default=[], type=pathlib.Path,
+                        help="Also combine proven class sets of a sibling platform build with the same XML version")
     parser.add_argument("--work", required=True, type=pathlib.Path)
     parser.add_argument("--locale", default="ru_RU")
     args = parser.parse_args()
@@ -61,9 +100,16 @@ def main():
     work.mkdir(parents=True)
     tree = work / "combined"
     sources, objects, aux = [], [], []
-    renamed, references = {}, {}
-    for set_dir, manifest in configuration_sets(args.root):
-        generated = work / "gen" / set_dir.name
+    renamed, references, root_properties = {}, {}, {}
+    roots = [args.root, *args.include_root]
+    for include in roots:
+        if include.resolve().parent != args.root.resolve().parent:
+            raise SystemExit("included sets must be sibling builds under the same coverage root")
+    sets = [(directory, manifest) for root in roots for directory, manifest in configuration_sets(root)]
+    for set_dir, manifest in sets:
+        if manifest["evidence"]["source_version"] != args.xml_version:
+            raise SystemExit(f"{set_dir}: source XML version differs from the combined target")
+        generated = work / "gen" / set_dir.parent.name / set_dir.name
         subprocess.run([sys.executable, "-I", str(HERE / "generate.py"), str(set_dir), str(generated)], check=True,
                        capture_output=True)
         if not tree.exists():
@@ -73,15 +119,27 @@ def main():
             shutil.copyfile(set_dir / "input" / "base" / "Configuration.xml", tree / "Configuration.xml")
             shutil.copytree(set_dir / "input" / "base" / "Languages", tree / "Languages")
             root_text = (tree / "Configuration.xml").read_text(encoding="utf-8-sig")
-            kept = [line for line in root_text.split("\n")
-                    if not re.fullmatch(r"\t\t\t<(\w+)>[^<]+</\1>", line) or "<Language>" in line]
-            (tree / "Configuration.xml").write_text("\ufeff" + "\n".join(kept), encoding="utf-8")
+            (tree / "Configuration.xml").write_text("\ufeff" + configuration_base(root_text), encoding="utf-8")
         # The set's auxiliary objects (a recorder, a handler module…) come along;
         # the same one in two sets must be the same file.
         # From the generated tree, not input/base: there a recorder already lists
         # every register of the set.
         for source in sorted(generated.iterdir()):
-            if not source.is_dir() or source.name in ("Languages", manifest["collection"]):
+            if not source.is_dir() or source.name == manifest["collection"]:
+                continue
+            if source.name == "Languages":
+                for language in sorted(source.glob("*.xml")):
+                    destination = tree / "Languages" / language.name
+                    if not destination.exists():
+                        shutil.copyfile(language, destination)
+                        aux.append(("Languages", language.stem, "Language"))
+                    else:
+                        code = lambda p: re.search(r"<LanguageCode>([^<]+)</LanguageCode>", p.read_text(encoding="utf-8-sig")).group(1)
+                        if code(language) != code(destination):
+                            raise SystemExit(f"two sets disagree on the code of language {language.stem}")
+                continue
+            if source.name == "Ext":
+                merge_root_files(source, tree / "Ext")
                 continue
             for item in sorted(source.glob("*.xml")):
                 target = tree / source.name / item.name
@@ -115,11 +173,20 @@ def main():
             if new_name != name:
                 renamed[f"{collection}/{name}"] = new_name
                 references[f">{tag}.{name}<"] = f">{tag}.{new_name}<"
-        sources.append({"set": manifest["set"], "path": set_dir.name,
+        for name, value in declared_configuration_properties(set_dir).items():
+            if name in root_properties and root_properties[name] != value:
+                raise SystemExit(f"two sets require different configuration values for {name}")
+            root_properties[name] = value
+        sources.append({"set": manifest["set"], "path": pathlib.Path(os.path.relpath(set_dir, args.root)).as_posix(),
                         "manifest_sha256": sha256((set_dir / "manifest.json").read_bytes())})
 
     configuration = tree / "Configuration.xml"
     text = configuration.read_text(encoding="utf-8-sig")
+    for name, value in root_properties.items():
+        pattern = re.compile(rf"<{re.escape(name)}(?:\s[^<>]*?)?(?:/>|>.*?</{re.escape(name)}>)", re.S)
+        if len(pattern.findall(text)) != 1:
+            raise SystemExit(f"combined configuration property {name} is not unique")
+        text = pattern.sub(lambda _: value, text)
     anchor = "\t\t</ChildObjects>"
     listed = set(re.findall(r"\n\t\t\t<(\w+)>([^<]+)</\1>", text))
     children = "".join(
