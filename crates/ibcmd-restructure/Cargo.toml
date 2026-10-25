@@ -1,0 +1,14 @@
+[package]
+name = "ibcmd-restructure"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Portable native database schema and extension migration planning"
+
+[dependencies]
+anyhow = "1.0"
+flate2 = "1.1"
+
+[lints.rust]
+unsafe_code = "forbid"
