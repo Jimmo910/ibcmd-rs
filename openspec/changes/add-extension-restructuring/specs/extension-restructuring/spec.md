@@ -78,3 +78,21 @@ source image and SHALL NOT treat a form-only edit as a physical table change.
 - **GIVEN** an unmodeled semantic change to a root property
 - **WHEN** it accompanies a nested-form addition
 - **THEN** the compiler refuses before staging and identifies the changed property
+### Requirement: Proven Designer XML defaults remain importable
+Designer XML source comparison SHALL treat only schema-owned, native-proven
+omissions as their platform defaults. It SHALL preserve meaningful scalar text,
+unknown properties and object identities instead of accepting arbitrary drift.
+
+#### Scenario: Managed dialog with omitted default properties
+- **GIVEN** a Designer-source button without Type and a form with CommandBarLocation None
+- **WHEN** a higher-version extension adds the dialog on either measured build
+- **THEN** the button is compiled with the native Designer default UsualButton
+- **AND** XML 2.21 ShowCommandBar is derived as false and form metadata defaults
+  UseInInterfaceCompatibilityMode to Any when those properties are absent
+- **AND** XML 2.20 does not gain XML 2.21-only properties
+
+#### Scenario: Only lexical XML differences
+- **GIVEN** recognized metadata XML differing only in declaration, BOM or indentation
+- **WHEN** the complete proposal is compared to its native-shaped source image
+- **THEN** lexical differences do not prevent import
+- **AND** changed values, identities, child order or namespace bindings still refuse
