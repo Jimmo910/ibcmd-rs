@@ -1162,3 +1162,101 @@ mod compiler_diagnostic_contracts {
         );
     }
 }
+
+// Runs only on the disposable public SQL fixture, never in ordinary CI.
+// The operator supplies an existing certificate-valid TCP endpoint. This uses
+// the product's integrated TDS/TLS client, without certificate bypass or secrets.
+#[test]
+#[ignore = "sole operator: Windows, explicit public SQL fixture and existing valid TLS endpoint required"]
+fn public_sql_snapshot_uses_real_product_tds_reader() -> anyhow::Result<()> {
+    use anyhow::{Context, ensure};
+    use ibcmd_rs::{
+        mssql_live_continue::DatabaseIdentity,
+        server::sql_import::{
+            readset::{Limits, Table},
+            snapshot::{self, Profile},
+        },
+        sql::{SqlLogin, SqlTarget, mssql::MssqlClient},
+    };
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+
+    ensure!(
+        cfg!(windows),
+        "public integrated-auth acceptance requires Windows"
+    );
+    const DATABASE: &str = "IBCMDLAB_PUBLIC_SQL_151c08962516426e96ccf4e48d240ff9";
+    const GUID: &str = "9000716B-B12F-45BE-BB5B-27FB88534F95";
+    ensure!(
+        std::env::var("IBCMD_SQL_IMPORT_PUBLIC_FIXTURE").as_deref() == Ok(GUID),
+        "explicit disposable public fixture opt-in required"
+    );
+    let endpoint = std::env::var("IBCMD_SQL_IMPORT_PUBLIC_ENDPOINT")
+        .context("operator-measured certificate-valid TCP endpoint required")?;
+    ensure!(
+        !endpoint.trim().is_empty() && !endpoint.contains(['\0', '\r', '\n']),
+        "invalid public SQL endpoint"
+    );
+    let profile = Profile {
+        identity: DatabaseIdentity {
+            server: "WIN-LHDQGRLB1L1".into(),
+            database: DATABASE.into(),
+            database_guid: GUID.into(),
+            family_guid: "DF1E79FC-77D9-4DF6-AF59-C753F3AF6EFC".into(),
+            recovery_fork: "DF1E79FC-77D9-4DF6-AF59-C753F3AF6EFC".into(),
+        },
+        sql_version: "16.0.1000.6".into(),
+        schema: [
+            0xad, 0xa2, 0x1b, 0x51, 0x3d, 0xe5, 0x5c, 0x54, 0x3d, 0xed, 0x7d, 0xe7, 0x24, 0xd1,
+            0x34, 0x41, 0x52, 0x31, 0x78, 0xd0, 0x78, 0xd5, 0xf8, 0x58, 0xc9, 0x1d, 0xce, 0x0c,
+            0xac, 0x10, 0xb6, 0x26,
+        ],
+    };
+    let client = MssqlClient::new(
+        SqlTarget {
+            server: endpoint,
+            database: Some(DATABASE.into()),
+            login: SqlLogin::Integrated,
+            trust_server_certificate: false,
+        },
+        1,
+    )?;
+    let started = Instant::now();
+    let rows = snapshot::capture(
+        &client,
+        &profile,
+        Limits {
+            max_parts: 1024,
+            max_part_bytes: 1024 * 1024,
+            max_payload_bytes: 8 * 1024 * 1024,
+            max_metadata_bytes: 262144,
+            max_name_units: 128,
+        },
+        Arc::new(move || {
+            ensure!(
+                started.elapsed() < Duration::from_secs(30),
+                "public snapshot deadline exceeded"
+            );
+            Ok(())
+        }),
+    )?;
+    let parts = [
+        rows.parts(Table::Config).count(),
+        rows.parts(Table::ConfigSave).count(),
+    ];
+    let bytes: [usize; 2] = [Table::Config, Table::ConfigSave]
+        .map(|table| rows.parts(table).map(|(_, part)| part.binary.len()).sum());
+    ensure!(
+        parts == [8, 0] && bytes == [3313, 0],
+        "public fixture changed from measured snapshot"
+    );
+    // No names, headers or BinaryData leave the process. This is read acceptance,
+    // not compiler, native export parity, CAS or publication authority.
+    let digest = rows.digest()?;
+    drop(rows);
+    drop(client);
+    println!("PUBLIC_SQL_SNAPSHOT_READ_PASS parts=8,0 bytes=3313,0 digest={digest:x?}");
+    Ok(())
+}
