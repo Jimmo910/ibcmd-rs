@@ -110,3 +110,17 @@ unmodeled own-common-attribute contributions to registers remain explicit
 refusals before staging. A registry-only recovery artifact cannot reverse a
 committed schema update. These boundaries do not remove existing data or
 silently publish an incomplete database.
+
+## Final local gates and independent review
+
+After integration with master PR #585, `cargo xtask ci` passed all 28 steps,
+including the workspace crates, integration suites and 4,112 root-library tests
+(0 failures, 16 existing ignored tests). `cargo xtask check` passed all 6 steps.
+A fresh-context critic independently reran check, recomputed all four native/own
+source comparisons and reviewed the merge delta: APPROVE, no blocking findings.
+The shared text primitives from #585 and the portable brace/schema planner are
+both retained; no extension restructuring behavior changed during the merge.
+
+Local gates do not replace the hosted release-build, native micro-corpus,
+SBOM or release-audit checks. Their current result remains visible in PR #584.
+The published corpus PR is Untru/1c-fixtures#2; neither PR is self-merged.
