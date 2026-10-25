@@ -10155,10 +10155,15 @@ mod tests {
             assert_eq!(encode_base64(input.as_bytes()), expected);
         }
         let every_byte: Vec<u8> = (0..=255).collect();
-        let encoded = encode_base64(&every_byte);
-        assert_eq!(encoded.len(), 344);
-        assert!(encoded.starts_with("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g"));
-        assert!(encoded.ends_with("/P3+/w=="));
+        let expected = concat!(
+            "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4v",
+            "MDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5f",
+            "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6P",
+            "kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/",
+            "wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v",
+            "8PHy8/T19vf4+fr7/P3+/w==",
+        );
+        assert_eq!(encode_base64(&every_byte), expected);
     }
 
     #[test]
