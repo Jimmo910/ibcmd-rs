@@ -7,6 +7,6 @@
 - [x] 5. Integrate schema planning with extension import/apply in an atomic guarded transaction, including rollback, no-op and concurrency paths (#582).
 - [x] 6. Verify native-vs-own twins on both builds, existing row/reference preservation, fresh-session new-object writes/reads and subsequent native apply (#582).
 - [x] 7. Publish/pin the generated corpus, complete targeted tests, check/ci, independent review and open the PR with evidence (#582).
-- [ ] 8. Reproduce and fix root XML plus added dialog/common-form import, hold it in the generated corpus and compare native round-trips on both platforms (#582).
-- [ ] 9. Remove infobase-account requirements from direct SQL profile verification, preserve actual build/schema/registration checks and add no-account regressions (#582).
-- [ ] 10. Repeat relevant gates and independent review for the follow-up, refresh artifacts/report and return PR #584 to review (#582).
+- [x] 8. Reproduce and fix root XML plus added dialog/common-form import, hold it in the generated corpus and compare native round-trips on both platforms (#582).
+- [x] 9. Remove infobase-account requirements from direct SQL profile verification, preserve actual build/schema/registration checks and add no-account regressions (#582).
+- [x] 10. Repeat relevant gates and independent review for the follow-up, refresh artifacts/report and return PR #584 to review (#582).
