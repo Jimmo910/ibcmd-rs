@@ -66,3 +66,9 @@
   This is the one-module public-fixture slice, not completion of 2.3/3.2 or
   general writer admission. Nonempty neighbour staging, native FormModule,
   live negative controls and guarded editor SQL routing remain open.
+
+- [x] F.14 Exact-9d04 disposable SQL nonempty-neighbour staging, cancellation
+  rollback and stale-plan pre-DML refusal passed one Windows integration test;
+  CONFIG and four unselected physical staging rows/headers were preserved.
+  The final six-part pending staging was not applied. Native FormModule and
+  guarded editor publication remain open; see the same held-lock evidence.

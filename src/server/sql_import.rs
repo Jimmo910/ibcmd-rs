@@ -98,6 +98,32 @@ impl SourceAdmission {
         Ok(Self { source, selected })
     }
 
+    /// Compile exactly one admitted CommonModule file from retained bytes.
+    /// The result is not publication authority: target/profile, one-shot plan
+    /// and full transactional CAS checks are still required by the adapter.
+    pub fn prepare_common_module(
+        &self,
+        snapshot: &readset::Readset,
+        selected_path: &str,
+        profile: &crate::compiler::families::modules::CommonModuleProfile,
+        limits: selected::Limits,
+        check: &readset::Check,
+    ) -> Result<selected::ModuleEdit> {
+        check()?;
+        if self.selected.len() != 1 {
+            bail!("SQL module preparation requires one explicit admitted file");
+        }
+        let bytes = self
+            .bytes(selected_path)
+            .context("SQL module file is outside the admitted selection")?;
+        self.revalidate()?;
+        let edit =
+            selected::prepare_module_file(snapshot, selected_path, bytes, profile, limits, check)?;
+        check()?;
+        self.revalidate()?;
+        Ok(edit)
+    }
+
     pub fn bytes(&self, path: &str) -> Option<&[u8]> {
         self.selected.get(path).map(|bytes| bytes.as_slice())
     }

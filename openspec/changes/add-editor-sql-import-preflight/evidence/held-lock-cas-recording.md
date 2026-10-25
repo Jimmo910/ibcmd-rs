@@ -408,3 +408,36 @@ new directory-census failure. Log SHA-256:
 3a9d27cd753c39d45b59801fd3fbf8e6de6b4e6097c939c6df87e49bb1954ba1.
 No baseline/scanner/whitelist was changed or rerun with an exception. Formatting,
 diff checks and all four affected OpenSpec changes validate strictly.
+
+
+## Actual nonempty-staging cancellation and stale-plan gate
+
+Exact source `9d04a5f1a19924062b797dc852b24e7d13ab43e8` passed Windows
+CI 40217548424. The sole operator ran only
+`public_sql_nonempty_stage_cancel_and_stale_preserve_neighbors` from executable
+SHA256 `7ed3569d51a3c19f15bfc066791db829723a568f255ec590c221247d6cc288c9`:
+one passed, zero failed, natural exit zero, empty stderr, 8.581 seconds.
+The artifact receipt declares the older held-test filter; the actual invocation
+and runtime markers bind this newer exact test explicitly.
+
+Native neighbour preparation had already succeeded once and produced five
+CONFIGSAVE parts (1352 bytes): template metadata and body, root, version and
+versions. The native-produced root/version payloads matched CONFIG with changed
+physical headers. These are measured preparation effects, not additional SQL
+mutation authority. The test-only continuation did not repeat native import or
+apply. Cancellation rolled back to that entire baseline; selected CommonModule A
+then committed its expected body/versions; a second plan from the stale baseline
+rolled back at the held readset comparison before application DML. Independent
+poststate checks confirmed unchanged CONFIG, all four unselected CONFIGSAVE
+rows/headers exact, and all non-A version entries exact.
+
+Result SHA256:
+`5c51de8e9c4f9ee898b5434cfbc351908e2d471607843829d88e72d398d9741a`.
+FULL RELEASE SHA256:
+`7145bbbd5cd049c0035404c331bdf88ac4755600486fd236996b1b49b085ce4b`.
+Both retained sanitized receipts were independently rehashed. Raw rows/logs stay
+inside the VM. Final CONFIG remains eight parts/3327 bytes; CONFIGSAVE is now
+six parts/1525 bytes, pending and not activated. This old target must not be
+reused as a clean baseline or accidentally applied. This closes the demonstrated
+CommonModule nonempty-neighbour/cancel/stale slice, not native FormModule,
+general writer admission, lost-ack runtime injection or the guarded editor route.

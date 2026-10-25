@@ -48,3 +48,29 @@ No branch-wide quality, full SQL write acceptance or issue completion is claimed
 External receipts: `logs/issue-382-selected-module-receipt.json` and the three
 `issue-382-selected-module-{first,corrected,check}.log` files. All build processes
 exited and the local compiler slot is fully released.
+
+## Held filesystem source adapter
+
+`SourceAdmission::prepare_common_module` compiles exactly one explicitly admitted
+file from its retained immutable byte slice, revalidating the original source
+before and after compilation. It opens no SQL connection and does not enable a
+prepare/publish RPC route. The existing storage-text compiler remains available;
+`prepare_module_file` additionally uses the existing pure loader byte policy.
+An unchanged native filesystem representation preserves the original raw storage
+and versions. Changed source uses that loader policy with a second size check
+after newline expansion. Actual source/custody bytes are never normalized.
+
+The discriminating fixture stores 38 LF bytes and projects 43 native BOM/CRLF
+bytes. Its unchanged filesystem file remains a no-op; the raw 38-byte file is an
+intentional edit under existing loader policy (40 storage bytes). Exact expanded
+budget 8 succeeds and 7 refuses. A source mutation during compilation refuses
+through the original source witness while retained input stays unchanged.
+
+Local Rust 1.95, jobs1, external retained fixtures: selected/admission 22 passed;
+pure loader byte policy 1 passed; compiler/transaction compatibility 33 passed
+with three live tests ignored; production library check passed. Existing warning
+totals remain 40 test/97 production. Independent source review approved the two
+consumer files. RED/GREEN and check logs are retained externally as
+`issue-382-held-file-module-{red,green}.log`, `issue-382-held-byte-policy.log`,
+`issue-382-held-file-stage-compat.log`, and `issue-382-held-file-libcheck.log`.
+This is local adapter evidence, separate from the exact-a666/9d04 lab executions.

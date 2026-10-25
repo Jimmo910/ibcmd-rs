@@ -20,6 +20,7 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use flate2::read::DeflateDecoder;
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     io::Read,
 };
@@ -230,6 +231,21 @@ fn captured_view<'a>(
 /// Compiles one selected module from a coherent captured snapshot and immutable
 /// original-census source bytes. Other file roles, aliases and incomplete stage
 /// inventories refuse. Unselected CONFIGSAVE payloads/headers are never rebuilt.
+/// Prepare already-held filesystem bytes. No pathname is opened here.
+/// Source custody and target/profile publication guards remain caller-owned.
+pub fn prepare_module_file(
+    snapshot: &Readset,
+    selected_path: &str,
+    text: &[u8],
+    profile: &CommonModuleProfile,
+    limits: Limits,
+    check: &Check,
+) -> Result<ModuleEdit> {
+    prepare_module_text(snapshot, selected_path, text, profile, limits, check, true)
+}
+
+/// Compile immutable storage text; callers using source-file bytes use
+/// prepare_module_file so native filesystem representation is not reimported.
 pub fn prepare_module(
     snapshot: &Readset,
     selected_path: &str,
@@ -237,6 +253,18 @@ pub fn prepare_module(
     profile: &CommonModuleProfile,
     limits: Limits,
     check: &Check,
+) -> Result<ModuleEdit> {
+    prepare_module_text(snapshot, selected_path, text, profile, limits, check, false)
+}
+
+fn prepare_module_text(
+    snapshot: &Readset,
+    selected_path: &str,
+    text: &[u8],
+    profile: &CommonModuleProfile,
+    limits: Limits,
+    check: &Check,
+    filesystem: bool,
 ) -> Result<ModuleEdit> {
     check()?;
     ensure!(
@@ -315,6 +343,27 @@ pub fn prepare_module(
     );
     let old_text = &old_elements[1].data;
     std::str::from_utf8(old_text).context("existing SQL module is not UTF-8 source")?;
+    // Compare original source bytes to the EXPECTED filesystem projection before
+    // applying storage policy. Never rewrite the source or its custody bytes.
+    // Native projection cannot shorten storage text, so avoid a large copy when
+    // its length already proves that this input file differs.
+    let prepared_text = if !filesystem {
+        Cow::Borrowed(text)
+    } else if old_text.len() <= text.len()
+        && crate::mssql_dump::native_module_file_bytes(old_text) == text
+    {
+        Cow::Borrowed(old_text.as_slice())
+    } else {
+        Cow::Owned(
+            crate::load::module_text_from_bytes(text, selected_path).map_err(anyhow::Error::msg)?,
+        )
+    };
+    check()?;
+    ensure!(
+        prepared_text.len() <= limits.source_bytes,
+        "SQL compiled module source budget exceeded"
+    );
+    let text = prepared_text.as_ref();
     let mut replacements = Rows::new();
     if old_text.as_slice() != text {
         check()?;
@@ -487,6 +536,182 @@ mod tests {
                 .is_err()
         );
     }
+    fn raw_filesystem_module_case() -> (Rows, String, String, Vec<u8>) {
+        let mut rows = fixture();
+        let (id, path) = module(&rows);
+        let key = format!("{id}.0");
+        let raw = b"Procedure Hello() Export\nEndProcedure\n".to_vec();
+        assert_eq!(raw.len(), 38);
+        let packed = pack_module_blob_bytes(&raw, Some(&rows[&key]), None).unwrap();
+        rows.insert(key.clone(), packed.blob);
+        (rows, key, path, raw)
+    }
+
+    fn admit_module_source(
+        path: &str,
+        bytes: &[u8],
+    ) -> (
+        crate::import_plan::ImportScratch,
+        crate::server::sql_import::SourceAdmission,
+    ) {
+        let root = crate::import_plan::ImportScratch::create().unwrap();
+        let target = root.join(path);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, bytes).unwrap();
+        let metadata = path.strip_suffix("/Ext/Module.bsl").unwrap().to_owned() + ".xml";
+        std::fs::write(root.join(&metadata), b"<MetaDataObject/>").unwrap();
+        let admitted = crate::server::sql_import::SourceAdmission::prepare(
+            &root.path,
+            &crate::file_import::Selection {
+                files: vec![path.into()],
+                ..Default::default()
+            },
+            Some(true),
+            crate::server::sql_import::SourceLimits::default(),
+        )
+        .unwrap();
+        (root, admitted)
+    }
+
+    #[test]
+    fn filesystem_module_admission_compiles_only_retained_selected_bytes() {
+        let (rows, _, path, raw) = raw_filesystem_module_case();
+        let captured = snapshot(&rows, &Rows::new());
+        let source = crate::mssql_dump::native_module_file_bytes(&raw);
+        let (_root, admitted) = admit_module_source(&path, &source);
+        let edit = admitted
+            .prepare_common_module(&captured, &path, &profile(), Limits::default(), &check())
+            .unwrap();
+        assert!(edit.replacements().is_empty());
+        assert_eq!(admitted.bytes(&path).unwrap(), source);
+        assert!(
+            admitted
+                .prepare_common_module(
+                    &captured,
+                    "CommonModules/Other/Ext/Module.bsl",
+                    &profile(),
+                    Limits::default(),
+                    &check()
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn filesystem_module_admission_detects_mutation_during_compilation_without_reread() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let (rows, _, path, raw) = raw_filesystem_module_case();
+        let captured = snapshot(&rows, &Rows::new());
+        let source = crate::mssql_dump::native_module_file_bytes(&raw);
+        let (root, admitted) = admit_module_source(&path, &source);
+        let target = root.join(&path);
+        let calls = AtomicUsize::new(0);
+        let check: Check = std::sync::Arc::new(move || {
+            if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                std::fs::write(&target, [0xff])?;
+            }
+            Ok(())
+        });
+        let error = admitted
+            .prepare_common_module(&captured, &path, &profile(), Limits::default(), &check)
+            .err()
+            .expect("changed source accepted");
+        assert!(
+            error.chain().any(|cause| cause
+                .downcast_ref::<crate::mssql_source_change::SourceChangeError>()
+                .is_some()),
+            "must refuse the original-source witness, not decode replacement bytes: {error:#}"
+        );
+        assert_eq!(admitted.bytes(&path).unwrap(), source);
+    }
+
+    #[test]
+    fn filesystem_module_native_noop_keeps_raw_storage_and_source_bytes() {
+        let (rows, _, path, raw) = raw_filesystem_module_case();
+        let captured = snapshot(&rows, &Rows::new());
+        let digest = captured.digest().unwrap();
+        let source = crate::mssql_dump::native_module_file_bytes(&raw);
+        assert_eq!(source.len(), 43);
+        let original = source.clone();
+        let edit = prepare_module_file(
+            &captured,
+            &path,
+            &source,
+            &profile(),
+            Limits::default(),
+            &check(),
+        )
+        .unwrap();
+        assert!(
+            edit.replacements().is_empty(),
+            "unchanged native file changed storage"
+        );
+        assert_eq!(source, original);
+        assert_eq!(captured.digest().unwrap(), digest);
+    }
+
+    #[test]
+    fn filesystem_module_edit_reuses_loader_policy_without_normalizing_custody() {
+        let (rows, key, path, source) = raw_filesystem_module_case();
+        let captured = snapshot(&rows, &Rows::new());
+        let original = source.clone();
+        let expected = crate::load::module_text_from_bytes(&source, &path).unwrap();
+        assert_eq!(expected.len(), 40);
+        let edit = prepare_module_file(
+            &captured,
+            &path,
+            &source,
+            &profile(),
+            Limits::default(),
+            &check(),
+        )
+        .unwrap();
+        assert_eq!(
+            edit.replacements().keys().cloned().collect::<BTreeSet<_>>(),
+            BTreeSet::from([key.clone(), "versions".into()])
+        );
+        assert_eq!(
+            unpack_module_blob_text(&edit.replacements()[&key]).unwrap(),
+            expected
+        );
+        assert_eq!(source, original);
+        assert_eq!(source.len(), 38);
+    }
+
+    #[test]
+    fn filesystem_module_bounds_expanded_storage_text() {
+        let (rows, _, path, _) = raw_filesystem_module_case();
+        let captured = snapshot(&rows, &Rows::new());
+        let source = b"\n\n\n\n";
+        assert!(
+            prepare_module_file(
+                &captured,
+                &path,
+                source,
+                &profile(),
+                Limits {
+                    source_bytes: 7,
+                    ..Limits::default()
+                },
+                &check()
+            )
+            .is_err()
+        );
+        let edit = prepare_module_file(
+            &captured,
+            &path,
+            source,
+            &profile(),
+            Limits {
+                source_bytes: 8,
+                ..Limits::default()
+            },
+            &check(),
+        )
+        .unwrap();
+        assert!(!edit.replacements().is_empty());
+    }
+
     #[test]
     fn snapshot_module_compiles_without_fetch_and_preserves_neighbours() {
         let rows = fixture();
