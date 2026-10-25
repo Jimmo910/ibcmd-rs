@@ -54,12 +54,16 @@ These are reported, not hidden by the source comparison; see the existing
 scratch-state classification in docs/apply/own-apply.md and native-apply-trace.md.
 No extension data-table restructuring is claimed.
 
-Local verification: `cargo xtask check` passes all 5 steps; `cargo xtask ci`
+Local verification: `cargo xtask check` passes all 6 steps; `cargo xtask ci`
 passes all 27 steps. Root library: 4142 passed, 0 failed, the existing 16 ignored
 remain unchanged. Standard CLI and platform boundary controls pass 12 and 10
 cases respectively. No failure is dismissed as pre-existing and no baseline is
 weakened. Release build, CI native micro-corpus parity, SBOM and release audit
-remain CI-only checks. Independent review is required before PR readiness.
+remain CI-only checks. Independent fresh-context review of 226cf5b1 returned APPROVE with no findings.
+The reviewer independently repeated check (6 passed), extension library suites
+(62 and 163 passed), raw source comparisons, preservation and refusal evidence.
+The author repeated all three commands after approval. Only this evidence and
+task-completion documentation change after the reviewed implementation.
 
 The final exact-27 repetition changes 1.0.0.2 -> 1.0.0.3 and `changed-B` ->
 `changed-C`, with 9/9 source files equal and both fresh sessions observing both.
