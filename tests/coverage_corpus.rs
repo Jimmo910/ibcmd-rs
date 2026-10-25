@@ -803,6 +803,18 @@ fn coverage_extension_restructuring_matches_native_schema_and_names() {
             let plan = outcome
                 .unwrap()
                 .expect("the measured update needs SQL schema publication");
+            let touched = plan.touched_tables();
+            for metadata in ["SchemaStorage", "Params", "_ExtensionsRestruct"] {
+                assert!(
+                    touched.iter().any(|table| table == metadata),
+                    "{platform}/{facts_file}: actual restructuring report omits {metadata}: {touched:?}"
+                );
+            }
+            assert_eq!(
+                touched.iter().collect::<BTreeSet<_>>().len(),
+                touched.len(),
+                "write set must not repeat a table"
+            );
             assert_eq!(
                 plan.after_schema,
                 data("schema_after"),
