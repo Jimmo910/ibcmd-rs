@@ -202,9 +202,27 @@ fn objects(root: &Path, image: &StorageImage) -> Result<Vec<Object>> {
     Ok(out)
 }
 
+fn validate_identities(old: &[Object], new: &[Object]) -> Result<()> {
+    for before in old {
+        if !new.iter().any(|after| {
+            after.uuid == before.uuid
+                && after.kind == before.kind
+                && after.family == before.family
+                && after.name == before.name
+        }) {
+            bail!(
+                "extension update removes, renames or replaces the identity of {}",
+                before.label()
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Inspect every changed path: a schema planner never turns ignored families
 /// into an accidental permission to publish an unmodeled metadata change.
 fn classify(base: &Path, next: &Path, old: &[Object], new: &[Object]) -> Result<Vec<String>> {
+    validate_identities(old, new)?;
     let a = crate::load::relative_files(base)?;
     let b = crate::load::relative_files(next)?;
     let mut changed = Vec::new();
@@ -992,6 +1010,18 @@ mod tests {
             row: Brace::List(vec![]),
         }
     }
+    #[test]
+    fn retained_paths_cannot_replace_old_data_object_identities() {
+        let before = enumeration(&["A"]);
+        let mut after = before.clone();
+        after.uuid = "aaaaaaaa-0000-4000-8000-000000000099".into();
+        assert!(validate_identities(&[before.clone()], &[after]).is_err());
+        let mut renamed = before.clone();
+        renamed.name = "Renamed".into();
+        assert!(validate_identities(&[before.clone()], &[renamed]).is_err());
+        assert!(validate_identities(&[before.clone()], &[before]).is_ok());
+    }
+
     #[test]
     fn enum_values_can_only_append_without_reordering_or_replacing_existing_ids() {
         let old = enumeration(&["A", "B"]);
