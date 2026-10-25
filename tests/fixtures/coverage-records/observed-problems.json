@@ -11443,6 +11443,82 @@
         []
       ],
       "known_symptom": null
+    },
+    {
+      "id": "8.3.27.2214-CovPictureUsualGroup",
+      "source": "observed ordinary group behavior loss with picture representation; independent native group combination and synthetic stored command-panel profile",
+      "set": "8.3.27.2214/corpus-stored-group-behavior-panels",
+      "variant": "CovPictureUsualGroup",
+      "file": "CommonForms/CovPictureUsualGroup/Ext/Form.xml",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}UsualGroup",
+        "name": "Probe"
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}Behavior",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}Behavior",
+        [],
+        "Usual",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.3.27.2214-CovCollapsedPictureUsualGroup",
+      "source": "observed ordinary group behavior loss with picture representation; independent native group combination and synthetic stored command-panel profile",
+      "set": "8.3.27.2214/corpus-stored-group-behavior-panels",
+      "variant": "CovCollapsedPictureUsualGroup",
+      "file": "CommonForms/CovCollapsedPictureUsualGroup/Ext/Form.xml",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}UsualGroup",
+        "name": "Probe"
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}Behavior",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}Behavior",
+        [],
+        "Usual",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.5.1.1150-CovPictureUsualGroup",
+      "source": "observed ordinary group behavior loss with picture representation; independent native group combination and synthetic stored command-panel profile",
+      "set": "8.5.1.1150/corpus-stored-group-behavior-panels",
+      "variant": "CovPictureUsualGroup",
+      "file": "CommonForms/CovPictureUsualGroup/Ext/Form.xml",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}UsualGroup",
+        "name": "Probe"
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}Behavior",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}Behavior",
+        [],
+        "Usual",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.5.1.1150-CovCollapsedPictureUsualGroup",
+      "source": "observed ordinary group behavior loss with picture representation; independent native group combination and synthetic stored command-panel profile",
+      "set": "8.5.1.1150/corpus-stored-group-behavior-panels",
+      "variant": "CovCollapsedPictureUsualGroup",
+      "file": "CommonForms/CovCollapsedPictureUsualGroup/Ext/Form.xml",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}UsualGroup",
+        "name": "Probe"
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}Behavior",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}Behavior",
+        [],
+        "Usual",
+        []
+      ],
+      "known_symptom": null
     }
   ]
 }
