@@ -202,6 +202,8 @@ fn ci_steps(root: &Path) -> Vec<Step> {
     let python = if cfg!(windows) { "python" } else { "python3" };
 
     let mut steps = vec![format_step()];
+    steps.push(Step::new("pinned fixtures validation", python, &["tools/coverage/fixture_paths.py"]));
+    steps.push(Step::new("native coverage generator tests", python, &["-m", "unittest", "discover", "-s", "tests/fixtures/1c-fixtures/tools/coverage", "-p", "test_*.py"]));
     steps.push(pwsh(
         "EDT corpus governance self-test",
         "tools/validate-edt-corpus.ps1",

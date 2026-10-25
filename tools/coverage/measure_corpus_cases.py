@@ -7,7 +7,7 @@ of XML into rows; zero failures is NOT proof of SQL import/apply parity.
 An empty rows folder is deliberately used, so 'extra' rows are expected.
 """
 import argparse,base64,hashlib,json,pathlib,subprocess,sys
-sys.path.insert(0,str(pathlib.Path(__file__).parent))
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[2] / "tests/fixtures/1c-fixtures/tools/coverage"))
 from native_round_trip import inputs_digest
 
 def main():

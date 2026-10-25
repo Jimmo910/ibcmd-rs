@@ -25,6 +25,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install Python
         uses: actions/setup-python@v5
@@ -47,6 +49,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Test exact-build evidence audit
         env:
           TMPDIR: ${{ runner.temp }}
@@ -58,6 +62,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -84,6 +90,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -133,6 +141,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

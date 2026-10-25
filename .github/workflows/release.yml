@@ -31,6 +31,7 @@ jobs:
       - name: Checkout complete history
         uses: actions/checkout@v4
         with:
+          submodules: true
           fetch-depth: 0
 
       - name: Install Node.js
@@ -119,6 +120,7 @@ jobs:
       - name: Checkout complete history
         uses: actions/checkout@v4
         with:
+          submodules: true
           fetch-depth: 0
 
       - name: Select a physical temporary directory
@@ -241,6 +243,8 @@ jobs:
     steps:
       - name: Checkout release notes
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Download audited artifacts
         uses: actions/download-artifact@v4

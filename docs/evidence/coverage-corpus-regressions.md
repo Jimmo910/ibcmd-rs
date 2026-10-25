@@ -8,7 +8,7 @@ All new source inputs, complete native oracle trees, CFs and proof manifests are
 
 The old 95 generated configuration sets remain byte-identical. Original baseline entries are retained. A typed per-entry CF refusal now allows complete byte-equal sibling objects to be checked without claiming global export success. Unknown failures, empty partial output and unattributed global refusals remain failures.
 
-[Rebuild instructions](coverage-corpus-build.md); [special source/legacy probes](../../tests/fixtures/coverage-records/README.md); [pinned evidence matrix](coverage-corpus-matrix.json).
+[Rebuild instructions](coverage-corpus-build.md); [special source/legacy probes](../../tests/fixtures/1c-fixtures/coverage-records/README.md); [pinned evidence matrix](coverage-corpus-matrix.json).
 
 | Class | Diagnostic | Observed rows | Evidence scope | Representative set |
 | --- | --- | --- | --- | --- |

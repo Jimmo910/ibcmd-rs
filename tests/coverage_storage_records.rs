@@ -1,6 +1,9 @@
 //! Stored records which an XML -> CF round trip cannot express separately.
 //! The surrounding configuration is the public, platform-proven coverage set.
 //! The inserted body is the ten-byte, data-free empty HTML record.
+#[path = "common/coverage_paths.rs"]
+mod coverage_paths;
+
 use ibcmd_cf::payload::{PayloadEncoding, encode_payload};
 use ibcmd_core::limits::ResourceLimits;
 use ibcmd_v8::reader::StreamingReader;
@@ -44,8 +47,8 @@ fn minimized_selected_rows_group_profile_keeps_its_known_failure() {
     // bag. Modern XML cannot express that internal panel as a named group.
     // Retain a public native group's common fields and instantiate only this
     // data-free kind and bag; this is a parser probe, not a native-built CF.
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let set = root.join("tests/fixtures/coverage/8.5.1.1150/corpus-compatible-form-layouts");
+    let root = coverage_paths::root();
+    let set = root.join("coverage/8.5.1.1150/corpus-compatible-form-layouts");
     let metadata =
         fs::read_to_string(set.join("native/CommonForms/CovCompatibleTable.xml")).unwrap();
     let owner = metadata
@@ -252,7 +255,7 @@ fn tree(root: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
 
 #[test]
 fn clean_room_corpus_stored_row_route_holds_its_baseline() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/coverage");
+    let root = coverage_paths::root().join("coverage");
     let mut sets = Vec::new();
     for platform in fs::read_dir(&root).unwrap() {
         let p = platform.unwrap().path();
@@ -349,7 +352,12 @@ fn clean_room_corpus_stored_row_route_holds_its_baseline() {
                 differences.push(serde_json::json!({"path":path,"status":status}));
             }
         }
-        if let Ok(bytes) = fs::read(set.join("storage-baseline.json")) {
+        if let Ok(bytes) = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/coverage")
+                .join(set.strip_prefix(&root).unwrap())
+                .join("storage-baseline.json"),
+        ) {
             let baseline: Value = serde_json::from_slice(&bytes).unwrap();
             for path in baseline["equal"].as_array().unwrap() {
                 let path = path.as_str().unwrap();
@@ -380,11 +388,23 @@ fn minimized_xml_probes_keep_their_precise_known_failures() {
     // Current native normalizes three properties away and refuses two legacy
     // commands. Probe only these generated XML fragments in a proven native
     // context. They are deliberately not presented as CF or SQL parity.
-    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let fixtures = coverage_paths::root();
     let document: Value = serde_json::from_slice(
         &fs::read(fixtures.join("coverage-records/source-probes.json")).unwrap(),
     )
     .unwrap();
+    let expectations: Value = serde_json::from_slice(
+        &fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/coverage-records/source-probe-expectations.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        document["cases"].as_array().unwrap().len(),
+        expectations["cases"].as_object().unwrap().len()
+    );
     let temp = std::env::temp_dir().join(format!(
         "coverage-source-probes-{}-{}",
         std::process::id(),
@@ -394,7 +414,15 @@ fn minimized_xml_probes_keep_their_precise_known_failures() {
             .as_nanos()
     ));
     let mut reports = Vec::new();
-    for (index, case) in document["cases"].as_array().unwrap().iter().enumerate() {
+    for (index, definition) in document["cases"].as_array().unwrap().iter().enumerate() {
+        let mut case = definition.clone();
+        let expected = expectations["cases"]
+            .get(case["id"].as_str().unwrap())
+            .expect("missing converter refusal expectation")
+            .as_object()
+            .unwrap()
+            .clone();
+        case.as_object_mut().unwrap().extend(expected);
         let set = case["set"].as_str().unwrap();
         let source = fixtures.join("coverage").join(set);
         assert_eq!(
@@ -504,8 +532,8 @@ fn minimized_xml_probes_keep_their_precise_known_failures() {
 
 #[test]
 fn coverage_empty_html_stored_record_has_a_precise_known_gap() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let fixture = root.join("tests/fixtures/coverage/8.3.27.2342/commontemplates");
+    let root = coverage_paths::root();
+    let fixture = root.join("coverage/8.3.27.2342/commontemplates");
     let temp = std::env::temp_dir().join(format!(
         "coverage-empty-html-{}-{}",
         std::process::id(),
@@ -539,10 +567,14 @@ fn coverage_empty_html_stored_record_has_a_precise_known_gap() {
         .split('"')
         .next()
         .unwrap();
-    let body = include_bytes!("fixtures/coverage-records/empty-html.txt");
+    let body = fs::read(coverage_paths::root().join("coverage-records/empty-html.txt")).unwrap();
     assert_eq!(body, b"\xef\xbb\xbf{5,0,0}");
-    let encoded =
-        encode_payload(PayloadEncoding::RawDeflate, body, ResourceLimits::default()).unwrap();
+    let encoded = encode_payload(
+        PayloadEncoding::RawDeflate,
+        &body,
+        ResourceLimits::default(),
+    )
+    .unwrap();
     fs::write(
         temp.join("rows").join(format!("{uuid}.0__part0.bin")),
         encoded,

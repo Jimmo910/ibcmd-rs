@@ -14,15 +14,18 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "coverage"
+CORPUS_ROOT = ROOT.parent / "1c-fixtures" / "coverage"
 
 
 def set_dirs():
     out = {}
-    for manifest in ROOT.rglob("manifest.json"):
+    if not (CORPUS_ROOT.parent / "corpus-index.json").is_file():
+        raise SystemExit("1c-fixtures is missing; run git submodule update --init --recursive")
+    for manifest in CORPUS_ROOT.rglob("manifest.json"):
         name = json.loads(manifest.read_text(encoding="utf-8"))["set"]
         if name in out:
             raise SystemExit(f"duplicate coverage set identifier {name}: {out[name]} and {manifest.parent}")
-        out[name] = manifest.parent
+        out[name] = ROOT / manifest.parent.relative_to(CORPUS_ROOT)
     return out
 
 
@@ -39,6 +42,7 @@ def main():
         path = dirs[name] / "baseline.json"
         equal = set(json.loads(path.read_text(encoding="utf-8"))["equal"]) if path.exists() else set()
         equal.update(variants)
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"equal": sorted(equal)}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"{name}: +{len(variants)}", file=sys.stderr)
 

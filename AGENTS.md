@@ -47,7 +47,7 @@ cargo build --locked --profile iter                                      # binar
    (ERP, Бухгалтерия, БСП…) is first reproduced as a coverage variant and seen
    red in `tests/coverage_corpus.rs` (skill `coverage-case`); only then fixed.
    The variant also enters the platform's combined configuration: rebuild it
-   with `tools/coverage/combine.py` (the coverage test fails until you do).
+   with `tests/fixtures/1c-fixtures/tools/coverage/combine.py` (the coverage test fails until you do).
 3. Change in small steps; after each, run the narrowest test that covers it.
 4. `cargo xtask check` until green. A failure is pre-existing only after you
    reproduce it on the merge base and say so, with the command.
