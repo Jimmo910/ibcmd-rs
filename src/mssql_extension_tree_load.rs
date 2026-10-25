@@ -1249,7 +1249,8 @@ mod tests {
                 .replace("<Vendor/>", "<Vendor></Vendor>");
             std::fs::write(input.join("Configuration.xml"), formatted).unwrap();
         }
-        if case == "Defaults" {
+        // The unused palette declaration belongs to the native XML 2.21 envelope.
+        if case == "Defaults" && platform.starts_with("8.5.") {
             let descriptor = input.join("DataProcessors/Cov_ImportTools/Forms/ImportDialog.xml");
             let document =
                 ibcmd_xml::XmlReader::from_slice(&std::fs::read(&descriptor).unwrap()).unwrap();
