@@ -65,7 +65,7 @@ function Get-TrackedFiles {
     $startInfo.FileName = $git.Source
     $safeRoot = [System.IO.Path]::GetFullPath($Root)
     $startInfo.WorkingDirectory = $safeRoot
-    $startInfo.Arguments = "-c safe.directory=`"$safeRoot`" -c core.quotePath=false ls-files -z"
+    $startInfo.Arguments = "-c safe.directory=`"$safeRoot`" -c core.quotePath=false ls-files --recurse-submodules -z"
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
@@ -547,6 +547,55 @@ function Invoke-SelfTest {
     }
     finally {
         [System.IO.Directory]::Delete($temporaryDirectory, $true)
+    }
+
+    $gitlinkDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("ibcmd-governance-gitlink-" + [guid]::NewGuid())
+    $gitlinkFullPath = [System.IO.Path]::GetFullPath($gitlinkDirectory)
+    $temporaryRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+    if (-not $gitlinkFullPath.StartsWith($temporaryRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Invalid temporary gitlink self-test path.'
+    }
+    [System.IO.Directory]::CreateDirectory($gitlinkFullPath) | Out-Null
+    try {
+        $nativeRepo = Join-Path $gitlinkFullPath 'source'
+        $consumerRepo = Join-Path $gitlinkFullPath 'consumer'
+        [System.IO.Directory]::CreateDirectory($nativeRepo) | Out-Null
+        [System.IO.Directory]::CreateDirectory($consumerRepo) | Out-Null
+        & git -C $nativeRepo init --quiet
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to initialize synthetic corpus.' }
+        [System.IO.File]::WriteAllBytes((Join-Path $nativeRepo 'probe.payload'), [byte[]](0x4D, 0x5A, 0x00))
+        & git -C $nativeRepo add -- probe.payload
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to stage synthetic payload.' }
+        & git -C $nativeRepo -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit --quiet -m 'Synthetic payload'
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to commit synthetic corpus.' }
+        & git -C $consumerRepo init --quiet
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to initialize synthetic consumer.' }
+        # Avoid runner-specific CRLF warnings becoming terminating stderr in Windows PowerShell 5.1.
+        & git -C $consumerRepo -c core.autocrlf=false -c protocol.file.allow=always submodule add --quiet $nativeRepo corpus
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to initialize synthetic gitlink.' }
+        $nestedFiles = Get-TrackedFiles -Root $consumerRepo
+        $nestedPayload = Join-Path $consumerRepo 'corpus/probe.payload'
+        if ($nestedFiles -notcontains $nestedPayload) {
+            throw 'Gitlink self-test: tracked submodule contents were skipped.'
+        }
+        $nestedRejected = $false
+        try {
+            Invoke-EdtCorpusValidation -Files $nestedFiles -DisplayRoot $consumerRepo -CheckPayloadOnly
+        }
+        catch {
+            if ($_.Exception.Message -notmatch [regex]::Escape('forbidden binary signature')) {
+                throw "Gitlink self-test failed through an unexpected branch: $($_.Exception.Message)"
+            }
+            $nestedRejected = $true
+        }
+        if (-not $nestedRejected) { throw 'Gitlink self-test: forbidden nested payload was accepted.' }
+    }
+    finally {
+        if ([System.IO.Path]::GetFullPath($gitlinkFullPath) -ne $gitlinkFullPath -or
+            -not $gitlinkFullPath.StartsWith($temporaryRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Unsafe gitlink self-test cleanup path.'
+        }
+        Remove-Item -LiteralPath $gitlinkFullPath -Recurse -Force
     }
 
     Write-Host 'EDT corpus governance self-tests passed.'

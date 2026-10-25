@@ -124,3 +124,19 @@ cargo test --locked -p ibcmd-rs --features mssql-live-tests live_compares_native
 ```
 
 Neither opt-in feature is enabled by default or in ordinary CI.
+
+## Public Coverage corpus
+
+Coverage native inputs, combined configurations and fixture records are pinned
+as `tests/fixtures/1c-fixtures` from https://github.com/Untru/1c-fixtures.
+Clone with `git clone --recurse-submodules` or run
+`git submodule update --init --recursive` after checkout/branch changes.
+CI initializes the exact gitlink; it never follows a moving remote branch.
+
+`python tools/coverage/fixture_paths.py` rejects an absent/dirty/wrong checkout,
+changed/missing/extra fixture bytes and orphaned local baseline references.
+`cargo xtask ci` runs it plus native generator tests from the pinned corpus.
+Converter equality baselines remain under `tests/fixtures/coverage`; source-probe
+diagnostics remain in `tests/fixtures/coverage-records/source-probe-expectations.json`.
+Update the public corpus first, then its gitlink and converter code in a PR.
+Changing the corpus does not authorize removing an existing passing expectation.
