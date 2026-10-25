@@ -76,8 +76,20 @@ def check_baselines(root, module):
     for probe in probes:
         if 'expected_failure' in probe or 'reader_platform' in probe:
             raise ValueError('converter-specific refusal/profile leaked into the corpus')
-        if not expected[probe['id']]['expected_failure']:
-            raise ValueError(f'empty refusal expectation: {probe["id"]}')
+        contract = expected[probe['id']]
+        failure = contract.get('expected_failure')
+        parity = contract.get('expected_parity')
+        if bool(failure) == bool(parity):
+            raise ValueError(f'exactly one refusal or parity expectation is required: {probe["id"]}')
+        if failure and not isinstance(failure, str):
+            raise ValueError(f'invalid refusal expectation: {probe["id"]}')
+        if parity and not (
+            parity == 'native_interface_descriptor'
+            and probe.get('native_behavior') == 'native_cf'
+            and probe.get('operation', {}).get('kind') == 'identity'
+            and probe.get('target', '').startswith('Interfaces/')
+        ):
+            raise ValueError(f'unsupported parity contract: {probe["id"]}')
     return len(baselines), variants_checked, len(ids)
 
 
@@ -85,7 +97,7 @@ def validate(root=ROOT):
     module = check_identity(root)
     subprocess.run([sys.executable, str(module / 'tools/verify_corpus.py')], check=True)
     counts = check_baselines(root, module)
-    print(f'1c-fixtures pinned checkout: PASS; {counts[0]} baseline files, {counts[1]} equal entries, {counts[2]} refusal probes')
+    print(f'1c-fixtures pinned checkout: PASS; {counts[0]} baseline files, {counts[1]} equal entries, {counts[2]} source probes')
 
 
 if __name__ == '__main__':

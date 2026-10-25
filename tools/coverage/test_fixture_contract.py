@@ -51,6 +51,28 @@ class FixtureContract(unittest.TestCase):
     def test_existing_expectations_are_kept(self):
         self.assertEqual(self.baseline_case(lambda *_: None), (1, 1, 1))
 
+    def test_identity_interface_can_require_native_parity(self):
+        def change(base, native, put):
+            root = base.parents[4]
+            module = f.fixture_root(root)
+            put(module/'coverage-records/source-probes.json', {'cases': [{'id': 'one', 'native_behavior': 'native_cf', 'operation': {'kind': 'identity'}, 'target': 'Interfaces/Probe.xml'}]})
+            put(root/'tests/fixtures/coverage-records/source-probe-expectations.json', {'cases': {'one': {'expected_parity': 'native_interface_descriptor'}}})
+        self.assertEqual(self.baseline_case(change), (1, 1, 1))
+
+    def test_mutated_source_cannot_be_relabeled_as_native_parity(self):
+        def change(base, native, put):
+            root = base.parents[4]
+            put(root/'tests/fixtures/coverage-records/source-probe-expectations.json', {'cases': {'one': {'expected_parity': 'native_interface_descriptor'}}})
+        with self.assertRaisesRegex(ValueError, 'unsupported parity'):
+            self.baseline_case(change)
+
+    def test_ambiguous_refusal_and_parity_is_rejected(self):
+        def change(base, native, put):
+            root = base.parents[4]
+            put(root/'tests/fixtures/coverage-records/source-probe-expectations.json', {'cases': {'one': {'expected_failure': 'precise', 'expected_parity': 'native_interface_descriptor'}}})
+        with self.assertRaisesRegex(ValueError, 'exactly one'):
+            self.baseline_case(change)
+
     def test_removed_set_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'orphaned baseline set'):
             self.baseline_case(lambda base, native, put: (native/'manifest.json').unlink())

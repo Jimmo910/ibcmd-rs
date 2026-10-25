@@ -383,8 +383,92 @@ fn clean_room_corpus_stored_row_route_holds_its_baseline() {
     fs::remove_dir_all(temp).unwrap();
 }
 
+fn assert_native_interface_descriptor_parity(
+    source: &std::path::Path,
+    xml: &std::path::Path,
+    target: &str,
+    work: &std::path::Path,
+) {
+    use ibcmd_rs::metadata_model::{
+        DescriptorContext, brace::parse_row, compile_descriptor, export::object_names,
+    };
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(source.join("manifest.json")).unwrap()).unwrap();
+    let version = manifest["evidence"]["source_version"].as_str().unwrap();
+    let context = DescriptorContext::new(xml, version).unwrap();
+    let compiled = compile_descriptor(
+        "Interface",
+        &xml.join(target),
+        &fs::read(xml.join(target)).unwrap(),
+        &context,
+    )
+    .unwrap();
+    let descriptor = parse_row(&compiled).unwrap();
+    let names =
+        object_names("Interface", &descriptor).expect("compiled native Interface has an identity");
+    let cf = decode(&fs::read(source.join("configuration.cf.b64")).unwrap());
+    let mut reader = StreamingReader::open_default(Cursor::new(cf)).unwrap();
+    let position = reader
+        .index()
+        .entries
+        .iter()
+        .position(|entry| entry.name == names.uuid)
+        .expect("native CF contains the Interface descriptor");
+    let stored = reader.read_entry_data(position).unwrap().unwrap();
+    let stored = ibcmd_cf::payload::decode_payload(
+        PayloadEncoding::RawDeflate,
+        &stored,
+        ResourceLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        descriptor,
+        parse_row(stored.bytes()).unwrap(),
+        "the complete descriptor compiled from native XML must match the native CF record"
+    );
+    let packed = encode_payload(
+        PayloadEncoding::RawDeflate,
+        &compiled,
+        ResourceLimits::default(),
+    )
+    .unwrap();
+    let archive =
+        ibcmd_v8::writer::write_format15_to_vec(&ibcmd_v8::writer::Format15Document::new(
+            7,
+            vec![ibcmd_v8::writer::Format15Element::named(
+                &names.uuid,
+                Some(packed),
+            )],
+        ))
+        .unwrap();
+    let cf = work.join("compiled-interface.cf");
+    fs::write(&cf, archive).unwrap();
+    let output = work.join("compiled-interface-xml");
+    let result = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
+        .args(["cf", "export"])
+        .arg(cf)
+        .arg(&output)
+        .args(["--source-version", version, "--fail-on-opaque"])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        tree(&output),
+        BTreeMap::from([(
+            target.to_owned(),
+            fs::read(source.join("native").join(target)).unwrap()
+        )]),
+        "the compiled descriptor must export the complete native Interface XML byte-for-byte"
+    );
+}
+
 #[test]
-fn minimized_xml_probes_keep_their_precise_known_failures() {
+fn minimized_xml_probes_keep_their_precise_contracts() {
     // Current native normalizes three properties away and refuses two legacy
     // commands. Probe only these generated XML fragments in a proven native
     // context. They are deliberately not presented as CF or SQL parity.
@@ -514,14 +598,33 @@ fn minimized_xml_probes_keep_their_precise_known_failures() {
             .flat_map(|(_, rows)| rows.as_array().unwrap())
             .filter(|row| row["source"] == case["failure_source"])
             .collect();
-        assert!(
-            rows.iter().any(|row| row["detail"]
-                .as_str()
-                .unwrap()
-                .contains(case["expected_failure"].as_str().unwrap())),
-            "{}: retain the precise known refusal; replace this assertion with an equivalence check when supported: {rows:?}",
-            case["id"]
-        );
+        match case["expected_parity"].as_str() {
+            Some("native_interface_descriptor") => {
+                assert_eq!(case["operation"]["kind"], "identity");
+                assert!(
+                    rows.is_empty(),
+                    "{}: supported metadata refused: {rows:?}",
+                    case["id"]
+                );
+                assert_native_interface_descriptor_parity(
+                    &source,
+                    &xml,
+                    case["target"].as_str().unwrap(),
+                    &work,
+                );
+            }
+            None => {
+                assert!(
+                    rows.iter().any(|row| row["detail"]
+                        .as_str()
+                        .unwrap()
+                        .contains(case["expected_failure"].as_str().unwrap())),
+                    "{}: retain the precise known refusal; replace this assertion with equivalence when supported: {rows:?}",
+                    case["id"]
+                );
+            }
+            Some(other) => panic!("unsupported parity contract: {other}"),
+        }
         reports.push(serde_json::json!({"case":case,"failures":rows}));
     }
     if let Some(path) = std::env::var_os("IBCMD_COVERAGE_SOURCE_REPORT") {

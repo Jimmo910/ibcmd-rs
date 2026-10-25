@@ -17,11 +17,11 @@
       "expected_failure": "unsupported Form ExcludedCommand: EditList"
     },
     "existing-interfaces-8.3.27.2342": {
-      "expected_failure": "no base-free compiler for Interface yet",
-      "reader_platform": "8.3.27.2214"
+      "reader_platform": "8.3.27.2214",
+      "expected_parity": "native_interface_descriptor"
     },
     "existing-interfaces-8.5.1.1150": {
-      "expected_failure": "no base-free compiler for Interface yet"
+      "expected_parity": "native_interface_descriptor"
     }
   }
 }
