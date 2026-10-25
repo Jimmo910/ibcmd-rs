@@ -6,6 +6,7 @@
 pub mod compiler_diagnostic;
 pub mod coverage;
 pub mod readset;
+pub mod selected;
 pub mod snapshot;
 
 use std::{collections::BTreeMap, path::Path, sync::Arc};

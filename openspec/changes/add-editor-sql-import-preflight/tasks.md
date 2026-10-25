@@ -31,3 +31,9 @@
   refusal oracle passed one exact test; all fixtures and prior failures retained.
 - [ ] F.7 Independent complete owner/kind/full-parent/selected-role witnesses,
   origin-aware versions authority and full readset-preserving SQL transaction.
+
+- [x] F.8 Direct snapshot-only existing top-level CommonModule compiler, exact
+  registered body-key selection and SQL-origin body-only versions guard; 10
+  focused tests and production lib-check passed. No observer dependency or SQL
+  route/publisher. See evidence/selected-module-snapshot.md; this is not F.7 or
+  completion of SQL preparation/publication.

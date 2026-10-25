@@ -147,3 +147,30 @@ owner-completeness refusal and final original-source validation.
 - **WHEN** passive diagnostic observations succeed
 - **THEN** owner, parent, body-role, versions and projection authority remain
   unavailable and publication remains false.
+
+### Requirement: Snapshot module compilation derives exact existing keys
+A CommonModule body candidate SHALL derive its exact stored key from the
+captured Configuration membership, typed existing descriptor and registered
+source role. It SHALL compile only immutable snapshot/source bytes without SQL
+fetches or granting publication authority.
+
+#### Scenario: Existing selected module and complete unrelated staging
+- **GIVEN** a bounded coherent snapshot, complete original/staged inventories,
+  unique existing owner identity and the exact registered Module source path
+- **WHEN** its source text changes
+- **THEN** only that body's packed bytes and its validated versions delta are
+  returned, while the original physical rows, neighbour headers and parts remain
+  unchanged.
+
+#### Scenario: Ambiguous owner or destructive module re-encoding
+- **GIVEN** duplicate membership, a root/descriptor identity mismatch, colliding
+  source names, a wrong role or unsupported module-container members
+- **WHEN** a module candidate is compiled
+- **THEN** compilation refuses without producing a replacement or contacting SQL.
+
+#### Scenario: Stale-count versions contain an unselected trailing entry
+- **GIVEN** a valid SQL inventory whose trailing entries exceed its declared count
+- **WHEN** a selected module generation changes
+- **THEN** every unselected entry including trailing generations, all service
+  generations, pair order and declared count remain exact; omission, addition or
+  mutation of any such entry refuses.

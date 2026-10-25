@@ -180,3 +180,28 @@ witness limitation, not evidence of a compiled SQL publication exploit. SQL
 authority remains unavailable; no existing source digest is promoted to that
 missing proof. The 36aeffdd focused runtime receipt remains valid for its tested
 file/budget/diagnostic cases and does not cover this new negative control.
+
+## Snapshot-only existing CommonModule implementation slice
+
+The first direct SQL compiler consumes the immutable physical Readset and held
+source bytes, without SqlClient, offline compiler globals or diagnostic observer.
+It admits only canonical plain storage names and complete original/overlaid SQL
+versions inventories before any projection. A nonempty ConfigSave requires its
+own inventory. The existing strict Configuration decoder supplies top-level
+membership before index reduction; duplicate UUIDs, mismatched root identity,
+case-colliding module paths and unsupported roles refuse. The typed CommonModule
+codec and the existing SourceAssetRegistry derive the sole exact module body key.
+
+The base-aware module codec preserves the existing info element and element
+headers. Missing, duplicate or unknown container members refuse rather than
+being dropped. SQL-origin versions validation retains count, pair ordering,
+coverage and all unselected/service generation fields, including entries beyond
+the declared count. Only a changed selected body generation and the inventory
+header generation may differ. No-op text produces no replacements.
+
+The result contains immutable packed replacements and the original full readset
+digest. It is not a publishable plan: no SQL header is synthesized, no physical
+part is modified, and no editor route calls this compiler. Document/form support,
+profile admission for actual targets, source-bound confirmation tokens and the
+same-session transactional publisher remain separate unfinished #382 work. The
+unpublished diagnostic observer is not a dependency of this implementation.

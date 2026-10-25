@@ -1090,14 +1090,15 @@ use form_ref_index::FormObjectRefIndex;
 use forms::*;
 use metadata::*;
 use moxel::*;
-pub(crate) use output_writer::{FileSink, native_module_file_bytes};
 use output_writer::OutputWriter;
+pub(crate) use output_writer::{FileSink, native_module_file_bytes};
 use refs::*;
 use role_rights::*;
 use selected::*;
 use source_asset_diagnostics::cluster_source_asset_diagnostics;
 use source_assets::*;
 
+pub(crate) use config_dump_info::{validate_sql_versions_change, validate_sql_versions_inventory};
 pub use metadata::MetadataExtractionMissReason;
 pub use mxl_ir::{MxlDiagnostic, MxlDiagnosticStage};
 pub use source_asset_diagnostics::{
