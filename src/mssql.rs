@@ -1131,7 +1131,14 @@ fn activate_staged_main_verified_inner(
         &allowed_targets,
         args.allow_non_lab,
     )
-    .map_err(anyhow::Error::new)?;
+    .map_err(anyhow::Error::new)?
+    .with_profile_verification(&profile_verification);
+    if mode == MainActivationMode::Live
+        && !plan.is_no_op()
+        && !profile_verification.physical_database_binding_verified
+    {
+        crate::mssql_platform_profile::refuse_unbound_live_sessions(&sql, &args.database)?;
+    }
     if let Some(session) = managed.as_deref_mut() {
         if !args.dry_run && !plan.is_no_op() {
             session.require_activation_target(args)?;
@@ -1149,11 +1156,10 @@ fn activate_staged_main_verified_inner(
     // write, on the cluster's word.
     let plan = if mode == MainActivationMode::Exclusive && !plan.is_no_op() {
         plan.with_own_ras_processes(
-            crate::mssql_platform_profile::own_ras_processes_for_exclusive(
+            crate::mssql_platform_profile::own_ras_processes_for_verified_exclusive(
                 &args.rac,
                 &args.ras_endpoint,
-                profile_verification.verified_cluster_id,
-                profile_verification.verified_infobase_id,
+                &profile_verification,
             )?,
         )
     } else {
@@ -1339,7 +1345,7 @@ fn activate_staged_main_verified_inner(
                 unreachable!()
             };
             live_continuation = Some(
-                match crate::mssql_live_continue::finish(
+                match crate::mssql_live_continue::finish_verified(
                     client,
                     artifact,
                     &live_artifact_path,
@@ -1348,6 +1354,7 @@ fn activate_staged_main_verified_inner(
                     args.infobase_user.as_deref(),
                     args.infobase_pwd.as_deref(),
                     args.interrupt_sessions,
+                    &profile_verification,
                 ) {
                     Ok(report) => report,
                     Err(error) => {

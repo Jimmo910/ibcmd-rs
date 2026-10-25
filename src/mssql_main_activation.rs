@@ -121,6 +121,8 @@ pub struct MainActivationDryRunReport {
     pub online_protocol_verified: bool,
     pub existing_sessions_retain_generation: bool,
     pub live_session_switch_expected: bool,
+    #[serde(default)]
+    pub requires_empty_actual_sql_sessions: bool,
     pub requires_tail_log_artifact: bool,
     pub recovery_token: String,
     /// New Config row names, excluding the root/version replacements.
@@ -165,6 +167,7 @@ pub struct MainActivationPlan {
     no_op: bool,
     recovery: MainActivationRecoverySnapshot,
     own_ras_processes: Vec<OwnRasProcess>,
+    physical_database_binding_verified: bool,
     /// Writes the caller's apply makes in the same transaction (see [`Self::with_parity_sql`]).
     parity_sql: Option<String>,
     /// Internal caller's exact semantic inventory assertions, also required before no-op cleanup.
@@ -267,6 +270,15 @@ impl MainActivationPlan {
         &self.own_ras_processes
     }
 
+    /// Runtime profile evidence; unverified/default plans stay conservative.
+    pub(crate) fn with_profile_verification(
+        mut self,
+        verification: &crate::mssql_platform_profile::MssqlNativeProfileVerification,
+    ) -> Self {
+        self.physical_database_binding_verified = verification.physical_database_binding_verified;
+        self
+    }
+
     /// The plan with the worker processes whose idle SQL sessions the
     /// `exclusive` session gate leaves out: the sessions the tool's own RAS
     /// verification made the cluster open (#409 F-3). Without any, the gate
@@ -348,10 +360,15 @@ impl MainActivationPlan {
             no_op: self.no_op,
             online_protocol_verified: self.mode == MainActivationMode::Online,
             existing_sessions_retain_generation: self.mode == MainActivationMode::Online,
-            live_session_switch_expected: matches!(
-                self.mode,
-                MainActivationMode::Live | MainActivationMode::Worker
-            ),
+            live_session_switch_expected: !self.no_op
+                && (self.mode == MainActivationMode::Worker
+                    || (self.mode == MainActivationMode::Live
+                        && self.physical_database_binding_verified)),
+            requires_empty_actual_sql_sessions: !self.no_op
+                && ((self.mode == MainActivationMode::Exclusive
+                    && self.own_ras_processes.is_empty())
+                    || (self.mode == MainActivationMode::Live
+                        && !self.physical_database_binding_verified)),
             requires_tail_log_artifact: self.mode == MainActivationMode::Live && !self.no_op,
             recovery_token: hex(&Sha256::digest(recovery_json)),
             dynamic_aliases: if self.mode == MainActivationMode::Online && !self.no_op {
@@ -562,6 +579,7 @@ pub fn prepare_main_activation_for(
         no_op,
         recovery,
         own_ras_processes: Vec::new(),
+        physical_database_binding_verified: false,
         parity_sql: None,
         precondition_sql: None,
         platform_timestamps: None,
@@ -764,6 +782,10 @@ fn render_main_activation_sql_internal(
         }
         (_, _, None) => None,
     };
+    let unbound_live_gate = (plan.mode == MainActivationMode::Live
+        && !plan.no_op
+        && !plan.physical_database_binding_verified)
+        .then(|| crate::mssql_platform_profile::unbound_live_session_gate(database_name));
     let mut sql = String::new();
     writeln!(sql, "SET NOCOUNT ON;").unwrap();
     writeln!(sql, "SET XACT_ABORT ON;").unwrap();
@@ -839,6 +861,9 @@ fn render_main_activation_sql_internal(
             sql.push('\n');
         }
     }
+    if let Some(gate) = &unbound_live_gate {
+        sql.push_str(gate);
+    }
     match plan.mode {
         MainActivationMode::Exclusive => render_ordinary_transition(&mut sql, plan, true),
         MainActivationMode::Online => render_online_transition(&mut sql, plan),
@@ -865,6 +890,9 @@ fn render_main_activation_sql_internal(
     render_postconditions(&mut sql, plan);
     writeln!(sql, "IF EXISTS (SELECT 1 FROM dbo.ConfigSave) THROW 57221, 'ConfigSave postcondition failed', 1;").unwrap();
     if live_tail.is_some() {
+        if let Some(gate) = &unbound_live_gate {
+            sql.push_str(gate);
+        }
         // work that started after the gate ran rolls the promotion back, instead of being rolled back by the interruption
         sql.push_str(
             &crate::mssql_live_gate::render_sessions_check_in_transaction(
@@ -883,9 +911,16 @@ fn render_main_activation_sql_internal(
                 &database_literal,
                 tail,
                 &plan.dry_run_report().recovery_token,
+                unbound_live_gate.as_deref(),
             );
         } else {
-            render_legacy_live_recovery(&mut sql, &database, &database_literal, tail);
+            render_legacy_live_recovery(
+                &mut sql,
+                &database,
+                &database_literal,
+                tail,
+                unbound_live_gate.as_deref(),
+            );
         }
     }
 
@@ -1118,6 +1153,7 @@ fn render_live_recovery(
     database_literal: &str,
     tail_log_output: &str,
     recovery_token: &str,
+    unbound_session_gate: Option<&str>,
 ) {
     let tail = quote_string(tail_log_output);
     let backup_name = format!("ibcmd-rs:live:{recovery_token}:1");
@@ -1126,6 +1162,9 @@ fn render_live_recovery(
     writeln!(sql, "BEGIN TRY").unwrap();
     writeln!(sql, "DECLARE @LiveFirstAccessChanged bit=0;").unwrap();
     // Promotion and cycle 1 commit independently. The guarded continuation owns cycle 2.
+    if let Some(gate) = unbound_session_gate {
+        sql.push_str(gate);
+    }
     writeln!(sql, "ALTER DATABASE {database} SET SINGLE_USER WITH ROLLBACK IMMEDIATE; SET @LiveFirstAccessChanged=1;").unwrap();
     writeln!(sql, "BACKUP LOG {database} TO DISK=N'{tail}' WITH NORECOVERY, INIT, COMPRESSION, CHECKSUM, NAME=N'{backup_name}';").unwrap();
     writeln!(sql, "RESTORE DATABASE {database} WITH RECOVERY;").unwrap();
@@ -1147,6 +1186,7 @@ fn render_legacy_live_recovery(
     database: &str,
     database_literal: &str,
     tail_log_output: &str,
+    unbound_session_gate: Option<&str>,
 ) {
     let tail = quote_string(tail_log_output);
     writeln!(sql, "DECLARE @LiveExpected1cConnections int=(SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process=1 AND database_id=DB_ID(N'{database_literal}') AND program_name=N'1CV83 Server');").unwrap();
@@ -1157,6 +1197,9 @@ fn render_legacy_live_recovery(
     // generation. The second recovery advances already open 1C sessions to
     // that prepared generation. Both log backup sets are retained in one
     // operator-owned artifact.
+    if let Some(gate) = unbound_session_gate {
+        sql.push_str(gate);
+    }
     writeln!(
         sql,
         "ALTER DATABASE {database} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;"
@@ -1172,6 +1215,9 @@ fn render_legacy_live_recovery(
     writeln!(sql, "DECLARE @LiveReconnectDeadline datetime2(3)=DATEADD(millisecond,4000,SYSUTCDATETIME()), @LiveStableSince datetime2(3)=NULL, @LiveObserved1cConnections int=0;").unwrap();
     writeln!(sql, "WHILE @LiveExpected1cConnections > 0 AND SYSUTCDATETIME() < @LiveReconnectDeadline BEGIN SELECT @LiveObserved1cConnections=COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process=1 AND database_id=DB_ID(N'{database_literal}') AND program_name=N'1CV83 Server'; IF @LiveObserved1cConnections >= @LiveExpected1cConnections BEGIN IF @LiveStableSince IS NULL SET @LiveStableSince=SYSUTCDATETIME(); IF DATEDIFF(millisecond,@LiveStableSince,SYSUTCDATETIME()) >= 500 BREAK; END ELSE SET @LiveStableSince=NULL; WAITFOR DELAY '00:00:00.100'; END;").unwrap();
     writeln!(sql, "IF @LiveExpected1cConnections > 0 AND (@LiveObserved1cConnections < @LiveExpected1cConnections OR @LiveStableSince IS NULL OR DATEDIFF(millisecond,@LiveStableSince,SYSUTCDATETIME()) < 500) THROW 57234, '1C SQL connections did not recover before the live activation deadline; database is online and the second recovery was not started', 1;").unwrap();
+    if let Some(gate) = unbound_session_gate {
+        sql.push_str(gate);
+    }
     writeln!(
         sql,
         "ALTER DATABASE {database} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;"
@@ -1945,6 +1991,33 @@ mod tests {
     }
 
     #[test]
+    fn unbound_live_requires_actual_sql_target_without_idle_sessions_before_writes() {
+        for checkpoint in [false, true] {
+            let plan = fixture(MainActivationMode::Live);
+            let script = if checkpoint {
+                render_main_activation_checkpoint("lab", &plan, Some(r"C:\tail.trn"), true)
+            } else {
+                render_main_activation_sql_with("lab", &plan, Some(r"C:\tail.trn"), true)
+            }
+            .unwrap();
+            let promotion = script.sql.find("DELETE FROM dbo.Config WHERE").unwrap();
+            let message =
+                "unbound RAS summary cannot exempt actual SQL target sessions, including idle";
+            let guard = script.sql.find(message).expect("direct live must gate actual target SQL sessions, even with interrupt acknowledgment");
+            assert!(guard < promotion);
+            let interruption = script.sql.find("SET SINGLE_USER").unwrap();
+            assert!(script.sql[promotion..interruption].contains(message));
+            assert!(script.report.requires_empty_actual_sql_sessions);
+            let mut bound = fixture(MainActivationMode::Live);
+            bound.physical_database_binding_verified = true;
+            let trusted =
+                render_main_activation_sql_with("lab", &bound, Some(r"C:\tail.trn"), true).unwrap();
+            assert!(!trusted.sql.contains(message));
+            assert!(!trusted.report.requires_empty_actual_sql_sessions);
+        }
+    }
+
+    #[test]
     fn live_promotes_ordinary_rows_then_runs_guarded_tail_recovery() {
         let script = render_main_activation_checkpoint(
             "lab]db",
@@ -2014,7 +2087,10 @@ mod tests {
     fn the_live_gate_is_at_the_head_of_the_script_and_the_sessions_are_checked_again_before_the_commit()
      {
         // #409 F-9 (log chain, directory, the account's right to write) and F-10 (sessions with open work)
-        let plan = fixture(MainActivationMode::Live);
+        // This is the previously measured physically bound managed policy.
+        // Unbound direct LIVE has its independent all-session guard test.
+        let mut plan = fixture(MainActivationMode::Live);
+        plan.physical_database_binding_verified = true;
         let tail = Some(r"C:\tail\generation.trn");
         let script = render_main_activation_sql("lab", &plan, tail).unwrap();
         let at = |needle: &str| {

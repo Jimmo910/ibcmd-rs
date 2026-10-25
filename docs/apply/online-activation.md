@@ -795,3 +795,19 @@ the saved artifact's logical RAS UUIDs do not claim a physical mapping.
 The owned managed-worker path retains its internal credentials and exact
 physical-registration proof. Earlier measurements in this document describe
 the authenticated route that existed when those traces were recorded.
+
+Direct summary verification never supplies RAS worker PIDs as SQL-session
+exemptions to an exclusive gate. A different registration can use the same
+worker process while the selected SQL database has real users. Without a
+verified physical binding every other target SQL session counts, including
+idle platform sessions. The managed exact-binding path retains its measured
+exemptions; the SQL gate itself is unchanged.
+
+Unbound direct LIVE also requires zero other sessions on the actual SQL
+target, including idle handles, before publication and before each disruptive
+recovery. `--interrupt-sessions` does not waive this missing-binding guard.
+Standalone continuation, including older saved artifacts, defaults to this
+strict policy. Only an in-process managed physical-registration verification
+retains the earlier idle-handle policy. Read-only/already-complete continuation
+and no-op publication do not claim a required interruption or add this gate.
+Dry-run reports expose `requires_empty_actual_sql_sessions`.

@@ -610,15 +610,39 @@ fn infobase_clients(
     }
 }
 
-/// For an exclusive activation: refuses, before anything is written, an
-/// infobase that has client connections or sessions, and returns the worker
-/// processes whose idle SQL sessions the gate of the activation leaves out
-/// ([`exclusive_session_gate`]) because they belong to the RAS service.
+/// An unbound logical registration cannot justify target SQL PID exemptions.
+/// Client inventory still refuses before writing; all actual SQL sessions count.
 pub fn own_ras_processes_for_exclusive(
     rac: &Path,
     ras_endpoint: &str,
     cluster_id: Uuid,
     infobase_id: Uuid,
+) -> Result<Vec<OwnRasProcess>> {
+    exclusive_ras_processes(rac, ras_endpoint, cluster_id, infobase_id, false)
+}
+
+/// Only an exact physical database-registration observation can establish that
+/// the RAS workers belong to the selected SQL target. Summary never can.
+pub fn own_ras_processes_for_verified_exclusive(
+    rac: &Path,
+    ras_endpoint: &str,
+    verification: &MssqlNativeProfileVerification,
+) -> Result<Vec<OwnRasProcess>> {
+    exclusive_ras_processes(
+        rac,
+        ras_endpoint,
+        verification.verified_cluster_id,
+        verification.verified_infobase_id,
+        verification.physical_database_binding_verified,
+    )
+}
+
+fn exclusive_ras_processes(
+    rac: &Path,
+    ras_endpoint: &str,
+    cluster_id: Uuid,
+    infobase_id: Uuid,
+    physical_database_binding_verified: bool,
 ) -> Result<Vec<OwnRasProcess>> {
     let found = read_infobase_clients(rac, ras_endpoint, cluster_id, infobase_id)?;
     if !found.clients.is_empty() {
@@ -634,7 +658,35 @@ pub fn own_ras_processes_for_exclusive(
                 .join("; ")
         );
     }
-    Ok(found.ras_only_processes.into_iter().collect())
+    Ok(if physical_database_binding_verified {
+        found.ras_only_processes.into_iter().collect()
+    } else {
+        Vec::new()
+    })
+}
+
+/// Direct LIVE cannot use an unbound RAS inventory to admit target SQL handles.
+/// This counts idle sessions too, and is never bypassed by --interrupt-sessions.
+pub(crate) fn unbound_live_session_gate(database: &str) -> String {
+    let database = database.replace('\'', "''");
+    format!(
+        "IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID(N'{database}')) THROW 57239, 'unbound RAS summary cannot exempt actual SQL target sessions, including idle; live operation refused', 1;\n"
+    )
+}
+
+pub(crate) fn refuse_unbound_live_sessions(sql: &SqlExec, database: &str) -> Result<()> {
+    let SqlBackend::Client(client) = sql.backend() else {
+        return Ok(());
+    };
+    if !client
+        .query_rows(&foreign_sessions_query(database, &[]), &[])?
+        .is_empty()
+    {
+        bail!(
+            "live operation refused before publication: unbound RAS summary cannot exempt actual SQL target sessions, including idle; close target SQL sessions and retry"
+        );
+    }
+    Ok(())
 }
 
 /// The statement of an exclusive activation that refuses when the database has
@@ -1352,6 +1404,69 @@ pub(crate) mod tests {
                 "rac_agent_exact_build_plus_cluster_summary_plus_independent_live_sql_schema"
             );
         }
+    }
+
+    #[test]
+    fn unbound_registration_never_exempts_a_shared_worker_sql_session() {
+        let name = "mssql_platform_profile::tests::unbound_registration_never_exempts_a_shared_worker_sql_session";
+        if run_isolated_profile_test(name) {
+            return;
+        }
+        let scratch = ProfileToolsDir::new();
+        let rac = inventory_rac(&scratch.0);
+        let exemptions = own_ras_processes_for_exclusive(
+            &rac,
+            "unused-endpoint",
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
+        .unwrap();
+        assert!(
+            exemptions.is_empty(),
+            "logical RAS registration must not exempt a PID shared with the selected SQL target: {exemptions:?}"
+        );
+        let gate = exclusive_session_gate(57209, "exclusive", &exemptions);
+        assert!(!gate.contains("shared-host"));
+        assert!(!gate.contains("host_process_id"));
+        let mut verified = verify_probe(
+            MssqlNativePlatformProfile::Platform8_3_27_2214,
+            "8.3.27.2214",
+            evidenced_probe(),
+            test_binding(),
+        )
+        .unwrap();
+        assert_eq!(
+            own_ras_processes_for_verified_exclusive(&rac, "unused", &verified).unwrap(),
+            vec![own("shared-host", 12345)]
+        );
+        verified.physical_database_binding_verified = false;
+        assert!(
+            own_ras_processes_for_verified_exclusive(&rac, "unused", &verified)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    fn inventory_rac(dir: &Path) -> std::path::PathBuf {
+        let path = fake_profile_tool(dir, "inventory-rac", "", false);
+        #[cfg(windows)]
+        let script = r#"@echo off
+if "%~1 %~2"=="connection list" (echo application : RAS&echo process : shared-worker&exit /b 0)
+if "%~1 %~2"=="session list" exit /b 0
+if "%~1 %~2"=="process list" (echo process : shared-worker&echo host : shared-host&echo pid : 12345&exit /b 0)
+exit /b 23
+"#.replace('\n', "\r\n");
+        #[cfg(unix)]
+        let script = r#"#!/bin/sh
+case "$1 $2" in
+'connection list') printf 'application : RAS\nprocess : shared-worker\n';;
+'session list') :;;
+'process list') printf 'process : shared-worker\nhost : shared-host\npid : 12345\n';;
+*) exit 23;;
+esac
+"#;
+        std::fs::write(&path, script).unwrap();
+        path
     }
 
     // rac_process deliberately owns one original child at a time. Run each

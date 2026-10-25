@@ -246,6 +246,14 @@ fn database_ident(database: &str) -> Result<String> {
 /// The header check is re-run inside the same master session/application lock as the append.
 /// Two genuine operation-owned sets return without another interruption; arbitrary two sets refuse.
 pub fn render_continue(artifact: &LiveArtifact, interrupt: bool, execute: bool) -> Result<String> {
+    render_continue_with_binding(artifact, interrupt, execute, false)
+}
+fn render_continue_with_binding(
+    artifact: &LiveArtifact,
+    interrupt: bool,
+    execute: bool,
+    physical_database_binding_verified: bool,
+) -> Result<String> {
     artifact.validate()?;
     let db = database_ident(&artifact.identity.database)?;
     let name = quote_string(&artifact.identity.database);
@@ -275,6 +283,11 @@ pub fn render_continue(artifact: &LiveArtifact, interrupt: bool, execute: bool) 
     sql.push_str("USE [master];\nIF (SELECT COUNT(*) FROM #LiveHeader)=2 BEGIN\nIF NOT EXISTS (SELECT 1 FROM #LiveHeader a JOIN #LiveHeader b ON a.Position=1 AND b.Position=2 WHERE a.LastLSN=b.FirstLSN AND a.DatabaseBackupLSN=b.DatabaseBackupLSN AND a.BackupSetGUID<>b.BackupSetGUID) THROW 57267,'live backup chain is not contiguous',1;\nEND\n");
     if execute {
         sql.push_str("ELSE BEGIN\n");
+        if !physical_database_binding_verified {
+            sql.push_str(&crate::mssql_platform_profile::unbound_live_session_gate(
+                &artifact.identity.database,
+            ));
+        }
         sql.push_str(&render_continuation_sessions_check(
             &artifact.identity.database,
             interrupt,
@@ -377,18 +390,63 @@ pub fn finish(
     pwd: Option<&str>,
     interrupt: bool,
 ) -> Result<LiveContinueReport> {
-    finish_with_readiness(client, artifact, path, interrupt, || {
-        let storage = crate::mssql_platform_profile::verify_mssql_storage_profile(
-            crate::mssql_platform_profile::MssqlNativePlatformProfile::Platform8_3_27_2214,
-            client,
-            &artifact.identity.database,
-        )?;
-        ensure!(
-            storage.storage_schema_sha256 == artifact.storage_schema_sha256,
-            "live continuation storage profile changed; cycle 2 was not started"
-        );
-        require_idle_ras(rac, endpoint, artifact, user, pwd)
-    })
+    finish_with_binding(
+        client, artifact, path, rac, endpoint, user, pwd, interrupt, false,
+    )
+}
+pub(crate) fn finish_verified(
+    client: &dyn SqlClient,
+    artifact: &LiveArtifact,
+    path: &Path,
+    rac: &Path,
+    endpoint: &str,
+    user: Option<&str>,
+    pwd: Option<&str>,
+    interrupt: bool,
+    verification: &crate::mssql_platform_profile::MssqlNativeProfileVerification,
+) -> Result<LiveContinueReport> {
+    finish_with_binding(
+        client,
+        artifact,
+        path,
+        rac,
+        endpoint,
+        user,
+        pwd,
+        interrupt,
+        verification.physical_database_binding_verified,
+    )
+}
+fn finish_with_binding(
+    client: &dyn SqlClient,
+    artifact: &LiveArtifact,
+    path: &Path,
+    rac: &Path,
+    endpoint: &str,
+    user: Option<&str>,
+    pwd: Option<&str>,
+    interrupt: bool,
+    physical_database_binding_verified: bool,
+) -> Result<LiveContinueReport> {
+    finish_with_readiness(
+        client,
+        artifact,
+        path,
+        interrupt,
+        physical_database_binding_verified,
+        || {
+            let storage = crate::mssql_platform_profile::verify_mssql_storage_profile(
+                crate::mssql_platform_profile::MssqlNativePlatformProfile::Platform8_3_27_2214,
+                client,
+                &artifact.identity.database,
+            )?;
+            ensure!(
+                storage.storage_schema_sha256 == artifact.storage_schema_sha256,
+                "live continuation storage profile changed; cycle 2 was not started"
+            );
+            require_idle_ras(rac, endpoint, artifact, user, pwd)
+        },
+    )
 }
 
 fn finish_with_readiness(
@@ -396,22 +454,46 @@ fn finish_with_readiness(
     artifact: &LiveArtifact,
     path: &Path,
     interrupt: bool,
+    physical_database_binding_verified: bool,
     mut idle: impl FnMut() -> Result<()>,
 ) -> Result<LiveContinueReport> {
-    let state = validated_state(client, artifact, interrupt, false)?;
+    let state = validated_state(
+        client,
+        artifact,
+        interrupt,
+        false,
+        physical_database_binding_verified,
+    )?;
     if state.0 == 2 {
-        return Ok(report(path, "already_complete", false));
+        return Ok(report_with_binding(
+            path,
+            "already_complete",
+            false,
+            physical_database_binding_verified,
+        ));
     }
     idle()?;
     // Recheck the real RAS inventory immediately before the atomic header/append guard.
     idle()?;
-    let state = validated_state(client, artifact, interrupt, true)?;
-    let final_state = validated_state(client, artifact, interrupt, false)?;
+    let state = validated_state(
+        client,
+        artifact,
+        interrupt,
+        true,
+        physical_database_binding_verified,
+    )?;
+    let final_state = validated_state(
+        client,
+        artifact,
+        interrupt,
+        false,
+        physical_database_binding_verified,
+    )?;
     ensure!(
         final_state.0 == 2,
         "cycle 2 completion is ambiguous; inspect retained artifact"
     );
-    Ok(report(
+    Ok(report_with_binding(
         path,
         if state.1 {
             "complete"
@@ -419,6 +501,7 @@ fn finish_with_readiness(
             "already_complete"
         },
         state.1,
+        physical_database_binding_verified,
     ))
 }
 
@@ -427,8 +510,17 @@ fn validated_state(
     artifact: &LiveArtifact,
     interrupt: bool,
     execute: bool,
+    physical_database_binding_verified: bool,
 ) -> Result<(i64, bool)> {
-    let rows = client.query_rows(&render_continue(artifact, interrupt, execute)?, &[])?;
+    let rows = client.query_rows(
+        &render_continue_with_binding(
+            artifact,
+            interrupt,
+            execute,
+            physical_database_binding_verified,
+        )?,
+        &[],
+    )?;
     ensure!(
         rows.len() == 1,
         "live state query returned ambiguous results"
@@ -442,8 +534,33 @@ fn validated_state(
     Ok((count, executed == 1))
 }
 
-fn report(path: &Path, state: &str, executed: bool) -> LiveContinueReport {
-    LiveContinueReport { artifact: path.to_owned(), state: state.to_owned(), cycle_2_executed: Some(executed), identity_source: "rac_cluster_summary_plus_saved_sql_checkpoint", physical_database_binding_verified: false, client_restart_required: true, detail: "Empty RAS user-session readiness only; active/warm cohort readiness and zero-error switching are not established".to_owned() }
+fn report_with_binding(
+    path: &Path,
+    state: &str,
+    executed: bool,
+    physical_database_binding_verified: bool,
+) -> LiveContinueReport {
+    let identity_source = if physical_database_binding_verified {
+        "managed_registered_infobase_plus_saved_sql_checkpoint"
+    } else {
+        "rac_cluster_summary_plus_saved_sql_checkpoint"
+    };
+    let detail = if state == "already_complete" {
+        "Saved SQL identity/backup chain proves completion; no further interruption or session admission was needed"
+    } else if physical_database_binding_verified {
+        "Empty RAS user-session readiness only; active/warm cohort readiness and zero-error switching are not established"
+    } else {
+        "Direct LIVE requires no other actual SQL target sessions, including idle; RAS summary proves only logical registration. Active/warm client readiness and zero-error switching are not established"
+    };
+    LiveContinueReport {
+        artifact: path.to_owned(),
+        state: state.to_owned(),
+        cycle_2_executed: Some(executed),
+        identity_source,
+        physical_database_binding_verified,
+        client_restart_required: true,
+        detail: detail.to_owned(),
+    }
 }
 
 pub fn unresolved(path: &Path, error: &anyhow::Error) -> LiveContinueReport {
@@ -911,7 +1028,7 @@ mod tests {
 
     #[test]
     fn continuation_report_never_claims_summary_proves_sql_mapping() {
-        let report = report(Path::new("checkpoint.json"), "complete", true);
+        let report = report_with_binding(Path::new("checkpoint.json"), "complete", true, false);
         assert!(!report.physical_database_binding_verified);
         assert_eq!(
             report.identity_source,
@@ -919,6 +1036,28 @@ mod tests {
         );
         let unresolved = unresolved(Path::new("checkpoint.json"), &anyhow::anyhow!("pending"));
         assert!(!unresolved.physical_database_binding_verified);
+    }
+
+    #[test]
+    fn unbound_continuation_counts_idle_sql_sessions_before_cycle_two() {
+        let sql = render_continue(&fixture(), true, true).unwrap();
+        let guard = sql
+            .find("unbound RAS summary cannot exempt actual SQL target sessions, including idle")
+            .expect("summary cannot establish an empty actual target client inventory");
+        assert!(guard < sql.find("SET SINGLE_USER").unwrap());
+        assert!(sql[..guard].contains("session_id<>@@SPID"));
+        let read_only = render_continue(&fixture(), true, false).unwrap();
+        assert!(
+            !read_only.contains("unbound RAS summary cannot exempt actual SQL target sessions")
+        );
+    }
+
+    #[test]
+    fn managed_bound_continuation_retains_idle_policy_and_binding_evidence() {
+        let bound = render_continue_with_binding(&fixture(), true, true, true).unwrap();
+        assert!(!bound.contains("unbound RAS summary cannot exempt actual SQL target sessions"));
+        let trusted = report_with_binding(Path::new("checkpoint.json"), "complete", true, true);
+        assert!(trusted.physical_database_binding_verified);
     }
 
     #[test]
@@ -1100,12 +1239,18 @@ mod tests {
             post_append_failure: true,
         };
         let mut checks = 0;
-        let error =
-            finish_with_readiness(&client, &fixture(), Path::new("saved.json"), false, || {
+        let error = finish_with_readiness(
+            &client,
+            &fixture(),
+            Path::new("saved.json"),
+            false,
+            false,
+            || {
                 checks += 1;
                 Ok(())
-            })
-            .unwrap_err();
+            },
+        )
+        .unwrap_err();
         assert_eq!(checks, 2);
         assert_eq!(client.calls.load(Ordering::SeqCst), 3);
         assert!(error.to_string().contains("post-append verification"));
@@ -1124,12 +1269,18 @@ mod tests {
             post_append_failure: true,
         };
         let mut checks = 0;
-        let error =
-            finish_with_readiness(&client, &fixture(), Path::new("saved.json"), false, || {
+        let error = finish_with_readiness(
+            &client,
+            &fixture(),
+            Path::new("saved.json"),
+            false,
+            false,
+            || {
                 checks += 1;
                 bail!("RAS session readiness timed out; cycle 2 was not started")
-            })
-            .unwrap_err();
+            },
+        )
+        .unwrap_err();
         assert_eq!(checks, 1);
         assert_eq!(client.calls.load(Ordering::SeqCst), 1);
         assert!(error.to_string().contains("cycle 2 was not started"));

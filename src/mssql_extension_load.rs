@@ -643,11 +643,10 @@ pub(crate) fn activate_staged_extension_verified(
         && !plan.is_no_op()
     {
         plan.with_own_ras_processes(
-            crate::mssql_platform_profile::own_ras_processes_for_exclusive(
+            crate::mssql_platform_profile::own_ras_processes_for_verified_exclusive(
                 &args.rac,
                 &args.ras_endpoint,
-                profile_verification.verified_cluster_id,
-                profile_verification.verified_infobase_id,
+                &profile_verification,
             )?,
         )
     } else {

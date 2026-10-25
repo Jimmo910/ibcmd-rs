@@ -382,16 +382,24 @@ fn apply_source_change_inner(
     // own RAS verification is on it; asking before the stage keeps `ConfigSave`
     // untouched. The gate inside the activation's transaction stays the last word.
     if matches!(args.mode, MssqlMainActivationModeArg::Exclusive) {
-        let own = crate::mssql_platform_profile::own_ras_processes_for_exclusive(
+        let own = crate::mssql_platform_profile::own_ras_processes_for_verified_exclusive(
             &args.rac,
             &args.ras_endpoint,
-            profile_verification.verified_cluster_id,
-            profile_verification.verified_infobase_id,
+            &profile_verification,
         )?;
         crate::mssql_platform_profile::refuse_foreign_sessions(
             &main_read_sql(args)?,
             &args.database,
             &own,
+        )?;
+    }
+    if args.extension.is_none()
+        && matches!(args.mode, MssqlMainActivationModeArg::Live)
+        && !profile_verification.physical_database_binding_verified
+    {
+        crate::mssql_platform_profile::refuse_unbound_live_sessions(
+            &main_read_sql(args)?,
+            &args.database,
         )?;
     }
     // The live switch is refused, before the stage, when the database has no log backup chain, the tail directory is not there or

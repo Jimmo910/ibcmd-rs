@@ -706,7 +706,14 @@ set `physical_database_binding_verified=false` and identify the summary evidence
 Legacy `--infobase-user` / `--infobase-pwd` are accepted but ignored on direct
 SQL routes, even when only the password is supplied. The owned managed-worker
 route retains its authenticated exact database-registration check and reports
-`physical_database_binding_verified=true`. For example:
+`physical_database_binding_verified=true`. Direct exclusive publication grants
+no SQL-session exemptions from RAS worker PIDs: another registration may share
+the same worker. All other sessions on the selected SQL target count. Only a
+physically bound managed observation may exempt its own idle RAS sessions.
+The unbound direct LIVE path likewise requires no other actual target SQL
+sessions before publication/recovery, including idle handles; an interruption
+acknowledgment does not bypass this rule.
+For example:
 
 ```text
 ibcmd-rs infobase config import --dbms=MSSQLServer --db-server=localhost --db-name=lab --platform=8.5.1.1150 --extension=MyExtension --rac=rac --ras-endpoint=localhost:1545 --cluster-id=<uuid> --infobase-id=<uuid> F:\src\MyExtension
