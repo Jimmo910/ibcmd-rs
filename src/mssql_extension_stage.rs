@@ -21,12 +21,13 @@ use uuid::Uuid;
 
 use crate::sql::{ScriptVariables, SqlBackend, SqlExec};
 
-const EVIDENCED_CONFIGINFO_STORAGE_FORMATS_8327: [u32; 4] = [80_310, 80_314, 80_321, 80_324];
+const EVIDENCED_CONFIGINFO_STORAGE_FORMATS_8327: [u32; 5] =
+    [80_310, 80_314, 80_321, 80_324, 80_327];
 /// Storage formats the export reads besides the evidenced ones: 80501, the
 /// 8.5.1 extensions of the БСП 8.5 clone (three extensions), and 80327, the
 /// extensions the 8.3.27.2214 platform creates itself (the platform-made
-/// fixtures of upstream PR 387). Read only: nothing is generated or staged in
-/// them.
+/// fixtures of upstream PR 387). Both are now evidenced staging formats;
+/// the exact platform capability and format pairing are checked separately.
 const READABLE_CONFIGINFO_STORAGE_FORMATS_85: [u32; 2] = [80_327, 80_501];
 /// Older standalone CFE inputs backed by the platform-made compatibility-form
 /// fixtures. They are readable containers, not evidenced SQL staging targets.
@@ -732,9 +733,11 @@ fn validate_content_rows(rows: &[ExtensionStageRow]) -> Result<(), ExtensionStag
     Ok(())
 }
 
-/// The formats a manifest may be generated in (staged into): 8.3.27 only.
+/// Formats measured on native SQL twins. Exact-build admission is separate.
 fn validate_storage_format(storage_format: u32) -> Result<(), ExtensionStageError> {
-    if EVIDENCED_CONFIGINFO_STORAGE_FORMATS_8327.contains(&storage_format) {
+    if EVIDENCED_CONFIGINFO_STORAGE_FORMATS_8327.contains(&storage_format)
+        || storage_format == 80_501
+    {
         Ok(())
     } else {
         Err(ExtensionStageError::InvalidConfigInfo(format!(
@@ -1251,14 +1254,14 @@ mod tests {
     }
 
     #[test]
-    fn reads_an_8_5_manifest_but_never_generates_one() {
+    fn reads_and_generates_measured_8_5_manifest() {
         let plain = generate_configinfo_manifest(&identity(), &content_rows()).unwrap();
         let text = String::from_utf8(plain).unwrap().replace("80321", "80501");
         let parsed = validate_configinfo_manifest(text.as_bytes()).unwrap();
         assert_eq!(parsed.storage_format, 80_501);
         let mut identity = identity();
         identity.storage_format = 80_501;
-        assert!(generate_configinfo_manifest(&identity, &content_rows()).is_err());
+        assert!(generate_configinfo_manifest(&identity, &content_rows()).is_ok());
     }
 
     #[test]

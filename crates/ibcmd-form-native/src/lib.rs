@@ -280,9 +280,11 @@ pub const WEB_COLOR_CODES: &[(&str, &str)] = &[
     ("LightYellow", "79"),
     ("Lime", "80"),
     ("LimeGreen", "81"),
+    ("Linen", "82"),
     ("Maroon", "84"),
     ("MediumBlue", "86"),
     ("MediumGray", "87"),
+    ("MediumGreen", "88"),
     ("MediumSeaGreen", "91"),
     ("MintCream", "97"),
     ("MistyRose", "98"),
@@ -311,6 +313,7 @@ pub const WEB_COLOR_CODES: &[(&str, &str)] = &[
     ("SlateGray", "131"),
     ("Snow", "132"),
     ("SteelBlue", "134"),
+    ("Tomato", "138"),
     ("Violet", "140"),
     ("VioletRed", "141"),
     ("White", "143"),
@@ -10139,6 +10142,21 @@ fn resolve_metadata_data_path_part(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extension_activation_colors_match_native_coverage() {
+        for (name, expected) in [
+            ("Linen", "{3,2,{82}}"),
+            ("MediumGreen", "{3,2,{88}}"),
+            ("Tomato", "{3,2,{138}}"),
+        ] {
+            assert_eq!(
+                format_native_color(Some(&format!("web:{name}")), |_| None).as_deref(),
+                Some(expected)
+            );
+        }
+        assert!(format_native_color(Some("web:Tomato.Extra"), |_| None).is_none());
+    }
 
     #[test]
     fn encodes_base64_as_rfc_4648_does() {

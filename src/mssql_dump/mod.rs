@@ -37698,9 +37698,11 @@ pub(crate) fn style_web_color_name(code: i32) -> Option<&'static str> {
         77 => Some("web:LightSlateGray"),
         78 => Some("web:LightSteelBlue"),
         79 => Some("web:LightYellow"),
+        82 => Some("web:Linen"),
         84 => Some("web:Maroon"),
         86 => Some("web:MediumBlue"),
         87 => Some("web:MediumGray"),
+        88 => Some("web:MediumGreen"),
         94 => Some("web:Orange"),
         105 => Some("web:Orange"),
         97 => Some("web:MintCream"),
@@ -37720,6 +37722,7 @@ pub(crate) fn style_web_color_name(code: i32) -> Option<&'static str> {
         130 => Some("web:SlateBlue"),
         131 => Some("web:SlateGray"),
         134 => Some("web:SteelBlue"),
+        138 => Some("web:Tomato"),
         140 => Some("web:Violet"),
         141 => Some("web:VioletRed"),
         143 => Some("web:White"),
@@ -39028,7 +39031,7 @@ fn parse_1c_quoted_string_with_len(input: &str) -> Option<(String, usize)> {
     None
 }
 
-fn parse_1c_quoted_string(input: &str) -> Option<String> {
+pub(crate) fn parse_1c_quoted_string(input: &str) -> Option<String> {
     parse_1c_quoted_string_with_len(input).map(|(value, _)| value)
 }
 
@@ -47663,3 +47666,19 @@ mod tests;
 
 #[cfg(test)]
 mod external_data_source_tests;
+
+#[cfg(test)]
+#[test]
+fn extension_activation_web_colors_share_the_native_dictionary() {
+    for (code, name) in [(82, "Linen"), (88, "MediumGreen"), (138, "Tomato")] {
+        assert_eq!(
+            style_web_color_name(code),
+            Some(format!("web:{name}").as_str())
+        );
+        assert!(
+            crate::compiler::bodies::form_native::WEB_COLOR_CODES
+                .iter()
+                .any(|(n, c)| *n == name && c.parse::<i32>().ok() == Some(code))
+        );
+    }
+}

@@ -81,8 +81,10 @@ pub struct MssqlExtensionActivationReport {
     pub dry_run: bool,
     pub executed: bool,
     pub activation: crate::mssql_extension_activation::ExtensionActivationDryRun,
-    pub script: PathBuf,
-    pub recovery: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<PathBuf>,
 }
 
 struct PreparedLoad {
@@ -205,6 +207,8 @@ pub fn load_extensions(args: &MssqlLoadExtensionArgs) -> Result<MssqlExtensionLo
             root,
         )
         .with_context(|| format!("failed to fetch active extension {:?}", extension.name))?;
+        args.platform_profile
+            .require_extension_storage_format(manifest.identity().storage_format)?;
         // A bounded selection of module bodies (`--path-prefix`, which
         // `mssql-apply-source-change --extension` always passes) is overlaid
         // on the active rows without comparing anything. Anything else -- or
@@ -381,6 +385,12 @@ pub(crate) fn activate_staged_extension_verified(
     profile_verification: crate::mssql_platform_profile::MssqlNativeProfileVerification,
 ) -> Result<MssqlExtensionActivationReport> {
     args.platform_profile.require_extension_write_supported()?;
+    if args.platform_profile
+        == crate::mssql_platform_profile::MssqlNativePlatformProfile::Platform8_5_1_1150
+        && args.mode != crate::cli::MssqlMainActivationModeArg::Exclusive
+    {
+        bail!("8.5.1.1150 extension publication is measured only in exclusive mode");
+    }
     if !args.allow_non_lab {
         bail!("direct extension writes require explicit --allow-non-lab");
     }
@@ -426,6 +436,20 @@ pub(crate) fn activate_staged_extension_verified(
         .iter()
         .find(|item| item.name == args.extension)
         .ok_or_else(|| anyhow!("extension {:?} was not found", args.extension))?;
+    let mode = match args.mode {
+        crate::cli::MssqlMainActivationModeArg::Exclusive => {
+            crate::mssql_extension_activation::ExtensionActivationMode::Exclusive
+        }
+        crate::cli::MssqlMainActivationModeArg::Online => {
+            crate::mssql_extension_activation::ExtensionActivationMode::Online
+        }
+        crate::cli::MssqlMainActivationModeArg::Live => {
+            bail!("live activation is not supported for extensions; use online or exclusive")
+        }
+        crate::cli::MssqlMainActivationModeArg::Worker => {
+            bail!("worker activation is not supported for extensions; use online or exclusive")
+        }
+    };
     let namespace = extension_namespace_prefix(extension.physical_registry_id);
     let prefix = format!("{namespace}__");
     let selected_stage = crate::mssql_dump::fetch_extension_activation_rows(
@@ -436,6 +460,33 @@ pub(crate) fn activate_staged_extension_verified(
         MAX_ACTIVATION_STAGE_ROWS,
         MAX_ACTIVATION_STAGE_BYTES,
     )?;
+    if selected_stage.is_empty() {
+        return Ok(MssqlExtensionActivationReport {
+            database: args.database.clone(),
+            claimed_platform_profile: profile_verification.claimed_platform_profile,
+            verified_platform_profile: profile_verification.verified_platform_profile,
+            storage_schema_sha256: profile_verification.storage_schema_sha256,
+            extension: args.extension.clone(),
+            dry_run: args.dry_run,
+            executed: false,
+            activation: crate::mssql_extension_activation::ExtensionActivationDryRun {
+                mode,
+                namespace_prefix: namespace,
+                prior_root_sha1: extension.active_cas_root.clone(),
+                published_root_sha1: extension.active_cas_root.clone(),
+                staged_rows: 0,
+                staged_bytes: 0,
+                immutable_cas_rows: 0,
+                touched_tables: Vec::new(),
+                no_op: true,
+                live_cache_invalidation_verified: false,
+                existing_sessions_retain_generation: false,
+                recovery_token: String::new(),
+            },
+            script: None,
+            recovery: None,
+        });
+    }
     let rows = selected_stage
         .into_iter()
         .map(|row| {
@@ -478,21 +529,8 @@ pub(crate) fn activate_staged_extension_verified(
         version: extension.registry_version,
         zipped_info: extension.zipped_info.clone(),
     };
-    let mode = match args.mode {
-        crate::cli::MssqlMainActivationModeArg::Exclusive => {
-            crate::mssql_extension_activation::ExtensionActivationMode::Exclusive
-        }
-        crate::cli::MssqlMainActivationModeArg::Online => {
-            crate::mssql_extension_activation::ExtensionActivationMode::Online
-        }
-        crate::cli::MssqlMainActivationModeArg::Live => {
-            bail!("live activation is not supported for extensions; use online or exclusive")
-        }
-        crate::cli::MssqlMainActivationModeArg::Worker => {
-            bail!("worker activation is not supported for extensions; use online or exclusive")
-        }
-    };
-    let plan = crate::mssql_extension_activation::prepare_extension_activation(
+    let plan = crate::mssql_extension_activation::prepare_extension_activation_for_profile(
+        args.platform_profile,
         mode,
         snapshot,
         &stage,
@@ -501,6 +539,27 @@ pub(crate) fn activate_staged_extension_verified(
         },
         args.allow_non_lab,
     )?;
+    if !plan.is_no_op() {
+        let root = CasHash::parse_hex(&extension.active_cas_root)?;
+        let (active, _) = fetch_cas_storage_image_with_manifest(
+            &sql,
+            &args.database,
+            MssqlStorageTable::ConfigCas,
+            root,
+        )?;
+        crate::mssql_extension_tree_load::require_nonstructural_stage(
+            &sql,
+            &args.database,
+            match args.platform_profile {
+                crate::mssql_platform_profile::MssqlNativePlatformProfile::Platform8_5_1_1150 => {
+                    crate::cli::InfobaseConfigSourceVersion::V2_21
+                }
+                _ => crate::cli::InfobaseConfigSourceVersion::V2_20,
+            },
+            &active,
+            &stage,
+        )?;
+    }
     // The tool's own RAS verification made the cluster open idle SQL sessions on
     // this database; the session gate of an exclusive activation must not count
     // them (#409 F-3), and an infobase that has clients is refused before any
@@ -558,8 +617,8 @@ pub(crate) fn activate_staged_extension_verified(
         dry_run: args.dry_run,
         executed: !args.dry_run && !rendered.sql().is_empty(),
         activation: rendered.report,
-        script,
-        recovery,
+        script: Some(script),
+        recovery: Some(recovery),
     })
 }
 
@@ -1186,9 +1245,9 @@ mod tests {
     };
 
     #[test]
-    fn unsupported_platform_fails_before_extension_registry_read() {
+    fn unadmitted_platform_fails_before_extension_registry_read() {
         let args = MssqlLoadExtensionArgs {
-            platform_profile: MssqlNativePlatformProfile::Platform8_5_1_1150,
+            platform_profile: MssqlNativePlatformProfile::Platform8_3_27_1989,
             rac: PathBuf::from("must-not-run-rac"),
             ras_endpoint: "must-not-connect".to_owned(),
             cluster_id: None,
@@ -1213,14 +1272,14 @@ mod tests {
             platform: None,
             source_version: crate::cli::InfobaseConfigSourceVersion::V2_20,
         };
-        let error = load_extensions(&args).expect_err("8.5 write must fail closed");
-        assert!(error.to_string().contains("explicitly unsupported"));
+        let error = load_extensions(&args).expect_err("unadmitted build must fail closed");
+        assert!(error.to_string().contains("not declared"));
     }
 
     #[test]
-    fn unsupported_platform_fails_before_extension_activation_read() {
+    fn unadmitted_platform_fails_before_extension_activation_read() {
         let args = MssqlActivateStagedExtensionArgs {
-            platform_profile: MssqlNativePlatformProfile::Platform8_5_1_1150,
+            platform_profile: MssqlNativePlatformProfile::Platform8_3_27_1989,
             rac: PathBuf::from("must-not-run-rac"),
             ras_endpoint: "must-not-connect".to_owned(),
             cluster_id: None,
@@ -1242,8 +1301,9 @@ mod tests {
             script_output: None,
             recovery_output: None,
         };
-        let error = activate_staged_extension(&args).expect_err("8.5 write must fail closed");
-        assert!(error.to_string().contains("explicitly unsupported"));
+        let error =
+            activate_staged_extension(&args).expect_err("unadmitted build must fail closed");
+        assert!(error.to_string().contains("not declared"));
     }
 
     #[test]

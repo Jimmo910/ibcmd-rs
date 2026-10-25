@@ -269,6 +269,60 @@ fn module_text_normalized(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Judge a complete externally staged image as well: an activation must not
+/// publish a native schema edit merely because its CAS graph hashes correctly.
+pub(crate) fn require_nonstructural_stage(
+    sql: &SqlExec,
+    database: &str,
+    version: InfobaseConfigSourceVersion,
+    active: &StorageImage,
+    stage: &crate::mssql_extension_stage::ExtensionStagePlan,
+) -> Result<()> {
+    let rows: BTreeMap<_, _> = stage
+        .rows()
+        .iter()
+        .filter(|r| r.logical_name != "configinfo")
+        .map(|r| (r.logical_name.clone(), r.binary_data.clone()))
+        .collect();
+    let dropped = active
+        .entries()
+        .iter()
+        .map(|e| e.logical_key().as_str().to_owned())
+        .filter(|key| !rows.contains_key(key))
+        .collect();
+    let proposed = proposed_image(active, &rows, &dropped)?;
+    let base = Scratch::new("activation-base");
+    let next = Scratch::new("activation-next");
+    for (image, dir) in [(active, &base.0), (&proposed, &next.0)] {
+        let report = crate::mssql_dump::extension::export_extension_image_to_source(
+            image,
+            dir,
+            version,
+            Some(crate::mssql_dump::extension::base_index_provider(
+                sql, database, version,
+            )),
+        )?;
+        if report.storage.failed > 0 || report.storage.opaque > 0 {
+            bail!(
+                "cannot prove extension stage schema safety: incomplete source export; nothing was published"
+            );
+        }
+    }
+    let diff = diff_trees_normalized(&base.0, &next.0)?;
+    let old = std::fs::read_to_string(base.0.join("Configuration.xml"))?;
+    let new = std::fs::read_to_string(next.0.join("Configuration.xml"))?;
+    let root_supported =
+        root_children_only_change(&old, &new) || root_version_edit(&old, &new).is_some();
+    let refused = structural_refusals(&diff, root_supported);
+    if !refused.is_empty() {
+        bail!(
+            "extension stage requires an unmodeled schema transition, nothing was published: {}",
+            list_paths(&refused)
+        );
+    }
+    Ok(())
+}
+
 /// Two files of a tree are the same file: byte for byte, and a module
 /// (`.bsl`) also when only its byte order mark or line ends differ.
 fn same_content(path: &str, left: &[u8], right: &[u8]) -> bool {
@@ -688,7 +742,6 @@ fn root_version_edit(active: &str, tree: &str) -> Option<(String, String)> {
 /// Called only after a complete active-image export validates its class
 /// sequence and adopted layout; the proposed image is exported again too.
 fn patch_root_version(packed: &[u8], key: &str, old: &str, new: &str) -> Result<Vec<u8>> {
-    use crate::module_blob::{inflate_raw, scan_braced_fields};
     if old == new
         || old.split('.').count() != new.split('.').count()
         || [old, new].iter().any(|value| {
@@ -700,7 +753,17 @@ fn patch_root_version(packed: &[u8], key: &str, old: &str, new: &str) -> Result<
     {
         bail!("unsupported extension Version format change");
     }
-    let mut text =
+    let (mut text, version) = root_version_range(packed, key)?;
+    if text[version.clone()] != format!("\"{old}\"") {
+        bail!("extension root Version differs from the active source");
+    }
+    text.replace_range(version, &format!("\"{new}\""));
+    crate::module_blob::deflate_raw(text.as_bytes())
+}
+
+fn root_version_range(packed: &[u8], key: &str) -> Result<(String, std::ops::Range<usize>)> {
+    use crate::module_blob::{inflate_raw, scan_braced_fields};
+    let text =
         String::from_utf8(inflate_raw(packed)?).context("the extension root is not UTF-8")?;
     let start = text
         .find('{')
@@ -708,35 +771,47 @@ fn patch_root_version(packed: &[u8], key: &str, old: &str, new: &str) -> Result<
     if !text[..start].trim_matches('\u{feff}').trim().is_empty() {
         bail!("unsupported extension root prefix");
     }
+    use ibcmd_schema::configuration_root::ExtensionRootVersionLayout as L;
     let root = scan_braced_fields(&text, start)?;
-    if root.len() != 11 || &text[root[0].clone()] != "2" || &text[root[2].clone()] != "7" {
+    if root.len() != L::ROOT_FIELDS
+        || &text[root[L::ROOT_TAG].clone()] != "2"
+        || &text[root[L::ROOT_SECTIONS].clone()] != "7"
+    {
         bail!("unsupported extension root envelope");
     }
-    let identity = scan_braced_fields(&text, root[1].start)?;
+    let identity = scan_braced_fields(&text, root[L::ROOT_IDENTITY].start)?;
     if identity.len() != 1 || text[identity[0].clone()] != *key {
         bail!("extension root identity differs from its storage key");
     }
-    let section = scan_braced_fields(&text, root[3].start)?;
-    if section.len() != 2 || uuid::Uuid::parse_str(&text[section[0].clone()]).is_err() {
+    let section = scan_braced_fields(&text, root[L::ROOT_PROPERTIES_SECTION].start)?;
+    if section.len() != L::SECTION_FIELDS
+        || uuid::Uuid::parse_str(&text[section[L::SECTION_CLASS].clone()]).is_err()
+    {
         bail!("unsupported extension root properties section");
     }
-    let payload = scan_braced_fields(&text, section[1].start)?;
-    if payload.len() != 28 || &text[payload[0].clone()] != "1" || &text[payload[2].clone()] != "25"
-    {
+    let payload = scan_braced_fields(&text, section[L::SECTION_PAYLOAD].start)?;
+    if payload.len() <= L::PAYLOAD_MEMBERS || &text[payload[L::PAYLOAD_TAG].clone()] != "1" {
         bail!("unsupported extension root properties payload");
     }
-    let properties = scan_braced_fields(&text, payload[1].start)?;
-    // 68 is the layout discriminator, not its field count. This native
-    // sample contains 60 members after that discriminator.
-    if properties.len() != 61 || &text[properties[0].clone()] != "68" {
-        bail!("unsupported extension root properties layout (expected layout 68, 60 members)");
+    let properties = scan_braced_fields(&text, payload[L::PAYLOAD_PROPERTIES].start)?;
+    if properties.is_empty()
+        || !L::accepts(
+            payload.len(),
+            &text[payload[L::PAYLOAD_MEMBERS].clone()],
+            properties.len(),
+            &text[properties[L::PROPERTIES_TAG].clone()],
+        )
+    {
+        bail!("unsupported extension root properties layout");
     }
-    let version = properties[15].clone();
-    if text[version.clone()] != format!("\"{old}\"") {
-        bail!("extension root Version differs from the active source");
-    }
-    text.replace_range(version, &format!("\"{new}\""));
-    crate::module_blob::deflate_raw(text.as_bytes())
+    let version = properties[L::VERSION].clone();
+    Ok((text, version))
+}
+
+pub(crate) fn stored_root_version(packed: &[u8], key: &str) -> Result<String> {
+    let (text, span) = root_version_range(packed, key)?;
+    crate::mssql_dump::parse_1c_quoted_string(&text[span])
+        .context("extension Version is not a quoted string")
 }
 
 #[cfg(test)]
