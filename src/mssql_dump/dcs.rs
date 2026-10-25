@@ -175,14 +175,9 @@ pub(super) fn emit_canonical_dcs_settings_parts(
         .map_err(CanonicalDcsSettingsAdapterError::Serialize)
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub(crate) enum DcsTypeResolution {
-    KeepId,
-    Type { qname: String },
-    TypeSet { qname: String },
-}
-
-pub(crate) type DcsTypeIndex = BTreeMap<String, DcsTypeResolution>;
+// The DCS type index is the `ibcmd-form-body` crate's (`FormParseContext`
+// holds it); it is built here and in `compiler::bodies::dcs`.
+pub(crate) use ibcmd_form_body::{DcsTypeIndex, DcsTypeResolution};
 
 /// Stage-typed reason one native three-document DCS schema template could not
 /// be normalized into its native source XML.

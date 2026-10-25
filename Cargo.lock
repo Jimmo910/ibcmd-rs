@@ -723,6 +723,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-form-body"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "ibcmd-form-native"
 version = "0.1.0"
 
@@ -770,6 +777,7 @@ dependencies = [
  "ibcmd-core",
  "ibcmd-edt",
  "ibcmd-filedb",
+ "ibcmd-form-body",
  "ibcmd-form-native",
  "ibcmd-form-schema",
  "ibcmd-moxel",

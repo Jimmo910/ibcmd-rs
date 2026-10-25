@@ -1,26 +1,29 @@
 //! Vocabularies of the 1C native records that the root's readers share:
 //! platform type identifiers and the XML names they are written as, the
 //! stored type patterns (`{"Pattern",...}`) and the `<Type>` blocks written
-//! from them, standard attributes, style codes, command shortcuts and a few
-//! small property values, with the payload helpers the form reader uses
-//! beside them.
+//! from them, standard attributes, style codes, command shortcuts, the
+//! standard pictures and a few small property values, with the payload
+//! helpers the form reader uses beside them.
 //!
 //! Everything here moved from the root crate's `mssql_dump` (`mod.rs`, and
-//! the picture-payload helpers from `source_assets.rs`), which still reaches
-//! every item by its old name through imports. The bodies are unchanged but
+//! the picture-payload helpers from `source_assets.rs`), and the standard
+//! pictures from its `metadata_model::standard_pictures`; the root still
+//! reaches every item by its old name through imports. The bodies are unchanged but
 //! for one argument: the two pattern readers take
 //! `keeps_unresolved_type_id`, which answers whether a type id nothing
 //! resolves is kept. The root answers it from its extension-export state,
 //! which stays in the root.
 //!
-//! The code came from the physical-adapter guard's slice, so the guard scans
-//! every non-test `*.rs` file under this crate's `src/`
+//! The code came from the physical-adapter guard's slice (the standard
+//! pictures joined it here), so the guard scans every non-test `*.rs` file
+//! under this crate's `src/`
 //! (`$GuardedCrateDirectories` in `tools/validate-physical-adapter-policy.ps1`)
 //! and their literals stay in the guard's baseline. A file added here is in
 //! the slice at once and fails the guard until its record is reviewed.
 
 mod commands;
 mod patterns;
+mod pictures;
 mod standard_attributes;
 mod style;
 mod support;
@@ -36,6 +39,7 @@ pub use patterns::{
     metadata_type_pattern_field_type_id, parse_form_metadata_type_pattern,
     parse_metadata_type_pattern_element_with_builtin,
 };
+pub use pictures::{standard_picture_name, standard_picture_uuid};
 pub use standard_attributes::{
     ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES,
     ACCUMULATION_REGISTER_TURNOVERS_STANDARD_ATTRIBUTES,
