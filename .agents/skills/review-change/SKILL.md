@@ -35,7 +35,7 @@ evidence, never by silence. Repeat until `APPROVE`.
 
 ## 4. The PR
 
-Branch `agent/issue-<N>-<slug>`; title `type(scope): summary`. Body:
+Branch `feature/issue-<N>-<slug>`; title `type(scope): summary`. Body:
 
 ```markdown
 ## What
@@ -59,10 +59,23 @@ ready only after `ci` passes and the critic approves.
 
 ## 5. The board
 
-Move the issue to In review and read the value back (AGENTS.md, Tracking).
+As the assigned contributor, comment `/review #PR` on the issue after the PR
+leaves Draft. Wait for the bot's success reply and read back In review and
+the PR reference in Agent (AGENTS.md, Tracking). Project write access and
+repository Collaboration are not required. If the bot is unavailable, ask
+the maintainer to perform and verify this transition; do not request broad
+access or silently leave stale tracking.
 
 ## 6. Rules you missed
 
 If you hit a trap AGENTS.md does not mention, propose the rule under
 "Suggested AGENTS.md changes" in the PR body. A rule earns its place when it
 is non-obvious, keeps recurring and is specific enough to act on.
+
+## 7. Clean up
+
+Scratch infobases, native exports and corpus outputs go as soon as their
+run is reported. When the PR is merged or you leave the worktree, run
+`cargo clean` in it, or `git worktree remove` it. Leave a target directory
+alone while another cargo process uses it. Say in your final report what you
+removed and what you kept, and why.
