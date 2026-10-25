@@ -1249,6 +1249,26 @@ mod tests {
                 .replace("<Vendor/>", "<Vendor></Vendor>");
             std::fs::write(input.join("Configuration.xml"), formatted).unwrap();
         }
+        if case == "Defaults" {
+            let descriptor = input.join("DataProcessors/Cov_ImportTools/Forms/ImportDialog.xml");
+            let document =
+                ibcmd_xml::XmlReader::from_slice(&std::fs::read(&descriptor).unwrap()).unwrap();
+            let attributes = document.root().attributes().iter().filter(|attribute| {
+                !matches!(attribute.kind(), ibcmd_xml::AttributeKind::Namespace(Some(prefix)) if prefix == "pal")
+            }).cloned().collect::<Vec<_>>();
+            assert_eq!(attributes.len() + 1, document.root().attributes().len());
+            let root = ibcmd_xml::XmlElement::with_parts(
+                document.root().name().clone(),
+                attributes,
+                document.root().children().to_vec(),
+            );
+            let bytes = ibcmd_xml::XmlWriter::to_vec(
+                &document.with_root(root),
+                ibcmd_xml::LexicalPolicy::Preserve,
+            )
+            .unwrap();
+            std::fs::write(descriptor, bytes).unwrap();
+        }
         let packed = crate::module_blob::decode_base64_mime(
             &std::fs::read_to_string(fixture.join("variants/CovRestructureDialogBaseline.cfe.b64"))
                 .unwrap(),
