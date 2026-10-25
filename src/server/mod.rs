@@ -21,6 +21,7 @@
 //! carries the protocol only; the engine's own diagnostics go to stderr.
 
 mod apply;
+mod import_plans;
 pub mod infobases;
 pub mod rpc;
 pub mod sql_import;
@@ -265,7 +266,7 @@ fn work(
         settings: Settings::default(),
         entries: Vec::new(),
         sessions: HashMap::new(),
-        import_plans: HashMap::new(),
+        import_plans: import_plans::Registry::new(),
         connection_epoch: 0,
     };
     for job in queue {
@@ -436,7 +437,7 @@ struct State {
     entries: Vec<Entry>,
     /// Open infobases by id.
     sessions: HashMap<String, Session>,
-    import_plans: HashMap<String, (String, u64, crate::file_import::Plan)>,
+    import_plans: import_plans::Registry<crate::file_import::Plan>,
     connection_epoch: u64,
 }
 
@@ -774,17 +775,19 @@ impl State {
             session.configuration.platform(),
         )
         .map_err(failure)?;
-        let token = uuid::Uuid::new_v4().to_string();
-        let result = json!({"plan": token, "preflight": plan.summary()});
-        // One pending confirmation per connection, bounded across the window.
-        self.import_plans
-            .retain(|_, (id, _, _)| id != &params.infobase);
-        if self.import_plans.len() >= 4 {
-            self.import_plans.clear();
-        }
-        self.import_plans
-            .insert(token, (params.infobase, self.connection_epoch, plan));
-        Ok(result)
+        let preflight = json!(plan.summary());
+        let token = self
+            .import_plans
+            .insert(
+                &params.infobase,
+                self.connection_epoch,
+                plan,
+                std::time::Instant::now(),
+            )
+            .map_err(|_| {
+                RpcError::new(codes::INTERNAL_ERROR, "could not retain import preflight")
+            })?;
+        Ok(json!({"plan": token.to_string(), "preflight": preflight}))
     }
 
     fn import(&mut self, params: ImportParams) -> Result<Value, RpcError> {
@@ -795,14 +798,21 @@ impl State {
                     "confirm the prepared file import before publication",
                 ));
             }
-            let (id, epoch, plan) = self.import_plans.remove(token).ok_or_else(|| {
-                RpcError::invalid_params("import preflight expired; prepare again")
-            })?;
-            if id != params.infobase || epoch != self.connection_epoch {
-                return Err(RpcError::invalid_params(
-                    "connection changed since preflight; prepare again",
-                ));
-            }
+            let token = uuid::Uuid::parse_str(token)
+                .map_err(|_| RpcError::invalid_params("invalid import preflight; prepare again"))?;
+            let plan = self
+                .import_plans
+                .take(
+                    &token,
+                    &params.infobase,
+                    self.connection_epoch,
+                    std::time::Instant::now(),
+                )
+                .map_err(|_| {
+                    RpcError::invalid_params(
+                        "import preflight expired or connection changed; prepare again",
+                    )
+                })?;
             let session = self.session(&params.infobase)?;
             let ConfigSource::FileDb(target) = session.configuration.source() else {
                 return Err(RpcError::invalid_params(
