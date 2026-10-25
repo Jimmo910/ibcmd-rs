@@ -96,6 +96,22 @@ impl OutputBytes for &String {
     }
 }
 
+/// Project stored module text into the native filesystem representation.
+/// This does not inspect or normalize any existing source file. Memory consumers
+/// keep their raw bytes; filesystem comparison/publication can share this policy.
+pub(crate) fn native_module_file_bytes(bytes: &[u8]) -> Vec<u8> {
+    let body = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    let mut native = Vec::with_capacity(bytes.len() + 3);
+    native.extend_from_slice(b"\xef\xbb\xbf");
+    for (index, byte) in body.iter().copied().enumerate() {
+        if byte == b'\n' && (index == 0 || body[index - 1] != b'\r') {
+            native.push(b'\r');
+        }
+        native.push(byte);
+    }
+    native
+}
+
 enum Job {
     Write { path: PathBuf, bytes: Vec<u8> },
     CreateDir { path: PathBuf },
@@ -476,16 +492,7 @@ impl OutputWriter {
         source_folder: bool,
     ) -> Result<()> {
         let bytes = if source_folder && self.shared.sink.is_none() {
-            let body = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
-            let mut native = Vec::with_capacity(bytes.len() + 3);
-            native.extend_from_slice(b"\xef\xbb\xbf");
-            for (index, byte) in body.iter().copied().enumerate() {
-                if byte == b'\n' && (index == 0 || body[index - 1] != b'\r') {
-                    native.push(b'\r');
-                }
-                native.push(byte);
-            }
-            native
+            super::native_module_file_bytes(&bytes)
         } else {
             bytes
         };
