@@ -520,6 +520,9 @@ pub fn type_entries(pattern: &Brace) -> Result<Vec<crate::restructure::schema::T
             }
             TypeEntry::new("N", digits, fraction, "", 0)
         }
+        // Unqualified BinaryData (`{"R"}`) is varbinary(max), measured in
+        // the synthetic extension update on both 8.3.27 and 8.5 (#582).
+        "R" if fields.len() == 1 => TypeEntry::new("B", 0x8000_0000, 0, "", 0),
         // A date, a date and time and a time alone are the same field (`datetime2(0)`; measured).
         "D" => TypeEntry::new("T", 0, 0, "", 0),
         "#" => match fields.get(1).and_then(Brace::as_atom) {

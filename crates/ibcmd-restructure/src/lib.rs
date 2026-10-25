@@ -3,3 +3,5 @@
 pub mod brace;
 pub mod names;
 pub mod schema;
+
+pub mod extension;

@@ -287,6 +287,23 @@ pub struct IndexEntry {
 }
 
 impl IndexEntry {
+    /// Native declaration for a generated index with the default index options.
+    pub fn to_brace(&self) -> Brace {
+        let mut keys = vec![Brace::atom(self.fields.len())];
+        keys.extend(self.fields.iter().map(Brace::str));
+        brace_list![
+            Brace::str(&self.name),
+            Brace::flag(self.unique),
+            Brace::List(keys),
+            Brace::flag(self.clustered),
+            Brace::num(0),
+            Brace::num(0),
+            brace_list![Brace::num(0)],
+            Brace::num(0),
+            Brace::num(0)
+        ]
+    }
+
     fn parse(node: &Brace) -> Result<Self> {
         let items = node.as_list().context("an index is not a list")?;
         if items.len() != 9 {

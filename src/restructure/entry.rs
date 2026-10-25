@@ -228,7 +228,7 @@ fn part_order(tag: &str) -> u8 {
 /// The type entries of an attribute: a primitive type, a value storage, a uuid, a reference type of the
 /// configuration (`R` with the table) or a composite type (`E`, the primitive parts in the fixed order
 /// `L N T S B`, and one untyped `R` when a reference is among them).
-fn attribute_types(member: &Member, refs: &RefTables) -> Result<Vec<TypeEntry>> {
+pub(crate) fn attribute_types(member: &Member, refs: &RefTables) -> Result<Vec<TypeEntry>> {
     let items = member
         .pattern
         .as_list()
