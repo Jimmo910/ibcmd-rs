@@ -33,6 +33,9 @@ use crate::metadata_model::xml::Element;
 
 /// Decodes one stored row of a common kind into the object's element.
 pub(crate) fn decode(kind: &str, row: &Brace, context: &ExportContext) -> Result<Element> {
+    if kind == "Interface" {
+        return crate::metadata_model::interface::Interface::from_brace(row)?.to_xml();
+    }
     if kind == "ExternalDataSource" {
         return crate::metadata_model::external_data_source::decode(row, &context.names);
     }
@@ -802,6 +805,9 @@ fn manager_name(name: String, type_id: &Brace, value_id: &Brace) -> Result<Gener
 
 /// What a common object's row contributes to a name index.
 pub(crate) fn names(kind: &str, row: &Brace) -> Result<ObjectNames> {
+    if kind == "Interface" {
+        return Ok(crate::metadata_model::interface::Interface::from_brace(row)?.names());
+    }
     if kind == "ExternalDataSource" {
         return crate::metadata_model::external_data_source::names(row);
     }
