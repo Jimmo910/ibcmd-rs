@@ -5045,13 +5045,6 @@ pub(super) fn format_ext_picture_xml(
     xml
 }
 
-pub(super) fn extract_base64_payload(text: &str) -> Option<&str> {
-    let prefix = "{#base64:";
-    let start = text.find(prefix)? + prefix.len();
-    let end = text[start..].find('}')? + start;
-    Some(&text[start..end])
-}
-
 pub(super) fn ext_picture_file_name(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         "Picture.png"

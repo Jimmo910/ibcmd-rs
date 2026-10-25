@@ -17,6 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 
+use ibcmd_1c_text::{extract_base64_payload, parse_non_zero_uuid, parse_uuid_field, xml_bool};
 use serde::Serialize;
 
 mod mxl_ir;
@@ -24,17 +25,14 @@ mod root_helpers;
 
 pub use mxl_ir::{MxlDiagnostic, MxlDiagnosticStage};
 use mxl_ir::{MxlFormatReferenceMap, MxlPaletteProvenance, MxlSpreadsheetWritePlan};
-use root_helpers::{
-    STD_PICTURE_INFORMATION_UUID, STD_PICTURE_SAVE_FILE_UUID, extract_base64_payload,
-    parse_non_zero_uuid, parse_uuid_field, xml_bool,
-};
+use root_helpers::{STD_PICTURE_INFORMATION_UUID, STD_PICTURE_SAVE_FILE_UUID};
 
 /// The root's table of built-in platform type identifiers
 /// (`mssql_dump::builtin_type_reference`): the XML type name of a platform
 /// type identifier, `None` for an identifier the table does not know.
 pub type BuiltinTypeReference = fn(&str) -> Option<&'static str>;
 
-/// The root's `escape_xml_element_text` written straight into the output: the same
+/// `ibcmd_1c_text::escape_xml_element_text` written straight into the output: the same
 /// bytes (`\r\n` read as `\n`, then `&`, `<` and `>` escaped) without
 /// building the escaped copy first.
 struct XmlElementText<'a>(&'a str);
@@ -109,7 +107,7 @@ fn push_xml_text_element(xml: &mut String, indent: &str, tag: &str, value: &str)
     xml.push_str(">\r\n");
 }
 
-/// The root's `escape_xml_text` written straight into the output.
+/// `ibcmd_1c_text::escape_xml_text` written straight into the output.
 struct XmlText<'a>(&'a str);
 
 impl std::fmt::Display for XmlText<'_> {
@@ -284,7 +282,7 @@ impl<'a, 'b> IntoIterator for &'b BracedFields<'a> {
     }
 }
 
-/// The shared `parse_1c_string`: content without a doubled quote is copied
+/// `ibcmd_1c_text::parse_1c_string`: content without a doubled quote is copied
 /// as it stands.
 fn parse_1c_string(text: &str) -> Option<String> {
     let text = text.trim();
@@ -324,7 +322,7 @@ fn braced_field_first_byte(text: &str, n: usize) -> Option<u8> {
 }
 
 /// The top-level fields of the braced value at `start`, trimmed: the same
-/// answer as the shared splitter.
+/// answer as `ibcmd_1c_text::split_1c_braced_fields`.
 #[doc(hidden)]
 pub fn split_1c_braced_fields(text: &str, start: usize) -> Option<BracedFields<'_>> {
     if text.len() < SPLIT_CACHE_MIN_LEN {
@@ -465,7 +463,7 @@ fn split_braced_bytes(text: &str, start: usize) -> Option<Vec<&str>> {
 }
 
 /// The root fields with the byte offsets of their values in `body`, as
-/// `split_1c_braced_fields_with_spans` spells them.
+/// `ibcmd_1c_text`'s `split_1c_braced_fields_with_spans` spells them.
 fn moxel_root_field_spans<'a>(body: &str, fields: &[&'a str]) -> Vec<(&'a str, usize, usize)> {
     let base = body.as_ptr() as usize;
     fields
@@ -16300,8 +16298,8 @@ mod moxel_exact_parity_tests {
         ];
         let source = "{8,{3,3,{-3}},{3,3,{-3}}}";
         // The root fields and their spans as the decoder reads them; the
-        // spans are the ones the root's `split_1c_braced_fields_with_spans`
-        // gives.
+        // spans are the ones `ibcmd_1c_text`'s
+        // `split_1c_braced_fields_with_spans` gives.
         let fields = split_braced_bytes(source, 0).unwrap();
         let raw_spans = moxel_root_field_spans(source, &fields);
         let lines = parse_moxel_lines_with_raw_spans(&fields, &raw_spans, &formats, false);

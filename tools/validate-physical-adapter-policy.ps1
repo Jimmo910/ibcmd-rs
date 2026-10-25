@@ -15,7 +15,14 @@ $AllowedCategories = @('uuid-literal', 'name-special-case', 'xml-policy')
 # literals under the new path.  Modules the compiler reads only for tests are
 # not part of the slice: they are found from their `#[cfg(test)] mod name;`
 # declaration (see Get-TestOnlyModulePaths).
-$GuardedCrateFiles = @('crates/ibcmd-moxel/src/root_helpers.rs')
+$GuardedCrateFiles = @(
+    'crates/ibcmd-1c-text/src/braced.rs',
+    'crates/ibcmd-1c-text/src/fields.rs',
+    'crates/ibcmd-1c-text/src/lib.rs',
+    'crates/ibcmd-1c-text/src/strings.rs',
+    'crates/ibcmd-1c-text/src/xml.rs',
+    'crates/ibcmd-moxel/src/root_helpers.rs'
+)
 
 $scannerSource = @'
 using System;
@@ -1025,7 +1032,6 @@ function Invoke-ScopeSelfTest {
     $uuid = 'const ID: &str = "11111111-1111-4111-8111-111111111111";'
     $files = [ordered]@{
         'src/module_blob.rs'                        = 'fn module_blob() {}'
-        'crates/ibcmd-moxel/src/root_helpers.rs'    = $uuid
         'src/mssql_dump/mod.rs'                     = @'
 #[cfg(test)]
 mod declared_tests;
@@ -1052,6 +1058,7 @@ mod host;
         'src/mssql_dump/host/host_tests.rs'         = $uuid
         'src/mssql_dump/host_tests.rs'              = $uuid
     }
+    foreach ($relative in $GuardedCrateFiles) { $files[$relative] = $uuid }
     try {
         foreach ($relative in $files.Keys) {
             $path = Join-Path $root $relative
@@ -1059,10 +1066,10 @@ mod host;
             [System.IO.File]::WriteAllText($path, ([string]$files[$relative]).Replace("`r`n", "`n"), $utf8)
         }
         [System.IO.Directory]::CreateDirectory((Join-Path $root 'tools')) | Out-Null
-        $expected = @(
-            'crates/ibcmd-moxel/src/root_helpers.rs', 'src/module_blob.rs', 'src/mssql_dump/host.rs',
-            'src/mssql_dump/host_tests.rs', 'src/mssql_dump/mod.rs', 'src/mssql_dump/partly_tests.rs',
-            'src/mssql_dump/pathed.rs', 'src/mssql_dump/plain_tests.rs'
+        $expected = @($GuardedCrateFiles) + @(
+            'src/module_blob.rs', 'src/mssql_dump/host.rs', 'src/mssql_dump/host_tests.rs',
+            'src/mssql_dump/mod.rs', 'src/mssql_dump/partly_tests.rs', 'src/mssql_dump/pathed.rs',
+            'src/mssql_dump/plain_tests.rs'
         )
         $actual = @(Get-ScopedFiles $root | ForEach-Object { Get-LogicalPath -Root $root -Path $_.FullName } | Sort-Object)
         if (($actual -join '|') -ne (($expected | Sort-Object) -join '|')) {
@@ -1074,11 +1081,16 @@ mod host;
         Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root)
         Add-Content -LiteralPath (Join-Path $mssql 'plain_tests.rs') 'const EXTRA: &str = "33333333-3333-4333-8333-333333333333";'
         Assert-Rejected { Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root) } 'category=uuid-literal'
-        Write-BaselineDocument -Root $root -Document (New-InventoryDocument $root)
-        Add-Content -LiteralPath (Join-Path $root 'crates/ibcmd-moxel/src/root_helpers.rs') 'const EXTRA: &str = "33333333-3333-4333-8333-333333333335";'
-        Assert-Rejected { Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root) } 'category=uuid-literal'
-        Remove-Item -LiteralPath (Join-Path $root 'crates/ibcmd-moxel/src/root_helpers.rs') -Force
-        Assert-Rejected { Get-ScopedFiles $root } 'Scoped source file is missing.'
+        foreach ($relative in $GuardedCrateFiles) {
+            $crateFile = Join-Path $root $relative
+            Write-BaselineDocument -Root $root -Document (New-InventoryDocument $root)
+            Add-Content -LiteralPath $crateFile 'const EXTRA: &str = "33333333-3333-4333-8333-333333333335";'
+            Assert-Rejected { Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root) } 'category=uuid-literal'
+            $saved = [System.IO.File]::ReadAllText($crateFile)
+            Remove-Item -LiteralPath $crateFile -Force
+            Assert-Rejected { Get-ScopedFiles $root } 'Scoped source file is missing.'
+            [System.IO.File]::WriteAllText($crateFile, $saved, $utf8)
+        }
     }
     finally {
         if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }

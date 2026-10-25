@@ -6,12 +6,15 @@ and `pwsh -File tools/validate-physical-adapter-policy.ps1 -RepositoryRoot .
 
 The guarded production slice is `src/module_blob.rs` plus non-test Rust modules
 under `src/mssql_dump/`, plus the files under `crates/` that hold code moved out
-of them (`$GuardedCrateFiles`: `crates/ibcmd-moxel/src/root_helpers.rs`).  Code
+of them (`$GuardedCrateFiles`: the five files of `crates/ibcmd-1c-text/src/`, the
+1C braced-text primitives formerly in `src/mssql_dump/mod.rs` and
+`source_assets.rs`, and `crates/ibcmd-moxel/src/root_helpers.rs`).  Code
 that leaves the slice for a crate takes the slice with it: its file is listed
 there and its baseline entries move to the new path in the same change, never
-dropped.  The MOXCEL decoder itself (`crates/ibcmd-moxel`, formerly
-`src/mssql_dump/moxel.rs` and `mxl_ir.rs`) was outside the slice and stays
-outside it; its root entry points in `src/mssql_dump/moxel_entry.rs` are guarded.
+dropped.  Only listed files are scanned: a file added to such a crate later is
+guarded once it is listed there too.  The MOXCEL decoder itself
+(`crates/ibcmd-moxel`, formerly `src/mssql_dump/moxel.rs` and `mxl_ir.rs`) was
+outside the slice and stays outside it; its root entry points in `src/mssql_dump/moxel_entry.rs` are guarded.
 A module the compiler reads only for tests is not production and is left out
 with every file below its directory: the guard finds it from the declaration
 `#[cfg(test)] mod name;` (also `pub`, or with other attributes) in a scoped
