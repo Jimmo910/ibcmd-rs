@@ -1103,6 +1103,10 @@ mod host;
             $saved = [System.IO.File]::ReadAllText($crateFile)
             Add-Content -LiteralPath $crateFile 'const EXTRA: &str = "33333333-3333-4333-8333-333333333335";'
             Assert-Rejected { Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root) } 'category=uuid-literal'
+            # A guarded file deleted from the directory (its code could have
+            # gone somewhere unguarded) is rejected: its record has no file.
+            Remove-Item -LiteralPath $crateFile -Force
+            Assert-Rejected { Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root) } 'baseline references a missing scoped file'
             [System.IO.File]::WriteAllText($crateFile, $saved, $utf8)
             # A new file of the directory is in the slice without being listed:
             # with a literal it is rejected as an unbaselined file, and once its

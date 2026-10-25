@@ -16,7 +16,8 @@ leaves the slice for a crate takes the slice with it: its directory is listed
 there and its baseline entries move to the new path in the same change, never
 dropped.  Every `*.rs` file below a listed directory is scanned, so a file added
 there is in the slice at once and fails as unbaselined until its record is
-reviewed; a listed directory that is missing fails the guard.  A crate made
+reviewed, a file deleted from one fails while its record is in the baseline,
+and a listed directory that is missing fails the guard.  A crate made
 only of moved code is listed by its `src/`.  The MOXCEL decoder itself
 (`crates/ibcmd-moxel`, formerly `src/mssql_dump/moxel.rs` and `mxl_ir.rs`) was
 outside the slice and stays outside it, so only the module directory that holds
