@@ -160,6 +160,19 @@ impl MssqlNativePlatformProfile {
         }
     }
 
+    /// XML dialect does not authorize a different CAS storage format.
+    pub(crate) fn require_extension_storage_format(self, format: u32) -> Result<()> {
+        let legacy = [80_310, 80_314, 80_321, 80_324, 80_327].contains(&format);
+        if legacy || (self == Self::Platform8_5_1_1150 && format == 80_501) {
+            Ok(())
+        } else {
+            bail!(
+                "extension storage format {format} is not evidenced for {}",
+                self.id()
+            )
+        }
+    }
+
     /// Extension mutation requires an evidenced CAS/registry protocol.
     pub fn require_extension_write_supported(self) -> Result<()> {
         self.require_capability(CAPABILITY_EXTENSION_WRITE)
@@ -318,6 +331,13 @@ pub(crate) fn verify_mssql_native_profile_managed_observation(
 #[cfg(test)]
 mod managed_auth_tests {
     use super::*;
+
+    #[test]
+    fn exact_851150_extension_write_is_admitted() {
+        MssqlNativePlatformProfile::Platform8_5_1_1150
+            .require_extension_write_supported()
+            .expect("measured extension stage and activation must be admitted on exact 8.5.1.1150");
+    }
 
     #[test]
     fn managed_auth_uses_separate_agent_cluster_flags_and_redacts_all_credentials() {
@@ -1301,10 +1321,9 @@ mod tests {
             .require_main_write_supported()
             .expect_err("8.5 main activation must fail closed");
         assert!(explicit.to_string().contains("explicitly unsupported"));
-        let explicit_extension = MssqlNativePlatformProfile::Platform8_5_1_1150
+        MssqlNativePlatformProfile::Platform8_5_1_1150
             .require_extension_write_supported()
-            .expect_err("8.5 extension writes must fail closed");
-        assert!(explicit_extension.to_string().contains("8.5.1.1150"));
+            .expect("exact 8.5 extension writes have independent native evidence");
     }
 
     #[test]
@@ -1332,7 +1351,7 @@ mod tests {
         // Main activation owns ONLINE/LIVE/WORKER; they remain closed even
         // though the separately guarded drop-in dynamic publication is admitted.
         assert!(exact.require_main_write_supported().is_err());
-        assert!(exact.require_extension_write_supported().is_err());
+        assert!(exact.require_extension_write_supported().is_ok());
         exact.require_config_apply_supported().unwrap(); // released 0.4 policy
 
         MssqlNativePlatformProfile::Platform8_3_27_2214

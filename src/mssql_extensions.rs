@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
+use ibcmd_schema::extension_registry::ExtensionRegistryLayout as L;
 use serde::Serialize;
 
 use crate::cli::MssqlExtensionListArgs;
@@ -213,11 +214,11 @@ fn decode_extension_envelope(
     }
 
     let body = &bytes[ENVELOPE_PREFIX_BYTES..];
-    let header = match profile {
-        RegistryEnvelope::Sql => [0xa1, 0x9a, 0x08],
-        RegistryEnvelope::File => [0xa2, 0x9a, 0x08],
+    let valid_header = match profile {
+        RegistryEnvelope::Sql => L::accepts_sql_header(&body[..L::CURRENT_HEADER.len()]),
+        RegistryEnvelope::File => body[..L::CURRENT_HEADER.len()] == L::CURRENT_HEADER,
     };
-    if body[..3] != header {
+    if !valid_header {
         return Err(ExtensionRegistryDecodeError::UnsupportedEnvelopeHeader);
     }
     let safe_mode = decode_bool("safe-mode", body[11])?;
@@ -256,6 +257,37 @@ fn decode_extension_envelope(
         safe_mode,
         unsafe_action_protection,
     })
+}
+
+/// Rewrite only the separately encoded registry Version field. The complete
+/// envelope is decoded on both sides; names, security flags and trailer survive.
+pub(crate) fn replace_extension_registry_version(bytes: &[u8], version: &str) -> Result<Vec<u8>> {
+    decode_extension_zipped_info(bytes)?;
+    if version.len() > u8::MAX as usize {
+        anyhow::bail!("extension registry Version exceeds its native encoding");
+    }
+    let body_header = ENVELOPE_PREFIX_BYTES + L::BODY_HEADER_BYTES;
+    let units = usize::from(bytes[ENVELOPE_PREFIX_BYTES + L::METADATA_UNITS]);
+    let width = if bytes[ENVELOPE_PREFIX_BYTES + L::METADATA_ENCODING] == L::UTF16_MARKER {
+        2
+    } else {
+        1
+    };
+    let start = body_header + units * width;
+    let end = bytes.len() - L::TRAILER_BYTES;
+    let mut output = bytes[..start].to_vec();
+    if version.is_empty() {
+        output.push(L::EMPTY_STRING_MARKER);
+    } else {
+        output.extend([L::UTF8_MARKER, version.len() as u8]);
+        output.extend_from_slice(version.as_bytes());
+    }
+    output.extend_from_slice(&bytes[end..]);
+    let decoded = decode_extension_zipped_info(&output)?;
+    if decoded.version != version {
+        anyhow::bail!("registry Version rewrite failed its decoder");
+    }
+    Ok(output)
 }
 
 fn decode_bool(

@@ -91,6 +91,10 @@ pub enum Opt {
     IHaveABackup,
     Verify,
     NoVerify,
+    Rac,
+    RasEndpoint,
+    ClusterId,
+    InfobaseId,
 }
 
 /// How an option is spelled and whether it takes a value.
@@ -164,6 +168,10 @@ pub const MODE_OPTIONS: &[OptSpec] = &[
     valued(Opt::Platform, &["platform"], None),
     valued(Opt::SourceVersion, &["source-version"], None),
     valued(Opt::DbPwdEnv, &["db-pwd-env"], None),
+    valued(Opt::Rac, &["rac"], None),
+    valued(Opt::RasEndpoint, &["ras-endpoint"], None),
+    valued(Opt::ClusterId, &["cluster-id"], None),
+    valued(Opt::InfobaseId, &["infobase-id"], None),
 ];
 
 const CONFIG_OPTIONS: &[OptSpec] = &[
@@ -512,6 +520,11 @@ pub struct Common {
     pub platform: Option<PlatformSpec>,
     pub source_version: Option<InfobaseConfigSourceVersion>,
     pub db_pwd_env: Option<String>,
+    pub extension: Option<String>,
+    pub rac: Option<PathBuf>,
+    pub ras_endpoint: Option<String>,
+    pub cluster_id: Option<uuid::Uuid>,
+    pub infobase_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -968,7 +981,7 @@ pub fn parse_infobase(args: &[OsString]) -> Result<Invocation, Refusal> {
     }
     let unsupported_options: &[Opt] = match node.kind {
         NodeKind::Export => &[Opt::File, Opt::Archive],
-        _ => &[Opt::Out, Opt::Extension],
+        _ => &[Opt::Out],
     };
     for opt in unsupported_options {
         if let Some(spelled) = scan.spelled(*opt) {
@@ -1127,15 +1140,9 @@ fn parse_apply(scan: &Scan) -> Result<Invocation, Refusal> {
             return Err(Refusal::UnsupportedServer(spelled.to_string()));
         }
     }
-    if let Some(spelled) = scan.spelled(Opt::Extension) {
-        return Err(Refusal::UnsupportedOption {
-            option: spelled.to_string(),
-            command,
-        });
-    }
-    if scan.has(Opt::Sqlcmd) {
+    if scan.has(Opt::Sqlcmd) && !scan.has(Opt::Extension) {
         return Err(Refusal::Unsupported(format!(
-            "Параметр `--sqlcmd` команды `{command}` не поддерживается: применение конфигурации работает только через встроенный клиент SQL Server"
+            "Параметр `--sqlcmd` команды `{command}` не поддерживается: применение основной конфигурации работает только через встроенный клиент SQL Server"
         )));
     }
     let common = common(scan)?;
@@ -1370,6 +1377,35 @@ fn common(scan: &Scan) -> Result<Common, Refusal> {
         platform,
         source_version,
         db_pwd_env: text(Opt::DbPwdEnv),
+        extension: match scan.value(Opt::Extension) {
+            Some(value) if value.trim().is_empty() => {
+                return Err(Refusal::InvalidValue {
+                    option: "--extension".into(),
+                    value: value.into(),
+                });
+            }
+            value => value.map(str::to_owned),
+        },
+        rac: path(Opt::Rac),
+        ras_endpoint: text(Opt::RasEndpoint),
+        cluster_id: scan
+            .value(Opt::ClusterId)
+            .map(|s| {
+                uuid::Uuid::parse_str(s).map_err(|_| Refusal::InvalidValue {
+                    option: "--cluster-id".into(),
+                    value: s.into(),
+                })
+            })
+            .transpose()?,
+        infobase_id: scan
+            .value(Opt::InfobaseId)
+            .map(|s| {
+                uuid::Uuid::parse_str(s).map_err(|_| Refusal::InvalidValue {
+                    option: "--infobase-id".into(),
+                    value: s.into(),
+                })
+            })
+            .transpose()?,
     })
 }
 
@@ -1907,7 +1943,7 @@ mod tests {
                 other => panic!("{option}: {other:?}"),
             }
         }
-        for option in ["--out=a.cf", "--extension=E"] {
+        for option in ["--out=a.cf"] {
             match parse(&["config", "import", "--db-name=b", option, "tree"]) {
                 Err(Refusal::UnsupportedOption { command, .. }) => {
                     assert_eq!(command, "infobase config import")
@@ -2320,7 +2356,6 @@ mod tests {
 
     #[test]
     fn what_apply_does_not_serve_is_named() {
-        let command = "infobase config apply".to_string();
         // `--dynamic=force` is served now: it parses, with the other words, and the apply judges the stage
         assert_eq!(
             apply(&["config", "apply", "--dynamic=force"]).dynamic,
@@ -2329,23 +2364,10 @@ mod tests {
         for list in [
             vec!["config", "apply", "--extension=E"],
             vec!["config", "apply", "--extension", "E"],
+            vec!["config", "apply", "-e", "E"],
         ] {
-            assert_eq!(
-                parse(&list),
-                Err(Refusal::UnsupportedOption {
-                    option: "--extension".to_string(),
-                    command: command.clone()
-                }),
-                "{list:?}"
-            );
+            assert_eq!(apply(&list).common.extension.as_deref(), Some("E"));
         }
-        assert_eq!(
-            parse(&["config", "apply", "-e", "E"]),
-            Err(Refusal::UnsupportedOption {
-                option: "-e".to_string(),
-                command: command.clone()
-            })
-        );
         for option in ["--pid=12", "--remote=http://host:1545"] {
             assert!(
                 matches!(

@@ -1,6 +1,6 @@
-//! Fail-closed direct MSSQL publication for one 8.3.27 extension.
+//! Fail-closed direct MSSQL publication for one verified extension.
 //!
-//! Only the transaction observed in two clean 8.3.27 publication oracles is
+//! Only transactions observed in independent exact-build native controls are
 //! rendered here. Derived platform caches are deliberately outside its scope.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -48,6 +48,12 @@ pub struct ExtensionActivationRecovery {
     pub prior_root_sha1: String,
     pub published_root_sha1: String,
     pub service_marker_previously_present: bool,
+    #[serde(default = "legacy_service_marker")]
+    pub service_marker_managed: bool,
+}
+
+fn legacy_service_marker() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -86,6 +92,7 @@ pub struct ExtensionActivationPlan {
     service_marker: ExtensionServiceMarkerSnapshot,
     no_op: bool,
     own_ras_processes: Vec<crate::mssql_platform_profile::OwnRasProcess>,
+    manage_service_marker: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -175,6 +182,7 @@ impl ExtensionActivationPlan {
             prior_root_sha1: hex(&self.old_root),
             published_root_sha1: hex(&self.new_root),
             service_marker_previously_present: self.service_marker.present,
+            service_marker_managed: self.manage_service_marker,
         }
     }
 }
@@ -211,6 +219,67 @@ pub fn prepare_extension_activation(
     stage: &ExtensionStagePlan,
     service_marker: ExtensionServiceMarkerSnapshot,
     allow_non_lab: bool,
+) -> Result<ExtensionActivationPlan, ExtensionActivationError> {
+    prepare_extension_activation_impl(
+        mode,
+        snapshot,
+        stage,
+        service_marker,
+        allow_non_lab,
+        false,
+        false,
+    )
+}
+
+pub(crate) fn prepare_extension_activation_for_profile(
+    profile: crate::mssql_platform_profile::MssqlNativePlatformProfile,
+    mode: ExtensionActivationMode,
+    snapshot: ExtensionRegistrySnapshot,
+    stage: &ExtensionStagePlan,
+    service_marker: ExtensionServiceMarkerSnapshot,
+    allow_non_lab: bool,
+) -> Result<ExtensionActivationPlan, ExtensionActivationError> {
+    let v85 =
+        profile == crate::mssql_platform_profile::MssqlNativePlatformProfile::Platform8_5_1_1150;
+    if v85 && mode != ExtensionActivationMode::Exclusive {
+        return Err(ExtensionActivationError::UnsupportedPlatform(
+            "8.5.1.1150 extension publication is measured only in exclusive mode".into(),
+        ));
+    }
+    let configinfo = stage
+        .rows()
+        .iter()
+        .find(|r| r.logical_name == "configinfo")
+        .ok_or_else(|| {
+            ExtensionActivationError::InvalidStage("configinfo row is missing".into())
+        })?;
+    let manifest = validate_configinfo_manifest(&inflate_raw_bounded(
+        &configinfo.binary_data,
+        MAX_PACKED_BYTES,
+    )?)
+    .map_err(|e| ExtensionActivationError::InvalidStage(e.to_string()))?;
+    profile
+        .require_extension_storage_format(manifest.storage_format)
+        .map_err(|e| ExtensionActivationError::UnsupportedPlatform(e.to_string()))?;
+    prepare_extension_activation_impl(
+        mode,
+        snapshot,
+        stage,
+        service_marker,
+        allow_non_lab,
+        v85,
+        true,
+    )
+}
+
+fn prepare_extension_activation_impl(
+    mode: ExtensionActivationMode,
+    snapshot: ExtensionRegistrySnapshot,
+    stage: &ExtensionStagePlan,
+    service_marker: ExtensionServiceMarkerSnapshot,
+    allow_non_lab: bool,
+    v85: bool,
+    synchronize_version: bool,
 ) -> Result<ExtensionActivationPlan, ExtensionActivationError> {
     if !allow_non_lab {
         return Err(ExtensionActivationError::SafetyGate(
@@ -281,7 +350,7 @@ pub fn prepare_extension_activation(
         ));
     }
     let mut mapped = BTreeSet::new();
-    for entry in manifest.entries {
+    for entry in &manifest.entries {
         let packed = by_name.get(&entry.logical_name).ok_or_else(|| {
             ExtensionActivationError::InvalidStage(format!(
                 "configinfo maps missing row {}",
@@ -295,7 +364,7 @@ pub fn prepare_extension_activation(
                 entry.logical_name
             )));
         }
-        mapped.insert(entry.logical_name);
+        mapped.insert(entry.logical_name.clone());
     }
     if by_name
         .keys()
@@ -316,6 +385,17 @@ pub fn prepare_extension_activation(
     registry_after[4..24].copy_from_slice(&new_root);
     registry_after[30] = 0;
     registry_after[31..35].copy_from_slice(&snapshot.version[4..8]);
+    if synchronize_version {
+        let key = manifest.identity.configuration_id.hyphenated().to_string();
+        let packed = by_name.get(&key).ok_or_else(|| {
+            ExtensionActivationError::InvalidStage("staged extension root is missing".into())
+        })?;
+        let version = crate::mssql_extension_tree_load::stored_root_version(packed, &key)
+            .map_err(|e| ExtensionActivationError::InvalidStage(e.to_string()))?;
+        registry_after =
+            crate::mssql_extensions::replace_extension_registry_version(&registry_after, &version)
+                .map_err(|e| ExtensionActivationError::UnsupportedPlatform(e.to_string()))?;
+    }
     let after = decode_extension_zipped_info(&registry_after)
         .map_err(|e| ExtensionActivationError::UnsupportedPlatform(e.to_string()))?;
     if after.active_cas_root != hex(&new_root) || !after.active {
@@ -357,6 +437,8 @@ pub fn prepare_extension_activation(
         service_marker,
         no_op: old_root == new_root,
         own_ras_processes: Vec::new(),
+        // 8.5 refreshes an existing legacy marker, but does not create one.
+        manage_service_marker: !v85 || service_marker.present,
     })
 }
 
@@ -409,11 +491,13 @@ pub fn render_extension_activation_sql(
     for row in &plan.cas_rows {
         writeln!(sql, "IF EXISTS (SELECT 1 FROM dbo.ConfigCAS WITH (UPDLOCK,HOLDLOCK) WHERE FileName=N'{}') BEGIN IF (SELECT COUNT_BIG(*) FROM dbo.ConfigCAS WITH (UPDLOCK,HOLDLOCK) WHERE FileName=N'{}') <> 1 OR (SELECT COUNT_BIG(*) FROM dbo.ConfigCAS WITH (UPDLOCK,HOLDLOCK) WHERE FileName=N'{}' AND Attributes=0 AND DataSize={} AND DATALENGTH(BinaryData)={} AND BinaryData=0x{} AND PartNo=0) <> 1 THROW 57204, 'Immutable ConfigCAS collision or drift', 1; END ELSE BEGIN INSERT dbo.ConfigCAS (FileName,Creation,Modified,Attributes,DataSize,BinaryData,PartNo) VALUES (N'{}',DATEADD(year,2000,SYSUTCDATETIME()),DATEADD(year,2000,SYSUTCDATETIME()),0,{},0x{},0); IF @@ROWCOUNT<>1 THROW 57205, 'ConfigCAS insert failed', 1; END;", row.file_name, row.file_name, row.file_name, row.binary_data.len(), row.binary_data.len(), hex(&row.binary_data), row.file_name, row.binary_data.len(), hex(&row.binary_data)).unwrap();
     }
-    writeln!(sql, "DECLARE @Marker nvarchar(255)=N'{}'; DECLARE @MarkerCount bigint=(SELECT COUNT_BIG(*) FROM dbo.ConfigCAS WITH (UPDLOCK,HOLDLOCK) WHERE FileName=@Marker);", quote_string(&marker)).unwrap();
-    if plan.service_marker.present {
-        sql.push_str("IF @MarkerCount<>1 OR (SELECT COUNT_BIG(*) FROM dbo.ConfigCAS WHERE FileName=@Marker AND Attributes=0 AND DataSize=0 AND DATALENGTH(BinaryData)=0 AND PartNo=0)<>1 THROW 57206, 'dbStruFinal optimistic predicate failed', 1; UPDATE dbo.ConfigCAS SET Modified=DATEADD(year,2000,SYSUTCDATETIME()) WHERE FileName=@Marker AND Attributes=0 AND DataSize=0 AND DATALENGTH(BinaryData)=0 AND PartNo=0; IF @@ROWCOUNT<>1 THROW 57207, 'dbStruFinal refresh failed', 1;\n");
-    } else {
-        sql.push_str("IF @MarkerCount<>0 THROW 57206, 'dbStruFinal appeared after snapshot', 1; INSERT dbo.ConfigCAS (FileName,Creation,Modified,Attributes,DataSize,BinaryData,PartNo) VALUES (@Marker,DATEADD(year,2000,SYSUTCDATETIME()),DATEADD(year,2000,SYSUTCDATETIME()),0,0,0x,0); IF @@ROWCOUNT<>1 THROW 57207, 'dbStruFinal insert failed', 1;\n");
+    if plan.manage_service_marker {
+        writeln!(sql, "DECLARE @Marker nvarchar(255)=N'{}'; DECLARE @MarkerCount bigint=(SELECT COUNT_BIG(*) FROM dbo.ConfigCAS WITH (UPDLOCK,HOLDLOCK) WHERE FileName=@Marker);", quote_string(&marker)).unwrap();
+        if plan.service_marker.present {
+            sql.push_str("IF @MarkerCount<>1 OR (SELECT COUNT_BIG(*) FROM dbo.ConfigCAS WHERE FileName=@Marker AND Attributes=0 AND DataSize=0 AND DATALENGTH(BinaryData)=0 AND PartNo=0)<>1 THROW 57206, 'dbStruFinal optimistic predicate failed', 1; UPDATE dbo.ConfigCAS SET Modified=DATEADD(year,2000,SYSUTCDATETIME()) WHERE FileName=@Marker AND Attributes=0 AND DataSize=0 AND DATALENGTH(BinaryData)=0 AND PartNo=0; IF @@ROWCOUNT<>1 THROW 57207, 'dbStruFinal refresh failed', 1;\n");
+        } else {
+            sql.push_str("IF @MarkerCount<>0 THROW 57206, 'dbStruFinal appeared after snapshot', 1; INSERT dbo.ConfigCAS (FileName,Creation,Modified,Attributes,DataSize,BinaryData,PartNo) VALUES (@Marker,DATEADD(year,2000,SYSUTCDATETIME()),DATEADD(year,2000,SYSUTCDATETIME()),0,0,0x,0); IF @@ROWCOUNT<>1 THROW 57207, 'dbStruFinal insert failed', 1;\n");
+        }
     }
     sql.push_str("UPDATE dbo._ExtensionsInfo SET _UpdateTime=DATEADD(year,2000,SYSUTCDATETIME()), _ExtensionZippedInfo=@After WHERE _IDRRef=@ExtensionId AND _Version=@ExpectedVersion AND DATALENGTH(_ExtensionZippedInfo)=DATALENGTH(@Before) AND _ExtensionZippedInfo=@Before; IF @@ROWCOUNT<>1 THROW 57208, 'Extension registry update lost race', 1;\n");
     writeln!(sql, "DELETE dbo.ConfigCASSave WHERE FileName LIKE N'{}' ESCAPE N'~'; IF @@ROWCOUNT<>{} THROW 57209, 'Selected ConfigCASSave cleanup count changed', 1;", quote_string(&pattern), plan.staged_rows.len()).unwrap();
@@ -478,10 +562,12 @@ pub fn render_extension_recovery_sql(
     writeln!(sql, "DECLARE @LockResult int; EXEC @LockResult=sys.sp_getapplock @Resource=N'{}',@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=0; IF @LockResult<0 THROW 57220,'Extension recovery lock unavailable',1;", quote_string(&format!("ibcmd-rs:extension-activation:{}", recovery.namespace_prefix))).unwrap();
     writeln!(sql, "DECLARE @Id binary(16)=0x{}; DECLARE @Version binary(8)=0x{}; DECLARE @Before varbinary(max)=0x{}; DECLARE @After varbinary(max)=0x{};", hex(&id), hex(&current_version), hex(current_blob), hex(&after)).unwrap();
     sql.push_str("UPDATE dbo._ExtensionsInfo WITH (UPDLOCK,HOLDLOCK) SET _UpdateTime=DATEADD(year,2000,SYSUTCDATETIME()),_ExtensionZippedInfo=@After WHERE _IDRRef=@Id AND _Version=@Version AND DATALENGTH(_ExtensionZippedInfo)=DATALENGTH(@Before) AND _ExtensionZippedInfo=@Before; IF @@ROWCOUNT<>1 THROW 57221,'Extension recovery optimistic predicate failed',1;\n");
-    if recovery.service_marker_previously_present {
-        writeln!(sql, "IF (SELECT COUNT_BIG(*) FROM dbo.ConfigCAS WITH (UPDLOCK,HOLDLOCK) WHERE FileName=N'{}')<>1 OR (SELECT COUNT_BIG(*) FROM dbo.ConfigCAS WITH (UPDLOCK,HOLDLOCK) WHERE FileName=N'{}' AND Attributes=0 AND DataSize=0 AND DATALENGTH(BinaryData)=0 AND PartNo=0)<>1 THROW 57222,'dbStruFinal recovery predicate failed',1; UPDATE dbo.ConfigCAS SET Modified=DATEADD(year,2000,SYSUTCDATETIME()) WHERE FileName=N'{}' AND Attributes=0 AND DataSize=0 AND DATALENGTH(BinaryData)=0 AND PartNo=0;", quote_string(&marker), quote_string(&marker), quote_string(&marker)).unwrap();
-    } else {
-        writeln!(sql, "DELETE dbo.ConfigCAS WHERE FileName=N'{}' AND Attributes=0 AND DataSize=0 AND DATALENGTH(BinaryData)=0 AND PartNo=0; IF @@ROWCOUNT<>1 THROW 57222,'dbStruFinal recovery predicate failed',1;", quote_string(&marker)).unwrap();
+    if recovery.service_marker_managed {
+        if recovery.service_marker_previously_present {
+            writeln!(sql, "IF (SELECT COUNT_BIG(*) FROM dbo.ConfigCAS WITH (UPDLOCK,HOLDLOCK) WHERE FileName=N'{}')<>1 OR (SELECT COUNT_BIG(*) FROM dbo.ConfigCAS WITH (UPDLOCK,HOLDLOCK) WHERE FileName=N'{}' AND Attributes=0 AND DataSize=0 AND DATALENGTH(BinaryData)=0 AND PartNo=0)<>1 THROW 57222,'dbStruFinal recovery predicate failed',1; UPDATE dbo.ConfigCAS SET Modified=DATEADD(year,2000,SYSUTCDATETIME()) WHERE FileName=N'{}' AND Attributes=0 AND DataSize=0 AND DATALENGTH(BinaryData)=0 AND PartNo=0;", quote_string(&marker), quote_string(&marker), quote_string(&marker)).unwrap();
+        } else {
+            writeln!(sql, "DELETE dbo.ConfigCAS WHERE FileName=N'{}' AND Attributes=0 AND DataSize=0 AND DATALENGTH(BinaryData)=0 AND PartNo=0; IF @@ROWCOUNT<>1 THROW 57222,'dbStruFinal recovery predicate failed',1;", quote_string(&marker)).unwrap();
+        }
     }
     sql.push_str("COMMIT TRANSACTION;\n");
     Ok(sql)
@@ -765,5 +851,195 @@ mod tests {
         assert!(script.sql().contains("DELETE dbo.ConfigCASSave"));
         assert!(!script.sql().contains("UPDATE dbo._ExtensionsInfo SET"));
         assert_eq!(script.report.touched_tables, vec!["ConfigCASSave"]);
+    }
+}
+
+#[cfg(test)]
+mod platform85_tests {
+    use super::*;
+    use crate::mssql_extension_stage::ExtensionStageRow;
+    use crate::mssql_platform_profile::MssqlNativePlatformProfile;
+
+    fn native_fixture() -> (ExtensionRegistrySnapshot, ExtensionStagePlan, Vec<u8>) {
+        native_fixture_parts(
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-851150/registry-snapshot.json"
+            ),
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-851150/registry-before.hex"
+            ),
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-851150/native-stage.json"
+            ),
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-851150/registry-applied.hex"
+            ),
+        )
+    }
+
+    fn native_fixture_parts(
+        metadata: &str,
+        before: &str,
+        rows: &str,
+        after: &str,
+    ) -> (ExtensionRegistrySnapshot, ExtensionStagePlan, Vec<u8>) {
+        let metadata: serde_json::Value = serde_json::from_str(metadata).unwrap();
+        let array = |name: &str| {
+            metadata[name]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|x| x.as_u64().unwrap() as u8)
+                .collect::<Vec<_>>()
+        };
+        let id: [u8; 16] = array("extension_id").try_into().unwrap();
+        let decode = |text: &str| {
+            text.trim()
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|p| (digit(p[0]).unwrap() << 4) | digit(p[1]).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let snapshot = ExtensionRegistrySnapshot {
+            extension_id: id,
+            version: array("version").try_into().unwrap(),
+            zipped_info: decode(before),
+        };
+        let rows: Vec<serde_json::Value> = serde_json::from_str(rows).unwrap();
+        let rows = rows
+            .iter()
+            .map(|r| {
+                ExtensionStageRow::new(
+                    r["name"].as_str().unwrap(),
+                    crate::module_blob::decode_base64_mime(r["packed"].as_str().unwrap()).unwrap(),
+                )
+            })
+            .collect();
+        (
+            snapshot,
+            ExtensionStagePlan::from_complete_rows(id, rows).unwrap(),
+            decode(after),
+        )
+    }
+
+    #[test]
+    fn native_83272214_storage_and_version_transition_are_exact() {
+        let (snapshot, stage, expected) = native_fixture_parts(
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-83272214/registry-snapshot.json"
+            ),
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-83272214/registry-before.hex"
+            ),
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-83272214/native-stage.json"
+            ),
+            include_str!(
+                "../tests/fixtures/native-evidence/extension-apply-83272214/registry-applied.hex"
+            ),
+        );
+        let plan = prepare_extension_activation_for_profile(
+            MssqlNativePlatformProfile::Platform8_3_27_2214,
+            ExtensionActivationMode::Exclusive,
+            snapshot,
+            &stage,
+            ExtensionServiceMarkerSnapshot { present: true },
+            true,
+        )
+        .unwrap();
+        assert_eq!(plan.registry_after, expected);
+        assert!(plan.recovery().service_marker_managed);
+    }
+
+    #[test]
+    fn native_851150_registry_transition_and_marker_policy_are_exact() {
+        let (snapshot, stage, expected) = native_fixture();
+        let plan = prepare_extension_activation_for_profile(
+            MssqlNativePlatformProfile::Platform8_5_1_1150,
+            ExtensionActivationMode::Exclusive,
+            snapshot,
+            &stage,
+            ExtensionServiceMarkerSnapshot { present: false },
+            true,
+        )
+        .unwrap();
+        assert_eq!(plan.registry_after, expected);
+        assert!(!plan.recovery().service_marker_managed);
+        let script = render_extension_activation_sql("synthetic", &plan).unwrap();
+        assert!(!script.sql().contains("dbStruFinal"));
+        assert!(!script.sql().contains("dbo.Params"));
+        assert!(script.sql().contains("optimistic predicate failed"));
+        let recovery = render_extension_recovery_sql(
+            "synthetic",
+            &script.recovery,
+            [0; 8],
+            &script.recovery.published_registry_blob,
+            true,
+        )
+        .unwrap();
+        assert!(!recovery.contains("dbStruFinal"));
+    }
+
+    #[test]
+    fn native_851150_refreshes_existing_legacy_marker() {
+        let (snapshot, stage, _) = native_fixture();
+        let plan = prepare_extension_activation_for_profile(
+            MssqlNativePlatformProfile::Platform8_5_1_1150,
+            ExtensionActivationMode::Exclusive,
+            snapshot,
+            &stage,
+            ExtensionServiceMarkerSnapshot { present: true },
+            true,
+        )
+        .unwrap();
+        assert!(plan.recovery().service_marker_managed);
+        let script = render_extension_activation_sql("synthetic", &plan).unwrap();
+        assert!(script.sql().contains("dbStruFinal refresh failed"));
+        assert!(!script.sql().contains("dbStruFinal insert failed"));
+    }
+
+    #[test]
+    fn native_851150_stage_rejects_drift_online_and_cross_profile() {
+        let (snapshot, stage, _) = native_fixture();
+        assert!(
+            prepare_extension_activation_for_profile(
+                MssqlNativePlatformProfile::Platform8_5_1_1150,
+                ExtensionActivationMode::Online,
+                snapshot.clone(),
+                &stage,
+                ExtensionServiceMarkerSnapshot { present: false },
+                true
+            )
+            .is_err()
+        );
+        assert!(
+            prepare_extension_activation_for_profile(
+                MssqlNativePlatformProfile::Platform8_3_27_2214,
+                ExtensionActivationMode::Exclusive,
+                snapshot.clone(),
+                &stage,
+                ExtensionServiceMarkerSnapshot { present: false },
+                true
+            )
+            .is_err()
+        );
+        let mut rows = stage.rows().to_vec();
+        rows.iter_mut()
+            .find(|r| r.logical_name != "configinfo")
+            .unwrap()
+            .binary_data
+            .push(0);
+        let broken = ExtensionStagePlan::from_complete_rows(snapshot.extension_id, rows).unwrap();
+        assert!(
+            prepare_extension_activation_for_profile(
+                MssqlNativePlatformProfile::Platform8_5_1_1150,
+                ExtensionActivationMode::Exclusive,
+                snapshot,
+                &broken,
+                ExtensionServiceMarkerSnapshot { present: false },
+                true
+            )
+            .is_err()
+        );
     }
 }

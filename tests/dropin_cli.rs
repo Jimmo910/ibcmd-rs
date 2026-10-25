@@ -222,17 +222,19 @@ fn unsupported_options_and_malformed_lines_are_refused() {
             needle,
         );
     }
-    for (option, needle) in [
+    for (option, code, needle) in [
         (
             "--out=a.cf",
+            UNSUPPORTED,
             "Параметр `--out` команды `infobase config import`",
         ),
         (
             "--extension=E",
-            "Параметр `--extension` команды `infobase config import`",
+            FAILED,
+            "extension writes require --cluster-id",
         ),
     ] {
-        assert_refused(
+        assert_exit(
             &[
                 "infobase",
                 "config",
@@ -241,6 +243,7 @@ fn unsupported_options_and_malformed_lines_are_refused() {
                 option,
                 out.arg(),
             ],
+            code,
             needle,
         );
     }
@@ -631,8 +634,8 @@ fn apply_words_and_refusals_are_the_platforms_before_anything_runs() {
         ),
         (
             "--extension=E",
-            UNSUPPORTED,
-            "Параметр `--extension` команды `infobase config apply`",
+            FAILED,
+            "extension writes require --cluster-id",
         ),
         ("--remote=http://h:1545", UNSUPPORTED, "Параметр `--remote`"),
         ("--pid=1", UNSUPPORTED, "Параметр `--pid`"),
@@ -645,7 +648,12 @@ fn apply_words_and_refusals_are_the_platforms_before_anything_runs() {
         let mut args = common.to_vec();
         args.push(option);
         let output = assert_exit(&args, code, needle);
-        assert_eq!(text(&output.stdout), "", "{option}");
+        let expected_stdout = if option.starts_with("--extension") {
+            "[INFO] Обновление конфигурации базы данных...\n"
+        } else {
+            ""
+        };
+        assert_eq!(text(&output.stdout), expected_stdout, "{option}");
         if code == UNSUPPORTED && !option.starts_with("--sqlcmd") {
             assert!(text(&output.stderr).contains(refused), "{option}");
         }

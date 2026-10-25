@@ -114,7 +114,8 @@ ibcmd infobase config apply [--force] [--dynamic=<режим>] [--session-termin
 | `--session-terminate=disable` (по умолчанию) | Если к базе подключены другие сеансы, отказ в словах штатного `ibcmd` (`Ошибка исключительной блокировки информационной базы.` и список соединений), код −1. Эта проверка строже штатной: штатный `ibcmd`, запущенный на базе, сеансов не видит и применяет, а в режиме `--pid`/`--remote` отменяет применение с предупреждением и кодом 0. Скрипт не должен принять «не применено» за успех. |
 | `--session-terminate=force`, `prompt` | Пока никого нет, принимаются. Если сеансы есть, отказ (код 1): ibcmd-rs сеансы не завершает. |
 | `--session-terminate-message` | Принимается, не используется. |
-| `--extension`, `-e`, `--pid`, `--remote`, `--sqlcmd` | Не поддерживаются (код 1). |
+| `--extension`, `-e` | SQL-расширение: монопольное применение на точных 8.3.27.2214 и 8.5.1.1150. Нужны параметры привязки RAS; см. [маршрут расширений](extensions/parity.md#sql-extension-import-and-apply-on-exact-builds). |
+| `--pid`, `--remote`, `--sqlcmd` | Для основной конфигурации не поддерживаются (код 1). |
 | `--recovery-backup=<файл>` | Только у `ibcmd-rs`. Согласие на реструктуризацию S1 и путь назад: перед транзакцией применение делает `BACKUP DATABASE ... WITH COPY_ONLY, COMPRESSION` в этот файл (путь, куда может писать служба SQL Server; файл не должен существовать, иначе код −1 до записи) и называет его в отчёте. Для загрузки без реструктуризации не нужен. |
 | `--i-have-a-backup` | Только у `ibcmd-rs`. То же согласие, но копию делаете вы; записывается в отчёте. Если указаны оба параметра, действует файл. |
 | `--exclusivity=<sql\|assumed>` | Только у `ibcmd-rs`. `sql` (по умолчанию): сеансы смотрит SQL Server, нужно право `VIEW SERVER STATE`; `assumed`: сеансы не проверяются, берите его, когда у логина СУБД нет этого права или соединение держит лишь пул рабочего процесса, а пользователей в базе нет. |
@@ -502,9 +503,9 @@ ibcmd-rs infobase-config-export --dbms=MSSQLServer --db-server=sql01 --db-name=M
 - `infobase config export all-extensions` и
   `infobase config import all-extensions`;
 - параметры выгрузки `--file`, `--archive`, а также `--base` и `--sync`
-  вместе с `--extension`; загрузки `--out`, `--extension` (и у
-  `import files` и `config load`); применения
-  `--extension`, `--sqlcmd`; сохранения `--extension`;
+  вместе с `--extension`; загрузки `--out`; `--extension` у
+  `import files` и `config load`; применения основной конфигурации
+  с `--sqlcmd`; сохранения `--extension`;
   общие `--pid`, `--remote`;
 - применение и загрузка расширений файловых баз (`--db-path`);
   частичная загрузка `import files` из файловой базы на Windows;
@@ -839,7 +840,8 @@ XML, что выбранный `--platform`/`--source-version`; преобраз
 `ConfigDumpInfo.xml`, а индекс хранит исходные версии записей.
 
 Эти операции создают файлы и не активируют расширение в базе. Ограничения
-SQL-загрузки и активации расширений на 8.5 от них не меняются.
+SQL-загрузки и активации определяются отдельно:
+[точные 8.3.27.2214 и 8.5.1.1150](extensions/parity.md#sql-extension-import-and-apply-on-exact-builds).
 
 Проверено: выгрузка БСП и ERP УХ (8.3.27.2214) совпадает со штатной
 выгрузкой той же конфигурации файл в файл (ERP УХ — 140 709 файлов).
@@ -1145,3 +1147,15 @@ existing combined base+sync and full-fallback/pruning behavior.
 
 Own minimal native snapshots and exact expected bytes are in
 `tests/fixtures/native-export-commands/manifest.json`. They contain no ERP data.
+
+
+### SQL-загрузка и применение расширений
+
+`infobase config import/apply --extension=<имя>` работают с уже установленным
+активным расширением на точных 8.3.27.2214 и 8.5.1.1150. Загрузка проверяет
+полное предлагаемое дерево; применение требует отсутствия клиентских сеансов.
+Нужны `--cluster-id` и `--infobase-id`, а `--rac` и `--ras-endpoint` задают
+нужный сервер администрирования. Существующие механизмы проверки связывают
+SQL-базу с выбранной базой кластера и сборкой платформы. Изменения структуры
+таблиц этим маршрутом не применяются. Примеры и измеренные границы:
+[extensions/parity.md](extensions/parity.md#sql-extension-import-and-apply-on-exact-builds).
