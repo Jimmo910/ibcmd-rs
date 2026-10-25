@@ -45,3 +45,20 @@ The updater SHALL classify accompanying metadata by its measured physical effect
 - **THEN** the updater reports the active and staged formats before staging or publication
 - **AND** no manifest version is silently changed
 - **AND** previously supported body-only overlays retain their prior format support
+
+### Requirement: Direct SQL profile verification without an infobase account
+Direct SQL import and apply SHALL NOT require an infobase application user or
+password and SHALL NOT open an authenticated infobase session as a preflight.
+The tool SHALL retain exact platform-build validation and live SQL-schema
+validation, and SHALL state the evidence actually used for RAS registration.
+
+#### Scenario: Protected infobase with SQL access
+- **GIVEN** a registered infobase with application users and valid SQL access
+- **WHEN** import or apply is invoked without infobase credentials
+- **THEN** profile verification uses administrative summary data and SQL facts
+- **AND** it does not call `rac infobase info` or request an application login
+
+#### Scenario: Wrong platform build or absent registration
+- **GIVEN** an unverified build or missing selected RAS registration
+- **WHEN** the operation is prepared without application credentials
+- **THEN** it refuses before staging and preserves existing data
