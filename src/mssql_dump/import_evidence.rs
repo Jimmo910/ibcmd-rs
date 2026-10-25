@@ -5,6 +5,7 @@
 #![allow(dead_code)] // Isolated extraction seam; production adapters are separately reviewed.
 
 use std::collections::BTreeMap;
+use std::path::{Component, Path};
 
 use flate2::{Decompress, FlushDecompress, Status};
 use sha2::{Digest, Sha256};
@@ -235,13 +236,14 @@ fn add(total: &mut usize, bytes: usize, limit: usize) -> Result<(), ObserveError
 }
 
 fn family(kind: &str) -> Option<OwnerGraphFamily> {
-    match kind {
-        "Catalog" => Some(OwnerGraphFamily::Catalog),
-        "Document" => Some(OwnerGraphFamily::Document),
-        "BusinessProcess" => Some(OwnerGraphFamily::BusinessProcess),
-        "ChartOfCharacteristicTypes" => Some(OwnerGraphFamily::ChartOfCharacteristicTypes),
-        _ => None,
-    }
+    [
+        OwnerGraphFamily::Catalog,
+        OwnerGraphFamily::Document,
+        OwnerGraphFamily::BusinessProcess,
+        OwnerGraphFamily::ChartOfCharacteristicTypes,
+    ]
+    .into_iter()
+    .find(|family| family.as_str() == kind)
 }
 
 fn unsafe_label(value: &str) -> bool {
@@ -249,9 +251,13 @@ fn unsafe_label(value: &str) -> bool {
         || value.chars().any(char::is_control)
         || value.starts_with(['/', '\\'])
         || value.contains(':')
-        || value
-            .split(['/', '\\'])
-            .any(|part| matches!(part, "" | "." | ".."))
+        || value.split(['/', '\\']).any(|part| {
+            let mut components = Path::new(part).components();
+            !matches!(
+                (components.next(), components.next()),
+                (Some(Component::Normal(_)), None)
+            )
+        })
 }
 
 fn alias(value: &str) -> String {
@@ -553,6 +559,77 @@ mod tests {
             layout.root_collection_count_token,
             collections.join(",")
         )
+    }
+
+    #[test]
+    fn typed_family_lookup_keeps_the_exact_supported_boundary() {
+        for name in [
+            "Catalog",
+            "Document",
+            "BusinessProcess",
+            "ChartOfCharacteristicTypes",
+        ] {
+            assert_eq!(family(name).map(OwnerGraphFamily::as_str), Some(name));
+        }
+        for name in [
+            "",
+            "catalog",
+            "CATALOG",
+            "Catalog ",
+            " Catalog",
+            "Form",
+            "Task",
+            "Catalog.New",
+        ] {
+            assert!(family(name).is_none(), "unexpected family {name:?}");
+        }
+    }
+
+    #[test]
+    fn component_parser_preserves_the_original_lexical_predicate() {
+        fn original(value: &str) -> bool {
+            value.is_empty()
+                || value.chars().any(char::is_control)
+                || value.starts_with(['/', '\\'])
+                || value.contains(':')
+                || value
+                    .split(['/', '\\'])
+                    .any(|part| matches!(part, "" | "." | ".."))
+        }
+        for value in [
+            "",
+            ".",
+            "..",
+            "...",
+            "a",
+            "A",
+            "a.b",
+            "a/b",
+            "a\\b",
+            "a//b",
+            "a\\\\b",
+            "a/./b",
+            "a\\..\\b",
+            "/root",
+            "\\root",
+            "a/",
+            "a\\",
+            ":",
+            "C:relative",
+            " a ",
+            "Каталог/Поле",
+            "控制",
+            "a／b",
+            "a\nb",
+            "a\0b",
+            "a\u{7f}b",
+        ] {
+            assert_eq!(
+                unsafe_label(value),
+                original(value),
+                "lexical change for {value:?}"
+            );
+        }
     }
 
     #[test]
