@@ -400,12 +400,17 @@ impl SqlSession for Session {
         let saved = sql
             .find("FROM dbo.ConfigSave WITH (TABLOCKX,HOLDLOCK)")
             .unwrap();
-        assert!(config < saved);
+        let params_lock = sql
+            .find("FROM dbo.Params WITH (TABLOCKX,HOLDLOCK)")
+            .unwrap();
+        assert!(config < saved && saved < params_lock);
+        assert!(sql.contains("snapshot dynamic generation is unsupported"));
         assert!(!sql.contains(" ROLLBACK TRANSACTION;\n SELECT @P7"));
         self.reads += 1;
         self.state.lock().unwrap().events.extend([
             "lock-config".into(),
             "lock-configsave".into(),
+            "lock-params".into(),
             format!("read:{}", self.reads),
         ]);
         if self.state.lock().unwrap().fault == Fault::ReadFailure {
@@ -504,6 +509,106 @@ fn run(fault: Fault) -> (Report, Client, Readset) {
     );
     (report, client, original)
 }
+fn single_part_selected_with_multipart_neighbour() -> Readset {
+    original()
+        .with_selected_stage(
+            [
+                (BODY, 0, 2, b"st".as_slice(), 7),
+                (NEIGHBOUR, 0, 6, b"nei".as_slice(), 9),
+                (NEIGHBOUR, 1, 6, b"ghb".as_slice(), 9),
+            ]
+            .into_iter()
+            .map(|(name, number, size, data, tag)| Input {
+                key: Key {
+                    file_name: name.into(),
+                    part_no: number,
+                },
+                part: Part {
+                    data_size: size,
+                    header: header(tag),
+                    binary: Arc::new(data.to_vec()),
+                },
+            }),
+        )
+        .unwrap()
+}
+
+#[test]
+fn single_part_policy_keeps_multipart_neighbours_and_effective_headers() {
+    let before = single_part_selected_with_multipart_neighbour();
+    let client = Client::new(before.clone(), Fault::None);
+    let report = stage(
+        &client,
+        &before,
+        &edit(&before),
+        &profile(),
+        &WritePolicy::existing_single_part(4, 4096).unwrap(),
+        client.check(),
+        &|| Ok(()),
+    );
+    assert_eq!(report.state, State::Committed, "{:?}", report.error);
+    let record = client.state.lock().unwrap();
+    assert!(
+        before
+            .parts(Table::Config)
+            .eq(record.db.parts(Table::Config))
+    );
+    assert!(
+        before
+            .parts(Table::ConfigSave)
+            .filter(|(k, _)| k.file_name == NEIGHBOUR)
+            .eq(record
+                .db
+                .parts(Table::ConfigSave)
+                .filter(|(k, _)| k.file_name == NEIGHBOUR))
+    );
+    let selected: Vec<_> = record
+        .db
+        .parts(Table::ConfigSave)
+        .filter(|(k, _)| k.file_name == BODY)
+        .collect();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].0.part_no, 0);
+    assert_eq!(selected[0].1.header, header(7));
+    assert_eq!(selected[0].1.binary.as_slice(), b"XY");
+}
+
+#[test]
+fn single_part_policy_refuses_selected_multipart_or_expansion_before_session() {
+    let one = single_part_selected_with_multipart_neighbour();
+    let multipart_versions = one
+        .with_selected_stage((0..2).map(|no| Input {
+            key: Key {
+                file_name: "versions".into(),
+                part_no: no,
+            },
+            part: Part {
+                data_size: 4,
+                header: header(7),
+                binary: Arc::new(b"vv".to_vec()),
+            },
+        }))
+        .unwrap();
+    for (before, cap) in [(original(), 4), (multipart_versions, 4), (one, 3)] {
+        let client = Client::new(before.clone(), Fault::None);
+        let report = stage(
+            &client,
+            &before,
+            &edit(&before),
+            &profile(),
+            &WritePolicy::existing_single_part(cap, 4096).unwrap(),
+            client.check(),
+            &|| Ok(()),
+        );
+        assert_eq!(report.state, State::NotPublished);
+        assert_eq!(client.opens.load(Ordering::SeqCst), 0);
+        assert!(client.events().is_empty());
+        before
+            .require_equal(&client.state.lock().unwrap().db)
+            .unwrap();
+    }
+}
+
 #[test]
 fn commit_is_one_session_preserves_neighbours_and_shrinks_selected_tail() {
     let (report, client, original) = run(Fault::None);

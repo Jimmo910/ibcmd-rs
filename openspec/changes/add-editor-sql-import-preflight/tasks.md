@@ -78,3 +78,10 @@
   Native-file no-ops preserve raw storage; 27 focused tests, 33 transaction/
   compiler regressions (three live ignored), and production check passed.
   Native FormModule and admitted editor SQL routing remain unfinished.
+
+
+- [x] F.16 Narrow existing-CommonModule operation admission and private one-shot
+  editor plan candidate: canonical extended schema/current-context observation,
+  Config/ConfigSave/Params held guards, single-part selected output and finite
+  RPC outcomes; 73+6+30+14+14 local tests and library check passed. This is not
+  current-head Windows/RPC/native acceptance or general writer admission.

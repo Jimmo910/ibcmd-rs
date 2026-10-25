@@ -552,7 +552,16 @@ mod snapshot_contracts {
         ) -> Result<()> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             assert_eq!(query.matches("BEGIN TRANSACTION").count(), 1);
-            assert_eq!(query.matches("WITH (TABLOCK,HOLDLOCK)").count(), 2);
+            assert_eq!(query.matches("WITH (TABLOCK,HOLDLOCK)").count(), 3);
+            assert!(
+                query
+                    .find("FROM dbo.ConfigSave WITH (TABLOCK,HOLDLOCK)")
+                    .unwrap()
+                    < query
+                        .find("FROM dbo.Params WITH (TABLOCK,HOLDLOCK)")
+                        .unwrap()
+            );
+            assert!(query.contains("snapshot dynamic generation is unsupported"));
             assert!(query.contains("USE [synthetic]]db];"));
             assert!(
                 query.find("snapshot aggregate budget exceeded").unwrap()
@@ -1259,4 +1268,74 @@ fn public_sql_snapshot_uses_real_product_tds_reader() -> anyhow::Result<()> {
     drop(client);
     println!("PUBLIC_SQL_SNAPSHOT_READ_PASS parts=8,0 bytes=3313,0 digest={digest:x?}");
     Ok(())
+}
+
+#[test]
+fn common_module_plan_scope_refuses_before_source_or_sql() {
+    use ibcmd_rs::{
+        server::sql_import::{CommonModulePlan, RequestRefused},
+        sql::SqlExec,
+    };
+    let sql = SqlExec::detached("SQL must not be contacted");
+    let client = sql.client().unwrap();
+    let absent = Path::new("nonexistent-common-module-plan-source");
+    let check: ibcmd_rs::server::sql_import::readset::Check = std::sync::Arc::new(|| Ok(()));
+    let verification = CommonModulePlan::prepare(
+        client,
+        "Synthetic",
+        absent,
+        &selected(),
+        Some(false),
+        check.clone(),
+    )
+    .err()
+    .unwrap();
+    assert!(verification.downcast_ref::<RequestRefused>().is_some());
+    assert_eq!(
+        verification.to_string(),
+        "SQL editor import requires mandatory verification"
+    );
+    let mut cases = vec![
+        Selection::default(),
+        Selection {
+            objects: vec!["CommonModule.Synthetic".into()],
+            ..Selection::default()
+        },
+        Selection {
+            changed: true,
+            ..Selection::default()
+        },
+        Selection {
+            files: vec![MODULE.into(), MODULE.into()],
+            ..Selection::default()
+        },
+    ];
+    for path in [
+        "Configuration.xml",
+        "Documents/Synthetic/Forms/Main/Ext/Form/Module.bsl",
+        "CommonModules/Synthetic/Ext/Other.bsl",
+        "commonmodules/Synthetic/Ext/Module.bsl",
+        "CommonModules/../Ext/Module.bsl",
+        "CommonModules/A/B/Ext/Module.bsl",
+        "CommonModules//Ext/Module.bsl",
+    ] {
+        cases.push(Selection {
+            files: vec![path.into()],
+            ..Selection::default()
+        });
+    }
+    for selection in cases {
+        let error =
+            CommonModulePlan::prepare(client, "Synthetic", absent, &selection, None, check.clone())
+                .err()
+                .unwrap();
+        assert!(
+            error.downcast_ref::<RequestRefused>().is_some(),
+            "{error:#}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "SQL preflight currently supports one existing CommonModule file"
+        );
+    }
 }

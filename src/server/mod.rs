@@ -496,6 +496,11 @@ struct ReadParams {
     path: String,
 }
 
+enum ImportPlan {
+    FileDb(Box<crate::file_import::Plan>),
+    SqlCommonModule(Box<sql_import::CommonModulePlan>),
+}
+
 struct State {
     output: Output,
     initialized: bool,
@@ -504,7 +509,7 @@ struct State {
     entries: Vec<Entry>,
     /// Open infobases by id.
     sessions: HashMap<String, Session>,
-    import_plans: import_plans::Registry<crate::file_import::Plan>,
+    import_plans: import_plans::Registry<ImportPlan>,
     connection_epoch: u64,
 }
 
@@ -826,23 +831,51 @@ impl State {
 
     fn prepare_import(&mut self, params: ImportParams) -> Result<Value, RpcError> {
         let session = self.session(&params.infobase)?;
-        let ConfigSource::FileDb(target) = session.configuration.source() else {
-            return Err(RpcError::invalid_params(
-                "safe preflight currently requires a file-db connection",
-            ));
+        let selection = crate::file_import::Selection {
+            files: params.files,
+            objects: params.objects,
+            changed: params.changed,
         };
-        let plan = crate::file_import::prepare(
-            target,
-            &params.source_dir,
-            &crate::file_import::Selection {
-                files: params.files,
-                objects: params.objects,
-                changed: params.changed,
-            },
-            session.configuration.platform(),
-        )
-        .map_err(failure)?;
-        let preflight = json!(plan.summary());
+        let (plan, preflight) = match session.configuration.source() {
+            ConfigSource::FileDb(target) => {
+                let plan = crate::file_import::prepare(
+                    target,
+                    &params.source_dir,
+                    &selection,
+                    session.configuration.platform(),
+                )
+                .map_err(failure)?;
+                let preflight = json!(plan.summary());
+                (ImportPlan::FileDb(Box::new(plan)), preflight)
+            }
+            ConfigSource::Database { sql, database } => {
+                let client = sql.client().ok_or_else(|| {
+                    RpcError::invalid_params("SQL guarded import requires the built-in client")
+                })?;
+                let plan = sql_import::CommonModulePlan::prepare(
+                    client,
+                    database,
+                    &params.source_dir,
+                    &selection,
+                    params._verify,
+                    Arc::new(|| crate::cancel::check().map_err(Into::into)),
+                )
+                .map_err(|error| {
+                    if let Some(refused) = error.downcast_ref::<sql_import::RequestRefused>() {
+                        RpcError::invalid_params(refused.to_string())
+                    } else {
+                        failure(error)
+                    }
+                })?;
+                let preflight = json!(plan.summary());
+                (ImportPlan::SqlCommonModule(Box::new(plan)), preflight)
+            }
+            ConfigSource::RowsDir(_) => {
+                return Err(RpcError::invalid_params(
+                    "safe preflight requires a file-db or supported SQL connection",
+                ));
+            }
+        };
         let token = self
             .import_plans
             .insert(
@@ -862,7 +895,7 @@ impl State {
             if !params.confirm {
                 return Err(RpcError::new(
                     codes::CONFIRMATION_REQUIRED,
-                    "confirm the prepared file import before publication",
+                    "confirm the prepared import before publication",
                 ));
             }
             let token = uuid::Uuid::parse_str(token)
@@ -881,15 +914,41 @@ impl State {
                     )
                 })?;
             let session = self.session(&params.infobase)?;
-            let ConfigSource::FileDb(target) = session.configuration.source() else {
-                return Err(RpcError::invalid_params(
+            return match (plan, session.configuration.source()) {
+                (ImportPlan::FileDb(plan), ConfigSource::FileDb(target)) => {
+                    let report = plan.publish(target).map_err(failure)?;
+                    Ok(
+                        json!({"report": {"backend":"file-db-partial-configsave", "stagedRows":report.rows_after, "backup":report.backup}}),
+                    )
+                }
+                (ImportPlan::SqlCommonModule(plan), ConfigSource::Database { sql, database }) => {
+                    // A token selects its retained bytes; confirmation may not
+                    // replace its selection or disable verification.
+                    if !params.files.is_empty()
+                        || !params.objects.is_empty()
+                        || params.changed
+                        || params._verify == Some(false)
+                    {
+                        return Err(RpcError::invalid_params(
+                            "SQL publication accepts only its prepared token; prepare again",
+                        ));
+                    }
+                    let client = sql.client().ok_or_else(|| {
+                        RpcError::invalid_params("SQL guarded import requires the built-in client")
+                    })?;
+                    let rows = plan.staged_rows();
+                    let report = plan.publish(
+                        client,
+                        database,
+                        &params.source_dir,
+                        Arc::new(|| crate::cancel::check().map_err(Into::into)),
+                    );
+                    sql_import_reply(report, rows)
+                }
+                _ => Err(RpcError::invalid_params(
                     "connection changed since preflight",
-                ));
+                )),
             };
-            let report = plan.publish(target).map_err(failure)?;
-            return Ok(
-                json!({"report": {"backend":"file-db-partial-configsave", "stagedRows":report.rows_after, "backup":report.backup}}),
-            );
         }
         if !params.files.is_empty() || params.changed {
             return Err(RpcError::invalid_params(
@@ -915,7 +974,7 @@ impl State {
             return Err(offline("objects/import", session));
         }
         // No direct editor RPC may enter the legacy full CONFIGSAVE replacement
-        // path. Guarded SQL plan publication stays unavailable until admitted.
+        // path. Only an independently prepared, admitted one-shot SQL plan may publish.
         Err(RpcError::invalid_params(
             "SQL import requires guarded preflight; prepare again",
         ))
@@ -950,6 +1009,24 @@ impl State {
             "verdict": verdict,
         }))
     }
+}
+
+/// Preserve acknowledged/uncertain outcomes before generic cancellation mapping.
+fn sql_import_reply(
+    report: sql_import::transaction::Report,
+    rows: usize,
+) -> Result<Value, RpcError> {
+    use sql_import::transaction::State;
+    if !matches!(report.state, State::Committed | State::Unchanged)
+        || report.error.is_some()
+        || report.cleanup_uncertain
+    {
+        return Err(failure(report.into()));
+    }
+    Ok(
+        json!({"report": {"backend":"mssql-common-module-configsave",
+        "stagedRows":rows, "state":format!("{:?}",report.state), "nativeApplied":false}}),
+    )
 }
 
 fn offline(method: &str, session: &Session) -> RpcError {
@@ -993,6 +1070,46 @@ fn opened_message(session: &Session) -> String {
 #[cfg(test)]
 mod import_error_tests {
     use super::*;
+    #[test]
+    fn sql_publication_reply_preserves_terminal_outcomes() {
+        use sql_import::transaction::{Report, State};
+        for state in [State::Unchanged, State::Committed] {
+            let value = sql_import_reply(
+                Report {
+                    state,
+                    error: None,
+                    cleanup_uncertain: false,
+                },
+                2,
+            )
+            .unwrap();
+            assert_eq!(value["report"]["state"], format!("{state:?}"));
+            assert_eq!(value["report"]["nativeApplied"], false);
+        }
+        for (state, uncertain, code) in [
+            (
+                State::Committed,
+                false,
+                codes::IMPORT_COMMITTED_RECOVERY_REQUIRED,
+            ),
+            (State::Unknown, false, codes::IMPORT_OUTCOME_UNKNOWN),
+            (State::RolledBack, true, codes::IMPORT_OUTCOME_UNKNOWN),
+            (State::RolledBack, false, codes::REQUEST_CANCELLED),
+        ] {
+            let error = sql_import_reply(
+                Report {
+                    state,
+                    error: Some(crate::cancel::Cancelled.into()),
+                    cleanup_uncertain: uncertain,
+                },
+                2,
+            )
+            .unwrap_err();
+            assert_eq!(error.code, code);
+            assert!(error.data.is_none());
+        }
+    }
+
     #[test]
     fn publication_panic_is_redacted_and_never_claims_no_write() {
         let payloads: Vec<Box<dyn std::any::Any + Send>> = vec![

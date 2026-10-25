@@ -231,3 +231,26 @@ success because its callback swallowed the failure.
 - **THEN** the rollback was acknowledged and the session is terminal. An absent
   transaction, unusable protocol state or missing acknowledgement SHALL NOT be
   reported as a successful rollback.
+
+
+### Requirement: Initial editor SQL operation is existing CommonModule text only
+The initial SQL editor operation SHALL accept exactly one canonical existing
+CommonModule module file with mandatory verification. Its private server-owned
+admission SHALL validate closed measured SQL storage semantics and current
+execution identity using the same canonical fragment as snapshot and held CAS.
+It SHALL retain Config, ConfigSave and Params locks in that order, refuse dynamic
+markers and unsupported DML-affecting catalog features, and require single-part
+selected body/versions output. It SHALL NOT infer a native platform build or
+activate the staged configuration.
+
+#### Scenario: Unsupported request cannot contact SQL
+- **GIVEN** objects/changed/multiple files, another file role or disabled verification
+- **WHEN** editor SQL preparation is requested
+- **THEN** the request is refused before source or SQL I/O.
+
+#### Scenario: Prepared editor operation is single-use and outcome preserving
+- **GIVEN** an admitted source/snapshot-bound CommonModule plan and explicit confirmation
+- **WHEN** its target/epoch/TTL-bound token is consumed for publication
+- **THEN** only retained bytes may be staged, full held CAS remains mandatory,
+  and acknowledged Committed or Unknown outcomes SHALL NOT become cancellation
+  or an automatic retry. Native activation remains separate.

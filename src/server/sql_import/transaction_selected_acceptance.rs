@@ -286,6 +286,17 @@ fn real_common_module_noop_never_opens_a_session() {
     let edit = fixture.compile(&fixture.old_text);
     assert!(edit.replacements().is_empty());
     let client = Client::new(fixture.snapshot.clone(), Fault::None);
+    assert_eq!(
+        preflight_selected_parts(&fixture.snapshot, &edit, &write_policy(), &client.check())
+            .unwrap(),
+        0
+    );
+    let changed = stale_snapshot(&fixture, "root", InterveningChange::Payload);
+    assert!(preflight_selected_parts(&changed, &edit, &write_policy(), &client.check()).is_err());
+    let cancelled: Check = Arc::new(|| Err(crate::cancel::Cancelled.into()));
+    let error = preflight_selected_parts(&fixture.snapshot, &edit, &write_policy(), &cancelled)
+        .unwrap_err();
+    assert!(crate::cancel::is_cancelled(&error));
     let report = stage(
         &client,
         &fixture.snapshot,

@@ -1,14 +1,14 @@
-//! Single-request read-only SQL acquisition. Not wired to editor dispatch.
+//! Canonical read-only SQL acquisition and closed storage-semantics observation.
 //!
-//! There is deliberately no accepted built-in profile. The operator must measure
-//! the exact SQL version and schema hash first. Recording clients establish the
-//! decoder contract only; lock/coherence/cancellation behavior needs real SQL.
+//! The private CommonModule observation binds current execution identity and the
+//! same extended schema seal used by capture and held CAS. It does not identify
+//! a native platform build. Recording tests do not establish live SQL behavior.
 use super::readset::{Builder, Check, Input, Key, Limits, Part, Readset, Table};
 use crate::{
     mssql_live_continue::DatabaseIdentity,
     sql::{Dbms, SqlClient, SqlParam, SqlRow, SqlSession, SqlValue},
 };
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use std::sync::Arc;
 
 /// Operator-owned measured profile, never accepted from an import RPC argument.
@@ -45,6 +45,204 @@ pub fn capture(
         })?
         .readset,
     )
+}
+
+/// Closed schema/current-execution-context observation, not a native build or
+/// edit capability. Only the canonical read-only observer can construct it.
+pub struct CommonModuleStorageProfile {
+    snapshot: Profile,
+}
+impl CommonModuleStorageProfile {
+    pub fn snapshot_profile(&self) -> &Profile {
+        &self.snapshot
+    }
+}
+
+/// Observe and validate the narrow staging schema in one read-only transaction.
+/// This admits neither a native build nor an edit: the caller must still capture
+/// the full readset, validate its selected owner/body and retain source custody.
+pub fn observe_common_module_profile(
+    client: &dyn SqlClient,
+    database: &str,
+    limits: Limits,
+    check: Check,
+) -> Result<CommonModuleStorageProfile> {
+    check()?;
+    ensure!(
+        client.dbms() == Dbms::SqlServer && client.detached_reason().is_none(),
+        "profile observation requires connected SQL Server"
+    );
+    ensure!(
+        !database.is_empty() && !database.contains('\0') && database.encode_utf16().count() <= 128,
+        "invalid observation database identifier"
+    );
+    let count = i64::try_from(limits.max_parts)?;
+    ensure!(
+        count > 0 && count < i64::MAX,
+        "invalid observation part limit"
+    );
+    let budget = i64::try_from(limits.max_metadata_bytes.min(MAX_SCHEMA_BYTES as u64))?;
+    ensure!(budget > 0, "invalid observation schema limit");
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let query = observation_query()?.replace(
+        "__DATABASE__",
+        &format!("[{}]", database.replace(']', "]]")),
+    );
+    // Positional holes are unused numeric parameters, never profile assertions.
+    let params = [
+        SqlParam::I64(0),
+        SqlParam::I64(count),
+        SqlParam::I64(0),
+        SqlParam::I64(0),
+        SqlParam::I64(0),
+        SqlParam::I64(0),
+        SqlParam::Text(&nonce),
+        SqlParam::I64(budget),
+    ];
+    let mut observer = ProfileObserver {
+        database,
+        nonce: &nonce,
+        limits,
+        check,
+        profile: None,
+        sealed: false,
+    };
+    let mut failed = None;
+    let outcome = client.read_rows(&query, &params, &mut |row| {
+        if failed.is_some() {
+            bail!("SQL profile stream was invalidated");
+        }
+        if let Err(error) = observer.accept(row) {
+            failed = Some(error);
+            bail!("SQL profile stream was invalidated");
+        }
+        Ok(())
+    });
+    if let Some(error) = failed {
+        return Err(error);
+    }
+    outcome?;
+    (observer.check)()?;
+    ensure!(
+        observer.sealed,
+        "SQL profile observation has no rollback seal"
+    );
+    Ok(CommonModuleStorageProfile {
+        snapshot: observer
+            .profile
+            .context("SQL profile observation has no identity")?,
+    })
+}
+
+fn observation_query() -> Result<String> {
+    // Reuse the canonical locked metadata producer verbatim; no parallel schema
+    // serializer or weaker catalog visibility path can mint an admission.
+    let sql = include_str!("snapshot.sql");
+    let anchor = " IF @SchemaHash<>@P1 OR ";
+    ensure!(
+        sql.matches(anchor).count() == 1,
+        "snapshot profile anchor changed"
+    );
+    let prefix = sql
+        .split_once(anchor)
+        .context("snapshot profile anchor missing")?
+        .0;
+    Ok(format!(
+        "{prefix} SELECT CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')),d.name,
+ CONVERT(varchar(36),r.database_guid),CONVERT(varchar(36),r.family_guid),
+ CONVERT(varchar(36),r.recovery_fork_guid),
+ CONVERT(nvarchar(128),SERVERPROPERTY('ProductVersion')),@SchemaHash,@Schema
+ FROM sys.databases d JOIN sys.database_recovery_status r ON r.database_id=d.database_id
+ WHERE d.database_id=DB_ID() AND d.state_desc=N'ONLINE' AND d.user_access_desc=N'MULTI_USER';
+ ROLLBACK TRANSACTION;
+ SELECT @P7;
+END TRY
+BEGIN CATCH
+ IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;
+ THROW;
+END CATCH;"
+    ))
+}
+
+struct ProfileObserver<'a> {
+    database: &'a str,
+    nonce: &'a str,
+    limits: Limits,
+    check: Check,
+    profile: Option<Profile>,
+    sealed: bool,
+}
+impl ProfileObserver<'_> {
+    fn accept(&mut self, row: SqlRow) -> Result<()> {
+        (self.check)()?;
+        ensure!(!self.sealed, "SQL profile rows follow the rollback seal");
+        match row.result_set {
+            0 => {
+                ensure!(self.profile.is_none(), "SQL profile identity repeated");
+                let mut fields = row.values;
+                let json = text(fields.pop().context("SQL schema JSON missing")?)?;
+                let profile = decode_profile_fields(
+                    fields
+                        .try_into()
+                        .map_err(|_| anyhow::anyhow!("SQL profile metadata shape is invalid"))?,
+                )?;
+                ensure!(
+                    profile.identity.database == self.database,
+                    "SQL profile database changed"
+                );
+                ensure!(
+                    profile.sql_version == "16.0.1000.6",
+                    "SQL staging engine is outside the measured operation cohort"
+                );
+                verify_common_module_storage_schema(&json)?;
+                use sha2::{Digest, Sha256};
+                let bytes: Vec<_> = json.encode_utf16().flat_map(u16::to_le_bytes).collect();
+                ensure!(
+                    Sha256::digest(&bytes)[..] == profile.schema[..],
+                    "SQL profile schema byte hash changed"
+                );
+                // Also validate all identity/limit arithmetic before returning a
+                // profile. No synthetic headers or physical rows are created.
+                Builder::new(
+                    profile.identity.clone(),
+                    profile.schema,
+                    self.limits,
+                    self.check.clone(),
+                )?;
+                self.profile = Some(profile);
+            }
+            1 => {
+                ensure!(
+                    self.profile.is_some() && row.values.len() == 1,
+                    "SQL profile rollback seal preceded identity"
+                );
+                ensure!(
+                    text(row.values.into_iter().next().unwrap())? == self.nonce,
+                    "SQL profile rollback nonce changed"
+                );
+                self.sealed = true;
+            }
+            _ => bail!("SQL profile resultset is unsupported"),
+        }
+        Ok(())
+    }
+}
+
+fn decode_profile_fields(fields: [SqlValue; 7]) -> Result<Profile> {
+    let [server, database, guid, family, fork, version, schema] = fields;
+    Ok(Profile {
+        identity: DatabaseIdentity {
+            server: text(server)?,
+            database: text(database)?,
+            database_guid: text(guid)?,
+            family_guid: text(family)?,
+            recovery_fork: text(fork)?,
+        },
+        sql_version: text(version)?,
+        schema: binary(schema)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("SQL schema hash shape is invalid"))?,
+    })
 }
 
 pub(super) struct HeldReadset {
@@ -85,7 +283,7 @@ fn held_query() -> Result<String> {
             1,
         ),
         (" BEGIN TRANSACTION;\n", "", 1),
-        ("WITH (TABLOCK,HOLDLOCK)", "WITH (TABLOCKX,HOLDLOCK)", 2),
+        ("WITH (TABLOCK,HOLDLOCK)", "WITH (TABLOCKX,HOLDLOCK)", 3),
         (
             " ROLLBACK TRANSACTION;\n SELECT @P7,@NC,@NS,@BC,@BS;",
             " SELECT @P7,@NC,@NS,@BC,@BS,@@TRANCOUNT,XACT_STATE(),@@SPID;",
@@ -240,29 +438,24 @@ impl Decoder<'_> {
         match row.result_set {
             0 => {
                 ensure!(self.builder.is_none(), "SQL snapshot identity repeated");
-                let [server, database, guid, family, fork, version, schema]: [SqlValue; 7] = row
-                    .values
-                    .try_into()
-                    .map_err(|_| anyhow::anyhow!("SQL snapshot metadata shape is invalid"))?;
-                let identity = DatabaseIdentity {
-                    server: text(server)?,
-                    database: text(database)?,
-                    database_guid: text(guid)?,
-                    family_guid: text(family)?,
-                    recovery_fork: text(fork)?,
-                };
+                let observed = decode_profile_fields(
+                    row.values
+                        .try_into()
+                        .map_err(|_| anyhow::anyhow!("SQL snapshot metadata shape is invalid"))?,
+                )?;
                 ensure!(
-                    identity == self.profile.identity,
+                    observed.identity == self.profile.identity,
                     "SQL snapshot target identity changed"
                 );
                 ensure!(
-                    text(version)? == self.profile.sql_version,
+                    observed.sql_version == self.profile.sql_version,
                     "SQL snapshot version is not measured"
                 );
                 ensure!(
-                    binary(schema)?.as_slice() == self.profile.schema,
+                    observed.schema == self.profile.schema,
                     "SQL snapshot schema is not measured"
                 );
+                let identity = observed.identity;
                 self.builder = Some(Builder::new(
                     identity,
                     self.profile.schema,
@@ -384,6 +577,13 @@ pub fn verify_common_module_storage_schema(json: &str) -> Result<()> {
     ensure!(
         schema.staging_safety_version == 1
             && schema.unsafe_storage_features == 0
+            && schema.metadata_sysadmin
+            && schema.params_marker_absent
+            && schema.principal_sid_sha256.len() == 64
+            && schema
+                .principal_sid_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
             && schema.collation_name == "Cyrillic_General_CI_AS"
             && schema.compatibility_level == 160
             && !schema.is_read_committed_snapshot_on,
@@ -494,6 +694,9 @@ impl<'de, T: serde::de::DeserializeOwned> serde::Deserialize<'de> for RequiredNu
 struct StagingSchema {
     staging_safety_version: u32,
     unsafe_storage_features: u64,
+    metadata_sysadmin: bool,
+    params_marker_absent: bool,
+    principal_sid_sha256: String,
     collation_name: String,
     compatibility_level: u16,
     is_read_committed_snapshot_on: bool,
@@ -602,6 +805,8 @@ mod staging_schema_contracts {
             })
             .collect();
         json!({"staging_safety_version": 1, "unsafe_storage_features": 0,
+            "metadata_sysadmin": true, "params_marker_absent": true,
+            "principal_sid_sha256": "11".repeat(32),
             "collation_name": "Cyrillic_General_CI_AS", "compatibility_level": 160,
             "is_read_committed_snapshot_on": false, "tables": tables})
     }
@@ -617,6 +822,12 @@ mod staging_schema_contracts {
         primary["tables"][0]["indexes"][0]["is_primary_key"] = json!(true);
         assert!(verify_common_module_storage_schema(&primary.to_string()).is_ok());
         refused(|v| v["tables"].as_array_mut().unwrap().swap(0, 1));
+        refused(|v| v["metadata_sysadmin"] = json!(false));
+        refused(|v| v["params_marker_absent"] = json!(false));
+        refused(|v| v["metadata_sysadmin"] = Value::Null);
+        refused(|v| v["principal_sid_sha256"] = Value::Null);
+        refused(|v| v["principal_sid_sha256"] = json!("x".repeat(64)));
+        refused(|v| v["principal_sid_sha256"] = json!("a".repeat(63)));
     }
     #[test]
     fn duplicate_unknown_and_missing_required_nullable_fields_refuse() {
@@ -663,5 +874,225 @@ mod staging_schema_contracts {
         assert!(verify_common_module_storage_schema(&within).is_ok());
         assert!(verify_common_module_storage_schema(&(within + " ")).is_err());
         assert!(verify_common_module_storage_schema(&"😀".repeat(8193)).is_err());
+    }
+
+    fn observer() -> super::ProfileObserver<'static> {
+        super::ProfileObserver {
+            database: "public_synthetic",
+            nonce: "sealed-observation",
+            limits: super::Limits::default(),
+            check: std::sync::Arc::new(|| Ok(())),
+            profile: None,
+            sealed: false,
+        }
+    }
+    fn observation_metadata() -> crate::sql::SqlRow {
+        use crate::sql::SqlValue;
+        use sha2::{Digest, Sha256};
+        let json = fixture().to_string();
+        let bytes: Vec<_> = json.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        crate::sql::SqlRow {
+            result_set: 0,
+            values: vec![
+                SqlValue::Text("recording".into()),
+                SqlValue::Text("public_synthetic".into()),
+                SqlValue::Text(uuid::Uuid::from_u128(1).to_string()),
+                SqlValue::Text(uuid::Uuid::from_u128(2).to_string()),
+                SqlValue::Text(uuid::Uuid::from_u128(3).to_string()),
+                SqlValue::Text("16.0.1000.6".into()),
+                SqlValue::Binary(Sha256::digest(&bytes).to_vec()),
+                SqlValue::Text(json),
+            ],
+        }
+    }
+    fn observation_seal(nonce: &str) -> crate::sql::SqlRow {
+        crate::sql::SqlRow {
+            result_set: 1,
+            values: vec![crate::sql::SqlValue::Text(nonce.into())],
+        }
+    }
+    #[test]
+    fn observation_requires_metadata_byte_hash_then_exact_rollback_seal() {
+        let mut o = observer();
+        o.accept(observation_metadata()).unwrap();
+        assert!(!o.sealed);
+        o.accept(observation_seal("sealed-observation")).unwrap();
+        assert!(o.sealed);
+        assert_eq!(
+            o.profile.as_ref().unwrap().identity.database,
+            "public_synthetic"
+        );
+        assert!(o.accept(observation_seal("sealed-observation")).is_err());
+        for field in [1, 5, 6] {
+            let mut row = observation_metadata();
+            row.values[field] = match field {
+                6 => crate::sql::SqlValue::Binary(vec![0; 32]),
+                _ => crate::sql::SqlValue::Text("wrong".into()),
+            };
+            let mut o = observer();
+            assert!(o.accept(row).is_err());
+            assert!(o.profile.is_none() && !o.sealed);
+        }
+        let mut o = observer();
+        assert!(o.accept(observation_seal("sealed-observation")).is_err());
+        let mut o = observer();
+        o.accept(observation_metadata()).unwrap();
+        assert!(o.accept(observation_metadata()).is_err());
+        assert!(o.accept(observation_seal("wrong")).is_err());
+    }
+    #[test]
+    fn observation_preserves_typed_cancellation_before_returning_a_profile() {
+        let mut o = observer();
+        o.check = std::sync::Arc::new(|| Err(crate::cancel::Cancelled.into()));
+        let error = o.accept(observation_metadata()).unwrap_err();
+        assert!(error.downcast_ref::<crate::cancel::Cancelled>().is_some());
+        assert!(o.profile.is_none() && !o.sealed);
+    }
+    #[test]
+    fn observation_and_held_capture_share_locked_context_and_safety_producer() {
+        let query = super::observation_query().unwrap();
+        let canonical = include_str!("snapshot.sql");
+        let prefix = canonical.split_once(" IF @SchemaHash<>@P1 OR ").unwrap().0;
+        assert!(query.starts_with(prefix));
+        let role = query.find("IS_SRVROLEMEMBER(N'sysadmin')").unwrap();
+        let first = query
+            .find("FROM dbo.Config WITH (TABLOCK,HOLDLOCK)")
+            .unwrap();
+        let second = query
+            .find("FROM dbo.ConfigSave WITH (TABLOCK,HOLDLOCK)")
+            .unwrap();
+        let params = query
+            .find("FROM dbo.Params WITH (TABLOCK,HOLDLOCK)")
+            .unwrap();
+        let ids = query.find("DECLARE @ConfigId").unwrap();
+        let safety = query.find("DECLARE @UnsafeStorageFeatures").unwrap();
+        assert!(role < first && first < second && second < params && params < ids && ids < safety);
+        assert!(query.contains("OR referenced_object_id IN (@ConfigId,@SaveId,@ParamsId)"));
+        assert!(query.contains("FROM sys.security_predicates"));
+        assert!(query.contains("FROM sys.triggers\n     WHERE parent_id"));
+        assert!(query.contains("@ExecutionSidHash,2) AS principal_sid_sha256"));
+        assert!(!query.contains("SELECT FileName,PartNo,DataSize"));
+        assert!(!query.contains("INSERT INTO") && !query.contains("DELETE "));
+        let rollback = query.find(" ROLLBACK TRANSACTION;").unwrap();
+        let seal = query.find(" SELECT @P7;").unwrap();
+        assert!(rollback < seal);
+        let held = super::held_query().unwrap();
+        for marker in [
+            "staging_safety_version",
+            "unsafe_storage_features",
+            "metadata_sysadmin",
+            "principal_sid_sha256",
+            "params_marker_absent",
+        ] {
+            assert!(query.contains(marker) && held.contains(marker));
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum ObservationFault {
+        None,
+        MissingSeal,
+        TransportAfterSeal,
+        IgnoreCallback,
+    }
+    struct ObservationClient {
+        fault: ObservationFault,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    impl super::SqlClient for ObservationClient {
+        fn dbms(&self) -> super::Dbms {
+            super::Dbms::SqlServer
+        }
+        fn max_connections(&self) -> usize {
+            1
+        }
+        fn run_script(&self, _: &str, _: crate::sql::ScriptVariables) -> anyhow::Result<()> {
+            panic!("profile observation must not use scripts")
+        }
+        fn execute(&self, _: &str, _: &[super::SqlParam<'_>]) -> anyhow::Result<u64> {
+            panic!("profile observation must not execute DML")
+        }
+        fn read_rows(
+            &self,
+            query: &str,
+            params: &[super::SqlParam<'_>],
+            each: &mut dyn FnMut(crate::sql::SqlRow) -> anyhow::Result<()>,
+        ) -> anyhow::Result<()> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(params.len(), 8);
+            assert!(!query.contains("SELECT FileName,PartNo,DataSize"));
+            let super::SqlParam::Text(nonce) = params[6] else {
+                panic!("nonce parameter missing")
+            };
+            if matches!(self.fault, ObservationFault::IgnoreCallback) {
+                let _ = each(observation_metadata());
+                let _ = each(observation_seal(nonce));
+                return Ok(());
+            }
+            each(observation_metadata())?;
+            if matches!(self.fault, ObservationFault::MissingSeal) {
+                return Ok(());
+            }
+            each(observation_seal(nonce))?;
+            if matches!(self.fault, ObservationFault::TransportAfterSeal) {
+                anyhow::bail!("recorded transport failed after rollback seal");
+            }
+            Ok(())
+        }
+        fn query_json(&self, _: &str) -> anyhow::Result<Option<String>> {
+            panic!("profile observation must not use alternate queries")
+        }
+        fn write_rows(
+            &self,
+            _: &str,
+            _: &[&str],
+            _: &[Vec<super::SqlParam<'_>>],
+        ) -> anyhow::Result<u64> {
+            panic!("profile observation must not write rows")
+        }
+    }
+    #[test]
+    fn observed_profile_returns_only_after_complete_transport_and_rollback_seal() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for (fault, succeeds) in [
+            (ObservationFault::None, true),
+            (ObservationFault::MissingSeal, false),
+            (ObservationFault::TransportAfterSeal, false),
+        ] {
+            let client = ObservationClient {
+                fault,
+                calls: AtomicUsize::new(0),
+            };
+            let outcome = super::observe_common_module_profile(
+                &client,
+                "public_synthetic",
+                super::Limits::default(),
+                std::sync::Arc::new(|| Ok(())),
+            );
+            assert_eq!(outcome.is_ok(), succeeds);
+            assert_eq!(client.calls.load(Ordering::SeqCst), 1);
+        }
+        let client = ObservationClient {
+            fault: ObservationFault::IgnoreCallback,
+            calls: AtomicUsize::new(0),
+        };
+        let checks = std::sync::Arc::new(AtomicUsize::new(0));
+        let check: super::Check = std::sync::Arc::new(move || {
+            if checks.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(())
+            } else {
+                Err(crate::cancel::Cancelled.into())
+            }
+        });
+        let error = super::observe_common_module_profile(
+            &client,
+            "public_synthetic",
+            super::Limits::default(),
+            check,
+        )
+        .err()
+        .expect("swallowed callback accepted");
+        assert!(error.downcast_ref::<crate::cancel::Cancelled>().is_some());
+        assert_eq!(client.calls.load(Ordering::SeqCst), 1);
     }
 }

@@ -1,8 +1,8 @@
 //! Bounded source admission for SQL editor preparation.
 //!
-//! Source admission, snapshot compilers and a library-only guarded transaction
-//! primitive are separate from user dispatch. No RPC route calls the transaction;
-//! native writer/profile and end-to-end acceptance remain required before wiring.
+//! CommonModule preparation binds original source custody, observed storage
+//! semantics and a full physical snapshot to one consumed server plan. Publication
+//! stages text and versions only; native activation remains a separate operation.
 pub mod compiler_diagnostic;
 pub mod coverage;
 pub mod readset;
@@ -114,6 +114,20 @@ impl SourceAdmission {
         })
     }
 
+    /// Compile existing CommonModule layout from held bytes, without a claimed
+    /// platform coordinate. This still supplies no schema or write admission.
+    pub fn prepare_common_module_layout(
+        &self,
+        snapshot: &readset::Readset,
+        selected_path: &str,
+        limits: selected::Limits,
+        check: &readset::Check,
+    ) -> Result<selected::ModuleEdit> {
+        self.prepare_selected_module(selected_path, check, |bytes| {
+            selected::prepare_module_file_layout(snapshot, selected_path, bytes, limits, check)
+        })
+    }
+
     /// Compile one existing Document-owned Form module from retained bytes.
     /// This does not admit Form.xml, other owner families or SQL publication.
     pub fn prepare_document_form_module(
@@ -166,5 +180,161 @@ impl SourceAdmission {
     /// This must precede the guarded SQL publication boundary, never follow it.
     pub fn revalidate(&self) -> Result<()> {
         self.source.require_unchanged().map_err(Into::into)
+    }
+}
+
+/// Server-owned prepared existing-CommonModule operation. No fields, raw rows,
+/// profile assertions or compiled payload can be supplied by an RPC caller.
+pub struct CommonModulePlan {
+    source: SourceAdmission,
+    source_dir: std::path::PathBuf,
+    original: readset::Readset,
+    edit: selected::ModuleEdit,
+    storage: snapshot::CommonModuleStorageProfile,
+    policy: transaction::WritePolicy,
+    summary: CommonModulePreflight,
+}
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommonModulePreflight {
+    backend: &'static str,
+    target: String,
+    files: Vec<String>,
+    missing_references: Vec<crate::file_import::MissingReference>,
+    ready: bool,
+    staged_rows: usize,
+}
+/// Unsupported request shape, distinct from source, target or SQL failures.
+#[derive(Debug)]
+pub struct RequestRefused(&'static str);
+impl std::fmt::Display for RequestRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+impl std::error::Error for RequestRefused {}
+
+impl CommonModulePlan {
+    /// Read-only preparation of one explicit canonical existing module path.
+    /// There is no platform-build inference, arbitrary multipart policy or
+    /// user-supplied schema admission; full snapshot CAS remains mandatory.
+    pub fn prepare(
+        client: &dyn crate::sql::SqlClient,
+        database: &str,
+        source_dir: &Path,
+        selection: &Selection,
+        verify: Option<bool>,
+        check: readset::Check,
+    ) -> Result<Self> {
+        check()?;
+        if verify == Some(false) {
+            return Err(RequestRefused("SQL editor import requires mandatory verification").into());
+        }
+        if selection.files.len() != 1 || !selection.objects.is_empty() || selection.changed {
+            return Err(RequestRefused(
+                "SQL preflight currently supports one existing CommonModule file",
+            )
+            .into());
+        }
+        let path = &selection.files[0];
+        let route = crate::compiler::families::assets::SourceAssetRegistry
+            .route(
+                "CommonModule",
+                crate::compiler::families::assets::SourceAssetRole::Module,
+            )
+            .context("CommonModule file route is unavailable")?;
+        let folder = crate::mssql_dump::root_family_folder(route.owner_family())
+            .context("CommonModule source folder is unavailable")?;
+        let prefix = format!("{folder}/");
+        let suffix = format!("/{}", route.relative_path());
+        let name = path
+            .strip_prefix(&prefix)
+            .and_then(|tail| tail.strip_suffix(&suffix));
+        if !name.is_some_and(|name| {
+            !name.is_empty() && name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        }) {
+            return Err(RequestRefused(
+                "SQL preflight currently supports one existing CommonModule file",
+            )
+            .into());
+        }
+        let source =
+            SourceAdmission::prepare(source_dir, selection, verify, SourceLimits::default())?;
+        check()?;
+        let limits = readset::Limits::default();
+        let storage =
+            snapshot::observe_common_module_profile(client, database, limits, check.clone())?;
+        let original =
+            snapshot::capture(client, storage.snapshot_profile(), limits, check.clone())?;
+        let edit = source.prepare_common_module_layout(
+            &original,
+            path,
+            selected::Limits::default(),
+            &check,
+        )?;
+        let policy = transaction::WritePolicy::existing_single_part(1024 * 1024, 4 * 1024 * 1024)?;
+        let staged_rows = transaction::preflight_selected_parts(&original, &edit, &policy, &check)?;
+        check()?;
+        source.revalidate()?;
+        let summary = CommonModulePreflight {
+            backend: "mssql-common-module-configsave",
+            target: database.into(),
+            files: selection.files.clone(),
+            missing_references: Vec::new(),
+            ready: true,
+            staged_rows,
+        };
+        Ok(Self {
+            source,
+            source_dir: source_dir.into(),
+            original,
+            edit,
+            storage,
+            policy,
+            summary,
+        })
+    }
+    pub fn summary(&self) -> &CommonModulePreflight {
+        &self.summary
+    }
+    pub fn staged_rows(&self) -> usize {
+        self.summary.staged_rows
+    }
+
+    /// Consumes the prepared operation. Callers must first consume the one-shot
+    /// target/connection-bound token and obtain explicit user confirmation.
+    /// Publication never compiles another path or rereads replacement contents.
+    pub fn publish(
+        self,
+        client: &dyn crate::sql::SqlClient,
+        current_database: &str,
+        current_source_dir: &Path,
+        check: readset::Check,
+    ) -> transaction::Report {
+        let before = (|| -> Result<()> {
+            check()?;
+            if current_database != self.storage.snapshot_profile().identity.database
+                || current_source_dir != self.source_dir.as_path()
+            {
+                bail!("SQL preflight binding changed; prepare again");
+            }
+            self.source.revalidate()
+        })();
+        if let Err(error) = before {
+            return transaction::Report {
+                state: transaction::State::NotPublished,
+                error: Some(error),
+                cleanup_uncertain: false,
+            };
+        }
+        transaction::stage(
+            client,
+            &self.original,
+            &self.edit,
+            self.storage.snapshot_profile(),
+            &self.policy,
+            check,
+            &|| self.source.revalidate(),
+        )
     }
 }

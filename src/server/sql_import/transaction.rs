@@ -1,4 +1,4 @@
-//! Guarded selected staging on one held-lock session. No RPC/CLI caller.
+//! Guarded selected staging on one held-lock session.
 //! This local implementation is NOT an admitted native writer profile. Selected
 //! headers are inherited unchanged from captured effective part zero; actual
 //! multipart/header/native apply behavior remains a disposable-SQL gate.
@@ -43,6 +43,7 @@ impl std::error::Error for Report {
 pub struct WritePolicy {
     part_bytes: usize,
     wire_bytes: usize,
+    existing_single_part: bool,
 }
 impl WritePolicy {
     pub fn new(part_bytes: usize, wire_bytes: usize) -> Result<Self> {
@@ -53,7 +54,17 @@ impl WritePolicy {
         Ok(Self {
             part_bytes,
             wire_bytes,
+            existing_single_part: false,
         })
+    }
+
+    /// Narrow physical restriction for an existing single-part replacement.
+    /// This is not schema/codec admission. Both effective selected input and
+    /// replacement must remain one part; unselected multipart rows stay exact.
+    pub fn existing_single_part(part_bytes: usize, wire_bytes: usize) -> Result<Self> {
+        let mut policy = Self::new(part_bytes, wire_bytes)?;
+        policy.existing_single_part = true;
+        Ok(policy)
     }
 }
 struct Plan {
@@ -61,6 +72,26 @@ struct Plan {
     parts: Vec<Input>,
     names: Vec<String>,
 }
+/// Pure preview of the exact same physical restrictions used before staging.
+/// This does not open a SQL session or grant publication authority.
+pub(super) fn preflight_selected_parts(
+    original: &Readset,
+    edit: &ModuleEdit,
+    policy: &WritePolicy,
+    check: &Check,
+) -> Result<usize> {
+    check()?;
+    ensure!(
+        *edit.readset_digest() == original.digest()?,
+        "SQL edit belongs to another snapshot"
+    );
+    if edit.replacements().is_empty() {
+        check()?;
+        return Ok(0);
+    }
+    Ok(physical_plan(original, edit, policy, check)?.parts.len())
+}
+
 fn physical_plan(
     original: &Readset,
     edit: &ModuleEdit,
@@ -89,6 +120,32 @@ fn physical_plan(
             .map(|(_, part)| part.header.clone())
             .context("selected SQL metadata provenance is missing")?;
         let bytes = &edit.replacements()[name];
+        if policy.existing_single_part {
+            let table = if original
+                .parts(Table::ConfigSave)
+                .any(|(key, _)| key.file_name == *name)
+            {
+                Table::ConfigSave
+            } else {
+                Table::Config
+            };
+            let mut effective = original
+                .parts(table)
+                .filter(|(key, _)| key.file_name == *name);
+            let (key, part) = effective
+                .next()
+                .context("selected single-part provenance is missing")?;
+            ensure!(
+                key.part_no == 0
+                    && effective.next().is_none()
+                    && part.data_size == u64::try_from(part.binary.len())?,
+                "selected SQL input is outside the single-part write policy"
+            );
+            ensure!(
+                bytes.len() <= policy.part_bytes,
+                "selected SQL replacement requires unadmitted partitioning"
+            );
+        }
         let total = u64::try_from(bytes.len())?;
         let count = bytes.len().max(1).div_ceil(policy.part_bytes);
         i64::try_from(total)?;
@@ -205,7 +262,7 @@ struct Attempt {
     error: Option<anyhow::Error>,
 }
 
-/// Internal operation only: never called by editor, MCP or the legacy writer.
+/// Guarded operation used only after source, schema and one-shot plan admission.
 /// Final guards are synchronous operator/source/cancellation checks, not consent
 /// callbacks. Preparation/consent must finish BEFORE this transaction begins.
 pub fn stage(

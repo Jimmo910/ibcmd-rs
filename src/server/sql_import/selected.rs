@@ -7,7 +7,7 @@ use super::readset::{Check, Readset, Table};
 use crate::{
     compiler::families::{
         assets::{SourceAssetRegistry, SourceAssetRole},
-        modules::{CommonModuleProfile, decode_common_module_blob},
+        modules::{CommonModuleProfile, decode_common_module_blob, decode_common_module_layout},
     },
     metadata_model::{
         brace::{Brace, parse_row},
@@ -241,7 +241,15 @@ pub fn prepare_module_file(
     limits: Limits,
     check: &Check,
 ) -> Result<ModuleEdit> {
-    prepare_module_text(snapshot, selected_path, text, profile, limits, check, true)
+    prepare_module_text(
+        snapshot,
+        selected_path,
+        text,
+        Some(profile),
+        limits,
+        check,
+        true,
+    )
 }
 
 /// Compile immutable storage text; callers using source-file bytes use
@@ -254,14 +262,35 @@ pub fn prepare_module(
     limits: Limits,
     check: &Check,
 ) -> Result<ModuleEdit> {
-    prepare_module_text(snapshot, selected_path, text, profile, limits, check, false)
+    prepare_module_text(
+        snapshot,
+        selected_path,
+        text,
+        Some(profile),
+        limits,
+        check,
+        false,
+    )
+}
+
+/// Compile the existing CommonModule grammar without claiming a platform build.
+/// Schema/physical operation admission and source custody remain separate.
+/// No profile coordinate, write capability or activation authority is inferred.
+pub fn prepare_module_file_layout(
+    snapshot: &Readset,
+    selected_path: &str,
+    text: &[u8],
+    limits: Limits,
+    check: &Check,
+) -> Result<ModuleEdit> {
+    prepare_module_text(snapshot, selected_path, text, None, limits, check, true)
 }
 
 fn prepare_module_text(
     snapshot: &Readset,
     selected_path: &str,
     text: &[u8],
-    profile: &CommonModuleProfile,
+    profile: Option<&CommonModuleProfile>,
     limits: Limits,
     check: &Check,
     filesystem: bool,
@@ -309,7 +338,10 @@ fn prepare_module_text(
             .context("SQL module descriptor is missing")?;
         // Bound/depth-check BEFORE the existing typed decoder inflates/parses it.
         let _ = budget.descriptor(blob)?;
-        let module = decode_common_module_blob(blob, profile)?;
+        let module = match profile {
+            Some(profile) => decode_common_module_blob(blob, profile)?,
+            None => decode_common_module_layout(blob)?,
+        };
         ensure!(
             module.uuid.to_string() == id,
             "SQL module descriptor identity changed"
@@ -690,6 +722,11 @@ mod tests {
         );
         assert_eq!(source, original);
         assert_eq!(captured.digest().unwrap(), digest);
+        let layout_edit =
+            prepare_module_file_layout(&captured, &path, &source, Limits::default(), &check())
+                .unwrap();
+        assert!(layout_edit.replacements().is_empty());
+        assert_eq!(layout_edit.readset_digest(), edit.readset_digest());
     }
 
     #[test]

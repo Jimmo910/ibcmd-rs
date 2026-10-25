@@ -441,3 +441,52 @@ six parts/1525 bytes, pending and not activated. This old target must not be
 reused as a clean baseline or accidentally applied. This closes the demonstrated
 CommonModule nonempty-neighbour/cancel/stale slice, not native FormModule,
 general writer admission, lost-ack runtime injection or the guarded editor route.
+
+
+## Narrow existing-CommonModule editor candidate
+
+The candidate uses one existing `CommonModules/<name>/Ext/Module.bsl` selection;
+objects, changed mode, other file roles, multiple files and disabled verification
+refuse before source or SQL I/O. Retained source bytes and directory witnesses,
+full CONFIG/CONFIGSAVE physical snapshot and a private observed storage token are
+owned by the consumed target/epoch/TTL-bound plan. The compiler uses its existing
+CommonModule grammar without manufacturing a native build coordinate. Selected
+body and versions must remain single physical parts; multipart neighbours stay
+untouched. An unchanged native-format module returns zero planned rows and no
+transaction, after digest and cancellation checks.
+
+One canonical read-only SQL prefix is shared by observation, initial capture and
+held recapture. Its seal now includes the closed SQL16 storage semantics, current
+effective sysadmin membership and hashed execution SID, plus the absence of a
+Params dynamic marker under a third retained table lock. Config -> ConfigSave ->
+Params is the deterministic lock order. Incoming/outgoing foreign keys, RLS,
+triggers/checks (including disabled/opaque ones), special table/column features,
+legacy bound defaults/rules and indexed schema-bound dependencies refuse. This
+restricts supported existing principals; no rights are granted or changed. The
+operation is text+versions staging only, not platform-build or native activation
+authority. The old two-table schema receipts do not validate this extended seal.
+
+The existing RPC stores either a FileDB plan or this private SQL plan. Confirmation
+can supply only its retained token/source binding; it cannot replace selection or
+disable verification. SQL Report Committed/Unknown takes precedence over late
+cancellation and recovery errors; no fallback, retry or native apply occurs.
+Main-view caches already recheck effective versions before use.
+
+Actual local gates: 73 SQL-import library tests passed, three live tests ignored;
+six RPC outcome tests passed; 30 source-admission tests passed, one live test
+ignored; all 14 editor_server and 14 editor_partial_import tests passed. The
+black-box SQL refusal test covers ten publication and thirteen prepare refusals,
+with zero accepted TCP connections and no source creation. The no-op preview
+regression first failed with `SQL replacement stage is empty`, then passed with
+wrong-snapshot and typed-cancellation controls. Production library check passed;
+root test/library warning totals remain 40/97. Fresh source reviews found no
+remaining scoped adapter, observer or physical-plan blocker. Logs are retained
+under external `logs/issue-382-operation-plan-*` and
+`logs/issue-382-noop-preview-red.log`.
+
+This is local candidate evidence. Current-head Windows/runtime RPC preparation,
+publication and native apply/export are still required. Earlier a666/9d04 runtime
+receipts retain their exact attribution. FormModule remains outside this editor
+route and its native fixture acceptance is tracked separately. The unrelated
+full-branch diagnostic-file registration policy refusal remains unresolved; no
+baseline growth or whitelist was introduced.

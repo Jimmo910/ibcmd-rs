@@ -4,21 +4,87 @@ SET NOCOUNT ON;
 SET XACT_ABORT ON;
 SET LOCK_TIMEOUT 5000;
 IF @@TRANCOUNT <> 0 THROW 57620, 'snapshot requires an idle session', 1;
+-- Initial operation admission is restricted to the CURRENT effective sysadmin
+-- context. No grant/elevation occurs; restricted principals remain unsupported.
+DECLARE @MetadataSysadmin int=IS_SRVROLEMEMBER(N'sysadmin');
+IF @MetadataSysadmin IS NULL OR @MetadataSysadmin<>1
+ THROW 57635, 'snapshot metadata context is unsupported', 1;
+DECLARE @ExecutionSid varbinary(max)=SUSER_SID();
+IF @ExecutionSid IS NULL OR DATALENGTH(@ExecutionSid)=0 OR DATALENGTH(@ExecutionSid)>85
+ THROW 57636, 'snapshot execution identity is unavailable', 1;
+DECLARE @ExecutionSidHash varbinary(32)=HASHBYTES('SHA2_256',@ExecutionSid);
 BEGIN TRY
  BEGIN TRANSACTION;
  IF ISNULL(HAS_PERMS_BY_NAME(DB_NAME(),'DATABASE','VIEW DEFINITION'),0)<>1
    THROW 57626, 'snapshot requires visible storage definitions', 1;
  IF OBJECT_ID(N'dbo.Config',N'U') IS NULL OR OBJECT_ID(N'dbo.ConfigSave',N'U') IS NULL
+   OR OBJECT_ID(N'dbo.Params',N'U') IS NULL
    THROW 57627, 'snapshot storage tables are unsupported', 1;
- DECLARE @NC bigint, @NS bigint, @BC bigint, @BS bigint, @MC bigint, @MS bigint;
+ DECLARE @NC bigint, @NS bigint, @BC bigint, @BS bigint, @MC bigint, @MS bigint, @NP bigint;
  -- Deterministic table lock order; TOP caps counting work for oversized targets.
  SELECT @NC=COUNT_BIG(*) FROM
    (SELECT TOP (@P2+1) FileName FROM dbo.Config WITH (TABLOCK,HOLDLOCK)) c;
  SELECT @NS=COUNT_BIG(*) FROM
    (SELECT TOP (@P2+1) FileName FROM dbo.ConfigSave WITH (TABLOCK,HOLDLOCK)) s;
  IF @NC+@NS>@P2 THROW 57621, 'snapshot part count exceeded', 1;
+ -- Params is not a payload source. Its retained lock protects the absence of
+ -- the paired dynamic-generation marker through the same publication boundary.
+ SELECT @NP=COUNT_BIG(*) FROM
+   (SELECT TOP (@P2+1) FileName FROM dbo.Params WITH (TABLOCK,HOLDLOCK)) p;
+ IF @NP>@P2 THROW 57637, 'snapshot Params marker inventory is oversized', 1;
+ -- Closed staging catalog cohort. Resolve object identities only AFTER all
+ -- three table locks; retain the objects against DDL through the completion seal.
+ DECLARE @ConfigId int=OBJECT_ID(N'dbo.Config',N'U'),
+   @SaveId int=OBJECT_ID(N'dbo.ConfigSave',N'U'),
+   @ParamsId int=OBJECT_ID(N'dbo.Params',N'U');
+ DECLARE @UnsafeStorageFeatures bigint=
+   (SELECT COUNT_BIG(*) FROM sys.foreign_keys
+     WHERE parent_object_id IN (@ConfigId,@SaveId,@ParamsId)
+        OR referenced_object_id IN (@ConfigId,@SaveId,@ParamsId))+
+   (SELECT COUNT_BIG(*) FROM sys.security_predicates
+     WHERE target_object_id IN (@ConfigId,@SaveId,@ParamsId))+
+   (SELECT COUNT_BIG(*) FROM sys.triggers
+     WHERE parent_id IN (@ConfigId,@SaveId,@ParamsId))+
+   (SELECT COUNT_BIG(*) FROM sys.check_constraints
+     WHERE parent_object_id IN (@ConfigId,@SaveId,@ParamsId))+
+   (SELECT COUNT_BIG(*) FROM sys.change_tracking_tables
+     WHERE object_id IN (@ConfigId,@SaveId,@ParamsId))+
+   (SELECT COUNT_BIG(*) FROM sys.tables WHERE object_id IN (@ConfigId,@SaveId,@ParamsId)
+     AND (is_memory_optimized=1 OR temporal_type<>0 OR is_filetable=1
+       OR is_node=1 OR is_edge=1 OR ledger_type<>0 OR is_external=1
+       OR is_remote_data_archive_enabled=1 OR is_tracked_by_cdc=1
+       OR is_replicated=1 OR has_replication_filter=1 OR is_merge_published=1
+       OR is_sync_tran_subscribed=1))+
+   (SELECT COUNT_BIG(*) FROM sys.columns c WHERE c.object_id IN (@ConfigId,@SaveId,@ParamsId)
+     AND (c.is_hidden=1 OR c.is_sparse=1 OR c.is_column_set=1 OR c.is_filestream=1
+       OR c.rule_object_id<>0 OR (c.default_object_id<>0 AND NOT EXISTS
+         (SELECT 1 FROM sys.default_constraints dc
+           WHERE dc.object_id=c.default_object_id AND dc.parent_object_id=c.object_id))))+
+   (SELECT COUNT_BIG(*) FROM sys.indexes WHERE object_id IN (@ConfigId,@SaveId,@ParamsId)
+     AND (ignore_dup_key=1 OR is_hypothetical=1))+
+   (SELECT COUNT_BIG(*) FROM sys.sql_expression_dependencies d
+     JOIN sys.views v ON v.object_id=d.referencing_id
+     WHERE d.referenced_id IN (@ConfigId,@SaveId,@ParamsId) AND d.is_schema_bound_reference=1
+       AND EXISTS(SELECT 1 FROM sys.indexes i
+         WHERE i.object_id=v.object_id AND i.index_id>0));
+ IF @UnsafeStorageFeatures<>0
+   THROW 57629, 'snapshot storage has unsupported DML features', 1;
+ IF NOT EXISTS(SELECT 1 FROM sys.columns c WHERE c.object_id=@ParamsId
+   AND c.column_id=1 AND CONVERT(varbinary(max),c.name)=CONVERT(varbinary(max),N'FileName')
+   AND c.system_type_id=231 AND c.user_type_id=231 AND c.max_length=256
+   AND c.is_nullable=0 AND c.is_identity=0 AND c.is_computed=0
+   AND c.generated_always_type=0 AND c.encryption_type IS NULL)
+   THROW 57638, 'snapshot Params marker key layout is unsupported', 1;
+ IF EXISTS(SELECT 1 FROM dbo.Params
+   WHERE FileName COLLATE Latin1_General_100_CI_AS=N'DynamicallyUpdated')
+   THROW 57639, 'snapshot dynamic generation is unsupported', 1;
+ DECLARE @ParamsMarkerAbsent bit=1;
  DECLARE @Schema nvarchar(max)=(
-   SELECT d.collation_name, d.compatibility_level, d.is_read_committed_snapshot_on,
+   SELECT 1 AS staging_safety_version, @UnsafeStorageFeatures AS unsafe_storage_features,
+     CONVERT(bit,@MetadataSysadmin) AS metadata_sysadmin,
+     @ParamsMarkerAbsent AS params_marker_absent,
+     CONVERT(varchar(64),@ExecutionSidHash,2) AS principal_sid_sha256,
+     d.collation_name, d.compatibility_level, d.is_read_committed_snapshot_on,
      JSON_QUERY((SELECT t.name,t.is_memory_optimized,t.temporal_type,
        JSON_QUERY((SELECT c.column_id,c.name,c.system_type_id,c.user_type_id,
          c.max_length,c.precision,c.scale,c.collation_name,c.is_nullable,
