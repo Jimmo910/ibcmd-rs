@@ -3,6 +3,9 @@
     "CovRestructureBaseline",
     "CovRestructureUpdate",
     "CovRestructureTwoJobs",
-    "CovRestructureTwoPlainJobs"
+    "CovRestructureTwoPlainJobs",
+    "CovRestructureDialogBaseline",
+    "CovRestructureDialogUpdate",
+    "CovRestructureDialogDefaults"
   ]
 }
