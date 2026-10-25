@@ -85,3 +85,11 @@
   Config/ConfigSave/Params held guards, single-part selected output and finite
   RPC outcomes; 73+6+30+14+14 local tests and library check passed. This is not
   current-head Windows/RPC/native acceptance or general writer admission.
+
+
+- [x] F.17 Native2342 public Document/Form FILE→CF→SQL-load/apply/export baseline
+  verified active root graph, both Documents/MainForm and exact native Module;
+  no Form staging/user-route acceptance inferred. See Form/CAS evidence.
+- [x] F.18 Original Form layout/raw module-token witnesses and grammar-only held
+  preparation integrated with focused source/local checks. Exact disposable Form
+  experiment constants are bound; Windows stage/native-cycle execution pending.

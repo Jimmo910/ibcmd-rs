@@ -150,6 +150,26 @@ impl SourceAdmission {
         })
     }
 
+    /// Compile one held existing Document Form module by its original grammar.
+    /// Target/schema admission and native acceptance are independent boundaries.
+    pub fn prepare_document_form_module_layout(
+        &self,
+        snapshot: &readset::Readset,
+        selected_path: &str,
+        limits: selected::Limits,
+        check: &readset::Check,
+    ) -> Result<selected::ModuleEdit> {
+        self.prepare_selected_module(selected_path, check, |bytes| {
+            selected::form::prepare_form_module_file_layout(
+                snapshot,
+                selected_path,
+                bytes,
+                limits,
+                check,
+            )
+        })
+    }
+
     fn prepare_selected_module(
         &self,
         selected_path: &str,

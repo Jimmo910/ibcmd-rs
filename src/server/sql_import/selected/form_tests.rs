@@ -485,6 +485,12 @@ fn filesystem_form_native_noop_keeps_raw_storage_layout_and_versions() {
     )
     .unwrap();
     assert!(edit.replacements().is_empty());
+    let layout_edit =
+        prepare_form_module_file_layout(&captured, &path(0), &source, Limits::default(), &check())
+            .unwrap();
+    assert!(layout_edit.replacements().is_empty());
+    assert_eq!(layout_edit.readset_digest(), edit.readset_digest());
+
     // The storage API retains its original EOL semantics for the same bytes.
     assert!(
         !prepare_form_module(
@@ -543,6 +549,16 @@ fn filesystem_form_edit_reuses_loader_policy_and_preserves_exact_nonmodule_state
         edit.replacements().keys().cloned().collect::<BTreeSet<_>>(),
         BTreeSet::from([key.clone(), "versions".into()])
     );
+    let layout_edit =
+        prepare_form_module_file_layout(&captured, &path(0), &source, Limits::default(), &check())
+            .unwrap();
+    assert_eq!(layout_edit.replacements()[&key], edit.replacements()[&key]);
+    assert_eq!(layout_edit.readset_digest(), edit.readset_digest());
+    crate::compiler::bodies::form::verify_module_only_edit(
+        &rows[&key],
+        &layout_edit.replacements()[&key],
+    )
+    .unwrap();
     let old = decode_managed_form(&profile().body, &rows[&key]).unwrap();
     let new = decode_managed_form(&profile().body, &edit.replacements()[&key]).unwrap();
     assert_eq!(

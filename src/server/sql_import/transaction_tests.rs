@@ -1711,10 +1711,11 @@ fn public_sql_nonempty_stage_cancel_and_stale_preserve_neighbors() -> Result<()>
 #[path = "transaction_selected_acceptance.rs"]
 mod selected_acceptance;
 
-// Operator-only PUBLICFORM experiment. Fill these measured bindings ONLY after
-// the native CF eaf574099239a975adb2a301b7e3d73743da00617e5c721a919329e6b5533bad
-// has a fresh SQL load/apply/export baseline. Empty/zero placeholders refuse
-// before any connection; this test is not runnable acceptance evidence yet.
+// Operator-only PUBLICFORM experiment, bound to the native CF
+// eaf574099239a975adb2a301b7e3d73743da00617e5c721a919329e6b5533bad SQL baseline.
+// Native export receipt1485ec09/fullrelease3b56d3ab verified the active graph;
+// a retained-seal lookup pins this exact single-part Form body without payload egress.
+// These bindings are experimental test inputs, not a native writer admission.
 #[test]
 #[ignore = "sole operator: new native-CF PUBLICFORM baseline and separate staging opt-in required; native writer profile unadmitted"]
 fn public_sql_existing_form_module_stage_experiment() -> Result<()> {
@@ -1729,13 +1730,17 @@ fn public_sql_existing_form_module_stage_experiment() -> Result<()> {
     use sha2::{Digest, Sha256};
     use std::time::{Duration, Instant};
 
-    const SERVER: &str = ""; // Actual new PUBLICFORM identity pending.
-    const DATABASE: &str = "";
-    const GUID: &str = "";
-    const FAMILY: &str = "";
-    const FORK: &str = "";
-    const SQL_VERSION: &str = "";
-    const PACKED_FORM_BODY_SHA256: [u8; 32] = [0; 32];
+    const SERVER: &str = "WIN-LHDQGRLB1L1";
+    const DATABASE: &str = "IBCMDLAB_PUBLIC_FORM_SQL_9eb812dd4de64d75bbd9655fd565717d";
+    const GUID: &str = "9DCEF2DD-3C19-418C-A4C4-8F1BF5D38B92";
+    const FAMILY: &str = "8B053531-FCFB-4564-8BA6-20DDD0CDE200";
+    const FORK: &str = "8B053531-FCFB-4564-8BA6-20DDD0CDE200";
+    const SQL_VERSION: &str = "16.0.1000.6";
+    const PACKED_FORM_BODY_SHA256: [u8; 32] = [
+        0x7f, 0x98, 0x90, 0x04, 0xe1, 0xb2, 0x2b, 0xd2, 0x89, 0x6b, 0x74, 0xcd, 0xf8, 0xc4, 0xb2,
+        0xdf, 0x9b, 0xc0, 0x56, 0x2e, 0xae, 0x5f, 0x50, 0x69, 0xbe, 0x80, 0x6f, 0xf8, 0xb7, 0x30,
+        0x43, 0xff,
+    ];
     const PATH: &str = "Documents/ImportDocument/Forms/Main/Ext/Form/Module.bsl";
     const BODY_KEY: &str = "60000000-0000-4000-8000-000000000200.0";
     ensure!(

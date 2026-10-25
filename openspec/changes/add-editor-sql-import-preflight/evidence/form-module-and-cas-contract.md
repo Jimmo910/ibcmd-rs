@@ -117,3 +117,61 @@ only rustfmt layout adjustment afterward. Formatting and diff checks passed.
 External logs: issue-382-held-form-source-focused.log,
 issue-382-held-form-stage-compat.log, issue-382-held-form-libcheck.log.
 No SQL/VM/native test ran in these gates and the editor SQL route stays closed.
+
+
+## Native public Document/Form baseline and original-layout witnesses
+
+The public XML2.20 Document-only source was compiled by native8.3.27.2342 in a
+fresh FILE context, then read back from its native CF: 80426 bytes, SHA256
+`eaf574099239a975adb2a301b7e3d73743da00617e5c721a919329e6b5533bad`.
+The SQL baseline used this CF, not another XML bootstrap. Fresh create/load
+succeeded; the first apply was canceled at the explicit two-Document/storage-mode
+confirmation. Exact full pending state was retained. The separate continuation
+sent one response only after the exact measured342-byte prompt and empty stderr;
+no force or repeated create/load was used. Apply acknowledged natural0 in1.845s.
+
+The diagnostic root reader then misclassified a24-byte raw-DEFLATE frame beginning
+with `{` as plaintext. It was corrected in an export-only continuation, pinned to
+that exact root hash; no second apply occurred. Production snapshot/StoredConfiguration
+paths were independently checked and already inflate before plaintext fallback.
+The subsequent native export acknowledged natural0 in1.416s with empty stderr.
+Root V2 points to Configuration30000000-0000-4000-8000-000000000001 and both
+Documents/MainForm; all seven XML files total33430 bytes. Module187 bytes equals
+native CF readback SHA41b7c4e622f734a34370d95e32750957cf57e5ce9292a8fe74785f75476ebbdf.
+CONFIG8parts6073bytes and CONFIGSAVEempty were identical before/after export.
+
+Exact result SHA256
+`1485ec09b1537ba4246c9d470bd26bb966e79cfafe35af98b775daa1e823ab49`;
+FULL RELEASE
+`3b56d3abbc542f1124b6e1c9784c1c945d5d53bbb026872bd8d84e7f1895cff7`.
+Prior apply result14bab8a4... and release dd799931... remain retained, not
+reclassified as a whole-controller success. All failed earlier targets remain
+untouched. This establishes the native SQL fixture, not Form staging acceptance.
+
+Grammar-only Document/Form decoder seams preserve existing profile APIs and old
+reader compatibility upgrades. The selected Form operation additionally validates
+the ORIGINAL bounded/BOM container before a root42 reader upgrade can occur, and
+verifies exact plaintext prefix/suffix outside the quoted module token after an
+edit. Trimmed semantic IR equality alone cannot prove those raw bytes unchanged.
+Held source layout preparation uses these same guards without a claimed native
+build coordinate. Existing profile paths are preserved and gain the same original
+layout/raw-custody restrictions. Form.xml/other owner cohorts stay unsupported.
+
+Donor4dd39e59 supplied five codec files: fifteen focused tests and production check
+passed. Its additional test-only donor0c1fdab6 proved the existing module packer
+already preserves adjacent ASCII whitespace via its scanner: the attempted RED
+passed on unchanged production, so no speculative packer patch was made. Primary
+integration passed73SQL compiler/transaction tests (four live ignored), seven
+codec tests and library check before that final test-only addition; warning totals
+remain40/97. The new exact-identity Form staging experiment was compiled while
+ignored, then bound to the actual database and retained1153-byte body SHA
+`7f989004e1b22bd2896b74cdf8c4b2df9bc0562eae5f5069be806ff8b73043ff`.
+Its later Windows execution/native cycle remains pending. Runtime acceptance of
+published CommonModule head9eed is separate from these unpublished Form changes.
+
+
+The final combined bound-test/layout-consumer checkpoint passed73SQL-import
+library tests (four live ignored), eight Form codec tests, production library
+check, formatting/diff checks and strict OpenSpec. The actual Form test remains
+ignored locally and requires its Windows executable, exact two GUID opt-ins and
+sole-operator target binding. No successful SQL stage is claimed by compilation.

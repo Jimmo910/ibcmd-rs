@@ -3,10 +3,13 @@
 //! observer, publisher, metadata rewrite or Form.xml rebuild is performed.
 use super::*;
 use crate::compiler::{
-    bodies::form::{ManagedFormCodecProfile, decode_managed_form},
+    bodies::form::{
+        ManagedFormCodecProfile, decode_managed_form, decode_managed_form_layout,
+        validate_original_managed_form_layout, verify_module_only_edit,
+    },
     families::{
-        document::{DocumentMetadataProfile, decode_document_blob},
-        form::{FormMetadataProfile, decode_form_metadata_blob},
+        document::{DocumentMetadataProfile, decode_document_blob, decode_document_layout},
+        form::{FormMetadataProfile, decode_form_metadata_blob, decode_form_metadata_layout},
     },
 };
 use ibcmd_core::profile::EffectiveProfile;
@@ -45,7 +48,15 @@ pub fn prepare_form_module_file(
     limits: Limits,
     check: &Check,
 ) -> Result<ModuleEdit> {
-    prepare_form_module_text(snapshot, selected_path, text, profile, limits, check, true)
+    prepare_form_module_text(
+        snapshot,
+        selected_path,
+        text,
+        Some(profile),
+        limits,
+        check,
+        true,
+    )
 }
 
 /// Resolves root -> Document -> Form BEFORE any UUID/name index reduction.
@@ -59,14 +70,35 @@ pub fn prepare_form_module(
     limits: Limits,
     check: &Check,
 ) -> Result<ModuleEdit> {
-    prepare_form_module_text(snapshot, selected_path, text, profile, limits, check, false)
+    prepare_form_module_text(
+        snapshot,
+        selected_path,
+        text,
+        Some(profile),
+        limits,
+        check,
+        false,
+    )
+}
+
+/// Existing Document/Form grammar only, without a native build coordinate.
+/// Original marker/layout and non-module raw bytes remain strictly checked.
+/// This supplies no storage admission or SQL publication authority.
+pub fn prepare_form_module_file_layout(
+    snapshot: &Readset,
+    selected_path: &str,
+    text: &[u8],
+    limits: Limits,
+    check: &Check,
+) -> Result<ModuleEdit> {
+    prepare_form_module_text(snapshot, selected_path, text, None, limits, check, true)
 }
 
 fn prepare_form_module_text(
     snapshot: &Readset,
     selected_path: &str,
     text: &[u8],
-    profile: &DocumentFormProfile,
+    profile: Option<&DocumentFormProfile>,
     limits: Limits,
     check: &Check,
     filesystem: bool,
@@ -110,7 +142,10 @@ fn prepare_form_module_text(
             .get(&id)
             .context("SQL Document descriptor is missing")?;
         let descriptor = budget.descriptor(blob)?;
-        let owner = decode_document_blob(blob, &profile.document)?;
+        let owner = match profile {
+            Some(profile) => decode_document_blob(blob, &profile.document)?,
+            None => decode_document_layout(blob)?,
+        };
         ensure!(
             owner.uuid.to_string() == id,
             "SQL Document descriptor identity changed"
@@ -160,7 +195,10 @@ fn prepare_form_module_text(
                 .get(&form_id)
                 .context("SQL Form descriptor is missing")?;
             let _ = budget.descriptor(metadata)?;
-            let form = decode_form_metadata_blob(metadata, &profile.metadata)?;
+            let form = match profile {
+                Some(profile) => decode_form_metadata_blob(metadata, &profile.metadata)?,
+                None => decode_form_metadata_layout(metadata)?,
+            };
             ensure!(
                 form.uuid.to_string() == form_id,
                 "SQL Form descriptor identity changed"
@@ -186,7 +224,12 @@ fn prepare_form_module_text(
         .context("selected SQL Form body is missing")?;
     let plain = budget.inflate(base)?;
     require_nesting_bound(&plain, check)?;
-    let old = decode_managed_form(&profile.body, base)?;
+    // Reject an original unsupported layout before the legacy reader can upgrade it.
+    validate_original_managed_form_layout(base)?;
+    let old = match profile {
+        Some(profile) => decode_managed_form(&profile.body, base)?,
+        None => decode_managed_form_layout(base)?,
+    };
     // Expected projection only: never normalize the original source/custody bytes.
     let old_text = old.module_text().as_bytes();
     let prepared_text = if !filesystem {
@@ -213,7 +256,11 @@ fn prepare_form_module_text(
         let packed = crate::module_blob::pack_form_body_blob_from_module_text(base, text)?;
         let plain = budget.inflate(&packed.blob)?;
         require_nesting_bound(&plain, check)?;
-        let new = decode_managed_form(&profile.body, &packed.blob)?;
+        verify_module_only_edit(base, &packed.blob)?;
+        let new = match profile {
+            Some(profile) => decode_managed_form(&profile.body, &packed.blob)?,
+            None => decode_managed_form_layout(&packed.blob)?,
+        };
         let a = old.parsed();
         let b = new.parsed();
         ensure!(
