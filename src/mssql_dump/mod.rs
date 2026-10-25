@@ -37189,8 +37189,8 @@ fn parse_metadata_type_pattern(
     parse_metadata_type_pattern_with_builtin(value, type_index, builtin_type_reference)
 }
 
-/// [`ibcmd_1c_vocab::parse_form_metadata_type_pattern`], keeping a type id
-/// nothing resolves while an extension export runs.
+/// [`ibcmd_1c_vocab::parse_form_metadata_type_pattern`] with the
+/// extension-export state as its `keeps_unresolved_type_id`.
 fn parse_form_metadata_type_pattern(
     value: &str,
     type_index: &BTreeMap<String, String>,
@@ -37238,8 +37238,8 @@ fn parse_metadata_type_pattern_element(
     parse_metadata_type_pattern_element_with_builtin(value, type_index, builtin_type_reference)
 }
 
-/// [`ibcmd_1c_vocab::parse_metadata_type_pattern_element_with_builtin`],
-/// keeping a type id nothing resolves while an extension export runs.
+/// [`ibcmd_1c_vocab::parse_metadata_type_pattern_element_with_builtin`] with
+/// the extension-export state as its `keeps_unresolved_type_id`.
 fn parse_metadata_type_pattern_element_with_builtin(
     value: &str,
     type_index: &BTreeMap<String, String>,

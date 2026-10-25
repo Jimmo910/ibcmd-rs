@@ -9,9 +9,11 @@ use crate::types::{ConstantValueType, form_builtin_type_reference};
 // Platform `Null` type, serialized in type patterns as the bare element `{"L"}`.
 const NULL_TYPE_REFERENCE: &str = "v8:Null";
 
-/// `keeps_unresolved_type_id` answers whether a type id that neither
-/// `type_index` nor the platform tables resolve is kept as
-/// [`ConstantValueType::TypeId`]; it is asked only for such an id.
+/// A form attribute's stored type pattern. `keeps_unresolved_type_id` is
+/// asked for an element whose type id neither `type_index` nor the form's
+/// platform table resolves: `true` keeps the id as
+/// [`ConstantValueType::TypeId`] at once, `false` lets the form-schema
+/// column table try it first.
 pub fn parse_form_metadata_type_pattern(
     value: &str,
     type_index: &BTreeMap<String, String>,
@@ -50,8 +52,9 @@ pub fn parse_form_metadata_type_pattern(
         .collect()
 }
 
-/// One element of a type pattern. `keeps_unresolved_type_id` is the
-/// argument of [`parse_form_metadata_type_pattern`].
+/// One element of a type pattern. `keeps_unresolved_type_id` is asked for a
+/// `{"#",<id>}` element that neither `type_index` nor `builtin_reference`
+/// resolves: `true` answers [`ConstantValueType::TypeId`], `false` `None`.
 pub fn parse_metadata_type_pattern_element_with_builtin(
     value: &str,
     type_index: &BTreeMap<String, String>,
