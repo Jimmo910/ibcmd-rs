@@ -570,7 +570,8 @@ function Invoke-SelfTest {
         if ($LASTEXITCODE -ne 0) { throw 'Unable to commit synthetic corpus.' }
         & git -C $consumerRepo init --quiet
         if ($LASTEXITCODE -ne 0) { throw 'Unable to initialize synthetic consumer.' }
-        & git -C $consumerRepo -c protocol.file.allow=always submodule add --quiet $nativeRepo corpus
+        # Avoid runner-specific CRLF warnings becoming terminating stderr in Windows PowerShell 5.1.
+        & git -C $consumerRepo -c core.autocrlf=false -c protocol.file.allow=always submodule add --quiet $nativeRepo corpus
         if ($LASTEXITCODE -ne 0) { throw 'Unable to initialize synthetic gitlink.' }
         $nestedFiles = Get-TrackedFiles -Root $consumerRepo
         $nestedPayload = Join-Path $consumerRepo 'corpus/probe.payload'
