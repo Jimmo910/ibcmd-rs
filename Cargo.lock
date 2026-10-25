@@ -663,6 +663,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-1c-text"
+version = "0.1.0"
+
+[[package]]
 name = "ibcmd-cf"
 version = "0.1.0"
 dependencies = [
@@ -721,6 +725,7 @@ dependencies = [
 name = "ibcmd-moxel"
 version = "0.1.0"
 dependencies = [
+ "ibcmd-1c-text",
  "serde",
 ]
 
@@ -747,6 +752,7 @@ dependencies = [
  "clap",
  "flate2",
  "futures-util",
+ "ibcmd-1c-text",
  "ibcmd-cf",
  "ibcmd-core",
  "ibcmd-edt",

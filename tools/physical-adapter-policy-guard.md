@@ -6,7 +6,9 @@ and `pwsh -File tools/validate-physical-adapter-policy.ps1 -RepositoryRoot .
 
 The guarded production slice is `src/module_blob.rs` plus non-test Rust modules
 under `src/mssql_dump/`, plus the files under `crates/` that hold code moved out
-of them (`$GuardedCrateFiles`: `crates/ibcmd-moxel/src/root_helpers.rs`).  Code
+of them (`$GuardedCrateFiles`: every file of `crates/ibcmd-1c-text/src/`, the 1C
+braced-text primitives formerly in `src/mssql_dump/mod.rs` and
+`source_assets.rs`, and `crates/ibcmd-moxel/src/root_helpers.rs`).  Code
 that leaves the slice for a crate takes the slice with it: its file is listed
 there and its baseline entries move to the new path in the same change, never
 dropped.  The MOXCEL decoder itself (`crates/ibcmd-moxel`, formerly
