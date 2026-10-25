@@ -110,3 +110,13 @@ The explicit reason was missing trusted end-user authorization for that exact
 external artifact egress/workflow side effect. A new specific authorization is
 required before retrying that action. Windows Rust/MSVC availability on the lab VM
 is not established; no toolchain was installed or new launcher created.
+
+The artifact-upload blocker above is historical: a subsequent explicit approval
+covers the exact existing fork workflow edit, push, Windows build and executable/
+SHA256/source-commit artifact download for this disposable-lab test. The minimal
+existing Portable (Windows) job addition packages only one Cargo-reported root
+lib-test executable and its build receipt in a fresh RUNNER_TEMP subdirectory.
+It does not execute ignored SQL tests, change permissions/secrets or upload
+application XML/database data. PowerShell AST check and independent source review
+passed before dispatch. This authorization does not establish runtime PASS or
+make the diagnostic branch policy gate pass.
