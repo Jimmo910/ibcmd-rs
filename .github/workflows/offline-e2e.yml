@@ -259,7 +259,6 @@ jobs:
         if: steps.scope.outputs.lib == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
         run: cargo test --locked -p ibcmd-rs --lib --no-default-features
 
       - name: Retain binary for failed release boundary investigation
