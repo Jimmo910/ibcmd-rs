@@ -751,70 +751,276 @@ fn parameter_value_budget_rejects_below_and_accepts_exact_or_above() {
     }
 }
 
-// SQL16 measured control: NULL,'SERVER' yields NULL; NULL,NULL yields 1
-// for the existing lab administrator. Keep invalid checks distinct from DENY.
-const CLOSED_SESSION_SQL: &str = "SELECT @@SPID,@@TRANCOUNT,XACT_STATE(),HAS_PERMS_BY_NAME(NULL,NULL,'VIEW SERVER PERFORMANCE STATE'),(SELECT COUNT_BIG(*) FROM sys.dm_exec_sessions WHERE session_id=@P1)";
-fn require_closed_session_row(row: SqlRow, held_spid: i64) -> Result<()> {
-    ensure!(row.result_set == 0, "invalid closure result set");
-    let [
-        SqlValue::Int(reader),
-        SqlValue::Int(depth),
-        SqlValue::Int(state),
-        visible,
-        SqlValue::Int(remaining),
-    ]: [SqlValue; 5] = row
-        .values
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("invalid closure result shape"))?
-    else {
-        anyhow::bail!("invalid closure result types");
-    };
+// SQL16 measured control: invalid NULL and absent zero never authorize visibility.
+const HELD_BIRTH_SQL: &str = "SELECT @@SPID,HAS_PERMS_BY_NAME(NULL,NULL,'VIEW SERVER PERFORMANCE STATE'),CONVERT(varbinary(8),login_time) FROM sys.dm_exec_sessions WHERE session_id=@@SPID";
+// One read_rows call retains one observer lease. Twenty observations permit at
+// most nineteen 50ms waits; blocking SQL/network/destructor time is not hard-bounded.
+const CLOSED_SESSION_SQL: &str = r#"
+SET NOCOUNT ON;
+DECLARE @Attempt int=0,@Reader int,@Depth int,@State int,@Visible int,@Any bigint,@Owned bigint;
+WHILE @Attempt<20
+BEGIN
+ SELECT @Reader=@@SPID,@Depth=@@TRANCOUNT,@State=XACT_STATE(),
+        @Visible=HAS_PERMS_BY_NAME(NULL,NULL,'VIEW SERVER PERFORMANCE STATE');
+ SELECT @Any=COUNT_BIG(*),@Owned=COUNT_BIG(CASE WHEN CONVERT(varbinary(8),login_time)=@P2 THEN 1 END)
+ FROM sys.dm_exec_sessions WHERE session_id=@P1;
+ SELECT @Reader,@Depth,@State,@Visible,@Any,@Owned;
+ SET @Attempt+=1;
+ IF @P1<=0 OR @P3<=0 OR @Reader<>@P3 OR @Reader=@P1 OR @Depth<>0 OR @State<>0
+    OR @Visible IS NULL OR @Visible<>1 OR @Any NOT IN (0,1) OR @Owned NOT IN (0,1)
+    OR @Owned>@Any OR @Owned=0 OR @Attempt>=20 BREAK;
+ WAITFOR DELAY '00:00:00.050';
+END;
+"#;
+fn require_visibility(visible: SqlValue) -> Result<()> {
     match visible {
-        SqlValue::Int(1) => {}
+        SqlValue::Int(1) => Ok(()),
         SqlValue::Int(0) => anyhow::bail!("server visibility permission is absent"),
         SqlValue::Null => anyhow::bail!("server visibility permission check is invalid"),
         _ => anyhow::bail!("invalid server visibility result"),
     }
-    ensure!(
-        held_spid > 0
-            && reader > 0
-            && reader != held_spid
-            && depth == 0
-            && state == 0
-            && remaining == 0,
-        "dedicated session closure or idle reader not confirmed"
-    );
-    Ok(())
 }
-
-#[test]
-fn closure_permission_oracle_uses_server_scope_and_distinguishes_null_from_zero() {
-    // Bind the recorded SQL16 RED/GREEN function result to the exact runtime query.
-    assert!(
-        CLOSED_SESSION_SQL.contains("HAS_PERMS_BY_NAME(NULL,NULL,'VIEW SERVER PERFORMANCE STATE')")
+fn read_session_birth(row: SqlRow, held: i64) -> Result<[u8; 8]> {
+    ensure!(row.result_set == 0, "invalid session identity result set");
+    let [SqlValue::Int(spid), visible, SqlValue::Binary(birth)]: [SqlValue; 3] = row
+        .values
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("invalid session identity shape"))?
+    else {
+        anyhow::bail!("invalid session identity types");
+    };
+    require_visibility(visible)?;
+    ensure!(
+        held > 0 && held == spid,
+        "session identity differs from held capture"
     );
-    assert!(!CLOSED_SESSION_SQL.contains("HAS_PERMS_BY_NAME(NULL,'SERVER'"));
-    let row = |visible, remaining| SqlRow {
-        result_set: 0,
+    birth
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("invalid session birth width"))
+}
+#[derive(Clone, Copy, Debug)]
+struct ClosureFlags {
+    held_positive: bool,
+    observer_positive: bool,
+    observer_distinct: bool,
+    observer_unchanged: bool,
+    depth_zero: bool,
+    state_zero: bool,
+    spid_present: bool,
+    captured_session_present: bool,
+}
+struct ClosureObserver {
+    held: i64,
+    reader: i64,
+    samples: usize,
+    closed: bool,
+    first: Option<ClosureFlags>,
+    last: Option<ClosureFlags>,
+}
+impl ClosureObserver {
+    fn new(held: i64, reader: i64) -> Self {
+        Self {
+            held,
+            reader,
+            samples: 0,
+            closed: false,
+            first: None,
+            last: None,
+        }
+    }
+    fn accept(&mut self, row: SqlRow) -> Result<()> {
+        ensure!(
+            !self.closed && self.samples < 20,
+            "closure frame after completion or limit"
+        );
+        ensure!(
+            row.result_set == self.samples,
+            "closure result sequence changed"
+        );
+        let [
+            SqlValue::Int(reader),
+            SqlValue::Int(depth),
+            SqlValue::Int(state),
+            visible,
+            SqlValue::Int(any),
+            SqlValue::Int(owned),
+        ]: [SqlValue; 6] = row
+            .values
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid closure result shape"))?
+        else {
+            anyhow::bail!("invalid closure result types");
+        };
+        require_visibility(visible)?;
+        ensure!(
+            (0..=1).contains(&any) && (0..=1).contains(&owned) && owned <= any,
+            "invalid closure counts"
+        );
+        let flags = ClosureFlags {
+            held_positive: self.held > 0,
+            observer_positive: reader > 0,
+            observer_distinct: reader != self.held,
+            observer_unchanged: reader == self.reader,
+            depth_zero: depth == 0,
+            state_zero: state == 0,
+            spid_present: any == 1,
+            captured_session_present: owned == 1,
+        };
+        ensure!(
+            flags.held_positive
+                && flags.observer_positive
+                && flags.observer_distinct
+                && flags.observer_unchanged
+                && flags.depth_zero
+                && flags.state_zero,
+            "dedicated session closure invariant failed: {flags:?}"
+        );
+        self.first.get_or_insert(flags);
+        self.last = Some(flags);
+        self.samples += 1;
+        self.closed = !flags.captured_session_present;
+        Ok(())
+    }
+    fn finish(&self) -> Result<()> {
+        ensure!(
+            self.closed && self.samples > 0,
+            "captured session closure unconfirmed: samples={} first={:?} last={:?}",
+            self.samples,
+            self.first,
+            self.last
+        );
+        Ok(())
+    }
+    fn reused_spid(&self) -> bool {
+        self.last
+            .is_some_and(|v| v.spid_present && !v.captured_session_present)
+    }
+}
+fn closure_row(index: usize, visible: SqlValue, any: i64, owned: i64) -> SqlRow {
+    SqlRow {
+        result_set: index,
         values: vec![
             SqlValue::Int(85),
             SqlValue::Int(0),
             SqlValue::Int(0),
             visible,
-            SqlValue::Int(remaining),
+            SqlValue::Int(any),
+            SqlValue::Int(owned),
         ],
+    }
+}
+#[test]
+fn closure_permission_oracle_uses_server_scope_and_distinguishes_null_from_zero() {
+    assert!(
+        CLOSED_SESSION_SQL.contains("HAS_PERMS_BY_NAME(NULL,NULL,'VIEW SERVER PERFORMANCE STATE')")
+    );
+    assert!(!CLOSED_SESSION_SQL.contains("HAS_PERMS_BY_NAME(NULL,'SERVER'"));
+    let once = |visible, remaining, held| -> Result<()> {
+        let mut observer = ClosureObserver::new(held, 85);
+        observer.accept(closure_row(0, visible, remaining, remaining))?;
+        observer.finish()
     };
-    let invalid = require_closed_session_row(row(SqlValue::Null, 0), 86).unwrap_err();
     assert_eq!(
-        invalid.to_string(),
+        once(SqlValue::Null, 0, 86).unwrap_err().to_string(),
         "server visibility permission check is invalid"
     );
-    let denied = require_closed_session_row(row(SqlValue::Int(0), 0), 86).unwrap_err();
-    assert_eq!(denied.to_string(), "server visibility permission is absent");
-    require_closed_session_row(row(SqlValue::Int(1), 0), 86).unwrap();
-    assert!(require_closed_session_row(row(SqlValue::Int(1), 1), 86).is_err());
-    assert!(require_closed_session_row(row(SqlValue::Int(1), 0), 85).is_err());
-    assert!(require_closed_session_row(row(SqlValue::Int(1), 0), 0).is_err());
+    assert_eq!(
+        once(SqlValue::Int(0), 0, 86).unwrap_err().to_string(),
+        "server visibility permission is absent"
+    );
+    once(SqlValue::Int(1), 0, 86).unwrap();
+    assert!(once(SqlValue::Int(1), 1, 86).is_err());
+    assert!(once(SqlValue::Int(1), 0, 85).is_err());
+    assert!(once(SqlValue::Int(1), 0, 0).is_err());
+}
+#[test]
+fn closure_observation_requires_disappearance_and_refuses_exhaustion() {
+    let mut observer = ClosureObserver::new(86, 85);
+    observer
+        .accept(closure_row(0, SqlValue::Int(1), 1, 1))
+        .unwrap();
+    assert!(observer.finish().is_err()); // Pending never means PASS.
+    observer
+        .accept(closure_row(1, SqlValue::Int(1), 0, 0))
+        .unwrap();
+    observer.finish().unwrap();
+    assert_eq!(observer.samples, 2);
+    assert!(
+        observer
+            .accept(closure_row(2, SqlValue::Int(1), 0, 0))
+            .is_err()
+    );
+    let mut persistent = ClosureObserver::new(86, 85);
+    for index in 0..20 {
+        persistent
+            .accept(closure_row(index, SqlValue::Int(1), 1, 1))
+            .unwrap();
+    }
+    assert!(persistent.finish().is_err());
+    assert!(
+        persistent
+            .accept(closure_row(20, SqlValue::Int(1), 0, 0))
+            .is_err()
+    );
+}
+#[test]
+fn closure_observation_rejects_changed_reader_state_and_malformed_sequence() {
+    for (column, value) in [
+        (0, 84),
+        (0, 0),
+        (0, 86),
+        (1, 1),
+        (2, -1),
+        (3, 0),
+        (4, 2),
+        (5, -1),
+    ] {
+        let mut observer = ClosureObserver::new(86, 85);
+        observer
+            .accept(closure_row(0, SqlValue::Int(1), 1, 1))
+            .unwrap();
+        let mut bad = closure_row(1, SqlValue::Int(1), 0, 0);
+        bad.values[column] = SqlValue::Int(value);
+        assert!(observer.accept(bad).is_err());
+        assert!(observer.finish().is_err());
+    }
+    let mut observer = ClosureObserver::new(86, 85);
+    assert!(
+        observer
+            .accept(closure_row(1, SqlValue::Int(1), 0, 0))
+            .is_err()
+    );
+    assert!(
+        observer
+            .accept(closure_row(0, SqlValue::Int(1), 0, 1))
+            .is_err()
+    );
+}
+#[test]
+fn closure_birth_binding_preserves_visibility_and_identifies_reused_spid() {
+    let birth = |id, visible, bytes| SqlRow {
+        result_set: 0,
+        values: vec![SqlValue::Int(id), visible, SqlValue::Binary(bytes)],
+    };
+    assert_eq!(
+        read_session_birth(birth(86, SqlValue::Int(1), vec![7; 8]), 86).unwrap(),
+        [7; 8]
+    );
+    assert!(read_session_birth(birth(86, SqlValue::Int(1), vec![7; 7]), 86).is_err());
+    assert!(read_session_birth(birth(85, SqlValue::Int(1), vec![7; 8]), 86).is_err());
+    assert!(read_session_birth(birth(86, SqlValue::Null, vec![7; 8]), 86).is_err());
+    let mut observer = ClosureObserver::new(86, 85);
+    observer
+        .accept(closure_row(0, SqlValue::Int(1), 1, 0))
+        .unwrap();
+    observer.finish().unwrap();
+    assert!(observer.reused_spid());
+    // A birth collision conservatively stays Pending rather than accepting.
+    let mut collision = ClosureObserver::new(86, 85);
+    collision
+        .accept(closure_row(0, SqlValue::Int(1), 1, 1))
+        .unwrap();
+    assert!(collision.finish().is_err());
 }
 
 // Operator-only read/rollback gate. No population, application DML or COMMIT.
@@ -889,6 +1095,29 @@ fn public_sql_held_capture_rolls_back_and_closes_dedicated_session() -> Result<(
                 == 3313,
         "public fixture differs from the measured baseline"
     );
+    let mut baseline_reader = None;
+    client.read_rows("SELECT @@SPID", &[], &mut |row| {
+        ensure!(
+            baseline_reader.is_none() && row.result_set == 0,
+            "observer identity repeated"
+        );
+        let [SqlValue::Int(reader)]: [SqlValue; 1] = row
+            .values
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid observer identity shape"))?
+        else {
+            anyhow::bail!("invalid observer identity type");
+        };
+        ensure!(reader > 0, "invalid observer identity");
+        baseline_reader = Some(reader);
+        Ok(())
+    })?;
+    let baseline_reader = baseline_reader.context("observer identity missing")?;
+    println!(
+        "PUBLIC_HELD_PHASE baseline_ms={}",
+        started.elapsed().as_millis()
+    );
+    let mut held_birth = None;
     let mut held_spid = None;
     let mut rollback_ack = false;
     let mut entries = 0usize;
@@ -906,6 +1135,12 @@ fn public_sql_held_capture_rolls_back_and_closes_dedicated_session() -> Result<(
                 "held captures changed SQL sessions"
             );
             first.readset.require_equal(&second.readset)?;
+            session.read_rows(HELD_BIRTH_SQL, &[], &mut |row| {
+                ensure!(held_birth.is_none(), "session birth repeated");
+                held_birth = Some(read_session_birth(row, first.session_id)?);
+                Ok(())
+            })?;
+            ensure!(held_birth.is_some(), "session birth missing");
             held_spid = Some(first.session_id);
             check()?;
             Ok(())
@@ -916,28 +1151,68 @@ fn public_sql_held_capture_rolls_back_and_closes_dedicated_session() -> Result<(
         reads?;
         rollback?;
         rollback_ack = true;
+        println!(
+            "PUBLIC_HELD_PHASE rollback_ack_ms={}",
+            started.elapsed().as_millis()
+        );
         Ok(())
     })?;
+    println!(
+        "PUBLIC_HELD_PHASE dedicated_return_ms={}",
+        started.elapsed().as_millis()
+    );
     ensure!(
         entries == 1 && rollback_ack,
         "held rollback was not acknowledged"
     );
     let spid = held_spid.context("held session seal missing")?;
     check()?;
-    // The original pooled reader remains open while the dedicated connection is
-    // dropped, preventing its own fresh checkout from reusing that SPID.
-    let mut closure_rows = 0usize;
-    client.read_rows(CLOSED_SESSION_SQL, &[SqlParam::I64(spid)], &mut |row| {
-        ensure!(closure_rows == 0, "closure result repeated");
-        require_closed_session_row(row, spid)?;
-        closure_rows += 1;
-        Ok(())
-    })?;
-    ensure!(closure_rows == 1, "closure result missing");
+    let birth = held_birth.context("captured session birth missing")?;
+    // Keep one observer lease for the fully drained batch. A reused numeric
+    // SPID with a different birth is not the captured session. Timestamp
+    // collisions conservatively remain Pending; this is not a TCP-ACK proof.
+    let mut observer = ClosureObserver::new(spid, baseline_reader);
+    let observing = Instant::now();
+    println!(
+        "PUBLIC_HELD_PHASE observation_start_ms={}",
+        started.elapsed().as_millis()
+    );
+    let observation_result = client.read_rows(
+        CLOSED_SESSION_SQL,
+        &[
+            SqlParam::I64(spid),
+            SqlParam::Binary(&birth),
+            SqlParam::I64(baseline_reader),
+        ],
+        &mut |row| {
+            check()?;
+            observer.accept(row)
+        },
+    );
+    println!(
+        "PUBLIC_HELD_CLOSURE samples={} observation_ms={} batch_ok={} closed_observed={} reused_spid={} first={:?} last={:?}",
+        observer.samples,
+        observing.elapsed().as_millis(),
+        observation_result.is_ok(),
+        observer.closed,
+        observer.reused_spid(),
+        observer.first,
+        observer.last
+    );
+    observation_result?;
+    observer.finish()?;
     let after = super::super::snapshot::capture(&client, &profile, limits, check.clone())?;
     before.require_equal(&after)?;
     check()?;
+    println!(
+        "PUBLIC_HELD_PHASE fresh_capture_ms={}",
+        started.elapsed().as_millis()
+    );
     drop(client);
+    println!(
+        "PUBLIC_HELD_PHASE client_dropped_ms={}",
+        started.elapsed().as_millis()
+    );
     println!(
         "PUBLIC_SQL_HELD_CAPTURE_ROLLBACK_PASS captures=2 same_session=true transaction_seals=true rollback_ack=true session_closed=true readsets_unchanged=true application_dml=false"
     );

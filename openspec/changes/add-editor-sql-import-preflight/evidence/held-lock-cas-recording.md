@@ -168,3 +168,48 @@ API changed. Local focused tests: 12 passed, zero failed, one live test ignored;
 owns the matching preflight correction. The old executable must not be used;
 a fresh changed-head Windows artifact and actual held-capture runtime remain
 required. Raw SQL and failure artifacts remain retained in the lab.
+
+## First actual held runtime and bounded closure observation
+
+The corrected permission-call EXE (head caeccbd4, artifact 12600246403, SHA256
+ed8d63763de26fc6b052f3a597352f51a2eba93a02403c946077a6f8b040b09e)
+actually ran on the public fixture: natural exit 101 after 4.443 seconds, zero
+passed / one failed. It reached the final combined closure predicate. By the
+pinned code's order, both held captures, TX1/XACT1/same positive SPID, full readset
+comparison, acknowledged rollback and visibility=1 passed before that failure.
+Individual closure scalars were not recorded, so neither a leak nor asynchronous
+cleanup nor SPID reuse was established. External fingerprints remained equal;
+no appDML occurred. FULL RELEASE SHA256:
+7db210fede4b2ac79560c00aea71b5a782f8f65799e837b79c4451cc506df81b.
+No blind retry or staging followed.
+
+The next change is confined to the existing test module. It records the existing
+pooled observer SPID and captures exactly one self row for the held session with
+an exact eight-byte login_time representation. Closure observes that captured
+SPID+birth incarnation; a new session reusing the number is reported separately.
+This timestamp is not globally unique: a birth collision conservatively remains
+Pending/failure. Session-incarnation disappearance is not an independent TCP
+shutdown acknowledgement.
+
+One fully drained observer query holds one pool lease. It returns only bounded
+scalar observations, preserving positive/distinct/unchanged observer identity,
+idle transaction state and visibility exactly 1 on every row. Invalid states fail
+immediately; only captured-session presence permits another observation. The
+server and client cap samples at 20, with at most 19 waits of 50ms. No WAITFOR
+follows the final sample. Blocking SQL, network and destructor time are not
+hard-bounded by that logical limit; the existing outer operator bound remains
+necessary. No capture, transaction or DML is replayed. Exhaustion fails.
+
+Safe flags and phase timings are retained even on observation failure; raw SPIDs,
+birth bytes, query text and application payloads are not printed. PASS still
+requires successful batch drainage, confirmed captured-session disappearance,
+rollback acknowledgement and final complete snapshot equality. No production
+connection drop order, public API, SQL write route or permission changed.
+
+Independent source review CLEAR. Local Rust 1.95.0 focused tests: 15 passed, zero
+failed, one live ignored; 1m10s compilation, 0.02s execution. The three added tests
+cover pending-to-closed, persistent presence/limits, invalid states after Pending,
+observer changes/frame gaps, exact birth width, reused SPID and conservative
+collision refusal. Logs: issue-382-session-closure-observation.log, retained.
+A fresh Windows artifact and actual runtime remain required; this is not PASS
+of the earlier failed run and does not establish its unrecorded cause.
