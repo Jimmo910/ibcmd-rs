@@ -1,4 +1,10 @@
-# Disposable SQL acceptance plan (not executed)
+# Disposable SQL acceptance plan
+
+Execution status: the selected CommonModule held-capture, real staging and
+native apply/export cycle passed on exact a666b1bb / native 8.3.27.2342.
+See evidence/held-lock-cas-recording.md for independently checked receipts.
+The broader neighbour-staging, FormModule, live conflict/cancellation and
+editor-route criteria below remain pending; they are not implied by that pass.
 
 Only the assigned VM operator runs SQL/native/VM commands after a dedicated
 slot is granted. No production/client database or private corpus is an input.

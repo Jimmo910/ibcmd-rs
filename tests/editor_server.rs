@@ -126,6 +126,7 @@ impl Server {
             .env("IBCMD_RS_CONFIG", &corpus.settings)
             .env_remove("IBCMD_RS_PLATFORM")
             .env_remove("IBCMD_DB_PSW")
+            .env_remove("IBCMD_RS_DB_USER")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -1291,4 +1292,166 @@ fn source_read_refuses_only_requested_invalid_descriptor_cold_and_cached() {
         failures.is_empty(),
         "RPC returned guessed descriptor: {failures:?}"
     );
+}
+
+#[test]
+fn sql_import_without_guarded_plan_refuses_before_source_or_sql() {
+    use std::{
+        net::TcpListener,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread::{self, JoinHandle},
+        time::{Duration, Instant},
+    };
+
+    // Only counts and closes loopback connections. No SQL/TDS/authentication
+    // protocol is implemented, and no received byte is read or retained.
+    struct Probe {
+        stop: Arc<AtomicBool>,
+        worker: Option<JoinHandle<std::io::Result<usize>>>,
+    }
+    impl Probe {
+        fn finish(mut self) -> usize {
+            self.stop.store(true, Ordering::SeqCst);
+            self.worker.take().unwrap().join().unwrap().unwrap()
+        }
+    }
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let endpoint = format!("127.0.0.1,{}", listener.local_addr().unwrap().port());
+    listener.set_nonblocking(true).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopped = stop.clone();
+    let worker = thread::spawn(move || {
+        let deadline = Instant::now().checked_add(Duration::from_secs(30)).unwrap();
+        let mut connections = 0;
+        loop {
+            if Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "loopback probe expired",
+                ));
+            }
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    drop(stream);
+                    connections += 1;
+                    if connections >= 64 {
+                        return Err(std::io::Error::other(
+                            "loopback probe connection bound exceeded",
+                        ));
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    // Drain connections already in the accept queue before stop.
+                    if stopped.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(connections)
+    });
+    let probe = Probe {
+        stop,
+        worker: Some(worker),
+    };
+    let corpus = Corpus::new("sql-import-guarded-only");
+    fs::write(&corpus.settings, "platform = \"8.3.27\"\n").unwrap();
+    let source = corpus.root.join("missing-owned-source");
+    assert!(!source.exists());
+    let mut server = Server::start(&corpus);
+    server.ok(
+        "initialize",
+        json!({
+            "protocolVersion": "1.4",
+            "settingsFile": corpus.settings,
+            "workspaceFolder": corpus.root,
+            "infobases": [{
+                "id": "sql-guarded-only",
+                "name": "PUBLIC_SYNTHETIC_SQL_IMPORT_GUARD",
+                "server": endpoint,
+                "platform": "8.3.27",
+            }],
+        }),
+    );
+    let listed = server.ok("infobases/list", json!({}));
+    let entries = listed["infobases"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    let entry = entries
+        .iter()
+        .find(|entry| entry["id"] == "sql-guarded-only")
+        .unwrap();
+    assert_eq!(entry["source"], "mssql");
+    assert_eq!(entry["server"], endpoint);
+    assert_eq!(entry["connected"], false);
+    let infobase = entry["id"].as_str().unwrap().to_owned();
+    let mut responses = Vec::new();
+    // Null and missing are deliberately separate wire cases. Unknown UUIDs
+    // must not be routed to a legacy whole-CONFIGSAVE replacement either.
+    for (plan, message) in [
+        (None, "SQL import requires guarded preflight; prepare again"),
+        (
+            Some(Value::Null),
+            "SQL import requires guarded preflight; prepare again",
+        ),
+        (Some(json!("")), "invalid import preflight; prepare again"),
+        (
+            Some(json!("not-a-plan")),
+            "invalid import preflight; prepare again",
+        ),
+        (
+            Some(json!("00000000-0000-4000-8000-000000000999")),
+            "import preflight expired or connection changed; prepare again",
+        ),
+    ] {
+        for verify in [None, Some(false)] {
+            let mut params = json!({
+                "infobase": infobase,
+                "sourceDir": source,
+                "objects": ["CommonModule.PublicSynthetic"],
+                "confirm": true,
+            });
+            if let Some(plan) = &plan {
+                params["plan"] = plan.clone();
+            }
+            if let Some(verify) = verify {
+                params["verify"] = json!(verify);
+            }
+            responses.push((server.call("objects/import", params), message));
+        }
+    }
+    server.ok("shutdown", Value::Null);
+    assert_eq!(server.finish(true), 0);
+    assert_eq!(
+        probe.finish(),
+        0,
+        "preflight refusal must never open SQL TCP"
+    );
+    assert!(
+        !source.exists(),
+        "refusal must not create the owned source path"
+    );
+    assert_eq!(responses.len(), 10);
+    for (response, message) in responses {
+        assert!(response.get("result").is_none());
+        assert_eq!(
+            response["error"],
+            json!({
+                "code": -32602,
+                "message": message,
+            })
+        );
+    }
 }

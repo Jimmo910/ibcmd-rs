@@ -292,3 +292,54 @@ and a separate sole-operator target/experiment review; there is no user write ro
 
 The unrelated diagnostic observer policy-registration blocker is unchanged.
 No baseline growth, whitelist, relocation workaround, merge or release is claimed.
+
+
+## Actual one-module held, staged and native acceptance (a666b1bb)
+
+Exact source a666b1bbb57f06fc02ba885f22786bbc00afa4c5 passed Windows CI
+40206960611, all seven jobs; root tests: 4300 passed, 18 ignored. Verified
+Windows lib-test executable SHA-256:
+f94ca6f7c1076a9a136b1eb4ee1ebdd5b679fa315e69bbba92ef36ffe423858c.
+The two ignored tests were then executed separately by the sole authorized
+operator against the same disposable public SQL fixture, SQL16/native
+8.3.27.2342. Neither test ran against a working infobase.
+
+Held capture: one passed, zero failed, natural exit zero, stderr empty, 4.241s.
+Two captures had one positive SPID, TX1/XACT1 and identical full readsets;
+rollback was acknowledged. Closure took one sample (2ms), the session was
+absent, and a fresh capture was unchanged. Full release SHA-256:
+fe54f2b0f6dcd7775e9784d0e939032c43330f14945da31ee501d7ab9f2f73b2.
+
+Staging: one passed, zero failed, natural exit zero, stderr empty, 4.241s.
+The report was Committed with confirmed cleanup. CONFIG stayed exactly eight
+parts/3313 bytes, including all physical header and payload seals. Initially
+empty CONFIGSAVE became exactly two parts/452 bytes: the selected existing
+module body and versions. Full expected-readset equality and decoded module
+text passed. Result SHA-256:
+e393909391c439212aa30ba1c58ffb219c100eb6bbc515f85fe7e24346d0ea1d.
+Full release SHA-256:
+449c5d8d6108cc76dc16dea0112e47c3ceecf565928c2e3d09f5c80428a93a0e.
+
+One native apply then one full native export completed with natural exit zero
+in 1.732s and 1.624s, both with empty stderr. Independent SQL readback proved
+active CONFIG body/versions matched the actual staged payloads; CONFIG became
+eight parts/3327 bytes and CONFIGSAVE became empty. All unselected CONFIG rows,
+including their headers, were identical. The native tree contained six files,
+25148 bytes, no missing/extra paths. The selected native module was exactly
+56 bytes, SHA-256:
+fea4fcfe9697b678655b03d9a670313961e20ce8e11e32956c97cd35fb6daebc.
+All four unselected XML files were byte-identical. The CDI retained the five
+ordered metadata tuples; only the selected version attribute changed, matching
+the actual staged version. No XML or raw SQL data left the VM. Native result
+SHA-256: 968c243ce47461ac71060aedcfa89fe04b7e79f61b4014c80291ee173f8bee20.
+Full release SHA-256:
+a03015af6624de7b73c057b06af5e15ae13ef3af2d67e2e96f284601c7f6908c.
+Both result/release pairs were independently rehashed. Workers were zero and
+source/native pins unchanged; neither staging nor native apply was repeated.
+
+This proves the complete selected CommonModule cycle on this exact public
+fixture. It does not admit a general target writer profile, prove preservation
+of initially nonempty neighbour staging, prove live conflict/cancellation
+controls, or cover native FormModule acceptance. The editor SQL write route
+remains closed. Recording and real-compiler bridge tests retain their separate
+attribution; no policy baseline was enlarged.

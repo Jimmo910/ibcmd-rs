@@ -57,3 +57,12 @@
   source review CLEAR. No real SQL session/write or user route was executed.
   See evidence/held-lock-cas-recording.md. Real lock/native writer admission and
   end-to-end acceptance remain unfinished 2.3/3.2, not a completed SQL capability.
+
+
+- [x] F.13 Actual exact-a666 Windows held-capture/rollback/closure, experimental
+  selected CommonModule staging, and native 8.3.27.2342 apply/full-export passed.
+  Active CONFIG independently matched staged body/versions; all unselected
+  CONFIG rows and four XML files were exact, CDI only selected version changed.
+  This is the one-module public-fixture slice, not completion of 2.3/3.2 or
+  general writer admission. Nonempty neighbour staging, native FormModule,
+  live negative controls and guarded editor SQL routing remain open.

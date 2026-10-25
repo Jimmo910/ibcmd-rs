@@ -25,6 +25,18 @@ pub struct Report {
     pub error: Option<anyhow::Error>,
     pub cleanup_uncertain: bool,
 }
+// Preserve the terminal transaction outcome through an anyhow/RPC boundary.
+// The finite display never includes SQL bodies, target paths or credentials.
+impl std::fmt::Display for Report {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SQL import transaction outcome: {:?}", self.state)
+    }
+}
+impl std::error::Error for Report {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.error.as_ref().map(|error| error.as_ref() as _)
+    }
+}
 /// Explicit local policy. No default or accepted native-profile assertion.
 /// `wire_bytes` caps parameter values using `SqlParam::wire_bytes`; SQL text
 /// and protocol framing are excluded, so this is not a full TDS request cap.
