@@ -2,7 +2,7 @@
 """Adds the variants the coverage test reports as newly equal to their sets'
 `baseline.json`.
 
-    cargo test --locked -p ibcmd-rs --test coverage_corpus --no-default-features \
+    cargo test --locked -p ibcmd-rs --test integration coverage_corpus:: --no-default-features \
         -- --nocapture | python3 tools/coverage/update_baseline.py
 
 Only additions: a variant leaves a baseline by hand, with the reason in the PR.

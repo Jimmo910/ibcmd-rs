@@ -57,7 +57,7 @@ variant instead.
 ## 4. See it red
 
 ```text
-cargo test --locked -p ibcmd-rs --test coverage_corpus --no-default-features -- --nocapture
+cargo test --locked -p ibcmd-rs --test integration coverage_corpus:: --no-default-features -- --nocapture
 ```
 
 The new variant must be reported `different` or `refused` with the same
