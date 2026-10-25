@@ -21,6 +21,7 @@ pub mod types;
 
 // Kind families, one track each.
 pub mod common;
+pub(crate) mod interface;
 pub mod websocket_client;
 // Base-free body rows of track D: predefined data, flowcharts, aggregates.
 pub mod bodies_aggregates;
@@ -228,6 +229,9 @@ pub fn compile_descriptor(
     } else {
         None
     };
+    if kind == "Interface" {
+        interface::validate_source(xml, &context.version)?;
+    }
     let doc = MetadataXml::parse(xml)?;
     let element = doc.object()?;
     if kind == "Configuration" {
