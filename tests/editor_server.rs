@@ -1432,6 +1432,65 @@ fn sql_import_without_guarded_plan_refuses_before_source_or_sql() {
             responses.push((server.call("objects/import", params), message));
         }
     }
+    // Unsupported preparation must not read the missing source or ask SQL for
+    // a snapshot. The canonical supported file is tested only with verify=false.
+    let mut prepare_responses = Vec::new();
+    for (selection, label) in [
+        (
+            json!({"files": ["Documents/Synthetic/Ext/ObjectModule.bsl"]}),
+            "other module scope",
+        ),
+        (
+            json!({"files": ["CommonForms/Synthetic/Ext/Form.xml"]}),
+            "form XML",
+        ),
+        (
+            json!({"objects": ["CommonModule.Synthetic"]}),
+            "object selection",
+        ),
+        (json!({"changed": true}), "changed selection"),
+        (
+            json!({"files": ["CommonModules/One/Ext/Module.bsl", "CommonModules/Two/Ext/Module.bsl"]}),
+            "multiple files",
+        ),
+        (
+            json!({"files": ["CommonModules/Synthetic/Ext/Module.bsl"], "objects": ["CommonModule.Synthetic"]}),
+            "multiple selection modes",
+        ),
+    ] {
+        for verify in [None, Some(false)] {
+            let mut params = selection.clone();
+            params["infobase"] = json!(infobase);
+            params["sourceDir"] = json!(source);
+            if let Some(verify) = verify {
+                params["verify"] = json!(verify);
+            }
+            let message = if verify == Some(false) {
+                "SQL editor import requires mandatory verification"
+            } else {
+                "SQL preflight currently supports one existing CommonModule file"
+            };
+            let response = server.call("objects/import/prepare", params);
+            let listed = server.ok("infobases/list", json!({}));
+            prepare_responses.push((response, listed, message, label));
+        }
+    }
+    let response = server.call(
+        "objects/import/prepare",
+        json!({
+            "infobase": infobase,
+            "sourceDir": source,
+            "files": ["CommonModules/Synthetic/Ext/Module.bsl"],
+            "verify": false,
+        }),
+    );
+    let listed = server.ok("infobases/list", json!({}));
+    prepare_responses.push((
+        response,
+        listed,
+        "SQL editor import requires mandatory verification",
+        "canonical file with verify disabled",
+    ));
     server.ok("shutdown", Value::Null);
     assert_eq!(server.finish(true), 0);
     assert_eq!(
@@ -1452,6 +1511,23 @@ fn sql_import_without_guarded_plan_refuses_before_source_or_sql() {
                 "code": -32602,
                 "message": message,
             })
+        );
+    }
+    assert_eq!(prepare_responses.len(), 13);
+    for (response, listed, message, label) in prepare_responses {
+        let entries = listed["infobases"].as_array().unwrap();
+        assert_eq!(entries.len(), 1, "{label}");
+        let entry = entries
+            .iter()
+            .find(|entry| entry["id"] == infobase)
+            .expect("the exact initialized SQL infobase remains registered");
+        assert_eq!(entry["source"], "mssql", "{label}");
+        assert_eq!(entry["server"], endpoint, "{label}");
+        assert!(response.get("result").is_none(), "{label}");
+        assert_eq!(
+            response["error"],
+            json!({"code": -32602, "message": message}),
+            "{label}"
         );
     }
 }
