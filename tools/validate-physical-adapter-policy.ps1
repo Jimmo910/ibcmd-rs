@@ -10,10 +10,12 @@ $ErrorActionPreference = 'Stop'
 
 $BaselineRelativePath = 'tools/physical-adapter-policy-baseline.json'
 $AllowedCategories = @('uuid-literal', 'name-special-case', 'xml-policy')
-# Production modules that stay out of the guarded slice by decision.  Modules the
-# compiler reads only for tests are not listed: they are found from their
-# `#[cfg(test)] mod name;` declaration (see Get-TestOnlyModulePaths).
-$ExcludedMssqlModules = @('mxl_ir.rs', 'moxel.rs')
+# Files under crates/ that hold code moved out of src/module_blob.rs or
+# src/mssql_dump/: the slice follows the code, and the baseline keeps its
+# literals under the new path.  Modules the compiler reads only for tests are
+# not part of the slice: they are found from their `#[cfg(test)] mod name;`
+# declaration (see Get-TestOnlyModulePaths).
+$GuardedCrateFiles = @('crates/ibcmd-moxel/src/root_helpers.rs')
 
 $scannerSource = @'
 using System;
@@ -797,15 +799,20 @@ function Get-ScopedFiles {
         throw 'Scoped source file is missing.'
     }
     $files.Add((Get-Item -LiteralPath $moduleBlob))
+    foreach ($relative in $GuardedCrateFiles) {
+        $crateFile = Join-Path $Root $relative
+        if (-not (Test-Path -LiteralPath $crateFile -PathType Leaf)) {
+            throw 'Scoped source file is missing.'
+        }
+        $files.Add((Get-Item -LiteralPath $crateFile))
+    }
 
     $mssqlRoot = Join-Path $Root 'src/mssql_dump'
     if (-not (Test-Path -LiteralPath $mssqlRoot -PathType Container)) {
         throw 'Scoped source directory is missing.'
     }
     foreach ($file in Get-ChildItem -LiteralPath $mssqlRoot -Filter '*.rs' -File -Recurse) {
-        if ($ExcludedMssqlModules -notcontains $file.Name) {
-            $files.Add($file)
-        }
+        $files.Add($file)
     }
     $testOnly = Get-TestOnlyModulePaths -Candidates $files.ToArray()
     $scoped = @($files | Where-Object { -not (Test-InsideTestOnlyModule -FullPath $_.FullName -TestOnly $testOnly) })
@@ -1018,6 +1025,7 @@ function Invoke-ScopeSelfTest {
     $uuid = 'const ID: &str = "11111111-1111-4111-8111-111111111111";'
     $files = [ordered]@{
         'src/module_blob.rs'                        = 'fn module_blob() {}'
+        'crates/ibcmd-moxel/src/root_helpers.rs'    = $uuid
         'src/mssql_dump/mod.rs'                     = @'
 #[cfg(test)]
 mod declared_tests;
@@ -1052,8 +1060,9 @@ mod host;
         }
         [System.IO.Directory]::CreateDirectory((Join-Path $root 'tools')) | Out-Null
         $expected = @(
-            'src/module_blob.rs', 'src/mssql_dump/host.rs', 'src/mssql_dump/host_tests.rs', 'src/mssql_dump/mod.rs',
-            'src/mssql_dump/partly_tests.rs', 'src/mssql_dump/pathed.rs', 'src/mssql_dump/plain_tests.rs'
+            'crates/ibcmd-moxel/src/root_helpers.rs', 'src/module_blob.rs', 'src/mssql_dump/host.rs',
+            'src/mssql_dump/host_tests.rs', 'src/mssql_dump/mod.rs', 'src/mssql_dump/partly_tests.rs',
+            'src/mssql_dump/pathed.rs', 'src/mssql_dump/plain_tests.rs'
         )
         $actual = @(Get-ScopedFiles $root | ForEach-Object { Get-LogicalPath -Root $root -Path $_.FullName } | Sort-Object)
         if (($actual -join '|') -ne (($expected | Sort-Object) -join '|')) {
@@ -1065,6 +1074,11 @@ mod host;
         Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root)
         Add-Content -LiteralPath (Join-Path $mssql 'plain_tests.rs') 'const EXTRA: &str = "33333333-3333-4333-8333-333333333333";'
         Assert-Rejected { Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root) } 'category=uuid-literal'
+        Write-BaselineDocument -Root $root -Document (New-InventoryDocument $root)
+        Add-Content -LiteralPath (Join-Path $root 'crates/ibcmd-moxel/src/root_helpers.rs') 'const EXTRA: &str = "33333333-3333-4333-8333-333333333335";'
+        Assert-Rejected { Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root) } 'category=uuid-literal'
+        Remove-Item -LiteralPath (Join-Path $root 'crates/ibcmd-moxel/src/root_helpers.rs') -Force
+        Assert-Rejected { Get-ScopedFiles $root } 'Scoped source file is missing.'
     }
     finally {
         if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
@@ -1075,6 +1089,11 @@ function Invoke-SelfTest {
     $root = Join-Path ([System.IO.Path]::GetTempPath()) ("ibcmd-physical-policy-" + [guid]::NewGuid())
     [System.IO.Directory]::CreateDirectory((Join-Path $root 'src/mssql_dump')) | Out-Null
     [System.IO.Directory]::CreateDirectory((Join-Path $root 'tools')) | Out-Null
+    foreach ($relative in $GuardedCrateFiles) {
+        $crateFile = Join-Path $root $relative
+        [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($crateFile)) | Out-Null
+        [System.IO.File]::WriteAllText($crateFile, '', [System.Text.UTF8Encoding]::new($false))
+    }
     try {
         $moduleBlob = Join-Path $root 'src/module_blob.rs'
         $formBody = Join-Path $root 'src/mssql_dump/form_body.rs'

@@ -1383,7 +1383,7 @@ pub(crate) fn up_convert_chart_records_8_5_1(text: &str) -> Result<String> {
         let Node::List(mut members) = parse_raw(&text[start..end])? else {
             bail!("a chart record is not a tuple");
         };
-        // The record's fixed part alone is 97 members (`moxel.rs`).
+        // The record's fixed part alone is 97 members (`ibcmd-moxel`).
         if members.len() < 97 {
             bail!(
                 "a chart record `{{74,...}}` carries {} members, fewer than 97",
