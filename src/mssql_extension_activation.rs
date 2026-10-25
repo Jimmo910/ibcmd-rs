@@ -460,7 +460,7 @@ pub fn render_extension_activation_sql(
     let pattern = format!("{}~_~_%", plan.namespace_prefix);
     let marker = format!("dbStruFinal{}", plan.namespace_prefix);
     let mut sql = String::new();
-    writeln!(sql, "SET NOCOUNT ON;\nSET XACT_ABORT ON;\nSET TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nUSE {db};\nBEGIN TRANSACTION;").unwrap();
+    writeln!(sql, "SET NOCOUNT ON;\nSET XACT_ABORT ON;\nSET TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nUSE {db};\nBEGIN TRY\nBEGIN TRANSACTION;").unwrap();
     writeln!(sql, "DECLARE @LockResult int; EXEC @LockResult = sys.sp_getapplock @Resource=N'{}', @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=0; IF @LockResult < 0 THROW 57200, 'Extension activation lock unavailable', 1;", quote_string(&format!("ibcmd-rs:extension-activation:{}", plan.namespace_prefix))).unwrap();
     if plan.mode == ExtensionActivationMode::Exclusive {
         let gate = crate::mssql_platform_profile::exclusive_session_gate(
@@ -481,7 +481,7 @@ pub fn render_extension_activation_sql(
     if plan.no_op {
         writeln!(sql, "DELETE dbo.ConfigCASSave WHERE FileName LIKE N'{}' ESCAPE N'~'; IF @@ROWCOUNT<>{} THROW 57209, 'Selected ConfigCASSave cleanup count changed', 1;", quote_string(&pattern), plan.staged_rows.len()).unwrap();
         writeln!(sql, "IF EXISTS (SELECT 1 FROM dbo.ConfigCASSave WHERE FileName LIKE N'{}' ESCAPE N'~') THROW 57211, 'Selected staging prefix remains', 1;", quote_string(&pattern)).unwrap();
-        sql.push_str("COMMIT TRANSACTION;\n");
+        finish_publication_transaction(&mut sql);
         return Ok(ExtensionActivationScript {
             sql,
             report,
@@ -503,7 +503,7 @@ pub fn render_extension_activation_sql(
     writeln!(sql, "DELETE dbo.ConfigCASSave WHERE FileName LIKE N'{}' ESCAPE N'~'; IF @@ROWCOUNT<>{} THROW 57209, 'Selected ConfigCASSave cleanup count changed', 1;", quote_string(&pattern), plan.staged_rows.len()).unwrap();
     sql.push_str("IF (SELECT COUNT_BIG(*) FROM dbo._ExtensionsInfo WHERE _IDRRef=@ExtensionId AND _Version<>@ExpectedVersion AND DATALENGTH(_ExtensionZippedInfo)=DATALENGTH(@After) AND _ExtensionZippedInfo=@After)<>1 THROW 57210, 'Registry postcondition failed', 1;\n");
     writeln!(sql, "IF EXISTS (SELECT 1 FROM dbo.ConfigCASSave WHERE FileName LIKE N'{}' ESCAPE N'~') THROW 57211, 'Selected staging prefix remains', 1;", quote_string(&pattern)).unwrap();
-    sql.push_str("COMMIT TRANSACTION;\n");
+    finish_publication_transaction(&mut sql);
     if sql.len() > MAX_SCRIPT_BYTES {
         return Err(ExtensionActivationError::Limit(format!(
             "SQL script has {} bytes, maximum is {MAX_SCRIPT_BYTES}",
@@ -515,6 +515,13 @@ pub fn render_extension_activation_sql(
         report,
         recovery,
     })
+}
+
+/// Roll back errors that SQL Server does not abort automatically as well.
+fn finish_publication_transaction(sql: &mut String) {
+    sql.push_str(
+        "COMMIT TRANSACTION;\nEND TRY\nBEGIN CATCH\nIF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;\nTHROW;\nEND CATCH;\n",
+    );
 }
 
 /// Binds a recovery transaction to the exact post-publication rowversion/blob.
@@ -689,6 +696,32 @@ mod tests {
             },
             plan,
         )
+    }
+
+    #[test]
+    fn publication_catches_errors_and_explicitly_rolls_back() {
+        let (snapshot, stage) = fixture();
+        let plan = prepare_extension_activation(
+            ExtensionActivationMode::Exclusive,
+            snapshot,
+            &stage,
+            ExtensionServiceMarkerSnapshot { present: true },
+            true,
+        )
+        .unwrap();
+        let script = render_extension_activation_sql("db", &plan).unwrap();
+        let text = script.sql();
+        let begin = text
+            .find("BEGIN TRY")
+            .expect("publication must catch failures");
+        let write = text.find("INSERT dbo.ConfigCAS").unwrap();
+        let commit = text.find("COMMIT TRANSACTION").unwrap();
+        let catch = text
+            .find("BEGIN CATCH")
+            .expect("publication must roll back");
+        assert!(begin < write && write < commit && commit < catch);
+        assert!(text[catch..].contains("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION"));
+        assert!(text[catch..].contains("THROW;"));
     }
 
     #[test]

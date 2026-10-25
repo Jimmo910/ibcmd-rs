@@ -1,6 +1,6 @@
 # Design
 
-The native platform is the oracle. Use synthetic versioned Coverage extension updates with multiple new catalogs, independent information registers and associated tableless metadata. Existing catalogs and registers contain control records before either updater runs. Source input versions must increase, and built CFE versions must match their sources.
+The native platform is the oracle. Use synthetic versioned Coverage extension updates with multiple new catalogs, independent information registers and associated tableless metadata. Existing catalogs, registers and an own document contain control records before either updater runs. The update also adds a decimal(15,2) document attribute and an enum value; these accompanying changes must preserve every old field, record and enum identity. Source input versions must increase, and built CFE versions must match their sources.
 
 Separate pure layout/planning from SQL execution. Reuse the S1 DBNames allocator, schema readers, DDL renderer and transaction/CAS mechanisms when extension measurements demonstrate identical semantics. New self-contained logic belongs in a portable workspace crate; physical record slots are supplied by schema-owned facts. Capture extension DBNames, SchemaStorage and DBSchema, registry and service/cache effects before choosing adapters.
 
