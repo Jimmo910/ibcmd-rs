@@ -10,8 +10,10 @@
 //! here read the same table, so it has one definition, in this crate.
 //!
 //! The code came from the physical-adapter guard's slice, so the guard scans
-//! every file of this crate (`tools/validate-physical-adapter-policy.ps1`,
-//! `$GuardedCrateFiles`) and its literals stay in the guard's baseline.
+//! this crate's files (`$GuardedCrateFiles` in
+//! `tools/validate-physical-adapter-policy.ps1`) and their literals stay in
+//! the guard's baseline. A file added to the crate is scanned only once it is
+//! listed there.
 
 mod braced;
 mod fields;
