@@ -49,7 +49,7 @@ Local macOS executable: 4,364,200 bytes, SHA256
 This executable came from the reviewed uncommitted manifest; it is not a Windows
 artifact and must not be substituted for clean exact-head CI provenance.
 
-## Remaining gates
+## Historical pending gates (superseded by the retained result below)
 
 A new exact-head Windows artifact, immutable worker/argument binding, public
 Windows context/custody controls, sole-operator lease and bounded real-input facts
@@ -89,3 +89,53 @@ are not a runtime policy PASS; the automatic corrective-head CI remains a gate.
 The exact `0f826d0b` Windows artifact is retained and verified but not executed.
 It remains prior-head evidence until corrective CI and worker/source bindings
 are reviewed. No private-input observation or production parity is implied.
+
+
+## Retained original Form acceptance
+
+The separately reviewed R10 sequence completed 45 public controls followed by
+one frozen-input observation. The final query projection remained unclassified
+where the parser could not establish identity; absence was not treated as
+semantic nonselection. R9 had already established a unique direct ordinary
+Russian-to-Russian field binding in each affected block.
+
+The first production candidate `11571333` removed the marker but incorrectly
+replaced two declared Russian spellings with the automatic English identity.
+Its retained failure is preserved. The correction gives a unique direct ordinary
+self-binding spelling precedence only after implicit availability succeeds,
+mirroring bag Field versus normalized ServerState emission. It does not add all
+declarations to the universe, infer a family-specific naming rule, or relax
+shadowing, projection, ambiguity and custody guards.
+
+Product `c45d1bb2a9ea260dd5d7bb32f3143eea7ab29076`, PE SHA256
+`3f2ae372b411e1c552395ca5745c9e46b31c2d43fe0121ab6fde32e446e4df32`,
+was tested by the sole operator against the retained native 8.3.27.2342 reference
+using the supported release profile 8.3.27. The original Form is byte-exact:
+417,459 bytes, SHA256
+`18a5ddb99b013572d9e52dcc19a236d06312cc57d5a906bbcc88205939fac279`.
+All 94 ordered UseAlways entries and 109 DataPaths match, with zero differences.
+Before/after source fingerprints match; SQL writes, forced termination and private
+XML transfer were zero. Shutdown/exit completed naturally with product exit 0.
+
+Sanitized Form result SHA256:
+`9b48e235d18cbd7feb3243a2b04954a7a931307ba6c9ba0fe2ba4af145acfcf5`.
+Combined physical full-release receipt SHA256:
+`3ead95f368c8419a67644b601e82aa3b5a0702fc07f439cad7985edd7ab5ccda`.
+The same product's full public export matched 5 of 6 files, including the 43-byte
+BSL module and complete ConfigDumpInfo; its remaining Template is not byte-exact.
+[Exact product CI](https://github.com/Jimmo910/ibcmd-rs/actions/runs/40151625588)
+passed on Windows and Linux.
+
+Local correction gates passed: 9 related Form tests, 9 existing UseAlways tests,
+8 XML controls, strict changed-crate clippy, formatting and whitespace checks.
+The integrated module donor additionally passed its 3 regressions and production
+lib-check. Review found and removed a quadratic namespace traversal before
+publication; direct ancestry lookup preserves namespace shadowing semantics.
+All fixtures and failed/successful logs remain on the external lab disk.
+
+This is a verified Form-file result, not acceptance of all six original
+differences. The five private Template chart-name differences, native publication
+context selection and public named-item ordering remain unresolved. Exact-build
+registry support, full private-tree parity and new upstream policy-gate results
+are not inferred. No scanner/baseline relaxation, denied local validator or
+destructive SelfTest was used for this result. Raw body/context/XML stay in VM.
