@@ -213,3 +213,13 @@ observer changes/frame gaps, exact birth width, reused SPID and conservative
 collision refusal. Logs: issue-382-session-closure-observation.log, retained.
 A fresh Windows artifact and actual runtime remain required; this is not PASS
 of the earlier failed run and does not establish its unrecorded cause.
+
+Follow-up source review corrected the test observer ordering: count DMV session
+rows first, then sample observer identity, transaction state and visibility
+immediately before emitting the row. This prevents pre-query state from being
+reported as post-query state; it does not explain the original unrecorded failure
+and changes no session setting or acceptance criterion. A source-order regression
+asserts count < sample < emission < wait. Independent source review CLEAR.
+Focused Rust 1.95.0 local run: 16 passed, zero failed, one live ignored;
+32.21s compilation and 0.02s execution. Retained log:
+issue-382-closure-post-dmv-state.log. Actual Windows runtime remains pending.

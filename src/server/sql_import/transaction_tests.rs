@@ -760,10 +760,10 @@ SET NOCOUNT ON;
 DECLARE @Attempt int=0,@Reader int,@Depth int,@State int,@Visible int,@Any bigint,@Owned bigint;
 WHILE @Attempt<20
 BEGIN
- SELECT @Reader=@@SPID,@Depth=@@TRANCOUNT,@State=XACT_STATE(),
-        @Visible=HAS_PERMS_BY_NAME(NULL,NULL,'VIEW SERVER PERFORMANCE STATE');
  SELECT @Any=COUNT_BIG(*),@Owned=COUNT_BIG(CASE WHEN CONVERT(varbinary(8),login_time)=@P2 THEN 1 END)
  FROM sys.dm_exec_sessions WHERE session_id=@P1;
+ SELECT @Reader=@@SPID,@Depth=@@TRANCOUNT,@State=XACT_STATE(),
+        @Visible=HAS_PERMS_BY_NAME(NULL,NULL,'VIEW SERVER PERFORMANCE STATE');
  SELECT @Reader,@Depth,@State,@Visible,@Any,@Owned;
  SET @Attempt+=1;
  IF @P1<=0 OR @P3<=0 OR @Reader<>@P3 OR @Reader=@P1 OR @Depth<>0 OR @State<>0
@@ -909,6 +909,17 @@ fn closure_row(index: usize, visible: SqlValue, any: i64, owned: i64) -> SqlRow 
         ],
     }
 }
+#[test]
+fn closure_observation_samples_state_after_dmv_query() {
+    let count = CLOSED_SESSION_SQL.find("SELECT @Any=COUNT_BIG(*)").unwrap();
+    let sample = CLOSED_SESSION_SQL.find("SELECT @Reader=@@SPID").unwrap();
+    let emit = CLOSED_SESSION_SQL
+        .find("SELECT @Reader,@Depth,@State,@Visible,@Any,@Owned;")
+        .unwrap();
+    let wait = CLOSED_SESSION_SQL.find("WAITFOR DELAY").unwrap();
+    assert!(count < sample && sample < emit && emit < wait);
+}
+
 #[test]
 fn closure_permission_oracle_uses_server_scope_and_distinguishes_null_from_zero() {
     assert!(
