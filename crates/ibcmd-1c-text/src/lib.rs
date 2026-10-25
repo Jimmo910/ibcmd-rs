@@ -3,17 +3,19 @@
 //! fields, and the XML escaping the writers apply to what they read.
 //!
 //! Everything here moved unchanged from the root crate's `mssql_dump`
-//! (`mod.rs`, and `extract_base64_payload` from `source_assets.rs`), which
-//! still reaches every item by its old name through imports. The root's
+//! (`mod.rs`; `extract_base64_payload`, `decode_base64_mime` and
+//! `format_1c_date_time` from `source_assets.rs`; the UUID scan
+//! `uuid_like_values` from `refs.rs`), which still reaches every item by its
+//! old name through imports. The root's
 //! form-body, reference and metadata readers register their texts in this
 //! crate's per-thread jump table ([`register_brace_jumps`]); the splitters
 //! here read the same table, so it has one definition, in this crate.
 //!
 //! The code came from the physical-adapter guard's slice, so the guard scans
-//! this crate's files (`$GuardedCrateFiles` in
-//! `tools/validate-physical-adapter-policy.ps1`) and their literals stay in
-//! the guard's baseline. A file added to the crate is scanned only once it is
-//! listed there.
+//! every non-test `*.rs` file under this crate's `src/`
+//! (`$GuardedCrateDirectories` in `tools/validate-physical-adapter-policy.ps1`)
+//! and their literals stay in the guard's baseline. A file added here is in
+//! the slice at once and fails the guard until its record is reviewed.
 
 mod braced;
 mod fields;
@@ -26,8 +28,10 @@ pub use braced::{
     split_1c_braced_fields, split_1c_braced_fields_bounded, split_1c_braced_sequence,
 };
 pub use fields::{
-    extract_base64_payload, is_uuid_text, parse_1c_bool_field, parse_1c_bool_field_or_default,
-    parse_1c_bool_flag, parse_1c_u32_field, parse_non_zero_uuid, parse_uuid_field,
+    decode_base64_mime, extract_base64_payload, format_1c_date_time, is_uuid_like_ascii,
+    is_uuid_text, parse_1c_bool_field, parse_1c_bool_field_or_default, parse_1c_bool_flag,
+    parse_1c_u32_field, parse_non_zero_uuid, parse_uuid_field, uuid_like_values,
+    uuid_like_values_in_text_order,
 };
 pub use strings::{
     parse_1c_quoted_string, parse_1c_quoted_string_with_len, parse_1c_string, parse_1c_synonyms,

@@ -667,6 +667,18 @@ name = "ibcmd-1c-text"
 version = "0.1.0"
 
 [[package]]
+name = "ibcmd-1c-vocab"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "ibcmd-1c-text",
+ "ibcmd-form-schema",
+ "ibcmd-schema",
+ "ibcmd-xml",
+]
+
+[[package]]
 name = "ibcmd-cf"
 version = "0.1.0"
 dependencies = [
@@ -753,6 +765,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "ibcmd-1c-text",
+ "ibcmd-1c-vocab",
  "ibcmd-cf",
  "ibcmd-core",
  "ibcmd-edt",
