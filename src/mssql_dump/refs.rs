@@ -3487,45 +3487,6 @@ pub(super) fn resolve_subsystem_source_path(
     Some(relative_path)
 }
 
-pub(super) fn uuid_like_values(text: &str) -> BTreeSet<String> {
-    uuid_like_values_in_text_order(text).into_iter().collect()
-}
-
-pub(super) fn uuid_like_values_in_text_order(text: &str) -> Vec<String> {
-    let bytes = text.as_bytes();
-    let mut values = Vec::new();
-    let mut seen = BTreeSet::new();
-    if bytes.len() < 36 {
-        return values;
-    }
-    for start in 0..=bytes.len() - 36 {
-        let value = &bytes[start..start + 36];
-        if is_uuid_like_ascii(value) {
-            let value = String::from_utf8_lossy(value).to_ascii_lowercase();
-            if seen.insert(value.clone()) {
-                values.push(value);
-            }
-        }
-    }
-    values
-}
-
-pub(super) fn is_uuid_like_ascii(value: &[u8]) -> bool {
-    if value.len() != 36 {
-        return false;
-    }
-    for (index, byte) in value.iter().copied().enumerate() {
-        if matches!(index, 8 | 13 | 18 | 23) {
-            if byte != b'-' {
-                return false;
-            }
-        } else if !byte.is_ascii_hexdigit() {
-            return false;
-        }
-    }
-    true
-}
-
 pub(super) fn infer_template_type_from_body(bytes: &[u8]) -> Option<&'static str> {
     let inflated = inflate_raw_deflate(bytes).ok()?;
     if inflated.starts_with(b"MOXCEL") {

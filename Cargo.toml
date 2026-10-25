@@ -22,6 +22,7 @@ members = [
     "crates/ibcmd-form-native",
     "crates/ibcmd-moxel",
     "crates/ibcmd-1c-text",
+    "crates/ibcmd-1c-vocab",
 ]
 resolver = "3"
 exclude = ["crates/ibcmd-edt/vendor/morph1c"]
@@ -58,6 +59,7 @@ ibcmd-form-schema = { path = "crates/ibcmd-form-schema" }
 ibcmd-form-native = { path = "crates/ibcmd-form-native" }
 ibcmd-moxel = { path = "crates/ibcmd-moxel" }
 ibcmd-1c-text = { path = "crates/ibcmd-1c-text" }
+ibcmd-1c-vocab = { path = "crates/ibcmd-1c-vocab" }
 # The process allocator, installed in main.rs.
 mimalloc = "0.1.52"
 quick-xml = "0.38"
