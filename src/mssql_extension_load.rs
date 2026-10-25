@@ -631,23 +631,16 @@ pub(crate) fn activate_staged_extension_verified(
         crate::mssql_extension_activation::render_extension_activation_sql(&args.database, &plan)?;
     let artifact_root = std::env::temp_dir().join("ibcmd-rs");
     fs::create_dir_all(&artifact_root)?;
-    let root_token = &rendered.report.published_root_sha1[..16];
-    let endpoint_digest = Sha256::digest(format!("{}\0{}", args.server, args.database).as_bytes());
-    let endpoint_token = endpoint_digest[..6]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    let endpoint_token = &endpoint_token[..12];
-    let script = args.script_output.clone().unwrap_or_else(|| {
-        artifact_root.join(format!(
-            "activate_extension_{endpoint_token}_{namespace}_{root_token}.sql"
-        ))
-    });
-    let recovery = args.recovery_output.clone().unwrap_or_else(|| {
-        artifact_root.join(format!(
-            "recovery_extension_{endpoint_token}_{namespace}_{root_token}.json"
-        ))
-    });
+    let (default_script, default_recovery) = activation_artifact_paths(
+        &artifact_root,
+        &args.server,
+        &args.database,
+        &namespace,
+        &rendered.report.published_root_sha1,
+        rendered.sql().as_bytes(),
+    );
+    let script = args.script_output.clone().unwrap_or(default_script);
+    let recovery = args.recovery_output.clone().unwrap_or(default_recovery);
     publish_activation_artifacts(
         &script,
         rendered.sql().as_bytes(),
@@ -669,6 +662,34 @@ pub(crate) fn activate_staged_extension_verified(
         script: Some(script),
         recovery: Some(recovery),
     })
+}
+
+/// Replanning creates fresh DBNames version identifiers. Keep each exact
+/// plan immutable without making a dry run block the subsequent real apply.
+fn activation_artifact_paths(
+    root: &Path,
+    server: &str,
+    database: &str,
+    namespace: &str,
+    cas_root: &str,
+    script: &[u8],
+) -> (PathBuf, PathBuf) {
+    let endpoint = Sha256::digest(format!("{server}\0{database}").as_bytes());
+    let endpoint = endpoint[..6]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let plan = Sha256::digest(script);
+    let plan = plan[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let root_token = &cas_root[..16];
+    let identity = format!("{endpoint}_{namespace}_{root_token}_{plan}");
+    (
+        root.join(format!("activate_extension_{identity}.sql")),
+        root.join(format!("recovery_extension_{identity}.json")),
+    )
 }
 
 fn publish_activation_artifacts(
@@ -1286,6 +1307,26 @@ fn resolve_password(args: &MssqlLoadExtensionArgs) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_activation_artifacts_distinguish_replanned_schema_versions() {
+        let root = Path::new("artifacts");
+        let cas = "0123456789abcdef0123456789abcdef01234567";
+        let first =
+            activation_artifact_paths(root, "server", "database", "namespace", cas, b"version-A");
+        assert_eq!(
+            first,
+            activation_artifact_paths(root, "server", "database", "namespace", cas, b"version-A")
+        );
+        let next =
+            activation_artifact_paths(root, "server", "database", "namespace", cas, b"version-B");
+        assert_ne!(first.0, next.0);
+        assert_ne!(first.1, next.1);
+        let other =
+            activation_artifact_paths(root, "server", "other", "namespace", cas, b"version-A");
+        assert_ne!(first, other);
+    }
+
     use crate::mssql_platform_profile::MssqlNativePlatformProfile;
     use ibcmd_core::artifact::StorageProfileId;
     use ibcmd_core::storage::{
