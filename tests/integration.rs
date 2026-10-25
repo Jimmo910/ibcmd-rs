@@ -69,6 +69,7 @@ mod form_compat_namespace;
 mod form_events;
 mod home_page_work_area;
 mod import_files;
+mod interface_metadata;
 // Its descriptor capability boundary is Unix-only.
 #[cfg(unix)]
 mod mcp_adapter;
