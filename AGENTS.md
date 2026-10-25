@@ -79,7 +79,8 @@ cargo build --locked --profile iter                                      # binar
   new numeric slot indices in production parsers and no special cases for
   named objects (a form called `ФормаСписка`): find the rule shared by all.
   `tools/validate-physical-adapter-policy.ps1` fails new literals in
-  `src/module_blob.rs` and `src/mssql_dump/`. Refresh its baseline only for a
+  `src/module_blob.rs`, `src/mssql_dump/` and the crate files listed in its
+  `$GuardedCrateFiles` (code moved out of those two). Refresh its baseline only for a
   reviewed policy, never to hide literals (`tools/physical-adapter-policy-guard.md`).
 - A new heuristic needs an EDT writer rule or a full corpus of
   counterexamples, plus a measured win on the full gate.
