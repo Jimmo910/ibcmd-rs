@@ -31,6 +31,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -43,6 +45,8 @@ jobs:
           NPM_CONFIG_AUDIT: "false"
           NPM_CONFIG_FUND: "false"
         run: |
+          npx --yes @fission-ai/openspec@1.6.0 validate extract-coverage-corpus --strict --no-interactive
+          npx --yes @fission-ai/openspec@1.6.0 validate add-coverage-configuration --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate build-offline-converter --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate add-fast-parity-evidence --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate add-selected-cf-extract --strict --no-interactive
@@ -55,6 +59,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Enforce EDT-derived corpus governance
         shell: pwsh
@@ -121,6 +127,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          submodules: true
           # The base of a pull request, for the lane selection below.
           fetch-depth: 0
 
@@ -201,6 +208,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'edt_release_audit_test failed' }
           python tests/scripts/linux_abi_test.py
           if ($LASTEXITCODE -ne 0) { throw 'linux_abi_test failed' }
+          python tools/coverage/fixture_paths.py
+          if ($LASTEXITCODE -ne 0) { throw 'pinned fixtures validation failed' }
+          python -m unittest discover -s tests/fixtures/1c-fixtures/tools/coverage -p 'test_*.py'
+          if ($LASTEXITCODE -ne 0) { throw 'native generator tests failed' }
+          python -m unittest discover -s tools/coverage -p 'test_*.py'
+          if ($LASTEXITCODE -ne 0) { throw 'coverage generator tests failed' }
 
       - name: Cache Cargo artifacts
         if: steps.scope.outputs.rust == 'true'
