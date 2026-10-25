@@ -440,3 +440,234 @@ where
         profile,
     )
 }
+
+fn raw_filesystem_form_case() -> (Rows, String, Vec<u8>) {
+    let mut rows = fixture(2);
+    let key = format!("{}.0", id(200));
+    let raw = b"// raw LF form module\n// second line\n".to_vec();
+    rows.insert(
+        key.clone(),
+        compile_managed_form(&profile().body, FORM_XML, Some(&raw), None).unwrap(),
+    );
+    assert_eq!(
+        decode_managed_form(&profile().body, &rows[&key])
+            .unwrap()
+            .module_text()
+            .as_bytes(),
+        raw
+    );
+    (rows, key, raw)
+}
+
+#[test]
+fn filesystem_form_native_noop_keeps_raw_storage_layout_and_versions() {
+    let (rows, key, raw) = raw_filesystem_form_case();
+    let saved = Rows::from([
+        (id(101), rows[&id(101)].clone()),
+        ("versions".into(), rows["versions"].clone()),
+    ]);
+    let captured = snapshot(&rows, &saved);
+    let before = captured.digest().unwrap();
+    let source = crate::mssql_dump::native_module_file_bytes(&raw);
+    assert!(source.starts_with(b"\xef\xbb\xbf"));
+    assert!(source.windows(2).any(|pair| pair == b"\r\n"));
+    assert_ne!(source, raw);
+    let original_source = source.clone();
+    let old_body = rows[&key].clone();
+    let old_versions = rows["versions"].clone();
+    let edit = prepare_form_module_file(
+        &captured,
+        &path(0),
+        &source,
+        &profile(),
+        Limits::default(),
+        &check(),
+    )
+    .unwrap();
+    assert!(edit.replacements().is_empty());
+    // The storage API retains its original EOL semantics for the same bytes.
+    assert!(
+        !prepare_form_module(
+            &captured,
+            &path(0),
+            &source,
+            &profile(),
+            Limits::default(),
+            &check(),
+        )
+        .unwrap()
+        .replacements()
+        .is_empty()
+    );
+    assert!(
+        prepare_form_module(
+            &captured,
+            &path(0),
+            &raw,
+            &profile(),
+            Limits::default(),
+            &check(),
+        )
+        .unwrap()
+        .replacements()
+        .is_empty()
+    );
+    assert_eq!(rows[&key], old_body);
+    assert_eq!(rows["versions"], old_versions);
+    assert_eq!(source, original_source);
+    assert_eq!(captured.digest().unwrap(), before);
+}
+
+#[test]
+fn filesystem_form_edit_reuses_loader_policy_and_preserves_exact_nonmodule_state() {
+    let (rows, key, _) = raw_filesystem_form_case();
+    let captured = snapshot(&rows, &Rows::new());
+    let before = captured.digest().unwrap();
+    let source = b"\xef\xbb\xbf// changed file\n// second line\n".to_vec();
+    let original_source = source.clone();
+    let expected = crate::load::module_text_from_bytes(&source, &path(0)).unwrap();
+    assert_ne!(
+        source, expected,
+        "LF source must exercise loader CRLF expansion"
+    );
+    let edit = prepare_form_module_file(
+        &captured,
+        &path(0),
+        &source,
+        &profile(),
+        Limits::default(),
+        &check(),
+    )
+    .unwrap();
+    assert_eq!(
+        edit.replacements().keys().cloned().collect::<BTreeSet<_>>(),
+        BTreeSet::from([key.clone(), "versions".into()])
+    );
+    let old = decode_managed_form(&profile().body, &rows[&key]).unwrap();
+    let new = decode_managed_form(&profile().body, &edit.replacements()[&key]).unwrap();
+    assert_eq!(
+        new.module_text(),
+        std::str::from_utf8(&expected)
+            .unwrap()
+            .trim_start_matches('\u{feff}')
+    );
+    assert_eq!(old.parsed().revision, new.parsed().revision);
+    assert_eq!(old.parsed().layout, new.parsed().layout);
+    assert_eq!(old.parsed().trailing, new.parsed().trailing);
+    assert_eq!(old.parsed().trailing_fields, new.parsed().trailing_fields);
+    let old_versions = crate::module_blob::inflate_raw(&rows["versions"]).unwrap();
+    let new_versions = crate::module_blob::inflate_raw(&edit.replacements()["versions"]).unwrap();
+    validate_sql_versions_change(&old_versions, &new_versions, &BTreeSet::from([key])).unwrap();
+    assert_eq!(source, original_source);
+    assert_eq!(captured.digest().unwrap(), before);
+}
+
+#[test]
+fn filesystem_form_bounds_expanded_storage_text_at_exact_limit() {
+    let (rows, key, _) = raw_filesystem_form_case();
+    let captured = snapshot(&rows, &Rows::new());
+    let source = b"\n\n\n\n";
+    let expected = crate::load::module_text_from_bytes(source, &path(0)).unwrap();
+    assert_eq!(expected, b"\r\n\r\n\r\n\r\n");
+    let error = prepare_form_module_file(
+        &captured,
+        &path(0),
+        source,
+        &profile(),
+        Limits {
+            source_bytes: 7,
+            ..Limits::default()
+        },
+        &check(),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        error.to_string(),
+        "SQL compiled Form module source budget exceeded"
+    );
+    let edit = prepare_form_module_file(
+        &captured,
+        &path(0),
+        source,
+        &profile(),
+        Limits {
+            source_bytes: 8,
+            ..Limits::default()
+        },
+        &check(),
+    )
+    .unwrap();
+    assert_eq!(
+        decode_managed_form(&profile().body, &edit.replacements()[&key])
+            .unwrap()
+            .module_text()
+            .as_bytes(),
+        expected
+    );
+}
+
+#[test]
+fn filesystem_form_post_loader_cancellation_retains_typed_error_and_inputs() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let (rows, _, _) = raw_filesystem_form_case();
+    let captured = snapshot(&rows, &Rows::new());
+    let before = captured.digest().unwrap();
+    let source = b"\n\n\n\n".to_vec();
+    let original_source = source.clone();
+    // The expansion-bound refusal identifies the last checkpoint before the
+    // post-loader budget, without coupling the test to a resolver walk count.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let count: Check = Arc::new(move || {
+        observed.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    });
+    let error = prepare_form_module_file(
+        &captured,
+        &path(0),
+        &source,
+        &profile(),
+        Limits {
+            source_bytes: 7,
+            ..Limits::default()
+        },
+        &count,
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        error.to_string(),
+        "SQL compiled Form module source budget exceeded"
+    );
+    let post_loader_check = calls.load(Ordering::SeqCst);
+    assert!(post_loader_check > 1);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let cancel: Check = Arc::new(move || {
+        if observed.fetch_add(1, Ordering::SeqCst) + 1 == post_loader_check {
+            return Err(crate::cancel::Cancelled.into());
+        }
+        Ok(())
+    });
+    let error = prepare_form_module_file(
+        &captured,
+        &path(0),
+        &source,
+        &profile(),
+        Limits {
+            source_bytes: 8,
+            ..Limits::default()
+        },
+        &cancel,
+    )
+    .err()
+    .unwrap();
+    assert!(crate::cancel::is_cancelled(&error));
+    assert_eq!(calls.load(Ordering::SeqCst), post_loader_check);
+    assert_eq!(source, original_source);
+    assert_eq!(captured.digest().unwrap(), before);
+}

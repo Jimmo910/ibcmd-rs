@@ -34,8 +34,23 @@ fn component(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Prepare already-held Form module file bytes without opening a pathname.
+/// Compare the original bytes to the native export projection before applying
+/// the existing loader storage policy. Source custody remains caller-owned.
+pub fn prepare_form_module_file(
+    snapshot: &Readset,
+    selected_path: &str,
+    text: &[u8],
+    profile: &DocumentFormProfile,
+    limits: Limits,
+    check: &Check,
+) -> Result<ModuleEdit> {
+    prepare_form_module_text(snapshot, selected_path, text, profile, limits, check, true)
+}
+
 /// Resolves root -> Document -> Form BEFORE any UUID/name index reduction.
 /// Only Module.bsl is selected; all non-module Form fields must remain exact.
+/// This API accepts storage text; held source-file bytes use the file wrapper.
 pub fn prepare_form_module(
     snapshot: &Readset,
     selected_path: &str,
@@ -44,12 +59,24 @@ pub fn prepare_form_module(
     limits: Limits,
     check: &Check,
 ) -> Result<ModuleEdit> {
+    prepare_form_module_text(snapshot, selected_path, text, profile, limits, check, false)
+}
+
+fn prepare_form_module_text(
+    snapshot: &Readset,
+    selected_path: &str,
+    text: &[u8],
+    profile: &DocumentFormProfile,
+    limits: Limits,
+    check: &Check,
+    filesystem: bool,
+) -> Result<ModuleEdit> {
     check()?;
     ensure!(
         text.len() <= limits.source_bytes && !text.contains(&0),
         "SQL Form module source budget or encoding is invalid"
     );
-    let expected_text = std::str::from_utf8(text)?.trim_start_matches('\u{feff}');
+    std::str::from_utf8(text)?;
     let CapturedView {
         rows,
         members,
@@ -160,6 +187,26 @@ pub fn prepare_form_module(
     let plain = budget.inflate(base)?;
     require_nesting_bound(&plain, check)?;
     let old = decode_managed_form(&profile.body, base)?;
+    // Expected projection only: never normalize the original source/custody bytes.
+    let old_text = old.module_text().as_bytes();
+    let prepared_text = if !filesystem {
+        std::borrow::Cow::Borrowed(text)
+    } else if old_text.len() <= text.len()
+        && crate::mssql_dump::native_module_file_bytes(old_text) == text
+    {
+        std::borrow::Cow::Borrowed(old_text)
+    } else {
+        std::borrow::Cow::Owned(
+            crate::load::module_text_from_bytes(text, selected_path).map_err(anyhow::Error::msg)?,
+        )
+    };
+    check()?;
+    ensure!(
+        prepared_text.len() <= limits.source_bytes,
+        "SQL compiled Form module source budget exceeded"
+    );
+    let text = prepared_text.as_ref();
+    let expected_text = std::str::from_utf8(text)?.trim_start_matches('\u{feff}');
     let mut replacements = Rows::new();
     if old.module_text() != expected_text {
         check()?;
