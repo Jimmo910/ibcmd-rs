@@ -478,6 +478,40 @@ mod tests {
     }
 
     #[test]
+    fn module_packer_preserves_whitespace_around_quoted_token() {
+        let profile = ManagedFormCodecProfile::fixture();
+        let base = compile_managed_form(&profile, SIMPLE_FORM, Some(b"old"), None).unwrap();
+        let (body, range) = original_layout(&base).unwrap();
+        let text = std::str::from_utf8(body.plaintext()).unwrap();
+        for (before, after) in [(" \t", ""), ("", "\r\n "), (" \t", "\r\n ")] {
+            let spaced = format!(
+                "{}{before}{}{after}{}",
+                &text[..range.start],
+                &text[range.clone()],
+                &text[range.end..]
+            );
+            let old = deflate_bytes(spaced.as_bytes()).unwrap();
+            let new = crate::module_blob::pack_form_body_blob_from_module_text(&old, b"new\"text")
+                .unwrap()
+                .blob;
+            verify_module_only_edit(&old, &new).unwrap();
+            let (old_body, a) = original_layout(&old).unwrap();
+            let (new_body, b) = original_layout(&new).unwrap();
+            assert_eq!(
+                &old_body.plaintext()[..a.start],
+                &new_body.plaintext()[..b.start]
+            );
+            assert_eq!(
+                &old_body.plaintext()[a.end..],
+                &new_body.plaintext()[b.end..]
+            );
+            assert_eq!(new_body.module_text(), "new\"text");
+            assert_eq!(old_body.parsed().layout, new_body.parsed().layout);
+            assert_eq!(old_body.parsed().trailing, new_body.parsed().trailing);
+        }
+    }
+
+    #[test]
     fn original_layout_refuses_root_42_before_reader_upgrade() {
         let plain = concat!(
             "\u{feff}{3,{42,0,0,0,0,1,0,0,00000000-0000-0000-0000-000000000000,1,{1,0},0,0,1,1,1,0,0,0,",
