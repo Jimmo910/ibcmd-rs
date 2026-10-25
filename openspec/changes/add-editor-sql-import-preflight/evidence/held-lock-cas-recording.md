@@ -120,3 +120,23 @@ It does not execute ignored SQL tests, change permissions/secrets or upload
 application XML/database data. PowerShell AST check and independent source review
 passed before dispatch. This authorization does not establish runtime PASS or
 make the diagnostic branch policy gate pass.
+
+## First Windows CI result and checkout fix
+
+CI run 40186940076 at 53ca54e17cff6cd280dad39098911ebefb4d03ca completed:
+Linux and Legacy Windows passed, but Portable Windows root tests had 4263 passed,
+6 failed and 17 ignored. The six new recording failures all stopped at
+`canonical snapshot control anchor changed`; the upload steps did not run.
+The original failed log is retained as issue-382-windows-ci-first-failure.log.
+
+Git's `core.autocrlf=true cat-file --filters HEAD:src/server/sql_import/snapshot.sql`
+reproduced the cause locally: 7101 bytes, 110 CRLF pairs, SHA256
+50b80805d1942e51f9946a7e180bd2cdf864fd4133c1de93d513be684249c928,
+and zero matches for the three strict newline-bearing control anchors.
+A single scoped `.gitattributes` rule pins this embedded SQL file to `text eol=lf`.
+The same checkout-filter control then returns exactly the canonical 6991 bytes,
+zero CR bytes and source SHA256 e6d1ecbfe06cd2df605cf53066a425dd98058056a701b661786567c057056da6.
+All original anchor counts are restored (1/1/1 and two table-lock anchors).
+No parser, SQL, guard or test assertion changed. Independent source review CLEAR;
+the same local CAS suite passes 11/11 with the one live test still ignored.
+Actual corrected Windows CI/runtime remain separate pending observations.
