@@ -1,0 +1,14 @@
+[package]
+name = "ibcmd-moxel"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Decoder of native MOXCEL spreadsheet bodies and their XML writer"
+
+[dependencies]
+# The line-trace events are serialized into the root's provenance report.
+serde = { version = "1.0", features = ["derive"] }
+
+[lints.rust]
+unsafe_code = "forbid"

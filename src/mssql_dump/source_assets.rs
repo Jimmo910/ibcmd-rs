@@ -3334,7 +3334,7 @@ fn write_source_asset_inner(
                 &asset.primary_path,
             )?;
             let xml = if context.source_version == InfobaseConfigSourceVersion::V2_20 {
-                super::moxel::with_v85_style_fonts_by_code(xml, context.object_refs)
+                super::moxel_entry::with_v85_style_fonts_by_code(xml, context.object_refs)
             } else {
                 xml
             };
