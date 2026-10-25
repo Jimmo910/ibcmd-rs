@@ -27,3 +27,19 @@ impl ExtensionScheduledJobsLayout {
         ("Version", "N", 9, 0),
     ];
 }
+
+/// Context columns shared by the extension registry and its service records.
+pub struct ExtensionServiceScopeLayout;
+impl ExtensionServiceScopeLayout {
+    pub const SERVICE_TABLE: &str = "ExtensionsRestruct";
+    pub const REGISTRY_TABLE: &str = "ExtensionsInfo";
+    pub const USE_PREFIX: &str = "DataSeparationUse";
+    pub const VALUE_PREFIX: &str = "Fld";
+    pub fn is_context_field(name: &str) -> bool {
+        [Self::USE_PREFIX, Self::VALUE_PREFIX].iter().any(|prefix| {
+            name.strip_prefix(prefix).is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit())
+            })
+        })
+    }
+}

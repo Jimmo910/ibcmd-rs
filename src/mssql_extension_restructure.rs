@@ -14,7 +14,9 @@ use ibcmd_restructure::extension::{
     NameRequest, NameStep, SchemaPlan, TableChange, allocate_extension_names,
 };
 use ibcmd_restructure::scheduled_jobs::{Job as ScheduledJob, Service as JobService};
-use ibcmd_schema::extension_schema::ExtensionScheduledJobsLayout as JobsLayout;
+use ibcmd_schema::extension_schema::{
+    ExtensionScheduledJobsLayout as JobsLayout, ExtensionServiceScopeLayout as ScopeLayout,
+};
 use sha2::{Digest, Sha256};
 
 use crate::metadata_model::DescriptorContext;
@@ -41,11 +43,6 @@ const TABLELESS: &[&str] = &[
     "Roles",
     "HTTPServices",
     "Subsystems",
-    "EventSubscriptions",
-    "CommonCommands",
-    "CommandGroups",
-    "SessionParameters",
-    "Languages",
 ];
 const DATA: &[&str] = &[
     "Catalogs",
@@ -457,7 +454,118 @@ pub struct ExtensionRestructureState {
     pub schemas: Vec<Schema>,
     pub services: Vec<(Vec<u8>, Vec<u8>, i64, i64)>,
 }
-fn state(sql: &SqlExec, database: &str) -> Result<ExtensionRestructureState> {
+/// The native global service context is copied from the selected registry
+/// row. Nullable separator values are not replaced with guessed defaults.
+struct ServiceScope {
+    columns: Vec<String>,
+    use_columns: Vec<String>,
+    extension_id: [u8; 16],
+}
+impl ServiceScope {
+    fn from_schemas(schemas: &[Schema], extension_id: [u8; 16]) -> Result<Self> {
+        let main = schemas
+            .iter()
+            .find(|s| s.id == 0)
+            .context("main SchemaStorage row 0 is required for extension service context")?;
+        let schema = DbSchema::parse(&main.current)?;
+        let service = schema.named(ScopeLayout::SERVICE_TABLE)?.fields()?;
+        let registry = schema.named(ScopeLayout::REGISTRY_TABLE)?.fields()?;
+        for required in [
+            "ExtDataID",
+            "RestructData",
+            "RestructDataInt",
+            "RestructDataType",
+        ] {
+            if service.iter().filter(|f| f.name == required).count() != 1 {
+                bail!("extension service schema lacks {required}");
+            }
+        }
+        for required in ["ID", "ExtensionScope"] {
+            if registry.iter().filter(|f| f.name == required).count() != 1 {
+                bail!("extension registry schema lacks {required}");
+            }
+        }
+        let mut columns = Vec::new();
+        let mut use_columns = Vec::new();
+        for field in &service {
+            if [
+                "ExtDataID",
+                "RestructData",
+                "RestructDataInt",
+                "RestructDataType",
+            ]
+            .contains(&field.name.as_str())
+            {
+                continue;
+            }
+            if !ScopeLayout::is_context_field(&field.name) {
+                bail!("unmodeled extension service field {}", field.name);
+            }
+            let corresponding = registry
+                .iter()
+                .find(|r| r.name == field.name)
+                .context("extension registry lacks a service context field")?;
+            if corresponding != field {
+                bail!("extension registry and service context field types disagree");
+            }
+            let physical = crate::restructure::schema::field_columns(field)?;
+            if field.name.starts_with(ScopeLayout::USE_PREFIX) {
+                if physical.len() != 1
+                    || physical[0].sql_type != crate::restructure::schema::SqlType::Binary(1)
+                    || physical[0].nullable
+                {
+                    bail!("unmodeled extension data-separation use flag");
+                }
+                use_columns.push(quote_ident(&physical[0].name)?);
+            }
+            for column in physical {
+                columns.push(quote_ident(&column.name)?);
+            }
+        }
+        Ok(Self {
+            columns,
+            use_columns,
+            extension_id,
+        })
+    }
+    fn registry_predicate(&self) -> String {
+        let mut value = format!(
+            "ctx._IDRRef=0x{} AND ctx._ExtensionScope=1",
+            hex_upper(&self.extension_id)
+        );
+        for col in &self.use_columns {
+            write!(value, " AND ctx.{col}=0x00").unwrap();
+        }
+        value
+    }
+    fn predicate(&self, alias: &str) -> String {
+        let mut value = format!(
+            "EXISTS(SELECT 1 FROM dbo._ExtensionsInfo ctx WITH(UPDLOCK,HOLDLOCK) WHERE {}",
+            self.registry_predicate()
+        );
+        for col in &self.columns {
+            write!(
+                value,
+                " AND (ctx.{col}={alias}.{col} OR (ctx.{col} IS NULL AND {alias}.{col} IS NULL))"
+            )
+            .unwrap();
+        }
+        value.push(')');
+        value
+    }
+    fn insert_columns(&self) -> String {
+        self.columns.iter().map(|c| format!(",{c}")).collect()
+    }
+    fn insert_values(&self) -> String {
+        self.columns.iter().map(|c| format!(",ctx.{c}")).collect()
+    }
+}
+
+fn state(
+    sql: &SqlExec,
+    database: &str,
+    extension_id: [u8; 16],
+) -> Result<ExtensionRestructureState> {
     let client = sql
         .client()
         .context("extension restructuring requires the built-in SQL client")?;
@@ -466,8 +574,24 @@ fn state(sql: &SqlExec, database: &str) -> Result<ExtensionRestructureState> {
     client.read_rows(&format!("USE {db}; SELECT FileName,DataSize,PartNo,BinaryData FROM dbo.Params WHERE FileName LIKE N'DBNames%' OR FileName=N'a07b62f0-1f01-484a-93d9-d42764cedac0.si' ORDER BY FileName,PartNo"),&[],&mut|mut r|{params.push(Param{name:r.take_text(0)?,size:r.i64(1)?,part:r.i64(2)?.try_into()?,data:r.take_binary(3)?});Ok(())})?;
     let mut schemas = Vec::new();
     client.read_rows(&format!("USE {db}; SELECT SchemaID,Status,CurrentSchema,NewGenCreated,NewGenDropped FROM dbo.SchemaStorage ORDER BY SchemaID"),&[],&mut|mut r|{schemas.push(Schema{id:r.i64(0)?,status:r.i64(1)?,current:r.take_binary(2)?,created:r.take_binary(3)?,dropped:r.take_binary(4)?});Ok(())})?;
+    let scope = ServiceScope::from_schemas(&schemas, extension_id)?;
+    let mut registry_count = 0;
+    client.read_rows(
+        &format!(
+            "USE {db}; SELECT COUNT_BIG(*) FROM dbo._ExtensionsInfo ctx WHERE {}",
+            scope.registry_predicate()
+        ),
+        &[],
+        &mut |r| {
+            registry_count = r.i64(0)?;
+            Ok(())
+        },
+    )?;
+    if registry_count != 1 {
+        bail!("extension restructuring requires exactly one global Infobase registry context");
+    }
     let mut services = Vec::new();
-    client.read_rows(&format!("USE {db}; SELECT _ExtDataID,_RestructData,_RestructDataInt,_RestructDataType FROM dbo._ExtensionsRestruct ORDER BY _ExtDataID"),&[],&mut|mut r|{services.push((r.take_binary(0)?,r.take_binary(1)?,r.i64(2)?,r.i64(3)?));Ok(())})?;
+    client.read_rows(&format!("USE {db}; SELECT _ExtDataID,_RestructData,_RestructDataInt,_RestructDataType FROM dbo._ExtensionsRestruct r WHERE {} ORDER BY _ExtDataID",scope.predicate("r")),&[],&mut|mut r|{services.push((r.take_binary(0)?,r.take_binary(1)?,r.i64(2)?,r.i64(3)?));Ok(())})?;
     if params.len() > 4096 || schemas.len() > 16 || services.len() > 4096 {
         bail!("extension schema state exceeds bounded row counts");
     }
@@ -498,7 +622,7 @@ fn assert_hash(
     writeln!(sql,"IF (SELECT COUNT_BIG(*) FROM dbo.{table} WITH(UPDLOCK,HOLDLOCK) WHERE {predicate} AND DATALENGTH({column})={} AND HASHBYTES('SHA2_256',{column})=0x{} {extra})<>1 THROW 57500,N'Extension schema optimistic state changed',1;",data.len(),digest(data)).unwrap();
 }
 
-fn guard_state(s: &ExtensionRestructureState) -> String {
+fn guard_state(s: &ExtensionRestructureState, scope: &ServiceScope) -> String {
     let mut sql = String::from(
         "DECLARE @ExtSchemaLock int; EXEC @ExtSchemaLock=sys.sp_getapplock @Resource=N'ibcmd-rs:extension-schema',@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=0; IF @ExtSchemaLock<0 THROW 57500,N'Extension schema lock unavailable',1;\n",
     );
@@ -533,14 +657,16 @@ fn guard_state(s: &ExtensionRestructureState) -> String {
             ),
         );
     }
-    writeln!(sql,"IF (SELECT COUNT_BIG(*) FROM dbo._ExtensionsRestruct WITH(UPDLOCK,HOLDLOCK))<>{} THROW 57500,N'Extension service row set changed',1;",s.services.len()).unwrap();
+    writeln!(sql,"IF (SELECT COUNT_BIG(*) FROM dbo._ExtensionsInfo ctx WITH(UPDLOCK,HOLDLOCK) WHERE {})<>1 THROW 57500,N'Extension global registry context changed',1;",scope.registry_predicate()).unwrap();
+    writeln!(sql,"IF (SELECT COUNT_BIG(*) FROM dbo._ExtensionsRestruct WITH(UPDLOCK,HOLDLOCK) WHERE {})<>{} THROW 57500,N'Extension scoped service row set changed',1;",scope.predicate("_ExtensionsRestruct"),s.services.len()).unwrap();
     for (id, data, int, kind) in &s.services {
         assert_hash(
             &mut sql,
             "_ExtensionsRestruct",
             &format!(
-                "_ExtDataID=0x{} AND _RestructDataInt={int} AND _RestructDataType={kind}",
-                hex_upper(id)
+                "_ExtDataID=0x{} AND _RestructDataInt={int} AND _RestructDataType={kind} AND {}",
+                hex_upper(id),
+                scope.predicate("_ExtensionsRestruct")
             ),
             "_RestructData",
             data,
@@ -821,7 +947,7 @@ pub(crate) fn prepare(
     if changed.is_empty() {
         return Ok(None);
     }
-    let s = state(sql, database)?;
+    let s = state(sql, database, extension_id)?;
     plan_from_source_trees(&base, &next, active, &proposed, extension_id, &s)
 }
 
@@ -961,7 +1087,8 @@ pub fn plan_from_source_trees(
         });
     }
     let plan = SchemaPlan::build(&schema.current, &changes)?;
-    let mut phase = guard_state(&s);
+    let scope = ServiceScope::from_schemas(&s.schemas, extension_id)?;
+    let mut phase = guard_state(&s, &scope);
     for (_, n) in &enums {
         let logical = format!(
             "Enum{}",
@@ -1083,9 +1210,9 @@ pub fn plan_from_source_trees(
             .to_bytes();
         after_scheduled_jobs = Some(row.clone());
         if let Some((_, old, _, _)) = existing {
-            writeln!(phase,"UPDATE dbo._ExtensionsRestruct SET _RestructData=0x{} WHERE _ExtDataID=0x{} AND _RestructDataInt=0 AND _RestructDataType=0 AND DATALENGTH(_RestructData)={} AND HASHBYTES('SHA2_256',_RestructData)=0x{}; IF @@ROWCOUNT<>1 THROW 57505,N'Scheduled-job mapping changed before publication',1;",hex_upper(&row),hex_upper(&id),old.len(),digest(old)).unwrap();
+            writeln!(phase,"UPDATE dbo._ExtensionsRestruct SET _RestructData=0x{} WHERE _ExtDataID=0x{} AND _RestructDataInt=0 AND _RestructDataType=0 AND DATALENGTH(_RestructData)={} AND HASHBYTES('SHA2_256',_RestructData)=0x{} AND {}; IF @@ROWCOUNT<>1 THROW 57505,N'Scheduled-job mapping changed before publication',1;",hex_upper(&row),hex_upper(&id),old.len(),digest(old),scope.predicate("_ExtensionsRestruct")).unwrap();
         } else {
-            writeln!(phase,"IF EXISTS(SELECT 1 FROM dbo._ExtensionsRestruct WITH(UPDLOCK,HOLDLOCK) WHERE _ExtDataID=0x{}) THROW 57505,N'Scheduled-job mapping appeared after planning',1; INSERT dbo._ExtensionsRestruct(_ExtDataID,_RestructData,_RestructDataInt,_RestructDataType) VALUES(0x{},0x{},0,0);",hex_upper(&id),hex_upper(&id),hex_upper(&row)).unwrap();
+            writeln!(phase,"IF EXISTS(SELECT 1 FROM dbo._ExtensionsRestruct WITH(UPDLOCK,HOLDLOCK) WHERE _ExtDataID=0x{} AND {}) THROW 57505,N'Scheduled-job mapping appeared after planning',1; INSERT dbo._ExtensionsRestruct(_ExtDataID,_RestructData,_RestructDataInt,_RestructDataType{}) SELECT 0x{},0x{},0,0{} FROM dbo._ExtensionsInfo ctx WITH(UPDLOCK,HOLDLOCK) WHERE {}; IF @@ROWCOUNT<>1 THROW 57505,N'Scheduled-job context copy lost race',1;",hex_upper(&id),scope.predicate("_ExtensionsRestruct"),scope.insert_columns(),hex_upper(&id),hex_upper(&row),scope.insert_values(),scope.registry_predicate()).unwrap();
         }
     }
     replace_param(&mut phase, target, &new_names.to_row()?);
@@ -1151,6 +1278,93 @@ mod tests {
             row: Brace::List(vec![]),
         }
     }
+    fn context_schema(extra: Vec<FieldEntry>) -> Vec<Schema> {
+        let f = |name: &str, tag: &str, a: u64| {
+            FieldEntry::new(
+                name,
+                false,
+                vec![crate::restructure::schema::TypeEntry::new(tag, a, 0, "", 0)],
+            )
+        };
+        let table = |name: &str, mut fields: Vec<FieldEntry>| {
+            fields.extend(extra.clone());
+            Brace::List(vec![
+                Brace::str(name),
+                Brace::str("N"),
+                Brace::num(1),
+                Brace::str(""),
+                list(fields.into_iter().map(|f| f.to_brace()).collect()),
+                list(vec![]),
+                list(vec![]),
+                Brace::num(1),
+                Brace::str("S"),
+                list(vec![]),
+                list(vec![]),
+                Brace::str(""),
+                Brace::num(0),
+                Brace::num(0),
+            ])
+        };
+        let service = table(
+            "ExtensionsRestruct",
+            vec![
+                f("ExtDataID", "B", 16),
+                f("RestructData", "B", 0x80000000),
+                f("RestructDataInt", "N", 9),
+                f("RestructDataType", "N", 9),
+            ],
+        );
+        let registry = table(
+            "ExtensionsInfo",
+            vec![f("ID", "B", 16), f("ExtensionScope", "N", 2)],
+        );
+        vec![Schema {
+            id: 0,
+            status: 100,
+            current: DbSchema::from_tables(vec![service, registry]).to_text(),
+            created: EMPTY_GENERATION.to_vec(),
+            dropped: EMPTY_GENERATION.to_vec(),
+        }]
+    }
+    #[test]
+    fn service_context_is_copied_and_guarded_without_nullable_default_guesses() {
+        let fields = vec![
+            FieldEntry::new(
+                "DataSeparationUse901",
+                false,
+                vec![crate::restructure::schema::TypeEntry::new("L", 0, 0, "", 0)],
+            ),
+            FieldEntry::new(
+                "Fld902",
+                true,
+                vec![crate::restructure::schema::TypeEntry::new(
+                    "S", 0x8000000a, 0, "", 0,
+                )],
+            ),
+        ];
+        let scope = ServiceScope::from_schemas(&context_schema(fields), [1; 16]).unwrap();
+        assert_eq!(scope.insert_columns(), ",[_DataSeparationUse901],[_Fld902]");
+        assert_eq!(
+            scope.insert_values(),
+            ",ctx.[_DataSeparationUse901],ctx.[_Fld902]"
+        );
+        let predicate = scope.predicate("r");
+        assert!(predicate.contains("ctx._ExtensionScope=1"));
+        assert!(predicate.contains("ctx.[_DataSeparationUse901]=0x00"));
+        assert!(predicate.contains(
+            "ctx.[_Fld902]=r.[_Fld902] OR (ctx.[_Fld902] IS NULL AND r.[_Fld902] IS NULL)"
+        ));
+        assert!(ServiceScope::from_schemas(&[], [1; 16]).is_err());
+        let bad = vec![FieldEntry::new(
+            "UnknownScope",
+            true,
+            vec![crate::restructure::schema::TypeEntry::new(
+                "S", 10, 0, "", 0,
+            )],
+        )];
+        assert!(ServiceScope::from_schemas(&context_schema(bad), [1; 16]).is_err());
+    }
+
     #[test]
     fn predefined_job_instances_refuse_before_schema_planning() {
         let mut job = enumeration(&[]);
