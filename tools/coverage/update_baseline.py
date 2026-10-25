@@ -19,7 +19,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cov
 def set_dirs():
     out = {}
     for manifest in ROOT.rglob("manifest.json"):
-        out[json.loads(manifest.read_text(encoding="utf-8"))["set"]] = manifest.parent
+        name = json.loads(manifest.read_text(encoding="utf-8"))["set"]
+        if name in out:
+            raise SystemExit(f"duplicate coverage set identifier {name}: {out[name]} and {manifest.parent}")
+        out[name] = manifest.parent
     return out
 
 

@@ -179,3 +179,10 @@ ibcmd-rs. Дальше идут отличающиеся варианты с п�
 - Входы набора не правят вручную: после любой правки `input/` набор заново
   проходит `native_round_trip.py`, иначе тест не совпадёт по sha256 входов.
 - Объекты корпусов в набор не копируются, только значения свойств.
+
+## Corpus regression inputs
+
+The `corpus-*` sets add clean-room reproductions and mixed reference controls.
+See [build instructions](../../../docs/evidence/coverage-corpus-build.md) and
+[the diagnostic matrix](../../../docs/evidence/coverage-corpus-regressions.md).
+Special source-only/legacy probes are documented in [coverage-records](../coverage-records/README.md).

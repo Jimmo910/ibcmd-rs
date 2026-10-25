@@ -43,19 +43,44 @@ def run_ibcmd(args, ibcmd, work, *command):
     full = [ibcmd, *command, f"--data={work / 'ibcmd-data'}"]
     done = subprocess.run(full, capture_output=True, text=True, env=env, errors="replace")
     output = (done.stdout + done.stderr).strip()
+    # The short manifest message is not enough to repair an XDTO refusal.
+    # Keep the complete command/output in scratch, outside the fixture.
+    if done.returncode:
+        work.mkdir(parents=True, exist_ok=True)
+        with (work / "native-refusals.jsonl").open("a", encoding="utf-8") as log:
+            log.write(json.dumps({"command": full, "exit_code": done.returncode,
+                                  "stdout": done.stdout, "stderr": done.stderr}, ensure_ascii=False) + "\n")
     return done.returncode == 0, output
 
 
-def first_error(output):
+def first_error(output, private_paths=()):
     """The platform's most specific error line: the last `[ERROR]` line (the
     first one only says that import found critical errors)."""
     errors = [line for line in output.splitlines() if line.startswith("[ERROR]")]
     lines = errors or [line for line in output.splitlines() if line.strip() and not line.startswith("[INFO]")]
-    return (lines[-1] if lines else output.splitlines()[-1] if output else "").strip()[:300]
+    message = (lines[-1] if lines else output.splitlines()[-1] if output else "").strip()
+    for path in private_paths:
+        # Diagnostics in public manifests must not contain the author's
+        # scratch root. The complete command and output remain in work/.
+        text = str(path)
+        for spelling in {text, text.replace("\\", "/"), text.replace("/", "\\")}:
+            message = message.replace(spelling, "<work>")
+    return message[:300]
 
 
 def objects_of(tree, collection):
     return sorted(path.stem for path in (tree / collection).glob("*.xml"))
+
+
+def required_variants(space, names):
+    """Same-class dependencies must stay present during refusal isolation."""
+    values = space.get("required_variants", [])
+    if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+        raise SystemExit("required_variants must be a list of variant names")
+    missing = set(values) - set(names)
+    if missing:
+        raise SystemExit(f"unknown required variants: {sorted(missing)}")
+    return set(values)
 
 
 MD_REF = re.compile(r'^\s*<xr:Item xsi:type="xr:MDObjectRef">(\w+)\.(\w+)</xr:Item>\s*$')
@@ -167,17 +192,23 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
 
     names = objects_of(args.tree, collection)
+    support = {template_name} | required_variants(space, names)
     refused = {}
     ok, output = create_from_tree(args, work, args.tree, work / "ib1")
     if not ok:
         print(f"set refused ({first_error(output)}); checking variants one by one", file=sys.stderr)
+        if len(support) > 1:
+            base = subset(args.tree, collection, support, work / "required")
+            base_ok, base_output = create_from_tree(args, work, base, work / "ib-required")
+            if not base_ok:
+                raise SystemExit(f"required variants refused: {first_error(base_output)}")
         for name in names:
-            if name == template_name:
+            if name in support:
                 continue
-            alone = subset(args.tree, collection, {template_name, name}, work / "alone")
+            alone = subset(args.tree, collection, support | {name}, work / "alone")
             single_ok, single_output = create_from_tree(args, work, alone, work / "ib-alone")
             if not single_ok:
-                refused[name] = first_error(single_output)
+                refused[name] = first_error(single_output, (work, args.tree, args.set))
                 print(f"  refused {name}: {refused[name]}", file=sys.stderr)
         accepted = subset(args.tree, collection, set(names) - set(refused), work / "accepted")
         ok, output = create_from_tree(args, work, accepted, work / "ib1")
@@ -249,7 +280,7 @@ def main():
 
     manifest = {
         "schema_version": 1,
-        "set": f"{args.platform}-xml-{args.xml_version}-{collection.lower()}",
+        "set": f"{args.platform}-xml-{args.xml_version}-{args.set.name}",
         "collection": collection,
         "evidence": {
             "status": "platform_proven",

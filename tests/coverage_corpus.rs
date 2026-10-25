@@ -176,13 +176,15 @@ struct Measured {
     regressions: Vec<String>,
 }
 
+#[derive(Debug)]
+struct Exported {
+    files: BTreeMap<String, Vec<u8>>,
+    refusal: Option<String>,
+}
+
 /// Exports `file` with ibcmd-rs into `out`; the tree, or the command's last
 /// stderr line when it refuses.
-fn cf_export(
-    file: &Path,
-    out: &Path,
-    source_version: &str,
-) -> Result<BTreeMap<String, Vec<u8>>, String> {
+fn cf_export(file: &Path, out: &Path, source_version: &str) -> Result<Exported, String> {
     let export = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
         .args(["cf", "export"])
         .arg(file)
@@ -191,16 +193,26 @@ fn cf_export(
         .env("PATH", "")
         .output()
         .unwrap();
-    if export.status.success() {
-        return Ok(read_tree(out));
+    export_result(export.status.success(), &export.stdout, &export.stderr, out)
+}
+
+fn export_result(
+    success: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+    out: &Path,
+) -> Result<Exported, String> {
+    if success {
+        return Ok(Exported {
+            files: read_tree(out),
+            refusal: None,
+        });
     }
     // The command reports its refusal as JSON on one of its streams.
-    let report = [&export.stdout, &export.stderr]
-        .into_iter()
-        .find_map(|stream| {
-            let text = String::from_utf8_lossy(stream);
-            serde_json::from_str::<Value>(&text[text.find('{')?..]).ok()
-        });
+    let report = [stdout, stderr].into_iter().find_map(|stream| {
+        let text = String::from_utf8_lossy(stream);
+        serde_json::from_str::<Value>(&text[text.find('{')?..]).ok()
+    });
     let first = report
         .as_ref()
         .and_then(|report| report["errors"].get(0))
@@ -211,13 +223,35 @@ fn cf_export(
                 error["message"].as_str().unwrap_or_default()
             )
         });
-    Err(first.unwrap_or_else(|| {
-        String::from_utf8_lossy(&export.stderr)
+    let message = first.unwrap_or_else(|| {
+        String::from_utf8_lossy(stderr)
             .lines()
             .last()
             .unwrap_or_default()
             .to_owned()
-    }))
+    });
+    // Only a typed per-entry refusal can leave independently comparable
+    // sibling objects. Malformed input, I/O errors and unknown exits retain
+    // the command-level refusal; an empty tree proves nothing.
+    let per_entry = report
+        .as_ref()
+        .and_then(|report| report["errors"].as_array())
+        .is_some_and(|errors| {
+            !errors.is_empty()
+                && errors
+                    .iter()
+                    .all(|error| error["code"] == "entry_export_failed")
+        });
+    if per_entry && out.is_dir() {
+        let files = read_tree(out);
+        if !files.is_empty() {
+            return Ok(Exported {
+                files,
+                refusal: Some(message),
+            });
+        }
+    }
+    Err(message)
 }
 
 /// The verdict of one variant: its native files against ours, plus any file
@@ -302,6 +336,7 @@ fn measure(set: &Path) -> Measured {
     let mut claimed = BTreeSet::new();
     let mut verdicts = BTreeMap::new();
     let mut failure = None;
+    let mut partial_failure = false;
 
     let kind = manifest["kind"].as_str().unwrap_or("configuration");
     if matches!(kind, "external" | "extension") {
@@ -325,24 +360,35 @@ fn measure(set: &Path) -> Measured {
             let file = temp.0.join(file_name);
             let out = temp.0.join(format!("{variant_name}-export"));
             fs::write(&file, &bytes).unwrap();
-            let exported = cf_export(&file, &out, source_version).map(|ours| {
+            let exported = cf_export(&file, &out, source_version).map(|mut ours| {
                 if kind == "extension" {
-                    ours.into_iter()
+                    ours.files = ours
+                        .files
+                        .into_iter()
                         .map(|(path, bytes)| (format!("{variant_name}/{path}"), bytes))
-                        .collect()
-                } else {
-                    ours
+                        .collect();
                 }
+                ours
             });
             let verdict = match exported {
-                Ok(ours) => compare(
-                    variant,
-                    &native,
-                    &ours,
-                    &[variant_name.clone()],
-                    &mut claimed,
-                    name,
-                ),
+                Ok(ours) => {
+                    let verdict = compare(
+                        variant,
+                        &native,
+                        &ours.files,
+                        &[variant_name.clone()],
+                        &mut claimed,
+                        name,
+                    );
+                    if let Some(message) = ours.refusal {
+                        // An external variant owns its whole file: a refused
+                        // export never becomes equal from partial output.
+                        failure.get_or_insert(message);
+                        Verdict::Refused
+                    } else {
+                        verdict
+                    }
+                }
                 Err(message) => {
                     failure.get_or_insert(message);
                     for path in variant["files"].as_array().unwrap() {
@@ -366,6 +412,14 @@ fn measure(set: &Path) -> Measured {
         let cf_path = temp.0.join("set.cf");
         fs::write(&cf_path, &cf).unwrap();
         let ours = cf_export(&cf_path, &temp.0.join("export"), source_version);
+        if let Ok(Exported {
+            refusal: Some(message),
+            ..
+        }) = &ours
+        {
+            failure.get_or_insert(message.clone());
+            partial_failure = true;
+        }
         // A class set names its variants by object; the combined set names
         // them `<collection>/<object>` already.
         let collection = manifest["collection"].as_str();
@@ -380,7 +434,7 @@ fn measure(set: &Path) -> Measured {
                 None => variant_name.clone(),
             };
             let verdict = match &ours {
-                Ok(ours) => compare(variant, &native, ours, &[own], &mut claimed, name),
+                Ok(ours) => compare(variant, &native, &ours.files, &[own], &mut claimed, name),
                 Err(message) => {
                     failure.get_or_insert(message.clone());
                     for path in variant["files"].as_array().unwrap() {
@@ -400,6 +454,9 @@ fn measure(set: &Path) -> Measured {
         0,
         "{name}: native/ holds files no variant claims"
     );
+    if unattributed_partial_failure(partial_failure, &verdicts) {
+        regressions.push(format!("{name}: exporter refused although every variant's files are equal; the failure has no classified owner"));
+    }
 
     let baseline: BTreeSet<String> = fs::read(set.join("baseline.json"))
         .ok()
@@ -430,6 +487,13 @@ fn measure(set: &Path) -> Measured {
     .unwrap();
     if let Some(message) = &failure {
         writeln!(report, "  cf export refused: {message}").unwrap();
+        if partial_failure {
+            writeln!(
+                report,
+                "  byte-equal sibling objects compared; the overall CF export still refused"
+            )
+            .unwrap();
+        }
     }
     for (variant, verdict) in &verdicts {
         let listed = baseline.contains(variant);
@@ -462,6 +526,106 @@ fn measure(set: &Path) -> Measured {
     }
 }
 
+fn unattributed_partial_failure(partial: bool, verdicts: &BTreeMap<String, Verdict>) -> bool {
+    partial
+        && verdicts
+            .values()
+            .all(|verdict| matches!(verdict, Verdict::Equal | Verdict::PlatformRefused))
+}
+
+#[test]
+fn typed_entry_refusal_preserves_only_complete_byte_equal_siblings() {
+    let temp = TempDirectory::new();
+    fs::write(temp.0.join("Good.xml"), b"native good").unwrap();
+    let native = BTreeMap::from([
+        ("Good.xml".to_owned(), b"native good".to_vec()),
+        ("Bad.xml".to_owned(), b"native bad".to_vec()),
+    ]);
+    let variant = |path: &str| serde_json::json!({"files":[{"path":path,"sha256":sha256_hex(&native[path])}]} );
+    let error = br#"{"errors":[{"code":"entry_export_failed","message":"one entry refused"}]}"#;
+    let exported = export_result(false, error, b"", &temp.0).unwrap();
+    assert_eq!(
+        exported.refusal.as_deref(),
+        Some("entry_export_failed: one entry refused")
+    );
+    let mut claimed = BTreeSet::new();
+    let good = compare(
+        &variant("Good.xml"),
+        &native,
+        &exported.files,
+        &["Good".into()],
+        &mut claimed,
+        "probe",
+    );
+    let bad = compare(
+        &variant("Bad.xml"),
+        &native,
+        &exported.files,
+        &["Bad".into()],
+        &mut claimed,
+        "probe",
+    );
+    assert_eq!(good, Verdict::Equal);
+    assert_eq!(bad, Verdict::Different("Bad.xml (not written)".into()));
+    let mut verdicts = BTreeMap::from([("Good".to_owned(), good), ("Bad".to_owned(), bad)]);
+    assert!(!unattributed_partial_failure(true, &verdicts));
+    verdicts.remove("Bad");
+    assert!(unattributed_partial_failure(true, &verdicts));
+    fs::create_dir(temp.0.join("Good")).unwrap();
+    fs::write(temp.0.join("Good/extra.xml"), b"unexpected").unwrap();
+    let exported = export_result(false, error, b"", &temp.0).unwrap();
+    assert_eq!(
+        compare(
+            &variant("Good.xml"),
+            &native,
+            &exported.files,
+            &["Good".into()],
+            &mut claimed,
+            "probe"
+        ),
+        Verdict::Different("Good/extra.xml (not written by the platform)".into())
+    );
+    fs::write(temp.0.join("Good.xml"), b"changed").unwrap();
+    let exported = export_result(false, error, b"", &temp.0).unwrap();
+    assert_eq!(
+        compare(
+            &variant("Good.xml"),
+            &native,
+            &exported.files,
+            &["Good".into()],
+            &mut claimed,
+            "probe"
+        ),
+        Verdict::Different("Good.xml (7 bytes, native 11)".into())
+    );
+}
+
+#[test]
+fn empty_or_untyped_failed_exports_are_never_salvaged() {
+    let temp = TempDirectory::new();
+    let typed = br#"{"errors":[{"code":"entry_export_failed","message":"no output"}]}"#;
+    assert_eq!(
+        export_result(false, typed, b"", &temp.0).unwrap_err(),
+        "entry_export_failed: no output"
+    );
+    fs::write(temp.0.join("Good.xml"), b"present").unwrap();
+    let unknown = br#"{"errors":[{"code":"invalid_cf","message":"bad input"}]}"#;
+    assert_eq!(
+        export_result(false, unknown, b"", &temp.0).unwrap_err(),
+        "invalid_cf: bad input"
+    );
+    assert_eq!(
+        export_result(false, b"", b"disk write failed\n", &temp.0).unwrap_err(),
+        "disk write failed"
+    );
+    assert!(
+        export_result(true, b"", b"", &temp.0)
+            .unwrap()
+            .refusal
+            .is_none()
+    );
+}
+
 #[test]
 fn coverage_sets_hold_their_baseline() {
     let sets = coverage_sets();
@@ -470,7 +634,15 @@ fn coverage_sets_hold_their_baseline() {
         "no coverage set under tests/fixtures/coverage"
     );
     let mut regressions = Vec::new();
+    let mut identifiers = BTreeMap::new();
     for set in &sets {
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(set.join("manifest.json")).unwrap()).unwrap();
+        let identifier = manifest["set"].as_str().unwrap().to_owned();
+        assert!(
+            identifiers.insert(identifier.clone(), set).is_none(),
+            "duplicate coverage set identifier {identifier}: baseline updates would address the wrong fixture"
+        );
         let measured = measure(set);
         print!("{}", measured.report);
         regressions.extend(measured.regressions);
