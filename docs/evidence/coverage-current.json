@@ -3,7 +3,7 @@
   "scope": "Current Coverage; CF export and XML compilation only, no SQL writes",
   "product_commit": "8e4d14305b91051088523142fb3b841c0cfd356d",
   "product_binary_sha256": "ae4fff3244359c581fe51f373c5023bf60f8a125cd132993959cce3d1c6d373c",
-  "corpus_commit": "65585d25fc0555c1d2070624e33db7901a984e7e",
+  "corpus_commit": "afcdcb010841f89f07c04a99aa07120a76b7116f",
   "all_sets_measured": 177,
   "full_matrix_profile": "debug test harness",
   "iter_regression_sets": 66,
