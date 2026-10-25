@@ -8529,9 +8529,10 @@ fn form_dynamic_list_deletion_mark_names(
     };
     for (ru, en) in form_dynamic_list_declared_std_attribute_pairs(pairs, main_table, declarations)
     {
-        if *en != "DeletionMark" {
+        let Some(field) = ibcmd_schema::metadata_child_storage_facts::DynamicListImplicitStandardField::from_canonical_name(en) else {
             continue;
-        }
+        };
+        let en = field.canonical_name();
         let projected = selection.paths.keys().any(|(source, field)| {
             form_data_path_name_eq_ignore_case(source, alias)
                 && (form_data_path_name_eq_ignore_case(field, ru)
