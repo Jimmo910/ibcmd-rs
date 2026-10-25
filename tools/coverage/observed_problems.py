@@ -18,7 +18,12 @@ import xml.etree.ElementTree as ET
 def canonical(element):
     if element is None:
         return None
-    return [element.tag, sorted(element.attrib.items()), (element.text or '').strip(),
+    value = element.text or ''
+    # Leaf whitespace belongs to the value (for example an input mask).
+    # Indentation preceding child elements is XML formatting only.
+    if len(element) and not value.strip():
+        value = ''
+    return [element.tag, sorted(element.attrib.items()), value,
             [canonical(child) for child in element]]
 
 

@@ -39,6 +39,21 @@ class WitnessContract(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'intact widget'):
             classify(self.native, wrong, self.case)
 
+    def test_mask_value_with_added_spaces_is_a_different_value(self):
+        native = ET.fromstring('<Form xmlns="' + NS + '"><InputField name="Probe"><Mask>9999999999</Mask></InputField></Form>')
+        case = dict(self.case, property='{' + NS + '}Mask',
+                    native=json.loads(json.dumps(canonical(native[0][0]))))
+        ours = ET.fromstring('<Form xmlns="' + NS + '"><InputField name="Probe"><Mask> 9999999999 </Mask></InputField></Form>')
+        with self.assertRaisesRegex(ValueError, 'unrelated mismatch'):
+            classify(native, ours, case)
+
+    def test_indentation_between_children_does_not_change_the_condition(self):
+        native = ET.fromstring('<Form xmlns="' + NS + '"><InputField name="Probe"><UserVisible>\n  <Common>false</Common>\n</UserVisible></InputField></Form>')
+        case = dict(self.case, property='{' + NS + '}UserVisible',
+                    native=json.loads(json.dumps(canonical(native[0][0]))))
+        ours = ET.fromstring('<Form xmlns="' + NS + '"><InputField name="Probe"><UserVisible><Common>false</Common></UserVisible></InputField></Form>')
+        self.assertEqual(classify(native, ours, case), 'equal')
+
     def test_repeated_property_is_not_accepted(self):
         wrong = form('2')
         wrong[0].append(ET.fromstring('<Height xmlns="' + NS + '">2</Height>'))
