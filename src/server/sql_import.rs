@@ -109,6 +109,39 @@ impl SourceAdmission {
         limits: selected::Limits,
         check: &readset::Check,
     ) -> Result<selected::ModuleEdit> {
+        self.prepare_selected_module(selected_path, check, |bytes| {
+            selected::prepare_module_file(snapshot, selected_path, bytes, profile, limits, check)
+        })
+    }
+
+    /// Compile one existing Document-owned Form module from retained bytes.
+    /// This does not admit Form.xml, other owner families or SQL publication.
+    pub fn prepare_document_form_module(
+        &self,
+        snapshot: &readset::Readset,
+        selected_path: &str,
+        profile: &selected::form::DocumentFormProfile,
+        limits: selected::Limits,
+        check: &readset::Check,
+    ) -> Result<selected::ModuleEdit> {
+        self.prepare_selected_module(selected_path, check, |bytes| {
+            selected::form::prepare_form_module_file(
+                snapshot,
+                selected_path,
+                bytes,
+                profile,
+                limits,
+                check,
+            )
+        })
+    }
+
+    fn prepare_selected_module(
+        &self,
+        selected_path: &str,
+        check: &readset::Check,
+        compile: impl FnOnce(&[u8]) -> Result<selected::ModuleEdit>,
+    ) -> Result<selected::ModuleEdit> {
         check()?;
         if self.selected.len() != 1 {
             bail!("SQL module preparation requires one explicit admitted file");
@@ -117,8 +150,7 @@ impl SourceAdmission {
             .bytes(selected_path)
             .context("SQL module file is outside the admitted selection")?;
         self.revalidate()?;
-        let edit =
-            selected::prepare_module_file(snapshot, selected_path, bytes, profile, limits, check)?;
+        let edit = compile(bytes)?;
         check()?;
         self.revalidate()?;
         Ok(edit)

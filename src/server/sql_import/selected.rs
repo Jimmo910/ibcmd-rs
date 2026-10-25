@@ -558,7 +558,12 @@ mod tests {
         let target = root.join(path);
         std::fs::create_dir_all(target.parent().unwrap()).unwrap();
         std::fs::write(&target, bytes).unwrap();
-        let metadata = path.strip_suffix("/Ext/Module.bsl").unwrap().to_owned() + ".xml";
+        let metadata = path
+            .strip_suffix("/Ext/Module.bsl")
+            .or_else(|| path.strip_suffix("/Ext/Form/Module.bsl"))
+            .unwrap()
+            .to_owned()
+            + ".xml";
         std::fs::write(root.join(&metadata), b"<MetaDataObject/>").unwrap();
         let admitted = crate::server::sql_import::SourceAdmission::prepare(
             &root.path,
@@ -595,6 +600,43 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    #[test]
+    fn filesystem_form_admission_retains_original_bytes_and_refuses_wrong_selection() {
+        let (captured, path, raw, profile) =
+            form::transaction_fixture(|rows, saved, _| snapshot(rows, saved));
+        let source = crate::mssql_dump::native_module_file_bytes(&raw);
+        let (root, admitted) = admit_module_source(&path, &source);
+        let before = captured.digest().unwrap();
+        let edit = admitted
+            .prepare_document_form_module(&captured, &path, &profile, Limits::default(), &check())
+            .unwrap();
+        assert!(edit.replacements().is_empty());
+        assert_eq!(captured.digest().unwrap(), before);
+        assert_eq!(admitted.bytes(&path).unwrap(), source);
+        assert!(
+            admitted
+                .prepare_document_form_module(
+                    &captured,
+                    &path.replace("Module.bsl", "Form.xml"),
+                    &profile,
+                    Limits::default(),
+                    &check(),
+                )
+                .is_err()
+        );
+        std::fs::write(root.join(&path), [0xff]).unwrap();
+        let error = admitted
+            .prepare_document_form_module(&captured, &path, &profile, Limits::default(), &check())
+            .err()
+            .expect("mutated Form source accepted");
+        assert!(error.chain().any(|cause| {
+            cause
+                .downcast_ref::<crate::mssql_source_change::SourceChangeError>()
+                .is_some()
+        }));
+        assert_eq!(admitted.bytes(&path).unwrap(), source);
     }
 
     #[test]

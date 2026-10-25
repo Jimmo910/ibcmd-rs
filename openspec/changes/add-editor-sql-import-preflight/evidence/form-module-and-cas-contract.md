@@ -87,3 +87,33 @@ Integrated production lib-check after the session seam: exit 0 in 8.19 s, same
 Cargo/test/compiler processes exited; the compiler slot is FULL_RELEASE. The
 external receipt was extended with the two SQL backend source hashes and session
 logs. There were zero actual SQL connections in these pure session tests.
+
+
+## Held Form source-file preparation
+
+The filesystem FormModule wrapper shares the existing Document-only resolver and
+codec path. It compares original held file bytes with the expected native module
+file representation before invoking the existing loader storage policy. An exact
+native BOM/CRLF file preserves raw module storage, layout, trailing fields and
+versions; a real edit uses the same pure byte policy as existing Form loading.
+The original storage-text API retains its prior BOM/EOL semantics. Source bytes
+and their custody hashes are never normalized. SourceAdmission consumes one
+exact retained path and revalidates before/after compilation; Form.xml and other
+owner cohorts are not enabled.
+
+Four new wrapper tests cover native-file no-op, changed-file loader policy with
+exact non-module state, expanded budget 7 refusal/8 acceptance, and typed late
+cancellation. One admission integration covers retained bytes, no-op snapshot
+identity, wrong selected path and typed source-mutation refusal. Its Form.xml
+path case proves outside-selection refusal; canonical Form.xml role refusal
+remains covered by the pre-existing resolver/bridge cases.
+
+Rust 1.95 local focused suite: 27 passed, zero failed/ignored (40.35s compile,
+0.06s tests). Compiler/transaction compatibility: 33 passed, three live tests
+ignored; production library check passed (6.01s). Existing warning totals remain
+40 lib-test and 97 production. Independent source reviews approved the two-file
+wrapper donor b524488b and the separate admission/test consumer; the latter had
+only rustfmt layout adjustment afterward. Formatting and diff checks passed.
+External logs: issue-382-held-form-source-focused.log,
+issue-382-held-form-stage-compat.log, issue-382-held-form-libcheck.log.
+No SQL/VM/native test ran in these gates and the editor SQL route stays closed.

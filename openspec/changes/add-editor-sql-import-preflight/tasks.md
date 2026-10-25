@@ -72,3 +72,9 @@
   CONFIG and four unselected physical staging rows/headers were preserved.
   The final six-part pending staging was not applied. Native FormModule and
   guarded editor publication remain open; see the same held-lock evidence.
+
+- [x] F.15 Held filesystem CommonModule and Document FormModule preparation uses
+  original admitted bytes, existing loader policy and custody revalidation.
+  Native-file no-ops preserve raw storage; 27 focused tests, 33 transaction/
+  compiler regressions (three live ignored), and production check passed.
+  Native FormModule and admitted editor SQL routing remain unfinished.
