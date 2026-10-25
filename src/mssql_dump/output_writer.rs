@@ -467,6 +467,31 @@ impl OutputWriter {
         })
     }
 
+    /// Native source folders use UTF-8 BOM and CRLF for BSL. Keep storage/debug
+    /// bytes and in-memory editor/compiler exports unchanged.
+    pub(crate) fn write_module(
+        &self,
+        path: impl Into<PathBuf>,
+        bytes: Vec<u8>,
+        source_folder: bool,
+    ) -> Result<()> {
+        let bytes = if source_folder && self.shared.sink.is_none() {
+            let body = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+            let mut native = Vec::with_capacity(bytes.len() + 3);
+            native.extend_from_slice(b"\xef\xbb\xbf");
+            for (index, byte) in body.iter().copied().enumerate() {
+                if byte == b'\n' && (index == 0 || body[index - 1] != b'\r') {
+                    native.push(b'\r');
+                }
+                native.push(byte);
+            }
+            native
+        } else {
+            bytes
+        };
+        self.write(path, bytes)
+    }
+
     /// A source XML file: the bytes as `write_source_xml_file` writes them.
     pub(crate) fn write_xml(
         &self,
@@ -595,6 +620,68 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    fn retained_module_root() -> PathBuf {
+        let root = std::env::temp_dir().join(format!("ibcmd-native-bsl-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        root // Deliberately retained lab evidence; no teardown/deletion.
+    }
+
+    #[test]
+    fn native_bsl_files_match_measured_public_module_bytes() {
+        use sha2::{Digest, Sha256};
+        let root = retained_module_root();
+        let source = b"Procedure Smoke() Export\nEndProcedure\n";
+        let expected = b"\xef\xbb\xbfProcedure Smoke() Export\r\nEndProcedure\r\n";
+        // Native 8.3.27.2342 public SQL export: 43 bytes, receipt81180851.
+        assert_eq!(expected.len(), 43);
+        assert_eq!(
+            format!("{:x}", Sha256::digest(expected)),
+            "f6c91e7f53f80656a0a726cf13fc3ae8fdfd54ace2fbd26069885a101b611e48"
+        );
+        for threads in [0, 2] {
+            let path = root.join(format!("t{threads}/Module.bsl"));
+            let writer = OutputWriter::new(threads, 8).with_existing_folder(&root);
+            writer.write_module(&path, source.to_vec(), true).unwrap();
+            writer.finish().unwrap();
+            assert_eq!(fs::read(path).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn native_bsl_files_preserve_existing_bom_crlf_and_unicode() {
+        let root = retained_module_root();
+        let source = "\u{feff}// Привет\r\nСтрока\nПоследняя".as_bytes();
+        let expected = "\u{feff}// Привет\r\nСтрока\r\nПоследняя".as_bytes();
+        let path = root.join("Module.bsl");
+        for bytes in [source, expected] {
+            let writer = OutputWriter::new(0, 8).with_existing_folder(&root);
+            writer.write_module(&path, bytes.to_vec(), true).unwrap();
+            writer.finish().unwrap();
+            assert_eq!(fs::read(&path).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn native_bsl_policy_preserves_raw_storage_and_memory_exports() {
+        let root = retained_module_root();
+        let source = b"Procedure Smoke() Export\nEndProcedure\n";
+        let path = root.join("raw.bsl");
+        let writer = OutputWriter::new(0, 8).with_existing_folder(&root);
+        writer.write_module(&path, source.to_vec(), false).unwrap();
+        writer.finish().unwrap();
+        assert_eq!(fs::read(path).unwrap(), source);
+        let sink = Arc::new(Collect::default());
+        let writer = OutputWriter::build(2, 8, Some(sink.clone()));
+        let path = root.join("memory/Module.bsl");
+        writer.write_module(&path, source.to_vec(), true).unwrap();
+        writer.finish().unwrap();
+        assert!(!path.exists());
+        assert_eq!(
+            sink.files.lock().unwrap().as_slice(),
+            &[(path, source.to_vec())]
+        );
     }
 
     #[test]
