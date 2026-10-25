@@ -195,3 +195,14 @@ pub fn prepare_form_module(
 #[cfg(test)]
 #[path = "form_tests.rs"]
 mod tests;
+
+// Test-only bridge keeps physical SQL headers in the recording adapter.
+#[cfg(test)]
+pub(in crate::server::sql_import) fn transaction_fixture<F>(
+    make_snapshot: F,
+) -> (Readset, String, Vec<u8>, DocumentFormProfile)
+where
+    F: FnOnce(&BTreeMap<String, Vec<u8>>, &BTreeMap<String, Vec<u8>>, &str) -> Readset,
+{
+    tests::transaction_fixture(make_snapshot)
+}

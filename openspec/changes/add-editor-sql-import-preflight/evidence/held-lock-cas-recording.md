@@ -223,3 +223,72 @@ asserts count < sample < emission < wait. Independent source review CLEAR.
 Focused Rust 1.95.0 local run: 16 passed, zero failed, one live ignored;
 32.21s compilation and 0.02s execution. Retained log:
 issue-382-closure-post-dmv-state.log. Actual Windows runtime remains pending.
+
+## Measured SQL16 observer expression context and integrated candidate
+
+Exact Windows candidate 6e11d42a passed CI 40200808727 (all seven jobs;
+4274 root tests passed, 17 ignored) but its real public held test FAILED:
+0 passed / 1 failed, natural exit 101 in 4.342s. Rollback was acknowledged,
+the captured SPID was absent, observer identity was positive/distinct/unchanged,
+and depth was zero; state-zero was false. The rejected row was not counted.
+Fingerprints matched and FULL RELEASE was confirmed. Release SHA-256:
+28c6f89e125d3f577079c80c341cf1328f1de389fb3df2edd77b2a5b0f8d5321.
+No staging, application DML or native command ran.
+
+A separate read-only, two-phase SQL16 expression probe measured actual integer
+values through sys.sp_executesql. Both before and after an own-session DMV read,
+combined SELECT and plain SELECT assignments gave depth=0/state=1, whereas
+standalone SET assignments before/after gave depth=0/state=0. The implicit bit
+was zero, permission was one and the observer remained the same. Therefore the
+permission lookup is not necessary for the SELECT-expression effect. This
+establishes a defective idle-state observation for this SQL/context; it does not
+prove a product connection leak or retrospectively identify the first run's
+unrecorded scalar. Exact types were 17 Int32 plus one Int64 per resultset; both
+resultsets drained. Probe source SHA-256:
+71e645e7b752dec4f8c091f56ffa11f0bd717605f0f80b8c49cf11e0d3d17c66.
+Actual probe FULL RELEASE SHA-256:
+f35782c9057fc61241e5a63867f0d8d668e2932a6ecb70ec5e7c02cd810cf3b6.
+No transaction commands, application data reads, DML or settings reset ran.
+
+The test now uses separate SET statements for permission, reader, depth and
+state, then emits saved typed variables. Strict depth/state-zero, visibility,
+identity, disappearance, successful drainage and fresh readset equality remain.
+Both state=1 and state=-1 are explicitly refused. The query-form regression
+requires separate SET sampling after the DMV and before emission. Independent
+source review CLEAR; production TDS cleanup/settings remain unchanged.
+
+Parallel reviewed donors were integrated with original provenance: c7d1a904
+(one-shot registry), 42370984 and 7ea46d43 (real CommonModule/FormModule compiler
+bridges). FileDB confirmations now have a fixed server-owned five-minute TTL,
+remove-before-validation, epoch/target binding and the previous capacity/replacement
+policy. SQL prepare/publication routes remain unwired; the existing legacy SQL
+fallback is still an explicit blocker before a guarded route can be enabled.
+Test-only factories retain the private typed Form fixture and give the recorder
+ownership of framed physical headers. Form.xml remains refused.
+
+Actual local Rust 1.95.0, jobs=1, external target/TMP, KEEP_FIXTURES=1:
+registry 9 passed; transaction/real-compiler bridges 33 passed, one live ignored;
+FileDB partial-import 14 passed; production lib-check passed. The orchestration
+initially expected 13 FileDB tests and STOPPED despite exit zero: the imported
+owned_scratch test was the fourteenth. That counter-only STOP/log is retained,
+source-confirmed correction is separate, no successful tests were repeated,
+and only the remaining lib-check was then run. Test/production warnings match
+the existing 40/97 baselines. Retained directory:
+logs/issue-382-proven-oracle-integrated-c8114da2b5ad44ad9664e5111a341053.
+
+One further ignored public staging experiment is compiled into the same test
+artifact to avoid another Windows build after held acceptance. It requires a
+separate stage-confirm GUID before connection opening. It uses immutable literal
+CommonModule text and the explicitly declared platform-8.3.27.1989 seed codec,
+not a claimed 8.3.27.2342 writer profile. Outcome is printed before assertions;
+Unknown/noncommitted outcomes stop without retry/native action. Confirmed commit
+must match the exact expected physical readset, unchanged CONFIG and decoded
+selected text. Its marker excludes target-platform admission, native apply and
+nonempty prior-staging preservation. Source review CLEAR. The final affected
+local filter passed 33 tests with TWO live tests ignored; compilation passed.
+Log: logs/issue-382-final-set-and-stage-compile.log. Neither live SQL test was
+executed locally or in CI. Actual staging still requires corrected held PASS
+and a separate sole-operator target/experiment review; there is no user write route.
+
+The unrelated diagnostic observer policy-registration blocker is unchanged.
+No baseline growth, whitelist, relocation workaround, merge or release is claimed.

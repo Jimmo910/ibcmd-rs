@@ -762,8 +762,10 @@ WHILE @Attempt<20
 BEGIN
  SELECT @Any=COUNT_BIG(*),@Owned=COUNT_BIG(CASE WHEN CONVERT(varbinary(8),login_time)=@P2 THEN 1 END)
  FROM sys.dm_exec_sessions WHERE session_id=@P1;
- SELECT @Reader=@@SPID,@Depth=@@TRANCOUNT,@State=XACT_STATE(),
-        @Visible=HAS_PERMS_BY_NAME(NULL,NULL,'VIEW SERVER PERFORMANCE STATE');
+ SET @Visible=HAS_PERMS_BY_NAME(NULL,NULL,'VIEW SERVER PERFORMANCE STATE');
+ SET @Reader=@@SPID;
+ SET @Depth=@@TRANCOUNT;
+ SET @State=XACT_STATE();
  SELECT @Reader,@Depth,@State,@Visible,@Any,@Owned;
  SET @Attempt+=1;
  IF @P1<=0 OR @P3<=0 OR @Reader<>@P3 OR @Reader=@P1 OR @Depth<>0 OR @State<>0
@@ -912,12 +914,23 @@ fn closure_row(index: usize, visible: SqlValue, any: i64, owned: i64) -> SqlRow 
 #[test]
 fn closure_observation_samples_state_after_dmv_query() {
     let count = CLOSED_SESSION_SQL.find("SELECT @Any=COUNT_BIG(*)").unwrap();
-    let sample = CLOSED_SESSION_SQL.find("SELECT @Reader=@@SPID").unwrap();
+    let permission = CLOSED_SESSION_SQL
+        .find("SET @Visible=HAS_PERMS_BY_NAME")
+        .unwrap();
+    let reader = CLOSED_SESSION_SQL.find("SET @Reader=@@SPID;").unwrap();
+    let depth = CLOSED_SESSION_SQL.find("SET @Depth=@@TRANCOUNT;").unwrap();
+    let state = CLOSED_SESSION_SQL.find("SET @State=XACT_STATE();").unwrap();
     let emit = CLOSED_SESSION_SQL
         .find("SELECT @Reader,@Depth,@State,@Visible,@Any,@Owned;")
         .unwrap();
     let wait = CLOSED_SESSION_SQL.find("WAITFOR DELAY").unwrap();
-    assert!(count < sample && sample < emit && emit < wait);
+    assert!(count < permission && permission < reader && reader < depth && depth < state);
+    assert!(state < emit && emit < wait);
+    // Measured SQL16 SELECT assignment reports statement context state=1 even
+    // without permission lookup; the oracle must sample in standalone SET.
+    assert!(!CLOSED_SESSION_SQL.contains("SELECT @Reader="));
+    assert!(!CLOSED_SESSION_SQL.contains("SELECT @Depth="));
+    assert!(!CLOSED_SESSION_SQL.contains("SELECT @State="));
 }
 
 #[test]
@@ -982,6 +995,7 @@ fn closure_observation_rejects_changed_reader_state_and_malformed_sequence() {
         (0, 86),
         (1, 1),
         (2, -1),
+        (2, 1),
         (3, 0),
         (4, 2),
         (5, -1),
@@ -1229,3 +1243,164 @@ fn public_sql_held_capture_rolls_back_and_closes_dedicated_session() -> Result<(
     );
     Ok(())
 }
+
+// Operator-only, separate permission and opt-in AFTER the corrected held gate.
+// Never executed by CI. No native activation or production route is enabled.
+#[test]
+#[ignore = "sole operator AFTER held PASS: explicit public staging experiment, native writer profile unadmitted"]
+fn public_sql_existing_module_stage_experiment() -> Result<()> {
+    use crate::sql::{SqlLogin, SqlTarget, mssql::MssqlClient};
+    use std::time::{Duration, Instant};
+    ensure!(
+        cfg!(windows),
+        "public integrated-auth acceptance requires Windows"
+    );
+    const DATABASE: &str = "IBCMDLAB_PUBLIC_SQL_151c08962516426e96ccf4e48d240ff9";
+    const GUID: &str = "9000716B-B12F-45BE-BB5B-27FB88534F95";
+    ensure!(
+        std::env::var("IBCMD_SQL_IMPORT_PUBLIC_STAGE_CONFIRM").as_deref() == Ok(GUID),
+        "separate disposable staging experiment opt-in required"
+    );
+    ensure!(
+        std::env::var("IBCMD_SQL_IMPORT_PUBLIC_FIXTURE").as_deref() == Ok(GUID),
+        "explicit disposable public fixture opt-in required"
+    );
+    let endpoint = std::env::var("IBCMD_SQL_IMPORT_PUBLIC_ENDPOINT")
+        .context("operator-measured certificate-valid TCP endpoint required")?;
+    ensure!(
+        !endpoint.trim().is_empty() && !endpoint.contains(['\0', '\r', '\n']),
+        "invalid public SQL endpoint"
+    );
+    let profile = Profile {
+        identity: DatabaseIdentity {
+            server: "WIN-LHDQGRLB1L1".into(),
+            database: DATABASE.into(),
+            database_guid: GUID.into(),
+            family_guid: "DF1E79FC-77D9-4DF6-AF59-C753F3AF6EFC".into(),
+            recovery_fork: "DF1E79FC-77D9-4DF6-AF59-C753F3AF6EFC".into(),
+        },
+        sql_version: "16.0.1000.6".into(),
+        schema: [
+            0xad, 0xa2, 0x1b, 0x51, 0x3d, 0xe5, 0x5c, 0x54, 0x3d, 0xed, 0x7d, 0xe7, 0x24, 0xd1,
+            0x34, 0x41, 0x52, 0x31, 0x78, 0xd0, 0x78, 0xd5, 0xf8, 0x58, 0xc9, 0x1d, 0xce, 0x0c,
+            0xac, 0x10, 0xb6, 0x26,
+        ],
+    };
+    let client = MssqlClient::new(
+        SqlTarget {
+            server: endpoint,
+            database: Some(DATABASE.into()),
+            login: SqlLogin::Integrated,
+            trust_server_certificate: false,
+        },
+        1,
+    )?;
+    let started = Instant::now();
+    let check: Check = Arc::new(move || {
+        ensure!(
+            started.elapsed() < Duration::from_secs(30),
+            "held capture deadline exceeded"
+        );
+        Ok(())
+    });
+    let limits = Limits {
+        max_parts: 1024,
+        max_part_bytes: 1024 * 1024,
+        max_payload_bytes: 8 * 1024 * 1024,
+        max_metadata_bytes: 262144,
+        max_name_units: 128,
+    };
+    let before = super::super::snapshot::capture(&client, &profile, limits, check.clone())?;
+    ensure!(
+        before.parts(Table::Config).count() == 8
+            && before.parts(Table::ConfigSave).count() == 0
+            && before
+                .parts(Table::Config)
+                .map(|(_, p)| p.binary.len())
+                .sum::<usize>()
+                == 3313,
+        "public fixture differs from the measured baseline"
+    );
+    // Immutable literal input, not editor source-custody admission. The codec
+    // coordinate is the declared seed codec; native 2342 is not writer-admitted.
+    const TEXT: &[u8] = b"Procedure PublicGuardedStage() Export\nEndProcedure\n";
+    let registry = crate::profile_registry::load_bundled_profile_registry()?;
+    let codec_id = ibcmd_core::artifact::ProfileId::parse("platform-8.3.27.1989")?;
+    let codec = crate::compiler::families::modules::CommonModuleProfile::from_effective(
+        registry
+            .get(&codec_id)
+            .context("seed codec profile missing")?,
+    )?;
+    let edit = super::super::selected::prepare_module(
+        &before,
+        "CommonModules/Portable/Ext/Module.bsl",
+        TEXT,
+        &codec,
+        super::super::selected::Limits::default(),
+        &check,
+    )?;
+    let route = crate::compiler::families::assets::SourceAssetRegistry
+        .route(
+            "CommonModule",
+            crate::compiler::families::assets::SourceAssetRole::Module,
+        )
+        .context("CommonModule body route missing")?;
+    let body = format!("20000000-0000-4000-8000-000000000001{}", route.suffix());
+    ensure!(
+        edit.replacements().keys().cloned().collect::<BTreeSet<_>>()
+            == BTreeSet::from([body.clone(), "versions".into()]),
+        "public experiment selected delta differs"
+    );
+    let policy = WritePolicy::new(1024 * 1024, 4 * 1024 * 1024)?;
+    let expected = physical_plan(&before, &edit, &policy, &check)?.expected;
+    let report = stage(
+        &client,
+        &before,
+        &edit,
+        &profile,
+        &policy,
+        check.clone(),
+        &|| Ok(()),
+    );
+    // Print outcome BEFORE assertions: committed-but-verification-failed and
+    // Unknown must never be reported as no write or automatically replayed.
+    println!(
+        "PUBLIC_SQL_EXPERIMENTAL_STAGE_OUTCOME state={:?} cleanup_uncertain={} automatic_retry=false",
+        report.state, report.cleanup_uncertain
+    );
+    ensure!(
+        report.state == State::Committed,
+        "experimental staging was not confirmed committed"
+    );
+    ensure!(
+        report.error.is_none() && !report.cleanup_uncertain,
+        "committed experiment needs reconciliation"
+    );
+    let after = super::super::snapshot::capture(&client, &profile, limits, check.clone())?;
+    expected.require_equal(&after)?;
+    ensure!(
+        before.parts(Table::Config).eq(after.parts(Table::Config)),
+        "experiment changed CONFIG before native apply"
+    );
+    let mut packed = Vec::new();
+    for (_, part) in after
+        .parts(Table::ConfigSave)
+        .filter(|(key, _)| key.file_name == body)
+    {
+        check()?;
+        packed.extend_from_slice(&part.binary);
+    }
+    ensure!(
+        crate::module_blob::unpack_module_blob_text(&packed)? == TEXT,
+        "staged module differs from literal input"
+    );
+    check()?;
+    drop(client);
+    println!(
+        "PUBLIC_SQL_EXPERIMENTAL_STAGE_PASS experimental_staging_only=true codec_profile=platform-8.3.27.1989 actual_native_build=8.3.27.2342 target_platform_admitted=false native_apply_verified=false nonempty_staging_preservation_measured=false automatic_retry=false"
+    );
+    Ok(())
+}
+
+#[path = "transaction_selected_acceptance.rs"]
+mod selected_acceptance;

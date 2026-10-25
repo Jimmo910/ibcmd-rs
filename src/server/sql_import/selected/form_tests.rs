@@ -407,3 +407,36 @@ fn form_refuses_collision_with_another_documents_generated_identity() {
             .contains("colliding identity")
     );
 }
+
+// The caller supplies the recorder's framed physical headers; this fixture owns
+// only the existing typed clean-room logical payloads and codec profile.
+pub(super) fn transaction_fixture<F>(
+    make_snapshot: F,
+) -> (Readset, String, Vec<u8>, DocumentFormProfile)
+where
+    F: FnOnce(&BTreeMap<String, Vec<u8>>, &BTreeMap<String, Vec<u8>>, &str) -> Readset,
+{
+    let rows = fixture(2);
+    let profile = profile();
+    let route = SourceAssetRegistry
+        .route("Form", SourceAssetRole::FormModule)
+        .unwrap();
+    let selected_key = format!("{}{}", id(200), route.suffix());
+    let old_text = decode_managed_form(&profile.body, &rows[&selected_key])
+        .unwrap()
+        .module_text()
+        .as_bytes()
+        .to_vec();
+    let neighbour = id(101);
+    let saved = BTreeMap::from([
+        (neighbour.clone(), rows[&neighbour].clone()),
+        ("versions".into(), rows["versions"].clone()),
+        (selected_key.clone(), rows[&selected_key].clone()),
+    ]);
+    (
+        make_snapshot(&rows, &saved, &selected_key),
+        path(0),
+        old_text,
+        profile,
+    )
+}
