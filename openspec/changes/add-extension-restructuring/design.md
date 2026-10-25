@@ -17,3 +17,20 @@ Structural admission retains the measured active/staged container pairing:
 80327 on 8.3.27.2214, 80501 on 8.5.1.1150, whole-infobase extension scope.
 Existing body-only legacy format support is unchanged. No implicit manifest
 upgrade is performed; legacy structural writers need separate native evidence.
+
+Whole-tree compilation also supports form-only additions on an existing own
+DataProcessor. These objects do not own persistent SQL tables. The same native
+pair changes Version and adds a common module; the complete compiled image,
+including every root child and nested form asset, must re-export faithfully.
+Root comparison uses XML semantics for syntax-only differences while retaining
+leaf text, element ordering, identity, namespace bindings and unknown properties.
+
+Direct SQL writes use SQL Server authorization, without an application-account
+login. Profile preflight reads the exact RAS build and selected cluster-level
+infobase summary, then probes the separately specified SQL target. Summary data
+proves registration existence, not the server/database mapping; reports expose
+that distinction explicitly. Internally created managed-worker registrations
+retain their stronger known physical mapping evidence. Direct live continuation
+keeps the persisted SQL identity/backup-chain/schema guards while using the same
+account-free registration check; an old checkpoint is not reported as a newly
+verified physical registration mapping.
