@@ -36,6 +36,7 @@ use crate::restructure::storage::EMPTY_GENERATION;
 use crate::sql::SqlExec;
 
 const TABLELESS: &[&str] = &[
+    "DataProcessors",
     "CommonForms",
     "CommonModules",
     "CommonPictures",
@@ -248,24 +249,17 @@ fn classify(base: &Path, next: &Path, old: &[Object], new: &[Object]) -> Result<
             let y = MetadataXml::parse(right.as_deref().context("configuration root missing")?)?;
             let x = x.object()?;
             let y = y.object()?;
-            if x.attr("uuid") != y.attr("uuid")
-                || !equal(
-                    &without(x, &["Properties", "ChildObjects"]),
-                    &without(y, &["Properties", "ChildObjects"]),
+            ibcmd_xml::extension_root::extension_root_edit(
+                left.as_deref().context("configuration root removed")?,
+                right.as_deref().context("configuration root missing")?,
+                |tag| crate::mssql_dump::root_family_folder(tag).is_some(),
+            )
+            .map_err(|changed| {
+                anyhow::anyhow!(
+                    "unsupported extension root transition: {}",
+                    changed.join(", ")
                 )
-                || !equal(
-                    &without(
-                        x.child("Properties").context("root properties missing")?,
-                        &["Version"],
-                    ),
-                    &without(
-                        y.child("Properties").context("root properties missing")?,
-                        &["Version"],
-                    ),
-                )
-            {
-                bail!("extension root changes properties beyond Version and additive child lists");
-            }
+            })?;
             let xp = x.child("ChildObjects").context("root child list missing")?;
             let yp = y.child("ChildObjects").context("root child list missing")?;
             for c in &xp.children {
@@ -1424,5 +1418,30 @@ mod tests {
                 "{changed:?}"
             );
         }
+    }
+    #[test]
+    fn data_processor_dialog_paths_do_not_request_sql_schema_planning() {
+        let base = Scratch::new().unwrap();
+        let next = Scratch::new().unwrap();
+        for root in [&base.0, &next.0] {
+            std::fs::create_dir_all(root.join("DataProcessors/Tools/Forms/Import/Ext")).unwrap();
+        }
+        std::fs::write(base.0.join("DataProcessors/Tools.xml"), b"before").unwrap();
+        std::fs::write(next.0.join("DataProcessors/Tools.xml"), b"after").unwrap();
+        std::fs::write(
+            next.0.join("DataProcessors/Tools/Forms/Import.xml"),
+            b"form descriptor",
+        )
+        .unwrap();
+        std::fs::write(
+            next.0
+                .join("DataProcessors/Tools/Forms/Import/Ext/Form.xml"),
+            b"form body",
+        )
+        .unwrap();
+        assert!(classify(&base.0, &next.0, &[], &[]).unwrap().is_empty());
+        std::fs::create_dir_all(next.0.join("Unmodeled")).unwrap();
+        std::fs::write(next.0.join("Unmodeled/Object.xml"), b"unknown").unwrap();
+        assert!(classify(&base.0, &next.0, &[], &[]).is_err());
     }
 }

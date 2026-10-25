@@ -4501,7 +4501,10 @@ fn format_native_child_item(
             button_type: item
                 .item_type
                 .as_deref()
-                .or_else(|| item.scalars.get("Type").map(String::as_str)),
+                .or_else(|| item.scalars.get("Type").map(String::as_str))
+                .or(Some(
+                    ibcmd_schema::form_source_defaults::DESIGNER_BUTTON_TYPE,
+                )),
             representation_in_context_menu: item
                 .scalars
                 .get("RepresentationInContextMenu")

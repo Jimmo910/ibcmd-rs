@@ -513,10 +513,15 @@ fn load_root(edits: &mut XmlEdits<'_>, root: usize, facts: &mut FormLoadFactsV8_
         )?,
     );
     let bar = take(edits, root, "ShowCommandBar")?;
-    facts.root_tail.insert(
-        6,
-        code_of(TRI_STATE, bar.as_deref(), "<Form> ShowCommandBar")?,
-    );
+    let location = peek(edits, root, "CommandBarLocation")?;
+    let bar = bar.as_deref().or_else(|| {
+        location.as_deref().and_then(|value| {
+            ibcmd_schema::form_source_defaults::derived_show_command_bar("2.21", value)
+        })
+    });
+    facts
+        .root_tail
+        .insert(6, code_of(TRI_STATE, bar, "<Form> ShowCommandBar")?);
     let group = peek(edits, root, "Group")?;
     let group_code = code_of(GROUPING, group.as_deref(), "<Form> Group")?;
     facts.root_group_horizontal = matches!(group_code.as_str(), "4" | "5");
