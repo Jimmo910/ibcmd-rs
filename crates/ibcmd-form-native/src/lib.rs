@@ -15,8 +15,9 @@
 //!
 //! The root crate reaches it as `compiler::bodies::form_native`: the form
 //! packer in `module_blob`, `compiler::bodies::form_chart`, `metadata_model`
-//! and `load::seed` use it. The crate depends on nothing in the root, so it
-//! builds once and in parallel with the root crate.
+//! and `load::seed` use it. The crate depends on nothing in the root, so a
+//! root rebuild reuses it, and a clean build compiles it beside the root's
+//! other dependencies.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
