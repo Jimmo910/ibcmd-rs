@@ -368,3 +368,300 @@ fn integer(value: SqlValue) -> Result<i64> {
         _ => bail!("SQL snapshot expected integer"),
     }
 }
+
+/// Verify the initial, narrow common-module staging storage contract.
+///
+/// This pure check establishes no native-platform identity, snapshot coherence,
+/// or mutation authority. The acquisition/publication owner must compute the
+/// safety projection from catalogs and bind this exact JSON under its locks.
+pub fn verify_common_module_storage_schema(json: &str) -> Result<()> {
+    ensure!(
+        json.encode_utf16().take(16 * 1024 + 1).count() <= 16 * 1024,
+        "SQL staging schema exceeds its budget"
+    );
+    let schema: StagingSchema = serde_json::from_str(json)
+        .map_err(|_| anyhow::anyhow!("SQL staging schema shape is unsupported"))?;
+    ensure!(
+        schema.staging_safety_version == 1
+            && schema.unsafe_storage_features == 0
+            && schema.collation_name == "Cyrillic_General_CI_AS"
+            && schema.compatibility_level == 160
+            && !schema.is_read_committed_snapshot_on,
+        "SQL staging database profile is unsupported"
+    );
+    ensure!(
+        schema.tables.len() == 2,
+        "SQL staging tables are unsupported"
+    );
+    for (table, name) in schema.tables.iter().zip(["Config", "ConfigSave"]) {
+        ensure!(
+            table.name == name
+                && !table.is_memory_optimized
+                && table.temporal_type == 0
+                && table.checks.is_empty()
+                && table.triggers.is_empty(),
+            "SQL staging table features are unsupported"
+        );
+        let expected = [
+            ("FileName", 231, 256, 0, 0),
+            ("Creation", 42, 6, 19, 0),
+            ("Modified", 42, 6, 19, 0),
+            ("Attributes", 52, 2, 5, 0),
+            ("DataSize", 127, 8, 19, 0),
+            ("BinaryData", 165, -1, 0, 0),
+            ("PartNo", 56, 4, 10, 0),
+        ];
+        ensure!(
+            table.columns.len() == expected.len(),
+            "SQL staging columns are unsupported"
+        );
+        for (index, (column, (name, ty, length, precision, scale))) in
+            table.columns.iter().zip(expected).enumerate()
+        {
+            ensure!(
+                column.column_id == index + 1
+                    && column.name == name
+                    && column.system_type_id == ty
+                    && column.user_type_id == ty
+                    && column.max_length == length
+                    && column.precision == precision
+                    && column.scale == scale
+                    && !column.is_nullable
+                    && !column.is_identity
+                    && !column.is_computed
+                    && column.generated_always_type == 0
+                    && column.encryption_type.0.is_none()
+                    && column.computed_definition.0.is_none()
+                    && column.is_persisted.0.is_none()
+                    && column.default_definition.0.is_none()
+                    && column.collation_name.0.as_deref()
+                        == (index == 0).then_some(schema.collation_name.as_str()),
+                "SQL staging column layout is unsupported"
+            );
+        }
+        ensure!(
+            table.indexes.len() == 1,
+            "SQL staging indexes are unsupported"
+        );
+        let index = &table.indexes[0];
+        ensure!(
+            !index.name.is_empty()
+                && !index.name.contains('\0')
+                && index.name.encode_utf16().count() <= 128
+                && index.index_type == 1
+                && index.is_unique
+                && !index.is_unique_constraint
+                && !index.is_disabled
+                && !index.has_filter
+                && index.filter_definition.0.is_none()
+                && index.columns.len() == 2,
+            "SQL staging index features are unsupported"
+        );
+        // Both primary-key and ordinary unique clustered indexes are admitted.
+        // The opaque index name and primary-key designation grant no authority.
+        let _ = index.is_primary_key;
+        for (position, (column, id)) in index.columns.iter().zip([1, 7]).enumerate() {
+            ensure!(
+                column.index_column_id == position + 1
+                    && column.column_id == id
+                    && column.key_ordinal == position + 1
+                    && !column.is_descending_key
+                    && !column.is_included_column,
+                "SQL staging index key layout is unsupported"
+            );
+        }
+    }
+    Ok(())
+}
+
+// Using a non-Option field whose deserializer starts with deserialize_any makes
+// a missing field an error, while preserving the explicit SQL JSON null value.
+// Nullable fields here are scalars; no nested object bypasses typed field checks.
+struct RequiredNullable<T>(Option<T>);
+impl<'de, T: serde::de::DeserializeOwned> serde::Deserialize<'de> for RequiredNullable<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
+        serde_json::from_value(value)
+            .map(Self)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StagingSchema {
+    staging_safety_version: u32,
+    unsafe_storage_features: u64,
+    collation_name: String,
+    compatibility_level: u16,
+    is_read_committed_snapshot_on: bool,
+    tables: Vec<StagingTable>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StagingTable {
+    name: String,
+    is_memory_optimized: bool,
+    temporal_type: u8,
+    columns: Vec<StagingColumn>,
+    indexes: Vec<StagingIndex>,
+    checks: Vec<serde::de::IgnoredAny>,
+    triggers: Vec<serde::de::IgnoredAny>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StagingColumn {
+    column_id: usize,
+    name: String,
+    system_type_id: u16,
+    user_type_id: u16,
+    max_length: i16,
+    precision: u8,
+    scale: u8,
+    collation_name: RequiredNullable<String>,
+    is_nullable: bool,
+    is_identity: bool,
+    is_computed: bool,
+    generated_always_type: u8,
+    encryption_type: RequiredNullable<u8>,
+    computed_definition: RequiredNullable<String>,
+    is_persisted: RequiredNullable<bool>,
+    default_definition: RequiredNullable<String>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StagingIndex {
+    name: String,
+    #[serde(rename = "type")]
+    index_type: u8,
+    is_unique: bool,
+    is_primary_key: bool,
+    is_unique_constraint: bool,
+    is_disabled: bool,
+    has_filter: bool,
+    filter_definition: RequiredNullable<String>,
+    columns: Vec<StagingIndexColumn>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StagingIndexColumn {
+    index_column_id: usize,
+    column_id: usize,
+    key_ordinal: usize,
+    is_descending_key: bool,
+    is_included_column: bool,
+}
+
+#[cfg(test)]
+mod staging_schema_contracts {
+    use super::verify_common_module_storage_schema;
+    use serde_json::{Value, json};
+
+    // Synthetic decoder contract, never a native schema observation or profile.
+    fn fixture() -> Value {
+        let columns: Vec<_> = [
+            ("FileName", 231, 256, 0),
+            ("Creation", 42, 6, 19),
+            ("Modified", 42, 6, 19),
+            ("Attributes", 52, 2, 5),
+            ("DataSize", 127, 8, 19),
+            ("BinaryData", 165, -1, 0),
+            ("PartNo", 56, 4, 10),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, (name, ty, length, precision))| {
+            json!({
+                "column_id": i + 1, "name": name, "system_type_id": ty,
+                "user_type_id": ty, "max_length": length, "precision": precision,
+                "scale": 0, "collation_name": (i == 0).then_some("Cyrillic_General_CI_AS"),
+                "is_nullable": false, "is_identity": false, "is_computed": false,
+                "generated_always_type": 0, "encryption_type": null,
+                "computed_definition": null, "is_persisted": null, "default_definition": null
+            })
+        })
+        .collect();
+        let tables: Vec<_> = ["Config", "ConfigSave"]
+            .into_iter()
+            .map(|name| {
+                json!({
+                    "name": name, "is_memory_optimized": false, "temporal_type": 0,
+                    "columns": columns, "checks": [], "triggers": [],
+                    "indexes": [{"name": "synthetic-index", "type": 1, "is_unique": true,
+                        "is_primary_key": false, "is_unique_constraint": false,
+                        "is_disabled": false, "has_filter": false, "filter_definition": null,
+                        "columns": [
+                            {"index_column_id": 1, "column_id": 1, "key_ordinal": 1,
+                                "is_descending_key": false, "is_included_column": false},
+                            {"index_column_id": 2, "column_id": 7, "key_ordinal": 2,
+                                "is_descending_key": false, "is_included_column": false}
+                        ]}]
+                })
+            })
+            .collect();
+        json!({"staging_safety_version": 1, "unsafe_storage_features": 0,
+            "collation_name": "Cyrillic_General_CI_AS", "compatibility_level": 160,
+            "is_read_committed_snapshot_on": false, "tables": tables})
+    }
+    fn refused(change: impl FnOnce(&mut Value)) {
+        let mut value = fixture();
+        change(&mut value);
+        assert!(verify_common_module_storage_schema(&value.to_string()).is_err());
+    }
+    #[test]
+    fn synthetic_schema_accepts_only_the_two_table_contract() {
+        assert!(verify_common_module_storage_schema(&fixture().to_string()).is_ok());
+        let mut primary = fixture();
+        primary["tables"][0]["indexes"][0]["is_primary_key"] = json!(true);
+        assert!(verify_common_module_storage_schema(&primary.to_string()).is_ok());
+        refused(|v| v["tables"].as_array_mut().unwrap().swap(0, 1));
+    }
+    #[test]
+    fn duplicate_unknown_and_missing_required_nullable_fields_refuse() {
+        let value = fixture().to_string();
+        let duplicate = value.replacen(
+            "\"encryption_type\":null",
+            "\"encryption_type\":null,\"encryption_type\":null",
+            1,
+        );
+        assert_ne!(duplicate, value);
+        assert!(verify_common_module_storage_schema(&duplicate).is_err());
+        refused(|v| {
+            v["tables"][0]["columns"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("encryption_type");
+        });
+        refused(|v| v["unexpected"] = json!(0));
+        refused(|v| v["tables"][0]["columns"][0]["unexpected"] = json!(0));
+    }
+    #[test]
+    fn altered_columns_indexes_and_features_refuse() {
+        refused(|v| v["tables"][0]["columns"][1]["system_type_id"] = json!(61));
+        refused(|v| v["tables"][0]["columns"][0]["user_type_id"] = json!(999));
+        refused(|v| v["tables"][0]["columns"][0]["default_definition"] = json!("(0)"));
+        refused(|v| {
+            v["tables"][0]["columns"][1]["collation_name"] = json!("Cyrillic_General_CI_AS")
+        });
+        refused(|v| v["tables"][0]["indexes"][0]["columns"][1]["column_id"] = json!(6));
+        refused(|v| v["tables"][0]["indexes"][0]["has_filter"] = json!(true));
+        refused(|v| v["tables"][0]["indexes"][0]["is_unique"] = json!(false));
+        refused(|v| v["tables"][0]["checks"] = json!([{}]));
+        refused(|v| v["tables"][0]["triggers"] = json!(null));
+        refused(|v| v["unsafe_storage_features"] = json!(1));
+        refused(|v| v["staging_safety_version"] = json!(2));
+    }
+    #[test]
+    fn schema_budget_counts_utf16le_bytes_before_parsing() {
+        let value = fixture().to_string();
+        let within = format!(
+            "{value}{}",
+            " ".repeat(16 * 1024 - value.encode_utf16().count())
+        );
+        assert!(verify_common_module_storage_schema(&within).is_ok());
+        assert!(verify_common_module_storage_schema(&(within + " ")).is_err());
+        assert!(verify_common_module_storage_schema(&"😀".repeat(8193)).is_err());
+    }
+}
