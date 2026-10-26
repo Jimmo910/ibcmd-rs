@@ -1,7 +1,8 @@
 //! Fail-closed direct MSSQL publication for one verified extension.
 //!
 //! Only transactions observed in independent exact-build native controls are
-//! rendered here. Derived platform caches are deliberately outside its scope.
+//! rendered here. An independently validated schema phase shares the same
+//! transaction as CAS and registry publication.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -50,6 +51,9 @@ pub struct ExtensionActivationRecovery {
     pub service_marker_previously_present: bool,
     #[serde(default = "legacy_service_marker")]
     pub service_marker_managed: bool,
+    /// Registry-only recovery would detach a committed schema from its metadata.
+    #[serde(default)]
+    pub schema_changed: bool,
 }
 
 fn legacy_service_marker() -> bool {
@@ -70,12 +74,21 @@ pub struct ExtensionActivationDryRun {
     pub live_cache_invalidation_verified: bool,
     pub existing_sessions_retain_generation: bool,
     pub recovery_token: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restructured_objects: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CasRow {
     file_name: String,
     binary_data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SchemaPublication {
+    sql: String,
+    tables: Vec<String>,
+    objects: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -89,10 +102,12 @@ pub struct ExtensionActivationPlan {
     staged_rows: Vec<(String, i16, Vec<u8>, i32)>,
     cas_rows: Vec<CasRow>,
     staged_bytes: u64,
+    storage_format: u32,
     service_marker: ExtensionServiceMarkerSnapshot,
     no_op: bool,
     own_ras_processes: Vec<crate::mssql_platform_profile::OwnRasProcess>,
     manage_service_marker: bool,
+    schema: Option<SchemaPublication>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -133,6 +148,10 @@ impl Display for ExtensionActivationError {
 impl Error for ExtensionActivationError {}
 
 impl ExtensionActivationPlan {
+    pub(crate) fn storage_format(&self) -> u32 {
+        self.storage_format
+    }
+
     pub fn is_no_op(&self) -> bool {
         self.no_op
     }
@@ -148,6 +167,30 @@ impl ExtensionActivationPlan {
         self
     }
 
+    /// Attach only a complete schema plan validated against the active image
+    /// and the SQL snapshot. DDL shares the publication transaction.
+    pub(crate) fn with_restructuring(
+        mut self,
+        schema: &crate::mssql_extension_restructure::ExtensionRestructurePlan,
+    ) -> Result<Self, ExtensionActivationError> {
+        if self.mode != ExtensionActivationMode::Exclusive {
+            return Err(ExtensionActivationError::SafetyGate(
+                "extension restructuring requires exclusive activation".into(),
+            ));
+        }
+        if self.no_op || schema.phase_sql().trim().is_empty() {
+            return Err(ExtensionActivationError::InvalidStage(
+                "a schema transition must belong to a changed extension image".into(),
+            ));
+        }
+        self.schema = Some(SchemaPublication {
+            sql: schema.phase_sql().to_owned(),
+            tables: schema.touched_tables(),
+            objects: schema.objects(),
+        });
+        Ok(self)
+    }
+
     pub fn dry_run(&self) -> ExtensionActivationDryRun {
         ExtensionActivationDryRun {
             mode: self.mode,
@@ -160,15 +203,26 @@ impl ExtensionActivationPlan {
             touched_tables: if self.no_op {
                 vec!["ConfigCASSave".to_owned()]
             } else {
-                vec!["ConfigCAS", "ConfigCASSave", "_ExtensionsInfo"]
+                let mut tables = vec!["ConfigCAS", "ConfigCASSave", "_ExtensionsInfo"]
                     .into_iter()
                     .map(str::to_owned)
-                    .collect()
+                    .collect::<Vec<_>>();
+                if let Some(schema) = &self.schema {
+                    tables.extend(schema.tables.iter().cloned());
+                    tables.sort();
+                    tables.dedup();
+                }
+                tables
             },
             no_op: self.no_op,
             live_cache_invalidation_verified: self.mode == ExtensionActivationMode::Online,
             existing_sessions_retain_generation: self.mode == ExtensionActivationMode::Online,
             recovery_token: String::new(),
+            restructured_objects: self
+                .schema
+                .as_ref()
+                .map(|s| s.objects.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -183,6 +237,7 @@ impl ExtensionActivationPlan {
             published_root_sha1: hex(&self.new_root),
             service_marker_previously_present: self.service_marker.present,
             service_marker_managed: self.manage_service_marker,
+            schema_changed: self.schema.is_some(),
         }
     }
 }
@@ -434,11 +489,13 @@ fn prepare_extension_activation_impl(
         staged_rows,
         cas_rows,
         staged_bytes,
+        storage_format: manifest.storage_format,
         service_marker,
         no_op: old_root == new_root,
         own_ras_processes: Vec::new(),
         // 8.5 refreshes an existing legacy marker, but does not create one.
         manage_service_marker: !v85 || service_marker.present,
+        schema: None,
     })
 }
 
@@ -460,7 +517,7 @@ pub fn render_extension_activation_sql(
     let pattern = format!("{}~_~_%", plan.namespace_prefix);
     let marker = format!("dbStruFinal{}", plan.namespace_prefix);
     let mut sql = String::new();
-    writeln!(sql, "SET NOCOUNT ON;\nSET XACT_ABORT ON;\nSET TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nUSE {db};\nBEGIN TRANSACTION;").unwrap();
+    writeln!(sql, "SET NOCOUNT ON;\nSET XACT_ABORT ON;\nSET TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nUSE {db};\nBEGIN TRY\nBEGIN TRANSACTION;").unwrap();
     writeln!(sql, "DECLARE @LockResult int; EXEC @LockResult = sys.sp_getapplock @Resource=N'{}', @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=0; IF @LockResult < 0 THROW 57200, 'Extension activation lock unavailable', 1;", quote_string(&format!("ibcmd-rs:extension-activation:{}", plan.namespace_prefix))).unwrap();
     if plan.mode == ExtensionActivationMode::Exclusive {
         let gate = crate::mssql_platform_profile::exclusive_session_gate(
@@ -481,12 +538,16 @@ pub fn render_extension_activation_sql(
     if plan.no_op {
         writeln!(sql, "DELETE dbo.ConfigCASSave WHERE FileName LIKE N'{}' ESCAPE N'~'; IF @@ROWCOUNT<>{} THROW 57209, 'Selected ConfigCASSave cleanup count changed', 1;", quote_string(&pattern), plan.staged_rows.len()).unwrap();
         writeln!(sql, "IF EXISTS (SELECT 1 FROM dbo.ConfigCASSave WHERE FileName LIKE N'{}' ESCAPE N'~') THROW 57211, 'Selected staging prefix remains', 1;", quote_string(&pattern)).unwrap();
-        sql.push_str("COMMIT TRANSACTION;\n");
+        finish_publication_transaction(&mut sql);
         return Ok(ExtensionActivationScript {
             sql,
             report,
             recovery,
         });
+    }
+    if let Some(schema) = &plan.schema {
+        sql.push_str(&schema.sql);
+        sql.push('\n');
     }
     for row in &plan.cas_rows {
         writeln!(sql, "IF EXISTS (SELECT 1 FROM dbo.ConfigCAS WITH (UPDLOCK,HOLDLOCK) WHERE FileName=N'{}') BEGIN IF (SELECT COUNT_BIG(*) FROM dbo.ConfigCAS WITH (UPDLOCK,HOLDLOCK) WHERE FileName=N'{}') <> 1 OR (SELECT COUNT_BIG(*) FROM dbo.ConfigCAS WITH (UPDLOCK,HOLDLOCK) WHERE FileName=N'{}' AND Attributes=0 AND DataSize={} AND DATALENGTH(BinaryData)={} AND BinaryData=0x{} AND PartNo=0) <> 1 THROW 57204, 'Immutable ConfigCAS collision or drift', 1; END ELSE BEGIN INSERT dbo.ConfigCAS (FileName,Creation,Modified,Attributes,DataSize,BinaryData,PartNo) VALUES (N'{}',DATEADD(year,2000,SYSUTCDATETIME()),DATEADD(year,2000,SYSUTCDATETIME()),0,{},0x{},0); IF @@ROWCOUNT<>1 THROW 57205, 'ConfigCAS insert failed', 1; END;", row.file_name, row.file_name, row.file_name, row.binary_data.len(), row.binary_data.len(), hex(&row.binary_data), row.file_name, row.binary_data.len(), hex(&row.binary_data)).unwrap();
@@ -503,7 +564,7 @@ pub fn render_extension_activation_sql(
     writeln!(sql, "DELETE dbo.ConfigCASSave WHERE FileName LIKE N'{}' ESCAPE N'~'; IF @@ROWCOUNT<>{} THROW 57209, 'Selected ConfigCASSave cleanup count changed', 1;", quote_string(&pattern), plan.staged_rows.len()).unwrap();
     sql.push_str("IF (SELECT COUNT_BIG(*) FROM dbo._ExtensionsInfo WHERE _IDRRef=@ExtensionId AND _Version<>@ExpectedVersion AND DATALENGTH(_ExtensionZippedInfo)=DATALENGTH(@After) AND _ExtensionZippedInfo=@After)<>1 THROW 57210, 'Registry postcondition failed', 1;\n");
     writeln!(sql, "IF EXISTS (SELECT 1 FROM dbo.ConfigCASSave WHERE FileName LIKE N'{}' ESCAPE N'~') THROW 57211, 'Selected staging prefix remains', 1;", quote_string(&pattern)).unwrap();
-    sql.push_str("COMMIT TRANSACTION;\n");
+    finish_publication_transaction(&mut sql);
     if sql.len() > MAX_SCRIPT_BYTES {
         return Err(ExtensionActivationError::Limit(format!(
             "SQL script has {} bytes, maximum is {MAX_SCRIPT_BYTES}",
@@ -515,6 +576,13 @@ pub fn render_extension_activation_sql(
         report,
         recovery,
     })
+}
+
+/// Roll back errors that SQL Server does not abort automatically as well.
+fn finish_publication_transaction(sql: &mut String) {
+    sql.push_str(
+        "COMMIT TRANSACTION;\nEND TRY\nBEGIN CATCH\nIF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;\nTHROW;\nEND CATCH;\n",
+    );
 }
 
 /// Binds a recovery transaction to the exact post-publication rowversion/blob.
@@ -529,6 +597,11 @@ pub fn render_extension_recovery_sql(
     if !allow_non_lab {
         return Err(ExtensionActivationError::SafetyGate(
             "--allow-non-lab acknowledgement is required".to_owned(),
+        ));
+    }
+    if recovery.schema_changed {
+        return Err(ExtensionActivationError::Recovery(
+            "this publication changed the extension schema; registry-only recovery would detach stored data from its metadata; restore the verified database backup instead".into(),
         ));
     }
     if current_blob != recovery.published_registry_blob {
@@ -689,6 +762,78 @@ mod tests {
             },
             plan,
         )
+    }
+
+    #[test]
+    fn schema_phase_shares_the_registry_transaction_and_cannot_use_registry_only_recovery() {
+        let (snapshot, stage) = fixture();
+        let mut plan = prepare_extension_activation(
+            ExtensionActivationMode::Exclusive,
+            snapshot,
+            &stage,
+            ExtensionServiceMarkerSnapshot { present: true },
+            true,
+        )
+        .unwrap();
+        plan.schema = Some(SchemaPublication {
+            sql: "CREATE TABLE dbo.[_Reference900X1] ([_IDRRef] binary(16) NOT NULL);".into(),
+            tables: vec!["_Reference900X1".into(), "SchemaStorage".into()],
+            objects: vec!["Catalog.Example".into()],
+        });
+        let script = render_extension_activation_sql("db", &plan).unwrap();
+        let text = script.sql();
+        let begin = text.find("BEGIN TRANSACTION").unwrap();
+        let ddl = text.find("CREATE TABLE dbo.[_Reference900X1]").unwrap();
+        let registry = text.find("UPDATE dbo._ExtensionsInfo SET").unwrap();
+        let commit = text.find("COMMIT TRANSACTION").unwrap();
+        assert!(begin < ddl && ddl < registry && registry < commit);
+        assert!(
+            script
+                .report
+                .touched_tables
+                .contains(&"SchemaStorage".to_owned())
+        );
+        assert_eq!(script.report.restructured_objects, vec!["Catalog.Example"]);
+        assert!(script.recovery.schema_changed);
+        let error = render_extension_recovery_sql(
+            "db",
+            &script.recovery,
+            [0; 8],
+            &script.recovery.published_registry_blob,
+            true,
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("registry-only recovery would detach stored data")
+        );
+    }
+
+    #[test]
+    fn publication_catches_errors_and_explicitly_rolls_back() {
+        let (snapshot, stage) = fixture();
+        let plan = prepare_extension_activation(
+            ExtensionActivationMode::Exclusive,
+            snapshot,
+            &stage,
+            ExtensionServiceMarkerSnapshot { present: true },
+            true,
+        )
+        .unwrap();
+        let script = render_extension_activation_sql("db", &plan).unwrap();
+        let text = script.sql();
+        let begin = text
+            .find("BEGIN TRY")
+            .expect("publication must catch failures");
+        let write = text.find("INSERT dbo.ConfigCAS").unwrap();
+        let commit = text.find("COMMIT TRANSACTION").unwrap();
+        let catch = text
+            .find("BEGIN CATCH")
+            .expect("publication must roll back");
+        assert!(begin < write && write < commit && commit < catch);
+        assert!(text[catch..].contains("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION"));
+        assert!(text[catch..].contains("THROW;"));
     }
 
     #[test]

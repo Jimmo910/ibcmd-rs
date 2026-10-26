@@ -113,7 +113,8 @@ impl fmt::Display for ExclusiveAccessRefused {
 
 impl std::error::Error for ExclusiveAccessRefused {}
 
-/// The login cannot see other sessions (no `VIEW SERVER STATE`), so exclusive
+/// The SQL login cannot see other sessions (version-appropriate server-state
+/// visibility permission is absent or unknown), so exclusive
 /// access cannot be proven. `--exclusivity assumed` is the way out for an
 /// operator who has proved it another way.
 #[derive(Debug, Clone)]

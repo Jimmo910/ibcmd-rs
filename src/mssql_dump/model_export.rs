@@ -1116,6 +1116,13 @@ mod compatibility_tests {
 
     #[test]
     fn compatibility_probe_reads_a_completed_stage_over_empty_config() {
+        // Other unit tests temporarily install process-wide offline rows.
+        // The shared helper also proves the selected child actually ran.
+        if crate::mssql_platform_profile::tests::run_isolated_profile_test(
+            "mssql_dump::model_export::compatibility_tests::compatibility_probe_reads_a_completed_stage_over_empty_config",
+        ) {
+            return;
+        }
         let root =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase/tiny-source");
         let path = root.join("Configuration.xml");

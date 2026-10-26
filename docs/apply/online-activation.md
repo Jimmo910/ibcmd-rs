@@ -678,7 +678,7 @@ does not expose this option. File/dispatch compatibility is independently
 reviewed, but actual compact LIVE continuation/recovery remains unmeasured.
 See [the format and acceptance boundary](evidence/live-gate/compact-live-recovery-2026-10-01.md).
 
-Readiness currently accepts only an **empty RAS user-session inventory**. The current RAS agent build must still be exactly `8.3.27.2214`, the storage profile must match the saved fingerprint, and the original MSSQL registration is rechecked against the recorded SQL database before inventory and twice before attempting cycle 2; each RAS call has a five-second deadline. Version and identity responses remain strict UTF-8. Session inventory is bounded raw output: only a successful response with empty stderr and ASCII-whitespace-only stdout admits cycle 2. Any nonempty output, including OEM user names and hibernating sessions, refuses. Idle SQL handles of the cluster are not users and do not drive this decision. Any user session, ambiguous output, wrong binding or timeout leaves cycle 1 retained and reports `continuation_required`. The SQL active-work check repeats under the master lock immediately before the second interruption; refusal correctly says the committed promotion/cycle 1 is retained. Active/warm cohort readiness remains unimplemented: this is not an acceptance of F-5 under load.
+Readiness currently accepts only an **empty RAS user-session inventory**. The current RAS agent build must still be exactly `8.3.27.2214`, the storage profile must match the saved fingerprint, and the original cluster registration UUID is rechecked using `rac infobase summary info` before inventory and twice before attempting cycle 2; each RAS call has a five-second deadline. Version and identity responses remain strict UTF-8. Session inventory is bounded raw output: only a successful response with empty stderr and ASCII-whitespace-only stdout admits cycle 2. Any nonempty output, including OEM user names and hibernating sessions, refuses. Idle SQL handles of the cluster are not users and do not drive this decision. Any user session, ambiguous output, missing/wrong registration UUID or timeout leaves cycle 1 retained and reports `continuation_required`. The SQL active-work check repeats under the master lock immediately before the second interruption; refusal correctly says the committed promotion/cycle 1 is retained. Active/warm cohort readiness remains unimplemented: this is not an acceptance of F-5 under load.
 
 Initial raw profile/RAS probes and the explicit `sqlcmd` profile probe share the
 same original-process collector with LIVE readiness. Their existing twenty-second
@@ -778,3 +778,52 @@ own client process.
 
 Before repeating: register the clone with `register-ib.ps1` (8.3.27), for `live` make it FULL and take a full backup, and
 unregister it afterwards. Do not run `worker`.
+
+
+### Direct SQL verification without an infobase account (#582)
+
+Direct import/apply and live continuation no longer call authenticated
+`rac infobase info`. They read `infobase summary info` without forwarding
+`--infobase-user` or `--infobase-pwd`; those legacy options remain accepted
+and ignored on direct routes. Summary establishes the named UUID exists in
+the selected cluster. It does not expose physical `db-server`/`db-name`, so
+reports set `physical_database_binding_verified=false` and identify summary
+evidence explicitly. Exact RAS build and independent SQL schema checks remain.
+For live continuation, SQL database/family/recovery GUIDs, saved backup headers
+and chain, source-generation and activity/session guards remain unchanged;
+the saved artifact's logical RAS UUIDs do not claim a physical mapping.
+The owned managed-worker path retains its internal credentials and exact
+physical-registration proof. Earlier measurements in this document describe
+the authenticated route that existed when those traces were recorded.
+
+Direct summary verification never supplies RAS worker PIDs as SQL-session
+exemptions to an exclusive gate. A different registration can use the same
+worker process while the selected SQL database has real users. Without a
+verified physical binding every other target SQL session counts, including
+idle platform sessions. The managed exact-binding path retains its measured
+exemptions; the SQL gate itself is unchanged.
+
+Unbound direct LIVE also requires zero other sessions on the actual SQL
+target, including idle handles, before publication and before each disruptive
+recovery. `--interrupt-sessions` does not waive this missing-binding guard.
+Standalone continuation, including older saved artifacts, defaults to this
+strict policy. Only an in-process managed physical-registration verification
+retains the earlier idle-handle policy. Read-only/already-complete continuation
+and no-op publication do not claim a required interruption or add this gate.
+Dry-run reports expose `requires_empty_actual_sql_sessions`.
+
+### SQL session visibility
+
+An empty `sys.dm_exec_sessions` result establishes no other sessions only
+when the SQL login can see all server sessions. Admission queries and rendered
+exclusive/LIVE guards require a known SQL2012+ major version and either
+`sysadmin`, `VIEW SERVER STATE` on major11–15 (SQL2012–2019), or
+`VIEW SERVER PERFORMANCE STATE` on major16 and later (SQL2022+). Unknown
+version/permission results refuse; database ownership and RESTORE rights do
+not substitute for this permission. These are SQL login permissions, with
+no infobase application account. The shared guard declares no variables, so
+repeated checks in one batch cannot conflict. Read-only/already-complete
+continuation without session admission keeps its existing behavior.
+
+Sources: [Microsoft session DMV permissions](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-exec-sessions-transact-sql),
+[HAS_PERMS_BY_NAME NULL behavior](https://learn.microsoft.com/en-us/sql/t-sql/functions/has-perms-by-name-transact-sql).
