@@ -22,10 +22,10 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow, bail};
 
-use crate::module_blob::ParsedFormBodyBlob;
+use crate::ParsedFormBodyBlob;
 
 /// Layout revision of a platform 8.5 managed-form root.
-pub(in crate::mssql_dump) const FORM_ROOT_REVISION_8_5_1: &str = "59";
+pub const FORM_ROOT_REVISION_8_5_1: &str = "59";
 const FORM_ROOT_REVISION_8_3: &str = "50";
 /// Members the 8.5 root trailer appends after the 8.3.27 trailer.
 const ROOT_TRAILER_APPENDED_8_5_1: usize = 12;
@@ -37,13 +37,13 @@ const FORM_CHOICE_LIST_VALUE_UUID: &str = "0e704aa2-07bd-48b9-8223-a0212c4d5fc2"
 /// A parsed brace tuple. Leaves keep their exact text (quoted strings with
 /// their quotes, base64 payloads with their own line breaks).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::mssql_dump) enum Node {
+pub enum Node {
     Leaf(String),
     List(Vec<Node>),
 }
 
 impl Node {
-    pub(in crate::mssql_dump) fn as_leaf(&self) -> Option<&str> {
+    pub fn as_leaf(&self) -> Option<&str> {
         self.leaf()
     }
 
@@ -61,7 +61,7 @@ impl Node {
         }
     }
 
-    pub(in crate::mssql_dump) fn to_text(&self) -> String {
+    pub fn to_text(&self) -> String {
         let mut out = String::new();
         self.emit(&mut out);
         out
@@ -85,7 +85,7 @@ impl Node {
 }
 
 /// Parses one brace tuple that starts at the first `{` of `text`.
-pub(in crate::mssql_dump) fn parse_node(text: &str) -> Result<Node> {
+pub fn parse_node(text: &str) -> Result<Node> {
     let start = text
         .find('{')
         .ok_or_else(|| anyhow!("8.5 form body tuple has no opening brace"))?;
@@ -156,46 +156,46 @@ fn parse_list(text: &str, bytes: &[u8], start: usize) -> Result<(Node, usize)> {
 
 /// What the 8.5 members appended to one form item said.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(in crate::mssql_dump) struct FormItemFactsV8_5_1 {
+pub struct FormItemFactsV8_5_1 {
     /// The item record's own 8.5 revision.
-    pub(in crate::mssql_dump) revision: String,
+    pub revision: String,
     /// The members 8.5 appended to the item record, in order.
-    pub(in crate::mssql_dump) tail: Vec<Node>,
+    pub tail: Vec<Node>,
     /// Every member of the 8.5 record ahead of the appended ones, and how
     /// far the optional common prefix shifts them.
-    pub(in crate::mssql_dump) record: Vec<Node>,
-    pub(in crate::mssql_dump) prefix_offset: usize,
+    pub record: Vec<Node>,
+    pub prefix_offset: usize,
     /// The item's kind code (group, field or decoration kind).
-    pub(in crate::mssql_dump) kind: Option<String>,
+    pub kind: Option<String>,
     /// The item's property bag: its 8.5 revision, every 8.5 member, and the
     /// members 8.5 appended.
-    pub(in crate::mssql_dump) bag_revision: Option<String>,
-    pub(in crate::mssql_dump) bag: Vec<Node>,
-    pub(in crate::mssql_dump) bag_tail: Vec<Node>,
+    pub bag_revision: Option<String>,
+    pub bag: Vec<Node>,
+    pub bag_tail: Vec<Node>,
 }
 
 /// Everything an 8.5 body carries beyond its 8.3.27 down-conversion.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(in crate::mssql_dump) struct FormFactsV8_5_1 {
+pub struct FormFactsV8_5_1 {
     /// The 12 members the root trailer appends.
-    pub(in crate::mssql_dump) root_tail: Vec<Node>,
+    pub root_tail: Vec<Node>,
     /// The member 8.5 appends to every choice-list value (its picture), in
     /// document order.
-    pub(in crate::mssql_dump) choice_value_pictures: Vec<Node>,
+    pub choice_value_pictures: Vec<Node>,
     /// The root's scale percentage (`100` unless the form sets one), the
     /// member 20 from the end of the 8.5 root record.
-    pub(in crate::mssql_dump) root_scale: Option<String>,
+    pub root_scale: Option<String>,
     /// Item facts by form item id.
-    pub(in crate::mssql_dump) items: BTreeMap<String, FormItemFactsV8_5_1>,
+    pub items: BTreeMap<String, FormItemFactsV8_5_1>,
     /// Appended form-command members by command id.
-    pub(in crate::mssql_dump) commands: BTreeMap<String, Vec<Node>>,
+    pub commands: BTreeMap<String, Vec<Node>>,
     /// Palette colour tuples left in their 8.5 shape (no 8.3.27 spelling).
-    pub(in crate::mssql_dump) palette_colors: usize,
+    pub palette_colors: usize,
     /// Colour tuples of a kind or palette index nothing names.
-    pub(in crate::mssql_dump) unknown_palette_colors: Vec<String>,
+    pub unknown_palette_colors: Vec<String>,
 }
 
-pub(in crate::mssql_dump) fn is_form_body_8_5_1(body: &ParsedFormBodyBlob) -> bool {
+pub fn is_form_body_8_5_1(body: &ParsedFormBodyBlob) -> bool {
     let declares_revision = body
         .layout
         .trim_start()
@@ -209,7 +209,7 @@ pub(in crate::mssql_dump) fn is_form_body_8_5_1(body: &ParsedFormBodyBlob) -> bo
     // root also ends in its trailer, whose own `{59,...}` revision tuple sits
     // 14 members from the end.
     declares_revision
-        && super::super::split_1c_braced_fields(&body.layout, 0).is_some_and(|fields| {
+        && ibcmd_1c_text::split_1c_braced_fields(&body.layout, 0).is_some_and(|fields| {
             fields.len() > ROOT_TRAILER_APPENDED_8_5_1 + 2
                 && fields[fields.len() - ROOT_TRAILER_APPENDED_8_5_1 - 2]
                     .trim_start()
@@ -223,7 +223,7 @@ pub(in crate::mssql_dump) fn is_form_body_8_5_1(body: &ParsedFormBodyBlob) -> bo
 }
 
 /// Down-converts one 8.5 form body into the 8.3.27 shape the form codec reads.
-pub(in crate::mssql_dump) fn down_convert_form_body_8_5_1(
+pub fn down_convert_form_body_8_5_1(
     body: &ParsedFormBodyBlob,
 ) -> Result<(ParsedFormBodyBlob, FormFactsV8_5_1)> {
     let mut facts = FormFactsV8_5_1::default();
@@ -275,7 +275,7 @@ pub(in crate::mssql_dump) fn down_convert_form_body_8_5_1(
     // the same ids as the form's, so it is left as it is and its facts are kept
     // apart (`form_extension::form_adoption` converts it as a body of its
     // own).
-    let base_slot = super::super::form_extension::adopted_base_record_slot(body);
+    let base_slot = super::form_extension::adopted_base_record_slot(body);
     for (index, block) in body.trailing.iter().enumerate() {
         if Some(index) == base_slot {
             trailing.push(block.clone());
@@ -380,7 +380,7 @@ fn is_font_8_5_1(members: &[Node]) -> bool {
 /// 8.5.1.1150 BSP native tree: every item carrying exactly one palette tuple
 /// and one `pal:` element pairs index and name without exception over the 78
 /// such items. An index the table does not name refuses the body.
-pub(in crate::mssql_dump) fn palette_color_name_8_5_1(index: i64) -> Option<&'static str> {
+pub fn palette_color_name_8_5_1(index: i64) -> Option<&'static str> {
     Some(match index {
         0 => "pal:FirstBrand",
         1 => "pal:SecondBrand",
@@ -398,12 +398,12 @@ pub(in crate::mssql_dump) fn palette_color_name_8_5_1(index: i64) -> Option<&'st
 }
 
 /// The 2.21 spelling of a palette colour tuple, if `text` is one.
-pub(in crate::mssql_dump) fn palette_color_8_5_1(text: &str) -> Option<&'static str> {
+pub fn palette_color_8_5_1(text: &str) -> Option<&'static str> {
     palette_color_index_8_5_1(text.trim()).and_then(palette_color_name_8_5_1)
 }
 
 /// Palette colour: space `4` ("automatic" to an 8.3.27 reader) with kind `5`.
-pub(in crate::mssql_dump) fn palette_color_index_8_5_1(text: &str) -> Option<i64> {
+pub fn palette_color_index_8_5_1(text: &str) -> Option<i64> {
     let node = parse_node(text).ok()?;
     let members = node.list()?;
     if !is_color_8_5_1(members) || members[1].leaf() != Some("4") || members[3].leaf() != Some("5")
@@ -461,9 +461,7 @@ fn short_tuple_end(bytes: &[u8], start: usize, limit: usize) -> Option<usize> {
 /// BSP rows carry them by the tens of thousands. Rewriting them therefore
 /// changes nothing an 8.3.27 base stores. A palette colour, which 8.3.27
 /// cannot spell, stays as stored for the readers that name palettes.
-pub(in crate::mssql_dump) fn rewrite_primitives_8_5_1_in_place(
-    text: &str,
-) -> std::borrow::Cow<'_, str> {
+pub fn rewrite_primitives_8_5_1_in_place(text: &str) -> std::borrow::Cow<'_, str> {
     const MAX_TUPLE: usize = 512;
     let bytes = text.as_bytes();
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
@@ -524,7 +522,7 @@ pub(in crate::mssql_dump) fn rewrite_primitives_8_5_1_in_place(
 
 /// Rewrites the 8.5 colour and font tuples of any brace text into their
 /// 8.3.27 spelling. A palette colour, which 8.3.27 cannot spell, is refused.
-pub(in crate::mssql_dump) fn down_convert_primitives_8_5_1_text(text: &str) -> Result<String> {
+pub fn down_convert_primitives_8_5_1_text(text: &str) -> Result<String> {
     let mut facts = FormFactsV8_5_1::default();
     let node = convert_primitives(parse_node(text)?, &mut facts);
     if facts.palette_colors != 0 {
@@ -594,7 +592,7 @@ fn item_identity(members: &[Node]) -> Option<&str> {
 }
 
 /// 8.5 item revision -> (8.3.27 revision, appended members).
-pub(in crate::mssql_dump) fn item_revision(revision: &str) -> Option<(&'static str, usize)> {
+pub fn item_revision(revision: &str) -> Option<(&'static str, usize)> {
     Some(match revision {
         "48" => ("37", 15),
         "34" => ("31", 7),
@@ -608,7 +606,7 @@ pub(in crate::mssql_dump) fn item_revision(revision: &str) -> Option<(&'static s
 
 /// The property-bag slot of a record that carries one, before the optional
 /// common prefix shifts it.
-pub(in crate::mssql_dump) fn bag_base_slot(v8_3_revision: &str) -> Option<usize> {
+pub fn bag_base_slot(v8_3_revision: &str) -> Option<usize> {
     match v8_3_revision {
         "22" => Some(20),
         "37" => Some(39),
@@ -625,7 +623,7 @@ pub(in crate::mssql_dump) fn bag_base_slot(v8_3_revision: &str) -> Option<usize>
 /// members, while a `CommandBar` (kind 0) moves from `{1,...}` of three to
 /// `{2,...}` of four. Every (kind, shape) pair of the 8.5 BSP bodies is listed;
 /// each maps onto the one shape the 8.3.27 BSP bodies give that kind.
-pub(in crate::mssql_dump) fn bag_revision(
+pub fn bag_revision(
     v8_3_owner: &str,
     kind: &str,
     revision: &str,
@@ -777,18 +775,17 @@ fn convert_values_and_commands(node: Node, facts: &mut FormFactsV8_5_1) -> Resul
     if members.len() == 3
         && members[0].leaf() == Some("\"#\"")
         && members[1].leaf() == Some(FORM_CHOICE_LIST_VALUE_UUID)
+        && let Node::List(value) = &mut members[2]
     {
-        if let Node::List(value) = &mut members[2] {
-            match (value.first().and_then(Node::leaf), value.len()) {
-                (Some("1"), 7) => {
-                    let picture = value.pop().expect("seven members");
-                    facts.choice_value_pictures.push(picture);
-                    value[0] = Node::Leaf("0".to_owned());
-                }
-                (lead, len) => bail!(
-                    "8.5 form choice-list value declares unknown revision {lead:?} with {len} members"
-                ),
+        match (value.first().and_then(Node::leaf), value.len()) {
+            (Some("1"), 7) => {
+                let picture = value.pop().expect("seven members");
+                facts.choice_value_pictures.push(picture);
+                value[0] = Node::Leaf("0".to_owned());
             }
+            (lead, len) => bail!(
+                "8.5 form choice-list value declares unknown revision {lead:?} with {len} members"
+            ),
         }
     }
     Ok(Node::List(members))

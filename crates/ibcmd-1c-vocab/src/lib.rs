@@ -1,12 +1,13 @@
 //! Vocabularies of the 1C native records that the root's readers share:
 //! platform type identifiers and the XML names they are written as, the
 //! stored type patterns (`{"Pattern",...}`) and the `<Type>` blocks written
-//! from them, standard attributes, style codes, command shortcuts, the
-//! standard pictures and a few small property values, with the payload
-//! helpers the form reader uses beside them.
+//! from them, standard attributes, style codes, command shortcuts, pictures
+//! and standard commands, the standard pictures and a few small property
+//! values, with the payload helpers the form reader uses beside them.
 //!
-//! Everything here moved from the root crate's `mssql_dump` (`mod.rs`, and
-//! the picture-payload helpers from `source_assets.rs`), and the standard
+//! Everything here moved from the root crate's `mssql_dump` (`mod.rs`, the
+//! picture-payload helpers from `source_assets.rs` and the standard command
+//! of a metadata kind from `command_interface.rs`), and the standard
 //! pictures from its `metadata_model::standard_pictures`; the root still
 //! reaches every item by its old name through imports. The bodies are unchanged but
 //! for one argument: the two pattern readers take
@@ -32,8 +33,8 @@ mod types;
 mod values;
 
 pub use commands::{
-    ShortcutModifierStyle, parse_common_command_shortcut_value,
-    parse_common_command_shortcut_value_with_style,
+    ShortcutModifierStyle, command_interface_standard_command, parse_common_command_picture_value,
+    parse_common_command_shortcut_value, parse_common_command_shortcut_value_with_style,
 };
 pub use patterns::{
     metadata_type_pattern_field_type_id, parse_form_metadata_type_pattern,
