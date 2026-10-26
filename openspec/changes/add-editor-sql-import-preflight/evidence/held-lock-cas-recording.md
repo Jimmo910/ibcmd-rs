@@ -876,3 +876,30 @@ publication checks. The release build, native micro-corpus matrix, SBOM and
 release audit are not claimed as local runs; existing scoped public runtime
 receipts are separate from those release gates. Hosted validation of the final
 published quality-fix head is tracked separately from87617 runtime acceptance.
+
+
+## Final hosted verification and scoped closure
+
+Published source/quality head
+`07385992b96adadbb2fed50b44f5fb20d3dd43d5` completed both required hosted
+runs successfully, independently read back after natural completion:
+
+- [CI40301563495](https://github.com/Jimmo910/ibcmd-rs/actions/runs/40301563495):
+  seven of seven jobs successful, including both portable platforms and the
+  Windows legacy-root harness.
+- [VSCode/product40301490504](https://github.com/Jimmo910/ibcmd-rs/actions/runs/40301490504):
+  two of two jobs successful, including packaged Windows extension installation
+  in a clean editor and offline-tree verification.
+
+No rerun or duplicate product dispatch was created. The sanitized final result
+snapshot SHA256 is
+`9f8b638175c1f29a808ea3d33f861261d3cf68b0a896574fec598a10981fe56b`.
+Together with the final19-step local CI and strict change validation, this closes
+quality item3.3. The subsequent checklist/evidence commit changes these two
+OpenSpec documents only; source, tests, Cargo inputs, tools and policy baseline
+remain identical to the hosted-tested head. The scoped existing CommonModule
+and Document-owned FormModule RPC→staging→native-apply/export acceptance is
+complete. Generic metadata/object/changed imports, other owner cohorts, dynamic
+storage, arbitrary repartitioning and build-wide writer admission remain refused
+or unsupported as stated above. No successful runtime cycle was repeated and
+no merge or release was performed.

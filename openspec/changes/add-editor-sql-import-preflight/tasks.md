@@ -10,7 +10,7 @@
 - [x] 3.1 Run allocated focused tests and independent review.
 - [x] 3.2 Through the authorized operator, verify disposable SQL module/form
   stage -> native apply -> export and unchanged neighbour/staging.
-- [ ] 3.3 Run required current-head quality/CI gates; publish honest evidence.
+- [x] 3.3 Run required current-head quality/CI gates; publish honest evidence.
 
 ## Delivered local foundations (not SQL acceptance)
 
@@ -113,3 +113,11 @@ native-build writer profile. Historical pending statements in foundation receipt
 remain dated checkpoints; F.19/F.20 and the final evidence supersede their runtime
 status. Broader profile/concurrency/parity measurements retain their original
 scope and are not silently certified by these two public fixtures.
+
+
+Final quality head `07385992b96adadbb2fed50b44f5fb20d3dd43d5` passed
+local `cargo xtask ci`19/19, hosted CI40301563495 seven jobs and
+VSCode/product40301490504 both jobs. The final checklist/evidence publication
+changes documentation only; runtime receipts keep their exact87617 attribution.
+No merge or release was performed. Broader foundation/profile measurements
+above remain explicitly outside the two accepted singleton-module cohorts.
