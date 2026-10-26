@@ -153,5 +153,149 @@ class ParameterWitnessContract(unittest.TestCase):
             classify(self.native, parameter('Unexpected'), case)
 
 
+
+
+def spreadsheet(font=False):
+    return ET.fromstring('<document xmlns="urn:coverage:spreadsheet">'
+                         + '<rowsItem><index>0</index></rowsItem>'
+                         + ('<font faceName="Arial" height="10"/>' if font else '')
+                         + '<format><font>0</font></format></document>')
+
+
+class DocumentWitnessContract(unittest.TestCase):
+    def setUp(self):
+        self.native = spreadsheet(True)
+        self.case = {'id': 'legacy-font',
+                     'anchor': {'tag': self.native.tag, 'root': True,
+                                'context': canonical(spreadsheet())},
+                     'property': '{urn:coverage:spreadsheet}font',
+                     'native': json.loads(json.dumps(canonical(self.native[1]))), 'known_symptom': None}
+
+    def test_only_missing_font_is_the_known_symptom(self):
+        self.assertEqual(classify(self.native, spreadsheet(), self.case), 'known-symptom')
+
+    def test_restored_font_is_equal(self):
+        self.assertEqual(classify(self.native, spreadsheet(True), self.case), 'equal')
+
+    def test_empty_document_does_not_substitute_for_font_loss(self):
+        with self.assertRaises(ValueError):
+            classify(self.native, ET.fromstring('<document xmlns="urn:coverage:spreadsheet"/>'), self.case)
+
+    def test_changed_format_reference_is_rejected(self):
+        ours = spreadsheet()
+        ours[-1][0].text = '1'
+        with self.assertRaises(ValueError):
+            classify(self.native, ours, self.case)
+
+    def test_duplicate_context_is_rejected(self):
+        ours = spreadsheet()
+        ours.append(ET.fromstring('<format xmlns="urn:coverage:spreadsheet"><font>0</font></format>'))
+        with self.assertRaises(ValueError):
+            classify(self.native, ours, self.case)
+
+    def test_nested_document_is_not_the_root(self):
+        ours = ET.fromstring('<wrapper/>')
+        ours.append(spreadsheet())
+        with self.assertRaises(ValueError):
+            classify(self.native, ours, self.case)
+
+    def test_duplicate_font_is_rejected(self):
+        ours = spreadsheet(True)
+        ours.append(ET.fromstring('<font xmlns="urn:coverage:spreadsheet" faceName="Arial" height="10"/>'))
+        with self.assertRaisesRegex(ValueError, 'repeated property'):
+            classify(self.native, ours, self.case)
+
+    def test_changed_font_is_an_unrelated_mismatch(self):
+        ours = spreadsheet(True)
+        ours[1].set('faceName', 'Tahoma')
+        with self.assertRaisesRegex(ValueError, 'unrelated mismatch'):
+            classify(self.native, ours, self.case)
+
+    def test_meaningful_tail_after_format_is_rejected(self):
+        ours = spreadsheet()
+        ours[-1].tail = 'unexpected-document-content'
+        with self.assertRaises(ValueError):
+            classify(self.native, ours, self.case)
+
+    def test_meaningful_tail_inside_context_is_rejected(self):
+        ours = spreadsheet()
+        ours[-1][0].tail = 'unexpected-format-content'
+        with self.assertRaises(ValueError):
+            classify(self.native, ours, self.case)
+
+    def test_non_xml_space_in_context_text_is_rejected(self):
+        ours = spreadsheet()
+        ours.text = '\u00a0'
+        with self.assertRaises(ValueError):
+            classify(self.native, ours, self.case)
+
+    def test_non_xml_space_in_tail_is_rejected(self):
+        ours = spreadsheet()
+        ours[-1].tail = '\u00a0'
+        with self.assertRaises(ValueError):
+            classify(self.native, ours, self.case)
+
+    def test_indentation_tails_remain_acceptable(self):
+        ours = spreadsheet()
+        for node in ours.iter():
+            node.tail = '\n\t'
+        self.assertEqual(classify(self.native, ours, self.case), 'known-symptom')
+
+    def test_wrong_document_namespace_is_rejected(self):
+        with self.assertRaises(ValueError):
+            classify(self.native, ET.fromstring('<document/>'), self.case)
+
+
+def merge_document(order):
+    return ET.fromstring('<document xmlns="urn:coverage:spreadsheet">'
+                         + '<height>4</height>'
+                         + ''.join('<merge><c>' + str(index) + '</c></merge>' for index in order)
+                         + '<format><font>0</font></format></document>')
+
+
+class CollectionWitnessContract(unittest.TestCase):
+    def setUp(self):
+        self.native = merge_document([0, 3])
+        self.case = {'id': 'merge-order', 'collection': True,
+                     'anchor': {'tag': self.native.tag, 'root': True,
+                                'context': canonical(merge_document([]))},
+                     'property': '{urn:coverage:spreadsheet}merge',
+                     'native': [canonical(x) for x in self.native if x.tag.endswith('}merge')],
+                     'known_symptom': [canonical(x) for x in merge_document([3, 0]) if x.tag.endswith('}merge')]}
+
+    def test_specific_wrong_order_is_known(self):
+        self.assertEqual(classify(self.native, merge_document([3, 0]), self.case), 'known-symptom')
+
+    def test_restored_collection_is_equal(self):
+        self.assertEqual(classify(self.native, merge_document([0, 3]), self.case), 'equal')
+
+    def test_lost_collection_is_an_unrelated_mismatch(self):
+        with self.assertRaises(ValueError):
+            classify(self.native, merge_document([]), self.case)
+
+    def test_lost_member_is_an_unrelated_mismatch(self):
+        with self.assertRaises(ValueError):
+            classify(self.native, merge_document([0]), self.case)
+
+    def test_other_duplicate_is_an_unrelated_mismatch(self):
+        with self.assertRaises(ValueError):
+            classify(self.native, merge_document([3, 3]), self.case)
+
+    def test_changed_coordinate_is_an_unrelated_mismatch(self):
+        with self.assertRaises(ValueError):
+            classify(self.native, merge_document([4, 0]), self.case)
+
+    def test_changed_document_context_is_rejected(self):
+        ours = merge_document([3, 0])
+        ours[0].text = '5'
+        with self.assertRaises(ValueError):
+            classify(self.native, ours, self.case)
+
+    def test_collection_mode_requires_a_root_context(self):
+        case = dict(self.case, anchor={'tag': self.native.tag, 'name': 'Probe'})
+        with self.assertRaises(ValueError):
+            classify(self.native, merge_document([3, 0]), case)
+
+
 if __name__ == '__main__':
     unittest.main()

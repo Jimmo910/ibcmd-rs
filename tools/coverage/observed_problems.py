@@ -75,32 +75,52 @@ def canonical(element):
 
 def condition(root, case):
     anchor = case['anchor']
-    child = anchor.get('child')
-    if child is not None:
-        values = (case['native'], case['known_symptom'])
-        if any(not isinstance(value, list) or len(value) != 4
-               or value[0] != case['property'] or value[1] or value[3]
-               or not isinstance(value[2], str) or not value[2] for value in values):
-            raise ValueError('child identity requires two exact scalar text conditions')
-        aliases = child['texts']
-        if child['tag'] != case['property'] or len(aliases) != 2 or set(aliases) != {value[2] for value in values}:
-            raise ValueError('child identity must contain exactly the native and known names')
-    elif 'name' not in anchor:
-        raise ValueError('witness anchor requires a name or child identity')
-    anchors = []
-    for node in root.iter():
-        if node.tag != anchor['tag']:
-            continue
-        if 'name' in anchor and node.get('name') != anchor['name']:
-            continue
-        if any(node.get(key) != value for key, value in anchor.get('attributes', {}).items()):
-            continue
-        if child is not None and not any(item.tag == child['tag'] and item.text in aliases for item in node):
-            continue
-        anchors.append(node)
+    if 'collection' in case and (case['collection'] is not True or anchor.get('root') is not True):
+        raise ValueError('collection witness requires an exact root context')
+    if anchor.get('root') is True:
+        if set(anchor) != {'tag', 'root', 'context'}:
+            raise ValueError('root witness requires one exact document context')
+        for node in root.iter():
+            if node.tail and node.tail.strip(' \t\r\n'):
+                raise ValueError('document contains unexpected text between elements')
+            # The shared scalar canonicalizer treats Unicode whitespace as
+            # indentation. Document guards allow only XML indentation here.
+            if len(node) and node.text and not node.text.strip() and node.text.strip(' \t\r\n'):
+                raise ValueError('document contains non-XML indentation text')
+        context = canonical(root)
+        context[3] = [item for item in context[3] if item[0] != case['property']]
+        if root.tag != anchor['tag'] or json.loads(json.dumps(context)) != anchor['context']:
+            raise ValueError(f"{case['id']}: intact document context differs")
+        anchors = [root]
+    else:
+        child = anchor.get('child')
+        if child is not None:
+            values = (case['native'], case['known_symptom'])
+            if any(not isinstance(value, list) or len(value) != 4
+                   or value[0] != case['property'] or value[1] or value[3]
+                   or not isinstance(value[2], str) or not value[2] for value in values):
+                raise ValueError('child identity requires two exact scalar text conditions')
+            aliases = child['texts']
+            if child['tag'] != case['property'] or len(aliases) != 2 or set(aliases) != {value[2] for value in values}:
+                raise ValueError('child identity must contain exactly the native and known names')
+        elif 'name' not in anchor:
+            raise ValueError('witness anchor requires a name or child identity')
+        anchors = []
+        for node in root.iter():
+            if node.tag != anchor['tag']:
+                continue
+            if 'name' in anchor and node.get('name') != anchor['name']:
+                continue
+            if any(node.get(key) != value for key, value in anchor.get('attributes', {}).items()):
+                continue
+            if child is not None and not any(item.tag == child['tag'] and item.text in aliases for item in node):
+                continue
+            anchors.append(node)
     if len(anchors) != 1:
         raise ValueError(f"{case['id']}: expected one intact widget, got {len(anchors)}")
     children = [node for node in anchors[0] if node.tag == case['property']]
+    if case.get('collection') is True:
+        return json.loads(json.dumps([canonical(child) for child in children]))
     if len(children) > 1:
         raise ValueError(f"{case['id']}: repeated property")
     # JSON uses arrays for attribute pairs; normalize tuples before comparing.
