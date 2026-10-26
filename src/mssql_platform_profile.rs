@@ -182,7 +182,8 @@ impl MssqlNativePlatformProfile {
     }
 }
 
-/// Actual database evidence bound to a claimed native platform profile.
+/// Independently observed SQL storage and RAS build/registration evidence.
+/// Only the managed exact-registration path proves their physical binding.
 #[derive(Debug, Clone)]
 pub struct MssqlNativeProfileVerification {
     pub claimed_platform_profile: String,
@@ -193,6 +194,8 @@ pub struct MssqlNativeProfileVerification {
     pub verified_cluster_id: Uuid,
     pub verified_infobase_id: Uuid,
     pub identity_source: &'static str,
+    /// Summary registration does not expose its physical SQL server/database.
+    pub physical_database_binding_verified: bool,
 }
 
 pub struct MssqlNativeProfileVerificationOptions<'a> {
@@ -205,6 +208,7 @@ pub struct MssqlNativeProfileVerificationOptions<'a> {
     pub database: &'a str,
     pub cluster_id: Option<Uuid>,
     pub infobase_id: Option<Uuid>,
+    /// Legacy direct-route option; ignored unless used by an owned managed operation.
     pub infobase_user: Option<&'a str>,
     pub infobase_pwd: Option<&'a str>,
     pub sql_user: Option<&'a str>,
@@ -224,6 +228,26 @@ struct NativeStorageProbe {
 struct RasDatabaseBinding {
     cluster_id: Uuid,
     infobase_id: Uuid,
+    evidence: RasIdentityEvidence,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RasIdentityEvidence {
+    ClusterSummary,
+    PhysicalDatabaseRegistration,
+}
+
+impl RasIdentityEvidence {
+    fn source(self) -> &'static str {
+        match self {
+            Self::ClusterSummary => {
+                "rac_agent_exact_build_plus_cluster_summary_plus_independent_live_sql_schema"
+            }
+            Self::PhysicalDatabaseRegistration => {
+                "rac_agent_exact_build_plus_registered_infobase_plus_live_sql_schema"
+            }
+        }
+    }
 }
 
 /// Verify both the live native schema and the exact RAS agent build. SQL
@@ -235,7 +259,7 @@ pub fn verify_mssql_native_profile(
     claimed: MssqlNativePlatformProfile,
     options: MssqlNativeProfileVerificationOptions<'_>,
 ) -> Result<MssqlNativeProfileVerification> {
-    verify_mssql_native_profile_with_auth(claimed, options, None)
+    verify_direct_mssql_native_profile(claimed, options)
 }
 
 /// Internal credentials created by the owned creator. This is neither a
@@ -245,24 +269,6 @@ pub(crate) struct ManagedRacReadAuth<'a> {
     pub agent_password: &'a str,
     pub cluster_user: &'a str,
     pub cluster_password: &'a str,
-}
-
-impl ManagedRacReadAuth<'_> {
-    fn arguments(&self, agent: bool) -> Vec<String> {
-        let (prefix, user, password) = if agent {
-            ("agent", self.agent_user, self.agent_password)
-        } else {
-            ("cluster", self.cluster_user, self.cluster_password)
-        };
-        vec![
-            format!("--{prefix}-user={user}"),
-            format!("--{prefix}-pwd={password}"),
-        ]
-    }
-
-    fn redact(&self, value: &str) -> String {
-        redact_managed_secrets(value, &[self.agent_password, self.cluster_password])
-    }
 }
 
 fn redact_managed_secrets(value: &str, secrets: &[&str]) -> String {
@@ -287,8 +293,13 @@ pub(crate) fn verify_mssql_native_profile_managed_observation(
     agent_version: &str,
     registration: &str,
 ) -> Result<MssqlNativeProfileVerification> {
+    // Authenticated native diagnostics can echo both internal account names
+    // and passwords. These remain owned-worker credentials, never required
+    // from a direct SQL caller.
     let secrets = [
+        authentication.agent_user,
         authentication.agent_password,
+        authentication.cluster_user,
         authentication.cluster_password,
         options.infobase_pwd.unwrap_or_default(),
         options.sql_pwd.unwrap_or_default(),
@@ -318,6 +329,7 @@ pub(crate) fn verify_mssql_native_profile_managed_observation(
             RasDatabaseBinding {
                 cluster_id,
                 infobase_id,
+                evidence: RasIdentityEvidence::PhysicalDatabaseRegistration,
             },
         )
     })();
@@ -366,25 +378,7 @@ mod managed_auth_tests {
     }
 
     #[test]
-    fn managed_auth_uses_separate_agent_cluster_flags_and_redacts_all_credentials() {
-        let auth = ManagedRacReadAuth {
-            agent_user: "generated-agent",
-            agent_password: "abc",
-            cluster_user: "generated-cluster",
-            cluster_password: "abcdef",
-        };
-        assert_eq!(
-            auth.arguments(true),
-            ["--agent-user=generated-agent", "--agent-pwd=abc"]
-        );
-        assert_eq!(
-            auth.arguments(false),
-            ["--cluster-user=generated-cluster", "--cluster-pwd=abcdef"]
-        );
-        assert_eq!(
-            auth.redact("native echoed abcdef then abc"),
-            "native echoed [redacted] then [redacted]"
-        );
+    fn managed_auth_redacts_all_credentials() {
         assert_eq!(
             redact_managed_secrets(
                 "abc/abcdef/IBpassword/SQLpassword",
@@ -395,31 +389,26 @@ mod managed_auth_tests {
     }
 }
 
-fn verify_mssql_native_profile_with_auth(
+fn verify_direct_mssql_native_profile(
     claimed: MssqlNativePlatformProfile,
     options: MssqlNativeProfileVerificationOptions<'_>,
-    authentication: Option<&ManagedRacReadAuth<'_>>,
 ) -> Result<MssqlNativeProfileVerification> {
-    let agent_build = if let Some(authentication) = authentication {
-        let mut args = vec!["agent".to_owned(), "version".to_owned()];
-        args.extend(authentication.arguments(true));
-        args.push(options.ras_endpoint.to_owned());
-        parse_rac_agent_build(&run_rac_bounded(options.rac, args)?)?
-    } else {
-        read_rac_agent_build(options.rac, options.ras_endpoint)?
-    };
-    let binding = verify_ras_infobase_binding(
+    verify_direct_mssql_native_profile_with_probe(claimed, options, run_probe)
+}
+
+fn verify_direct_mssql_native_profile_with_probe(
+    claimed: MssqlNativePlatformProfile,
+    options: MssqlNativeProfileVerificationOptions<'_>,
+    probe: impl FnOnce(&MssqlNativeProfileVerificationOptions<'_>) -> Result<String>,
+) -> Result<MssqlNativeProfileVerification> {
+    let agent_build = read_rac_agent_build(options.rac, options.ras_endpoint)?;
+    let binding = verify_ras_infobase_summary(
         options.rac,
         options.ras_endpoint,
-        options.server,
-        options.database,
         options.cluster_id,
         options.infobase_id,
-        options.infobase_user,
-        options.infobase_pwd,
-        authentication,
     )?;
-    let output = run_probe(&options)?;
+    let output = probe(&options)?;
     verify_probe(claimed, &agent_build, parse_probe(&output)?, binding)
 }
 
@@ -454,53 +443,62 @@ pub(crate) fn parse_rac_agent_build(output: &str) -> Result<String> {
     Ok((*builds.first().expect("one build was checked")).to_owned())
 }
 
-fn verify_ras_infobase_binding(
+fn verify_ras_infobase_summary(
     rac: &Path,
     ras_endpoint: &str,
-    sql_server: &str,
-    database: &str,
     cluster_id: Option<Uuid>,
     infobase_id: Option<Uuid>,
-    infobase_user: Option<&str>,
-    infobase_pwd: Option<&str>,
-    authentication: Option<&ManagedRacReadAuth<'_>>,
 ) -> Result<RasDatabaseBinding> {
     let cluster_id = cluster_id.ok_or_else(|| {
-        anyhow!("native MSSQL write verification requires --cluster-id to bind RAS to SQL")
+        anyhow!("native MSSQL verification requires --cluster-id for the RAS registration check")
     })?;
     let infobase_id = infobase_id.ok_or_else(|| {
-        anyhow!("native MSSQL write verification requires --infobase-id to bind RAS to SQL")
+        anyhow!("native MSSQL verification requires --infobase-id for the RAS registration check")
     })?;
-    let mut args = vec![
-        "infobase".to_owned(),
-        "info".to_owned(),
-        format!("--cluster={cluster_id}"),
-        format!("--infobase={infobase_id}"),
-    ];
-    if let Some(user) = infobase_user {
-        args.push(format!("--infobase-user={user}"));
-        args.push(format!(
-            "--infobase-pwd={}",
-            infobase_pwd.unwrap_or_default()
-        ));
-    } else if infobase_pwd.is_some() {
-        bail!("--infobase-pwd requires --infobase-user");
-    }
-    if let Some(authentication) = authentication {
-        args.extend(authentication.arguments(false));
-    }
-    args.push(ras_endpoint.to_owned());
-    let registration = run_rac_bounded(rac, args)?;
-    require_registered_database(
-        &parse_rac_blocks(&registration),
-        &infobase_id.to_string(),
-        sql_server,
-        database,
+    let registration = run_rac_bounded(
+        rac,
+        [
+            "infobase".to_owned(),
+            "summary".to_owned(),
+            "info".to_owned(),
+            format!("--cluster={cluster_id}"),
+            format!("--infobase={infobase_id}"),
+            ras_endpoint.to_owned(),
+        ],
     )?;
+    require_infobase_summary(&registration, infobase_id)?;
     Ok(RasDatabaseBinding {
         cluster_id,
         infobase_id,
+        evidence: RasIdentityEvidence::ClusterSummary,
     })
+}
+
+/// `summary info` proves one logical registration, never its physical DB mapping.
+/// Reject duplicate fields/records and malformed replies rather than hiding them
+/// in the permissive parser used for other RAC inventories.
+pub(crate) fn require_infobase_summary(text: &str, infobase_id: Uuid) -> Result<()> {
+    let mut values = BTreeMap::new();
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let (key, value) = line
+            .split_once(':')
+            .context("unrecognized RAS infobase summary output")?;
+        if values
+            .insert(key.trim(), value.trim().trim_matches('"'))
+            .is_some()
+        {
+            bail!("ambiguous RAS infobase summary");
+        }
+    }
+    let observed = values
+        .get("infobase")
+        .and_then(|value| Uuid::parse_str(value).ok());
+    if observed != Some(infobase_id) || !values.get("name").is_some_and(|v| !v.is_empty()) {
+        bail!(
+            "RAS summary must contain exactly the requested infobase registration `{infobase_id}` and its name"
+        );
+    }
+    Ok(())
 }
 
 /// A worker process of the cluster that holds an infobase only for the RAS
@@ -529,12 +527,13 @@ pub struct RasInfobaseClients {
 /// `rac session list` and `rac process list`, without the infobase login (which
 /// would itself open a RAS connection).
 ///
-/// The tool's own RAS verification (`rac infobase info --infobase-user`) makes
+/// Earlier authenticated verification (`rac infobase info --infobase-user`) made
 /// the worker process load the infobase, and the process keeps two idle
 /// `1CV83 Server` SQL sessions on the database for as long as its RAS
 /// connection lives (#409 F-3: observed for 56 minutes after the command
 /// ended). They are not users, but the SQL gate of an exclusive activation
-/// counts every session.
+/// counts every session. Direct profile verification now uses cluster summary
+/// and does not create an infobase login.
 pub fn read_infobase_clients(
     rac: &Path,
     ras_endpoint: &str,
@@ -611,15 +610,39 @@ fn infobase_clients(
     }
 }
 
-/// For an exclusive activation: refuses, before anything is written, an
-/// infobase that has client connections or sessions, and returns the worker
-/// processes whose idle SQL sessions the gate of the activation leaves out
-/// ([`exclusive_session_gate`]) because they belong to the RAS service.
+/// An unbound logical registration cannot justify target SQL PID exemptions.
+/// Client inventory still refuses before writing; all actual SQL sessions count.
 pub fn own_ras_processes_for_exclusive(
     rac: &Path,
     ras_endpoint: &str,
     cluster_id: Uuid,
     infobase_id: Uuid,
+) -> Result<Vec<OwnRasProcess>> {
+    exclusive_ras_processes(rac, ras_endpoint, cluster_id, infobase_id, false)
+}
+
+/// Only an exact physical database-registration observation can establish that
+/// the RAS workers belong to the selected SQL target. Summary never can.
+pub fn own_ras_processes_for_verified_exclusive(
+    rac: &Path,
+    ras_endpoint: &str,
+    verification: &MssqlNativeProfileVerification,
+) -> Result<Vec<OwnRasProcess>> {
+    exclusive_ras_processes(
+        rac,
+        ras_endpoint,
+        verification.verified_cluster_id,
+        verification.verified_infobase_id,
+        verification.physical_database_binding_verified,
+    )
+}
+
+fn exclusive_ras_processes(
+    rac: &Path,
+    ras_endpoint: &str,
+    cluster_id: Uuid,
+    infobase_id: Uuid,
+    physical_database_binding_verified: bool,
 ) -> Result<Vec<OwnRasProcess>> {
     let found = read_infobase_clients(rac, ras_endpoint, cluster_id, infobase_id)?;
     if !found.clients.is_empty() {
@@ -635,7 +658,56 @@ pub fn own_ras_processes_for_exclusive(
                 .join("; ")
         );
     }
-    Ok(found.ras_only_processes.into_iter().collect())
+    Ok(if physical_database_binding_verified {
+        found.ras_only_processes.into_iter().collect()
+    } else {
+        Vec::new()
+    })
+}
+
+/// Server-wide DMV visibility is necessary before an empty session result
+/// can prove absence. SQL2012+ exposes the columns these queries use; newer
+/// numeric majors follow Microsoft's SQL2022-and-later permission rule.
+/// CASE always returns 0/1, including NULL version/role/permission results.
+/// Source: Microsoft sys.dm_exec_sessions and HAS_PERMS_BY_NAME documentation.
+pub(crate) const SESSION_VISIBILITY_PREDICATE: &str = r#"CASE WHEN TRY_CONVERT(int, SERVERPROPERTY(N'ProductMajorVersion')) >= 11 AND (
+    IS_SRVROLEMEMBER(N'sysadmin') = 1
+    OR (TRY_CONVERT(int, SERVERPROPERTY(N'ProductMajorVersion')) BETWEEN 11 AND 15 AND HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW SERVER STATE') = 1)
+    OR (TRY_CONVERT(int, SERVERPROPERTY(N'ProductMajorVersion')) >= 16 AND HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW SERVER PERFORMANCE STATE') = 1)
+) THEN 1 ELSE 0 END"#;
+
+pub(crate) const SESSION_VISIBILITY_ERROR: &str = "SQL session visibility cannot be proven: require sysadmin or VIEW SERVER STATE (SQL2012-2019) / VIEW SERVER PERFORMANCE STATE (SQL2022 and later); NULL or unsupported SQL version refuses. No infobase application account is required";
+
+/// No DECLARE statements: the same guard may be repeated in one SQL batch.
+pub(crate) fn session_visibility_gate(code: u32) -> String {
+    format!(
+        "IF ({SESSION_VISIBILITY_PREDICATE}) <> 1 THROW {code}, N'{SESSION_VISIBILITY_ERROR}', 1;\n"
+    )
+}
+
+/// Direct LIVE cannot use an unbound RAS inventory to admit target SQL handles.
+/// This counts idle sessions too, and is never bypassed by --interrupt-sessions.
+pub(crate) fn unbound_live_session_gate(database: &str) -> String {
+    let database = database.replace('\'', "''");
+    format!(
+        "{}IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID(N'{database}')) THROW 57239, 'unbound RAS summary cannot exempt actual SQL target sessions, including idle; live operation refused', 1;\n",
+        session_visibility_gate(57270)
+    )
+}
+
+pub(crate) fn refuse_unbound_live_sessions(sql: &SqlExec, database: &str) -> Result<()> {
+    let SqlBackend::Client(client) = sql.backend() else {
+        return Ok(());
+    };
+    if !client
+        .query_rows(&foreign_sessions_query(database, &[]), &[])?
+        .is_empty()
+    {
+        bail!(
+            "live operation refused before publication: unbound RAS summary cannot exempt actual SQL target sessions, including idle; close target SQL sessions and retry"
+        );
+    }
+    Ok(())
 }
 
 /// The statement of an exclusive activation that refuses when the database has
@@ -655,7 +727,8 @@ pub fn own_ras_processes_for_exclusive(
 pub fn exclusive_session_gate(code: u32, message: &str, own: &[OwnRasProcess]) -> String {
     let exempt = session_exemption(own);
     format!(
-        "IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID(){exempt}) THROW {code}, '{}', 1;",
+        "{}IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID(){exempt}) THROW {code}, '{}', 1;",
+        session_visibility_gate(57270),
         message.replace('\'', "''")
     )
 }
@@ -695,7 +768,8 @@ pub(crate) fn session_exemption(own: &[OwnRasProcess]) -> String {
 /// status`. Same condition as [`exclusive_session_gate`].
 pub fn foreign_sessions_query(database: &str, own: &[OwnRasProcess]) -> String {
     format!(
-        "SELECT session_id, ISNULL(login_name,N''), ISNULL(host_name,N''), ISNULL(program_name,N''), status FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID(N'{}'){} ORDER BY session_id",
+        "{}SELECT session_id, ISNULL(login_name,N''), ISNULL(host_name,N''), ISNULL(program_name,N''), status FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID(N'{}'){} ORDER BY session_id",
+        session_visibility_gate(57270),
         database.replace('\'', "''"),
         session_exemption(own)
     )
@@ -1065,7 +1139,11 @@ fn verify_probe(
         platform_version_req: probe.platform_version_req,
         verified_cluster_id: binding.cluster_id,
         verified_infobase_id: binding.infobase_id,
-        identity_source: "rac_agent_exact_build_plus_registered_infobase_plus_live_sql_schema",
+        identity_source: binding.evidence.source(),
+        physical_database_binding_verified: matches!(
+            binding.evidence,
+            RasIdentityEvidence::PhysicalDatabaseRegistration
+        ),
     })
 }
 
@@ -1122,7 +1200,7 @@ pub fn verify_mssql_storage_profile(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -1239,6 +1317,30 @@ mod tests {
     }
 
     #[test]
+    fn session_visibility_precedes_every_zero_session_admission_read() {
+        for sql in [
+            unbound_live_session_gate("lab"),
+            exclusive_session_gate(57209, "no other sessions", &[]),
+            foreign_sessions_query("lab", &[]),
+        ] {
+            let permission = sql.find("VIEW SERVER PERFORMANCE STATE").expect(
+                "an empty DMV result must not admit a caller that sees only its own session",
+            );
+            assert!(permission < sql.find("FROM sys.dm_exec_sessions").unwrap());
+            assert!(sql.contains("VIEW SERVER STATE"));
+            assert!(sql.contains("IS_SRVROLEMEMBER"));
+            assert!(
+                sql.contains("THEN 1 ELSE 0 END"),
+                "NULL permission/version must refuse"
+            );
+            assert!(
+                !sql.contains("DECLARE"),
+                "gate may occur more than once in a batch"
+            );
+        }
+    }
+
+    #[test]
     fn the_pre_stage_query_counts_what_the_gate_counts() {
         let own = [own("DESKTOP-SMI5N4O", 22608)];
         let gate = exclusive_session_gate(57209, "m", &own);
@@ -1250,7 +1352,12 @@ mod tests {
             .map(|(condition, _)| condition.replace("DB_ID()", "DB_ID(N'lab''db')"))
             .unwrap();
         assert!(query.contains(&condition), "{query}\n{condition}");
-        assert!(query.starts_with("SELECT session_id, ISNULL(login_name,N'')"));
+        assert!(
+            query
+                .strip_prefix(&session_visibility_gate(57270))
+                .unwrap()
+                .starts_with("SELECT session_id, ISNULL(login_name,N'')")
+        );
         assert!(query.ends_with(" ORDER BY session_id"));
         // No process named: every session.
         let plain = foreign_sessions_query("db", &[]);
@@ -1266,7 +1373,10 @@ mod tests {
                 "exclusive activation requires no other database sessions",
                 &[]
             ),
-            "IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID()) THROW 57209, 'exclusive activation requires no other database sessions', 1;"
+            format!(
+                "{}IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE is_user_process=1 AND session_id<>@@SPID AND database_id=DB_ID()) THROW 57209, 'exclusive activation requires no other database sessions', 1;",
+                session_visibility_gate(57270)
+            )
         );
         let text = exclusive_session_gate(
             57209,
@@ -1289,10 +1399,249 @@ mod tests {
         assert!(text.ends_with(") THROW 57209, 'no other sessions', 1;"));
     }
 
+    /// A real child process rejects credential forwarding and the authenticated
+    /// `infobase info` route. The independent SQL probe is supplied as rows.
+    #[test]
+    fn direct_profile_uses_summary_without_infobase_credentials() {
+        if run_isolated_profile_test(
+            "mssql_platform_profile::tests::direct_profile_uses_summary_without_infobase_credentials",
+        ) {
+            return;
+        }
+        let scratch = ProfileToolsDir::new();
+        let ib = "b38d6f6a-d849-42be-bdba-b88dc9a11461";
+        let cluster = Uuid::new_v4();
+        let rac = fake_profile_tool(
+            &scratch.0,
+            "rac",
+            &format!("infobase : {ib}\nname : logical-registration-name\n"),
+            true,
+        );
+        let mut probe = "IDENTITY|7|80313\n".to_owned();
+        for column in evidenced_probe().columns {
+            probe.push_str(&column);
+            probe.push('\n');
+        }
+        for (user, password) in [
+            (None, None),
+            (None, Some("unused-password")),
+            (Some("unused-user"), Some("unused-password")),
+        ] {
+            let verified = verify_direct_mssql_native_profile_with_probe(
+                MssqlNativePlatformProfile::Platform8_5_1_1150,
+                MssqlNativeProfileVerificationOptions {
+                    sqlcmd: None,
+                    rac: &rac,
+                    ras_endpoint: "localhost:3545",
+                    server: "independently-selected-sql",
+                    database: "physical-sql-name",
+                    cluster_id: Some(cluster),
+                    infobase_id: Some(ib.parse().unwrap()),
+                    infobase_user: user,
+                    infobase_pwd: password,
+                    sql_user: None,
+                    sql_pwd: None,
+                    sql_pwd_env: "UNUSED_AUTH_TEST_PASSWORD",
+                    sqlcmd_trust_cert: false,
+                },
+                |options| {
+                    assert_eq!(options.server, "independently-selected-sql");
+                    assert_eq!(options.database, "physical-sql-name");
+                    Ok(probe.clone())
+                },
+            )
+            .expect("direct SQL verification needs cluster summary, never an infobase account");
+            assert!(!verified.physical_database_binding_verified);
+            assert_eq!(verified.verified_cluster_id, cluster);
+            assert_eq!(verified.verified_infobase_id.to_string(), ib);
+            assert_eq!(
+                verified.identity_source,
+                "rac_agent_exact_build_plus_cluster_summary_plus_independent_live_sql_schema"
+            );
+        }
+    }
+
+    #[test]
+    fn unbound_registration_never_exempts_a_shared_worker_sql_session() {
+        let name = "mssql_platform_profile::tests::unbound_registration_never_exempts_a_shared_worker_sql_session";
+        if run_isolated_profile_test(name) {
+            return;
+        }
+        let scratch = ProfileToolsDir::new();
+        let rac = inventory_rac(&scratch.0);
+        let exemptions = own_ras_processes_for_exclusive(
+            &rac,
+            "unused-endpoint",
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        )
+        .unwrap();
+        assert!(
+            exemptions.is_empty(),
+            "logical RAS registration must not exempt a PID shared with the selected SQL target: {exemptions:?}"
+        );
+        let gate = exclusive_session_gate(57209, "exclusive", &exemptions);
+        assert!(!gate.contains("shared-host"));
+        assert!(!gate.contains("host_process_id"));
+        let mut verified = verify_probe(
+            MssqlNativePlatformProfile::Platform8_3_27_2214,
+            "8.3.27.2214",
+            evidenced_probe(),
+            test_binding(),
+        )
+        .unwrap();
+        assert_eq!(
+            own_ras_processes_for_verified_exclusive(&rac, "unused", &verified).unwrap(),
+            vec![own("shared-host", 12345)]
+        );
+        verified.physical_database_binding_verified = false;
+        assert!(
+            own_ras_processes_for_verified_exclusive(&rac, "unused", &verified)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    fn inventory_rac(dir: &Path) -> std::path::PathBuf {
+        let path = fake_profile_tool(dir, "inventory-rac", "", false);
+        #[cfg(windows)]
+        let script = r#"@echo off
+if "%~1 %~2"=="connection list" (echo application : RAS&echo process : shared-worker&exit /b 0)
+if "%~1 %~2"=="session list" exit /b 0
+if "%~1 %~2"=="process list" (echo process : shared-worker&echo host : shared-host&echo pid : 12345&exit /b 0)
+exit /b 23
+"#.replace('\n', "\r\n");
+        #[cfg(unix)]
+        let script = r#"#!/bin/sh
+case "$1 $2" in
+'connection list') printf 'application : RAS\nprocess : shared-worker\n';;
+'session list') :;;
+'process list') printf 'process : shared-worker\nhost : shared-host\npid : 12345\n';;
+*) exit 23;;
+esac
+"#;
+        std::fs::write(&path, script).unwrap();
+        path
+    }
+
+    #[test]
+    #[should_panic(expected = "isolated profile regression must execute exactly one passing test")]
+    fn final_admission_isolated_helper_rejects_nonexistent_exact_filter() {
+        run_isolated_profile_test("mssql_platform_profile::tests::this_test_does_not_exist_582");
+    }
+
+    // rac_process deliberately owns one original child at a time. Run each
+    // process regression in its own harness process so parallel tests cannot
+    // create false failures or poison other readiness tests.
+    pub(crate) fn run_isolated_profile_test(name: &str) -> bool {
+        const MARKER: &str = "IBCMD_ISOLATED_PROFILE_TEST";
+        if std::env::var(MARKER).ok().as_deref() == Some(name) {
+            return false;
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env(MARKER, name)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated profile regression failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout
+                .lines()
+                .any(|line| line.starts_with("test result: ok. 1 passed; 0 failed; 0 ignored;")),
+            "isolated profile regression must execute exactly one passing test: {stdout}"
+        );
+        true
+    }
+
+    #[test]
+    fn summary_requires_one_named_exact_uuid_and_rejects_ambiguous_output() {
+        let id = Uuid::new_v4();
+        let good = format!("infobase : {id}\nname : LogicalName\ndescr : \"\"\n");
+        require_infobase_summary(&good, id).unwrap();
+        for bad in [
+            String::new(),
+            good.replace(&id.to_string(), &Uuid::new_v4().to_string()),
+            good.replace("name : LogicalName\n", ""),
+            format!("{good}\n{good}"),
+            format!("{good}unexpected"),
+            good.replace("LogicalName", ""),
+        ] {
+            assert!(require_infobase_summary(&bad, id).is_err(), "{bad}");
+        }
+    }
+
+    pub(crate) struct ProfileToolsDir(pub(crate) std::path::PathBuf);
+    impl ProfileToolsDir {
+        pub(crate) fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("ibcmd-profile-auth-{}", Uuid::new_v4()));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for ProfileToolsDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(any(windows, unix))]
+    pub(crate) fn fake_profile_tool(
+        dir: &Path,
+        name: &str,
+        output: &str,
+        rac: bool,
+    ) -> std::path::PathBuf {
+        #[cfg(windows)]
+        {
+            let path = dir.join(format!("{name}.cmd"));
+            let mut script = "@echo off\r\n".to_owned();
+            if rac {
+                script
+                    .push_str("if \"%~1 %~2\"==\"agent version\" (echo 8.5.1.1150&exit /b 0)\r\n");
+                script.push_str("if not \"%~1 %~2 %~3\"==\"infobase summary info\" exit /b 23\r\n");
+                script.push_str("echo %* | findstr /C:\"--infobase-user\" /C:\"--infobase-pwd\" >nul && exit /b 24\r\n");
+            }
+            for line in output.lines() {
+                script.push_str(&format!("echo {}\r\n", line.replace('|', "^|")));
+            }
+            script.push_str("exit /b 0\r\n");
+            std::fs::write(&path, script).unwrap();
+            path
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = dir.join(name);
+            let mut script = "#!/bin/sh\n".to_owned();
+            if rac {
+                script.push_str(
+                    "if [ \"$1 $2\" = 'agent version' ]; then echo 8.5.1.1150; exit 0; fi\n",
+                );
+                script.push_str("[ \"$1 $2 $3\" = 'infobase summary info' ] || exit 23\n");
+                script.push_str(
+                    "case \"$*\" in *--infobase-user*|*--infobase-pwd*) exit 24;; esac\n",
+                );
+            }
+            script.push_str(&format!(
+                "cat <<'PROFILE_TEST_OUTPUT'\n{output}PROFILE_TEST_OUTPUT\n"
+            ));
+            std::fs::write(&path, script).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            path
+        }
+    }
+
     fn test_binding() -> RasDatabaseBinding {
         RasDatabaseBinding {
             cluster_id: Uuid::nil(),
             infobase_id: Uuid::nil(),
+            evidence: RasIdentityEvidence::PhysicalDatabaseRegistration,
         }
     }
 
@@ -1417,6 +1766,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(verified.verified_platform_profile, "platform-8.3.27.2214");
+        assert!(verified.physical_database_binding_verified);
+        assert_eq!(
+            verified.identity_source,
+            "rac_agent_exact_build_plus_registered_infobase_plus_live_sql_schema"
+        );
         assert_eq!(
             verified.storage_schema_sha256,
             "49ab07a8ddb8c87ae1bdc47b1b5342dc2341dbf99cc777ede57ad8ec539bc0a3"

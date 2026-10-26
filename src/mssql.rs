@@ -356,6 +356,8 @@ pub struct MssqlActivateStagedMainReport {
     pub claimed_platform_profile: String,
     pub verified_platform_profile: String,
     pub storage_schema_sha256: String,
+    pub identity_source: &'static str,
+    pub physical_database_binding_verified: bool,
     pub dry_run: bool,
     pub executed: bool,
     pub activation: MainActivationDryRunReport,
@@ -1129,7 +1131,14 @@ fn activate_staged_main_verified_inner(
         &allowed_targets,
         args.allow_non_lab,
     )
-    .map_err(anyhow::Error::new)?;
+    .map_err(anyhow::Error::new)?
+    .with_profile_verification(&profile_verification);
+    if mode == MainActivationMode::Live
+        && !plan.is_no_op()
+        && !profile_verification.physical_database_binding_verified
+    {
+        crate::mssql_platform_profile::refuse_unbound_live_sessions(&sql, &args.database)?;
+    }
     if let Some(session) = managed.as_deref_mut() {
         if !args.dry_run && !plan.is_no_op() {
             session.require_activation_target(args)?;
@@ -1147,11 +1156,10 @@ fn activate_staged_main_verified_inner(
     // write, on the cluster's word.
     let plan = if mode == MainActivationMode::Exclusive && !plan.is_no_op() {
         plan.with_own_ras_processes(
-            crate::mssql_platform_profile::own_ras_processes_for_exclusive(
+            crate::mssql_platform_profile::own_ras_processes_for_verified_exclusive(
                 &args.rac,
                 &args.ras_endpoint,
-                profile_verification.verified_cluster_id,
-                profile_verification.verified_infobase_id,
+                &profile_verification,
             )?,
         )
     } else {
@@ -1337,7 +1345,7 @@ fn activate_staged_main_verified_inner(
                 unreachable!()
             };
             live_continuation = Some(
-                match crate::mssql_live_continue::finish(
+                match crate::mssql_live_continue::finish_verified(
                     client,
                     artifact,
                     &live_artifact_path,
@@ -1346,6 +1354,7 @@ fn activate_staged_main_verified_inner(
                     args.infobase_user.as_deref(),
                     args.infobase_pwd.as_deref(),
                     args.interrupt_sessions,
+                    &profile_verification,
                 ) {
                     Ok(report) => report,
                     Err(error) => {
@@ -1367,6 +1376,8 @@ fn activate_staged_main_verified_inner(
         claimed_platform_profile: profile_verification.claimed_platform_profile,
         verified_platform_profile: profile_verification.verified_platform_profile,
         storage_schema_sha256: profile_verification.storage_schema_sha256,
+        identity_source: profile_verification.identity_source,
+        physical_database_binding_verified: profile_verification.physical_database_binding_verified,
         dry_run: args.dry_run,
         executed: !args.dry_run,
         activation: rendered.report,
@@ -1517,6 +1528,8 @@ fn activate_by_config_apply(
         claimed_platform_profile: profile_verification.claimed_platform_profile,
         verified_platform_profile: profile_verification.verified_platform_profile,
         storage_schema_sha256: profile_verification.storage_schema_sha256,
+        identity_source: profile_verification.identity_source,
+        physical_database_binding_verified: profile_verification.physical_database_binding_verified,
         dry_run: args.dry_run,
         executed: applied.executed,
         activation: report,

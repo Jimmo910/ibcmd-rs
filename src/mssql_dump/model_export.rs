@@ -1012,6 +1012,38 @@ mod tests {
         assert_eq!(jumped[3], None);
     }
 
+    /// `mssql_dump`'s readers (form bodies, references, metadata rows)
+    /// register their texts through the module's import of
+    /// `ibcmd_1c_text::register_brace_jumps`, and the crate's splitters read
+    /// that registration: there is one jump table per thread, the crate's.
+    /// What the table answers is by design what the walk answers, so the
+    /// table is observed through `registered_header_marker`, which reads the
+    /// same table and answers `None` for a text it does not hold.
+    #[test]
+    fn texts_registered_through_mssql_dump_are_in_the_crate_jump_table() {
+        let uuid = "11111111-1111-1111-1111-111111111111";
+        let mut text = String::from("{1,");
+        // Padding past the registration threshold.
+        text.push_str(&"{\"#\",0},".repeat(700));
+        let marker = format!("{{1,0,{uuid}}},");
+        let marker_end = text.len() + marker.len();
+        text.push_str(&marker);
+        text.push_str("\"Имя\",{0},\"\"}");
+        assert!(text.len() >= BRACE_JUMPS_MIN_TEXT);
+        assert_eq!(ibcmd_1c_text::registered_header_marker(&text, uuid), None);
+        let registered = register_brace_jumps([text.as_str()]);
+        assert_eq!(
+            ibcmd_1c_text::registered_header_marker(&text, uuid),
+            Some(Some(marker_end))
+        );
+        assert_eq!(
+            parse_metadata_header_from_text(&text, uuid).map(|header| header.name),
+            Some("Имя".to_string())
+        );
+        drop(registered);
+        assert_eq!(ibcmd_1c_text::registered_header_marker(&text, uuid), None);
+    }
+
     #[test]
     fn kinds_go_to_their_folders() {
         for (kind, folder) in [
@@ -1084,6 +1116,13 @@ mod compatibility_tests {
 
     #[test]
     fn compatibility_probe_reads_a_completed_stage_over_empty_config() {
+        // Other unit tests temporarily install process-wide offline rows.
+        // The shared helper also proves the selected child actually ran.
+        if crate::mssql_platform_profile::tests::run_isolated_profile_test(
+            "mssql_dump::model_export::compatibility_tests::compatibility_probe_reads_a_completed_stage_over_empty_config",
+        ) {
+            return;
+        }
         let root =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase/tiny-source");
         let path = root.join("Configuration.xml");

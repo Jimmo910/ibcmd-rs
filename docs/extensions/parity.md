@@ -672,13 +672,48 @@ bash F:/ibcmd/lab/05/ext/tools/main_regress.sh bsp8327 <run>
 Issue #578 adds standard `infobase config import/apply --extension` on exact
 8.5.1.1150 and 8.3.27.2214, using the existing verified overlay and SQL CAS
 publisher. The extension must already exist and be active. Maintain its Version.
-Supported edits retain the metadata structure and change supported bodies,
-forms, templates or the measured dotted Version property. A complete proposed
-image is re-exported and compared before staging. Schema changes and unknown
-records fail closed; this route does not restructure extension data tables.
+Body, form, template and dotted Version edits retain the existing route.
+Issue #582 additionally supports measured additive extension schema updates:
+new own catalogs and independent nonperiodical information registers, an added
+attribute of an existing own document/catalog, appended enum values, and new
+non-predefined scheduled jobs. Common modules, HTTP services and subsystems can
+accompany the same update. A complete proposal is exported back and compared
+before staging; the schema plan is validated before the first staging write.
 
-Both commands require explicit cluster/infobase IDs. RAS verifies that the SQL
-connection actually belongs to that infobase and exact platform build. For example:
+Structural publication is measured for whole-infobase installation scope,
+8.3.27.2214 with active/staged configinfo 80327 and 8.5.1.1150 with 80501.
+Legacy body overlays retain their prior formats. A legacy format is never
+silently upgraded. Changes to adopted data objects, existing fields/types,
+predefined job instances, unmeasured history/register modes and unknown
+physical SQL features are refused. These are additive migrations, not a
+writer for destructive schema changes.
+
+Main common data-separation attributes do not inherit into own extension
+objects in the measured scope. They do add context columns to the registry
+and service tables: publication derives those columns from SchemaStorage(0)
+and copies the selected registry values, preserving NULL versus empty values.
+Other separator contexts remain unchanged. Own extension common attributes
+use the existing S1 catalog/document model; their contribution to new registers
+requires a separate measurement.
+
+Both commands require explicit cluster/infobase IDs. Direct SQL commands use
+`rac infobase summary info`, which requires no infobase application account.
+The agent's exact build and the selected SQL database's storage fingerprint
+remain independently checked. Summary confirms the registration UUID exists
+in the selected cluster; it does **not** expose or verify its physical SQL
+server/database mapping. The caller selects that SQL target. Reports explicitly
+set `physical_database_binding_verified=false` and identify the summary evidence.
+Legacy `--infobase-user` / `--infobase-pwd` are accepted but ignored on direct
+SQL routes, even when only the password is supplied. The owned managed-worker
+route retains its authenticated exact database-registration check and reports
+`physical_database_binding_verified=true`. Direct exclusive publication grants
+no SQL-session exemptions from RAS worker PIDs: another registration may share
+the same worker. All other sessions on the selected SQL target count. Only a
+physically bound managed observation may exempt its own idle RAS sessions.
+The unbound direct LIVE path likewise requires no other actual target SQL
+sessions before publication/recovery, including idle handles; an interruption
+acknowledgment does not bypass this rule.
+For example:
 
 ```text
 ibcmd-rs infobase config import --dbms=MSSQLServer --db-server=localhost --db-name=lab --platform=8.5.1.1150 --extension=MyExtension --rac=rac --ras-endpoint=localhost:1545 --cluster-id=<uuid> --infobase-id=<uuid> F:\src\MyExtension
@@ -697,6 +732,12 @@ are preserved. No native `ibcmd` is invoked by the implementation.
 It refreshes an existing legacy `dbStruFinal` marker, but does not create one
 when absent; 8.3 retains its measured marker creation rule. Recovery retains
 this distinction. A CAS collision or stale registry rolls back the transaction.
+DDL, record copying, DBNames, SchemaStorage(1), scheduled-job service mappings,
+CAS and registry publication share one guarded transaction. Existing record IDs,
+values and references are checked during copying; SQL rowversion values are
+regenerated as they are by native restructuring. Failed scripts explicitly
+roll back. A committed structural update cannot use the registry-only recovery
+artifact, because that would detach stored data from its metadata.
 
 Synthetic native/own SQL twins change Version, own-object BSL, a form color and
 a text template while retaining an adopted object. Native re-export compares
@@ -706,3 +747,30 @@ fresh session visibility. See the immutable measurement summary in
 [the OpenSpec evidence](../../openspec/changes/enable-extension-apply-851150/evidence/native-publication.md).
 These measurements do not imply byte equality of compressed CAS records or of
 platform-maintained licensing, mobile and user-cache records.
+
+
+### Additive restructuring evidence
+
+Generated Coverage twins on both exact builds add two catalogs, four registers,
+a document decimal attribute, an enum value and a scheduled job, with code-only
+companions. Fresh sessions read prior records/references and write/read all new
+objects. Both ordinary and separated-base updates reproduce native source
+files outside derived ConfigDumpInfo.xml. Injected failures, rollback rehearsals,
+stale predicates and repeated apply are checked independently.
+See [the immutable #582 measurement](../../openspec/changes/add-extension-restructuring/evidence/native-restructure-20261025.md)
+and the pinned `extensions/restructuring` corpus. Predefined scheduled jobs
+remain an explicit refusal because their persistent activation-condition
+instance writer is not implemented.
+
+Exclusive session admission verifies server-wide SQL DMV visibility:
+`sysadmin` or the version-appropriate `VIEW SERVER STATE` (SQL2012–2019) /
+`VIEW SERVER PERFORMANCE STATE` (SQL2022+) permission. A missing/NULL
+permission or unknown/older SQL version refuses before using an empty session
+result. This requires no infobase application account.
+
+The structural writer requires SQL Server 2017+ and database compatibility
+level >=110. A separate legacy-compatible capability read precedes the modern
+catalog/ordered-aggregate queries, and unknown facts refuse without writes.
+Previously supported metadata/code-only updates retain their existing engine
+requirements. The utility does not change server or database compatibility.
+Source: [Microsoft STRING_AGG engine/compatibility requirements](https://learn.microsoft.com/en-us/sql/t-sql/functions/string-agg-transact-sql?view=sql-server-2017).

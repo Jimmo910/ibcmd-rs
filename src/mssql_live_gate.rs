@@ -86,6 +86,9 @@ pub fn render_live_gate(settings: &LiveGateSettings<'_>) -> Result<String, MainA
     let directory_literal = quote_string(&directory);
     let mut sql = String::new();
     writeln!(sql, "USE [master];").unwrap();
+    sql.push_str(&crate::mssql_platform_profile::session_visibility_gate(
+        57270,
+    ));
     writeln!(
         sql,
         "IF DB_ID(N'{database}') IS NULL THROW 57230, 'live activation database does not exist', 1;"
@@ -129,7 +132,8 @@ pub fn render_sessions_check_in_transaction(database: &str, interrupt_sessions: 
     }
     let condition = active_work_condition(&quote_string(database));
     format!(
-        "IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions s WHERE {condition}) THROW {ERR_SESSIONS_APPEARED}, 'live activation refused: sessions of the database started work while the promotion was prepared; the promotion is rolled back and nothing was changed. Retry when they are idle, or accept the interruption with --interrupt-sessions', 1;\n"
+        "{}IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions s WHERE {condition}) THROW {ERR_SESSIONS_APPEARED}, 'live activation refused: sessions of the database started work while the promotion was prepared; the promotion is rolled back and nothing was changed. Retry when they are idle, or accept the interruption with --interrupt-sessions', 1;\n",
+        crate::mssql_platform_profile::session_visibility_gate(57270)
     )
 }
 
@@ -169,22 +173,24 @@ pub struct LiveGateReport {
 fn facts_query(database: &str) -> String {
     let database = quote_string(database);
     format!(
-        "SELECT CASE d.recovery_model WHEN 1 THEN N'FULL' WHEN 2 THEN N'BULK_LOGGED' WHEN 3 THEN N'SIMPLE' ELSE N'?' END, \
+        "{}SELECT CASE d.recovery_model WHEN 1 THEN N'FULL' WHEN 2 THEN N'BULK_LOGGED' WHEN 3 THEN N'SIMPLE' ELSE N'?' END, \
          CASE WHEN r.last_log_backup_lsn IS NULL THEN 0 ELSE 1 END, \
          (SELECT COUNT(*) FROM sys.dm_exec_sessions s WHERE s.is_user_process=1 AND s.session_id<>@@SPID AND s.database_id=d.database_id), \
          (SELECT COUNT(*) FROM sys.dm_exec_sessions s WHERE s.is_user_process=1 AND s.session_id<>@@SPID AND s.database_id=d.database_id AND s.program_name=N'1CV83 Server'), \
          (SELECT COUNT(*) FROM sys.dm_exec_sessions s WHERE s.is_user_process=1 AND s.session_id<>@@SPID AND s.database_id=d.database_id AND s.open_transaction_count>0), \
          (SELECT COUNT(*) FROM sys.dm_exec_sessions s WHERE s.is_user_process=1 AND s.session_id<>@@SPID AND s.database_id=d.database_id AND EXISTS (SELECT 1 FROM sys.dm_exec_requests q WHERE q.session_id=s.session_id)) \
-         FROM sys.databases d LEFT JOIN sys.database_recovery_status r ON r.database_id=d.database_id WHERE d.name=N'{database}'"
+         FROM sys.databases d LEFT JOIN sys.database_recovery_status r ON r.database_id=d.database_id WHERE d.name=N'{database}'",
+        crate::mssql_platform_profile::session_visibility_gate(57270)
     )
 }
 
 fn active_sessions_query(database: &str) -> String {
     let condition = active_work_condition(&quote_string(database));
     format!(
-        "SELECT TOP (10) s.session_id, ISNULL(s.login_name,N''), ISNULL(s.host_name,N''), ISNULL(s.program_name,N''), s.status, s.open_transaction_count, \
+        "{}SELECT TOP (10) s.session_id, ISNULL(s.login_name,N''), ISNULL(s.host_name,N''), ISNULL(s.program_name,N''), s.status, s.open_transaction_count, \
          ISNULL((SELECT TOP 1 q.status+N' '+q.command FROM sys.dm_exec_requests q WHERE q.session_id=s.session_id),N'') \
-         FROM sys.dm_exec_sessions s WHERE {condition} ORDER BY s.open_transaction_count DESC, s.session_id"
+         FROM sys.dm_exec_sessions s WHERE {condition} ORDER BY s.open_transaction_count DESC, s.session_id",
+        crate::mssql_platform_profile::session_visibility_gate(57270)
     )
 }
 

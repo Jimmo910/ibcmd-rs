@@ -866,9 +866,16 @@ mod tests {
     }
 }
 
-impl super::MssqlDumpTimingReport {
+/// `MssqlDumpTimingReport` is the `ibcmd-form-body` crate's type, so the
+/// writer's part of it is a crate-private trait the callers reach exactly as
+/// before.
+pub(crate) trait MssqlDumpTimingReportOutputExt {
     /// What an export's writer did, into its table's timings.
-    pub(crate) fn add_output_write(&mut self, stats: &OutputWriteStats) {
+    fn add_output_write(&mut self, stats: &OutputWriteStats);
+}
+
+impl MssqlDumpTimingReportOutputExt for super::MssqlDumpTimingReport {
+    fn add_output_write(&mut self, stats: &OutputWriteStats) {
         self.output_write_threads = self.output_write_threads.max(stats.threads);
         self.output_write_files += stats.files;
         self.output_write_bytes += stats.bytes;

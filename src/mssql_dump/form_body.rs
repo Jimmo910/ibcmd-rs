@@ -130,6 +130,33 @@ const FORM_XML_LINE_ENDING: &str = "\r\n";
 
 const MAX_FORM_SERVER_STATE_XML_BYTES: usize = 64 * 1_048_576;
 
+/// The readers of the Form Attributes conditional-appearance tail, which the
+/// reader is handed instead of naming them: they read the tail's physical
+/// layout (`module_blob`), not the form body record. `FormParseContext::new`
+/// fills in the root's (`form_body_host::ROOT_FORM_BODY_HOST`).
+#[derive(Clone, Copy)]
+pub(super) struct FormBodyHost {
+    /// The storage document the packed tail carries, or `Ok(None)` when the
+    /// body has no tail.
+    pub(super) conditional_appearance_tail_storage_document:
+        fn(&str) -> anyhow::Result<Option<Vec<u8>>>,
+    /// The same tail's conditional appearance, typed.
+    pub(super) parse_conditional_appearance_tail:
+        fn(&str) -> anyhow::Result<DcsChildParseOutcome<DcsConditionalAppearance>>,
+}
+
+/// What a form reads of the extension export running while it is read. A
+/// `FormParseContext` holds it from the moment it is built
+/// (`form_body_host::active_form_extension_export`), `None` in an ordinary
+/// export: an export holds its extension context from before its first form
+/// to after its last, so the state is the same for every reader of one form.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct FormExtensionExport {
+    /// The compatibility mode of the configuration the extension extends
+    /// (`Version8_3_27`), `None` when its references cannot be read.
+    pub(super) extended_compatibility_mode: Option<String>,
+}
+
 /// Immutable dependencies supplied by the source-asset caller for one form.
 /// Form-local indexes deliberately remain inside the parser.
 pub(super) struct FormParseContext<'a> {
@@ -190,6 +217,11 @@ pub(super) struct FormParseContext<'a> {
     /// (`FormCompatibility`); the platform's own edition by default.
     form_compatibility: FormCompatibility,
     trace_sink: Option<&'a dyn FormItemTraceSink>,
+    /// The readers of the Form Attributes tail (`FormBodyHost`).
+    host: FormBodyHost,
+    /// The extension export running when the context was built; `None` in an
+    /// ordinary export.
+    extension_export: Option<FormExtensionExport>,
 }
 
 pub(crate) trait FormItemTraceSink {
@@ -250,6 +282,8 @@ impl<'a> FormParseContext<'a> {
             dcs_schema_namespace: true,
             form_compatibility: FormCompatibility::default(),
             trace_sink: None,
+            host: super::form_body_host::ROOT_FORM_BODY_HOST,
+            extension_export: super::form_body_host::active_form_extension_export(),
         }
     }
 
@@ -321,6 +355,17 @@ impl<'a> FormParseContext<'a> {
     #[allow(dead_code)]
     pub(super) fn with_trace_sink(mut self, trace_sink: &'a dyn FormItemTraceSink) -> Self {
         self.trace_sink = Some(trace_sink);
+        self
+    }
+
+    /// Reads the form as under `extension_export` instead of the export
+    /// running now.
+    #[cfg(test)]
+    pub(super) fn with_extension_export(
+        mut self,
+        extension_export: Option<FormExtensionExport>,
+    ) -> Self {
+        self.extension_export = extension_export;
         self
     }
 }
@@ -492,6 +537,7 @@ fn extract_form_body_xml_from_body_detailed_single(
         context.metadata_field_declarations,
         context.object_ref_index,
         context.foreign_types,
+        context.extension_export.is_some(),
     );
     let attribute_save_field_bindings = extract_form_body_attribute_save_field_bindings(
         &body.trailing,
@@ -502,7 +548,7 @@ fn extract_form_body_xml_from_body_detailed_single(
         timings.source_asset_form_attributes_cpu_ms += elapsed_ms(started);
     }
     let attributes_section =
-        extract_form_body_attributes_section(&body.trailing, context.object_refs);
+        extract_form_body_attributes_section(&body.trailing, context.object_refs, context.host);
 
     // Read once from the attribute collection and shared by every consumer of
     // the fact: the root event reader, the root command set and the button's
@@ -564,7 +610,11 @@ fn extract_form_body_xml_from_body_detailed_single(
     }
 
     let started = Instant::now();
-    let parameters = extract_form_body_parameters(&body.trailing, context.type_index);
+    let parameters = extract_form_body_parameters(
+        &body.trailing,
+        context.type_index,
+        context.extension_export.is_some(),
+    );
     if let Some(timings) = timings.as_deref_mut() {
         timings.source_asset_form_parameters_cpu_ms += elapsed_ms(started);
     }
@@ -576,6 +626,7 @@ fn extract_form_body_xml_from_body_detailed_single(
         context.object_refs,
         context.trace_sink,
     );
+    child_item_indexes.owner_scoped_bindings.extension_export = context.extension_export.is_some();
     properties.mobile_device_command_bar_content = extract_form_mobile_device_command_bar_content(
         &form_fields,
         &child_item_indexes.item_name_by_id,
@@ -641,6 +692,7 @@ fn extract_form_body_xml_from_body_detailed_single(
             .owner_scoped_bindings
             .unresolvable_table_columns
             .clone(),
+        extension_export: context.extension_export.is_some(),
         ..Default::default()
     };
     let mut auto_command_bar = extract_form_auto_command_bar(
@@ -891,7 +943,7 @@ fn extract_form_body_xml_from_body_detailed_single(
 
     if !writes_usual_group_behavior(
         context.form_compatibility.usual_group_behavior,
-        super::extension::active().as_deref(),
+        context.extension_export.as_ref(),
     ) {
         without_usual_group_behavior(&mut child_items);
     }
@@ -1068,12 +1120,12 @@ pub(super) fn with_unidentified_form_items_numbered(layout: &str) -> Option<Stri
 /// applies: written.
 pub(super) fn writes_usual_group_behavior(
     own_mode_writes: bool,
-    extension: Option<&super::extension::ExtensionContext>,
+    extension: Option<&FormExtensionExport>,
 ) -> bool {
     match extension {
-        Some(extension) => {
-            super::refs::forms_write_usual_group_behavior(extension.extended_compatibility_mode())
-        }
+        Some(extension) => super::refs::forms_write_usual_group_behavior(
+            extension.extended_compatibility_mode.as_deref(),
+        ),
         None => own_mode_writes,
     }
 }
@@ -4610,6 +4662,7 @@ fn form_body_attribute_records(trailing: &[String]) -> Option<RawFormAttributeRe
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn extract_form_body_attributes_with_dcs_type_index(
     trailing: &[String],
     type_index: &BTreeMap<String, String>,
@@ -4618,6 +4671,7 @@ fn extract_form_body_attributes_with_dcs_type_index(
     declarations: Option<&MetadataFieldDeclarationIndex>,
     object_ref_index: Option<&FormObjectRefIndex<'_>>,
     foreign_types: Option<&BTreeSet<String>>,
+    extension_export: bool,
 ) -> Vec<FormAttribute> {
     let Some(raw) = form_body_attribute_records(trailing) else {
         return Vec::new();
@@ -4633,6 +4687,7 @@ fn extract_form_body_attributes_with_dcs_type_index(
                 declarations,
                 object_ref_index,
                 foreign_types,
+                extension_export,
             )
         })
         .collect()
@@ -4646,32 +4701,29 @@ pub(super) const FORM_ATTRIBUTES_CONDITIONAL_APPEARANCE_INDENT: &str = "\t\t";
 pub(super) fn extract_form_body_attributes_section(
     trailing: &[String],
     object_refs: &BTreeMap<String, String>,
+    host: FormBodyHost,
 ) -> FormAttributesSection {
     let Some(text) = trailing.first() else {
         return FormAttributesSection::default();
     };
-    let storage =
-        match crate::module_blob::form_attributes_conditional_appearance_tail_storage_document(text)
-        {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) => {
-                return FormAttributesSection {
-                    conditional_appearance: None,
-                };
-            }
-            // The physical layout itself did not read, so there is no storage
-            // document to re-spell and the refusal stands on the raw tail.
-            Err(_) => {
-                return FormAttributesSection {
-                    conditional_appearance: Some(
-                        FormAttributesConditionalAppearance::OpaqueStorage {
-                            bytes: text.as_bytes().to_vec(),
-                            reason: "malformed Form Attributes conditional-appearance physical tail",
-                        },
-                    ),
-                };
-            }
-        };
+    let storage = match (host.conditional_appearance_tail_storage_document)(text) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => {
+            return FormAttributesSection {
+                conditional_appearance: None,
+            };
+        }
+        // The physical layout itself did not read, so there is no storage
+        // document to re-spell and the refusal stands on the raw tail.
+        Err(_) => {
+            return FormAttributesSection {
+                conditional_appearance: Some(FormAttributesConditionalAppearance::OpaqueStorage {
+                    bytes: text.as_bytes().to_vec(),
+                    reason: "malformed Form Attributes conditional-appearance physical tail",
+                }),
+            };
+        }
+    };
     // A cohort refusal says only that no enumerated shape describes the
     // document, never that the document cannot be spelled, so the lexical
     // writer is asked next and the typed refusal stands only if it too
@@ -4688,17 +4740,16 @@ pub(super) fn extract_form_body_attributes_section(
                 reason,
             },
         };
-    let conditional_appearance =
-        match crate::module_blob::parse_form_attributes_conditional_appearance_tail(text) {
-            Ok(DcsChildParseOutcome::Typed(value)) => {
-                Some(FormAttributesConditionalAppearance::Typed(value))
-            }
-            Ok(DcsChildParseOutcome::Unsupported(reason)) => Some(refused(reason)),
-            Ok(DcsChildParseOutcome::Absent) => None,
-            Err(_) => Some(refused(
-                "Form Attributes conditional-appearance storage document is unreadable",
-            )),
-        };
+    let conditional_appearance = match (host.parse_conditional_appearance_tail)(text) {
+        Ok(DcsChildParseOutcome::Typed(value)) => {
+            Some(FormAttributesConditionalAppearance::Typed(value))
+        }
+        Ok(DcsChildParseOutcome::Unsupported(reason)) => Some(refused(reason)),
+        Ok(DcsChildParseOutcome::Absent) => None,
+        Err(_) => Some(refused(
+            "Form Attributes conditional-appearance storage document is unreadable",
+        )),
+    };
     FormAttributesSection {
         conditional_appearance,
     }
@@ -4784,6 +4835,7 @@ pub(super) fn parse_form_attribute(
         None,
         None,
         None,
+        false,
     )
 }
 
@@ -4802,6 +4854,7 @@ pub(super) fn parse_form_attribute_with_declarations(
         Some(declarations),
         None,
         None,
+        false,
     )
 }
 
@@ -4845,6 +4898,7 @@ fn form_attribute_raw_view(field: &str) -> Option<RawFormAttributeView<'_>> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn parse_form_attribute_with_dcs_type_index(
     field: &str,
     type_index: &BTreeMap<String, String>,
@@ -4853,6 +4907,7 @@ fn parse_form_attribute_with_dcs_type_index(
     declarations: Option<&MetadataFieldDeclarationIndex>,
     object_ref_index: Option<&FormObjectRefIndex<'_>>,
     foreign_types: Option<&BTreeSet<String>>,
+    extension_export: bool,
 ) -> Option<FormAttribute> {
     let RawFormAttributeView {
         fields,
@@ -4872,14 +4927,15 @@ fn parse_form_attribute_with_dcs_type_index(
     // `<v8:Type>ent:AccountingRecordType</v8:Type>` for each, while the plain
     // index -- which carries only the configuration's own generated types --
     // could not name the identifier and refused the whole tuple.
-    let parsed_value_types =
-        pattern.and_then(|field| parse_form_attribute_column_type_pattern(field, type_index));
+    let parsed_value_types = pattern.and_then(|field| {
+        parse_form_attribute_column_type_pattern(field, type_index, extension_export)
+    });
     let exact_single_type_uuid = pattern.and_then(|field| parse_form_exact_single_type_uuid(field));
     let explicit_empty_type = parsed_value_types
         .as_ref()
         .is_some_and(|value_types| value_types.is_empty());
     let value_types = parsed_value_types.unwrap_or_default();
-    let columns = parse_form_attribute_columns(&fields, type_index, object_refs);
+    let columns = parse_form_attribute_columns(&fields, type_index, object_refs, extension_export);
     // Slots 6 and 7 are the attribute's `<View>` and `<Edit>` permissions, in
     // the same tuple the command-interface visibility uses.  Both were read by
     // nobody, so the platform's blocks were simply never written.
@@ -4987,9 +5043,9 @@ fn parse_form_attribute_with_dcs_type_index(
         }
     }
     use_always.sort();
-    let type_description_settings = fields
-        .get(14)
-        .and_then(|field| parse_form_type_description_settings(field, type_index));
+    let type_description_settings = fields.get(14).and_then(|field| {
+        parse_form_type_description_settings(field, type_index, extension_export)
+    });
     // The same resolvable-field universe `<UseAlways>` is measured against,
     // recorded per field-map id so a data path onto one of those fields can
     // carry the platform's own `~` marker.
@@ -5067,6 +5123,7 @@ fn parse_form_exact_single_type_uuid(field: &str) -> Option<String> {
 pub(super) fn parse_form_type_description_settings(
     field: &str,
     type_index: &BTreeMap<String, String>,
+    extension_export: bool,
 ) -> Option<Vec<ConstantValueType>> {
     let fields = split_1c_braced_fields(field.trim(), 0)?;
     fields.windows(2).find_map(|window| {
@@ -5076,9 +5133,13 @@ pub(super) fn parse_form_type_description_settings(
                 split_1c_braced_fields(window[1].trim(), 0)
                     .and_then(|value_fields| {
                         if value_fields.first().map(|field| field.trim()) == Some(r##""#""##) {
-                            parse_form_type_pattern(value_fields.get(2)?.trim(), type_index)
+                            parse_form_type_pattern(
+                                value_fields.get(2)?.trim(),
+                                type_index,
+                                extension_export,
+                            )
                         } else {
-                            parse_form_type_pattern(window[1].trim(), type_index)
+                            parse_form_type_pattern(window[1].trim(), type_index, extension_export)
                         }
                     })
                     .unwrap_or_default()
@@ -5524,6 +5585,7 @@ pub(super) fn parse_form_attribute_columns(
     fields: &[&str],
     type_index: &BTreeMap<String, String>,
     object_refs: &BTreeMap<String, String>,
+    extension_export: bool,
 ) -> Vec<FormAttributeColumn> {
     let Some(count) = fields
         .get(13)
@@ -5535,7 +5597,9 @@ pub(super) fn parse_form_attribute_columns(
         .iter()
         .skip(14)
         .take(count)
-        .filter_map(|field| parse_form_attribute_column(field, type_index, object_refs))
+        .filter_map(|field| {
+            parse_form_attribute_column(field, type_index, object_refs, extension_export)
+        })
         .collect()
 }
 
@@ -5793,7 +5857,14 @@ pub(super) fn parse_form_attribute_additional_columns_group(
         .iter()
         .skip(3)
         .take(schema.column_count())
-        .map(|field| parse_form_attribute_column(field, type_index, object_refs))
+        .map(|field| {
+            parse_form_attribute_column(
+                field,
+                type_index,
+                object_refs,
+                child_item_indexes.owner_scoped_bindings.extension_export,
+            )
+        })
         .collect::<Option<Vec<_>>>()?;
     let mut tabular_section_uuid = None;
     let (table, nested_binding_start, nested_value_type) = match schema.binding_kind() {
@@ -6057,6 +6128,7 @@ pub(super) fn parse_form_attribute_column(
     field: &str,
     type_index: &BTreeMap<String, String>,
     object_refs: &BTreeMap<String, String>,
+    extension_export: bool,
 ) -> Option<FormAttributeColumn> {
     let fields = split_1c_braced_fields(field.trim(), 0)?;
     FormAttributeColumnSchema::from_raw_layout(&fields)?;
@@ -6068,9 +6140,9 @@ pub(super) fn parse_form_attribute_column(
     if name.is_empty() {
         return None;
     }
-    let parsed_value_types = fields
-        .get(5)
-        .and_then(|field| parse_form_attribute_column_type_pattern(field, type_index));
+    let parsed_value_types = fields.get(5).and_then(|field| {
+        parse_form_attribute_column_type_pattern(field, type_index, extension_export)
+    });
     Some(FormAttributeColumn {
         id: id.to_string(),
         name,
@@ -6120,9 +6192,10 @@ pub(super) fn parse_form_attribute_column(
 pub(super) fn parse_form_attribute_column_type_pattern(
     field: &str,
     type_index: &BTreeMap<String, String>,
+    extension_export: bool,
 ) -> Option<Vec<ConstantValueType>> {
     let trimmed = field.trim();
-    if let Some(value_types) = parse_form_type_pattern(trimmed, type_index) {
+    if let Some(value_types) = parse_form_type_pattern(trimmed, type_index, extension_export) {
         return Some(value_types);
     }
     // A column pattern may name a platform type that neither the
@@ -6140,7 +6213,7 @@ pub(super) fn parse_form_attribute_column_type_pattern(
     // never shadow an entry, and it is built only when the pattern actually
     // names one, so the common path is untouched.
     let overlay = form_attribute_column_type_index_overlay(trimmed, type_index)?;
-    parse_form_type_pattern(trimmed, &overlay)
+    parse_form_type_pattern(trimmed, &overlay, extension_export)
 }
 
 /// `type_index` plus the column-scoped platform references the pattern names and
@@ -11198,6 +11271,7 @@ const FORM_MAIN_TABLE_CATEGORY_SUFFIXES: &[(&str, &str, &str)] = &[
 pub(super) fn extract_form_body_parameters(
     trailing: &[String],
     type_index: &BTreeMap<String, String>,
+    extension_export: bool,
 ) -> Vec<FormParameter> {
     let Some(fields) = trailing
         .get(1)
@@ -11208,13 +11282,14 @@ pub(super) fn extract_form_body_parameters(
     fields
         .iter()
         .skip(2)
-        .filter_map(|field| parse_form_parameter(field, type_index))
+        .filter_map(|field| parse_form_parameter(field, type_index, extension_export))
         .collect()
 }
 
 pub(super) fn parse_form_parameter(
     field: &str,
     type_index: &BTreeMap<String, String>,
+    extension_export: bool,
 ) -> Option<FormParameter> {
     let fields = split_1c_braced_fields(field.trim(), 0)?;
     let name = parse_1c_quoted_string_with_len(fields.get(1)?.trim())?.0;
@@ -11223,7 +11298,7 @@ pub(super) fn parse_form_parameter(
     }
     let value_types = fields
         .get(2)
-        .and_then(|field| parse_form_type_pattern(field, type_index))?;
+        .and_then(|field| parse_form_type_pattern(field, type_index, extension_export))?;
     let explicit_empty_type = value_types.is_empty();
     let key_parameter = match fields.get(3).map(|field| field.trim()) {
         Some("1") => true,
@@ -11491,11 +11566,18 @@ fn form_reference_list_declared_members<'a>(fields: &'a [&'a str]) -> Option<&'a
         .then_some(members)
 }
 
+/// A form's stored type pattern. `extension_export` is whether an extension
+/// export runs: only then does an element keep a type id the configuration
+/// index and the platform tables both miss, which names a type of the extended
+/// configuration (`ibcmd_1c_vocab::parse_form_metadata_type_pattern`).
 pub(super) fn parse_form_type_pattern(
     field: &str,
     object_refs: &BTreeMap<String, String>,
+    extension_export: bool,
 ) -> Option<Vec<ConstantValueType>> {
-    parse_form_metadata_type_pattern(field, object_refs).map(normalize_form_type_pattern)
+    let keeps_unresolved_type_id: fn() -> bool = if extension_export { || true } else { || false };
+    ibcmd_1c_vocab::parse_form_metadata_type_pattern(field, object_refs, keeps_unresolved_type_id)
+        .map(normalize_form_type_pattern)
 }
 
 pub(super) fn normalize_form_type_pattern(
@@ -12204,6 +12286,12 @@ pub(super) struct FormOwnerScopedBindingIndexes {
     /// from the item side too.
     unresolvable_table_columns: BTreeSet<(String, String)>,
     invalid_nested_table_columns: BTreeSet<(String, String)>,
+    /// Whether an extension export runs (`FormParseContext::extension_export`).
+    /// Form-wide, and carried here for the same reason `form_main_attribute`
+    /// is: the readers that ask -- a planner's drag flag, an input field's
+    /// available types and an additional column's type pattern -- are reached
+    /// through this bundle.
+    extension_export: bool,
 }
 
 /// The attribute-namespace root a chain rooted at a form item continues from.
@@ -14962,7 +15050,9 @@ fn parse_form_child_item_with_metadata_owners(
             }),
         enable_drag: table_schema
             .and_then(|schema| schema.enable_drag(&fields))
-            .or_else(|| parse_planner_field_enable_drag(tag, fields)),
+            .or_else(|| {
+                parse_planner_field_enable_drag(tag, fields, owner_scoped_bindings.extension_export)
+            }),
         file_drag_mode: if tag == "Table" {
             if let Some(schema) = table_schema {
                 schema.file_drag_mode(&fields)
@@ -17133,7 +17223,12 @@ fn parse_form_child_item_with_metadata_owners(
                         type_index_collisions,
                         object_refs,
                     ),
-                    canonical_form_input_field_available_types(*schema, options, type_index),
+                    canonical_form_input_field_available_types(
+                        *schema,
+                        options,
+                        type_index,
+                        owner_scoped_bindings.extension_export,
+                    ),
                 ))
             },
         ),
@@ -18739,8 +18834,12 @@ const FORM_GRAPHICAL_SCHEME_COMMANDS: &[(&str, &str)] = &[
 /// ServiceDesk extension (`сд_Канбан2`), written `<EnableStartDrag>true` and
 /// `<EnableDrag>true` with both slots `1`; the planners of the ordinary
 /// corpora write neither. Read in an extension export only.
-fn parse_planner_field_enable_drag(tag: &str, fields: &[&str]) -> Option<bool> {
-    if tag != "PlannerField" || super::extension::active().is_none() {
+fn parse_planner_field_enable_drag(
+    tag: &str,
+    fields: &[&str],
+    extension_export: bool,
+) -> Option<bool> {
+    if tag != "PlannerField" || !extension_export {
         return None;
     }
     let (_, options) = form_document_field_geometry_options(tag, fields)?;
@@ -19823,12 +19922,13 @@ pub(super) fn canonical_form_input_field_available_types(
     schema: FormFieldSchema,
     options: &[&str],
     type_index: &BTreeMap<String, String>,
+    extension_export: bool,
 ) -> CanonicalFormChoiceParameterAvailableTypes {
     let slot = InputFieldSlot::AvailableTypes.index();
     let Some(raw) = schema.input_field_option(options, InputFieldSlot::AvailableTypes) else {
         return FormChoiceParameterAvailableTypes::Absent;
     };
-    match parse_form_type_pattern(raw.trim(), type_index) {
+    match parse_form_type_pattern(raw.trim(), type_index, extension_export) {
         Some(value_types) if value_types.is_empty() => FormChoiceParameterAvailableTypes::Absent,
         Some(value_types) => FormChoiceParameterAvailableTypes::Typed(value_types),
         // Unobserved on the whole native tree: the slot parses on all 49 951

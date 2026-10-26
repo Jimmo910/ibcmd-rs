@@ -1,0 +1,19 @@
+[package]
+name = "ibcmd-1c-vocab"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Vocabularies of the 1C native records: platform types and type patterns, standard attributes, style codes and command shortcuts"
+
+[dependencies]
+# `inflate_raw_deflate` and its error, as in the root.
+anyhow = "1.0"
+flate2 = "1.1"
+ibcmd-1c-text = { path = "../ibcmd-1c-text" }
+ibcmd-form-schema = { path = "../ibcmd-form-schema" }
+ibcmd-schema = { path = "../ibcmd-schema" }
+ibcmd-xml = { path = "../ibcmd-xml" }
+
+[lints.rust]
+unsafe_code = "forbid"
