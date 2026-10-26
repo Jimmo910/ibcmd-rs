@@ -498,7 +498,7 @@ struct ReadParams {
 
 enum ImportPlan {
     FileDb(Box<crate::file_import::Plan>),
-    SqlCommonModule(Box<sql_import::CommonModulePlan>),
+    SqlModule(Box<sql_import::CommonModulePlan>),
 }
 
 struct State {
@@ -852,7 +852,7 @@ impl State {
                 let client = sql.client().ok_or_else(|| {
                     RpcError::invalid_params("SQL guarded import requires the built-in client")
                 })?;
-                let plan = sql_import::CommonModulePlan::prepare(
+                let plan = sql_import::CommonModulePlan::prepare_supported(
                     client,
                     database,
                     &params.source_dir,
@@ -868,7 +868,7 @@ impl State {
                     }
                 })?;
                 let preflight = json!(plan.summary());
-                (ImportPlan::SqlCommonModule(Box::new(plan)), preflight)
+                (ImportPlan::SqlModule(Box::new(plan)), preflight)
             }
             ConfigSource::RowsDir(_) => {
                 return Err(RpcError::invalid_params(
@@ -921,7 +921,7 @@ impl State {
                         json!({"report": {"backend":"file-db-partial-configsave", "stagedRows":report.rows_after, "backup":report.backup}}),
                     )
                 }
-                (ImportPlan::SqlCommonModule(plan), ConfigSource::Database { sql, database }) => {
+                (ImportPlan::SqlModule(plan), ConfigSource::Database { sql, database }) => {
                     // A token selects its retained bytes; confirmation may not
                     // replace its selection or disable verification.
                     if !params.files.is_empty()
@@ -937,13 +937,14 @@ impl State {
                         RpcError::invalid_params("SQL guarded import requires the built-in client")
                     })?;
                     let rows = plan.staged_rows();
+                    let backend = plan.backend();
                     let report = plan.publish(
                         client,
                         database,
                         &params.source_dir,
                         Arc::new(|| crate::cancel::check().map_err(Into::into)),
                     );
-                    sql_import_reply(report, rows)
+                    sql_import_reply(report, rows, backend)
                 }
                 _ => Err(RpcError::invalid_params(
                     "connection changed since preflight",
@@ -1015,6 +1016,7 @@ impl State {
 fn sql_import_reply(
     report: sql_import::transaction::Report,
     rows: usize,
+    backend: &'static str,
 ) -> Result<Value, RpcError> {
     use sql_import::transaction::State;
     if !matches!(report.state, State::Committed | State::Unchanged)
@@ -1023,10 +1025,8 @@ fn sql_import_reply(
     {
         return Err(failure(report.into()));
     }
-    Ok(
-        json!({"report": {"backend":"mssql-common-module-configsave",
-        "stagedRows":rows, "state":format!("{:?}",report.state), "nativeApplied":false}}),
-    )
+    Ok(json!({"report": {"backend":backend,
+        "stagedRows":rows, "state":format!("{:?}",report.state), "nativeApplied":false}}))
 }
 
 fn offline(method: &str, session: &Session) -> RpcError {
@@ -1081,6 +1081,7 @@ mod import_error_tests {
                     cleanup_uncertain: false,
                 },
                 2,
+                "mssql-common-module-configsave",
             )
             .unwrap();
             assert_eq!(value["report"]["state"], format!("{state:?}"));
@@ -1103,10 +1104,33 @@ mod import_error_tests {
                     cleanup_uncertain: uncertain,
                 },
                 2,
+                "mssql-common-module-configsave",
             )
             .unwrap_err();
             assert_eq!(error.code, code);
             assert!(error.data.is_none());
+        }
+    }
+
+    #[test]
+    fn sql_reply_keeps_the_prepared_module_backend() {
+        for backend in [
+            "mssql-common-module-configsave",
+            "mssql-document-form-module-configsave",
+        ] {
+            let value = sql_import_reply(
+                sql_import::transaction::Report {
+                    state: sql_import::transaction::State::Committed,
+                    error: None,
+                    cleanup_uncertain: false,
+                },
+                2,
+                backend,
+            )
+            .unwrap();
+            assert_eq!(value["report"]["backend"], backend);
+            assert_eq!(value["report"]["state"], "Committed");
+            assert_eq!(value["report"]["nativeApplied"], false);
         }
     }
 

@@ -93,3 +93,12 @@
 - [x] F.18 Original Form layout/raw module-token witnesses and grammar-only held
   preparation integrated with focused source/local checks. Exact disposable Form
   experiment constants are bound; Windows stage/native-cycle execution pending.
+
+
+- [x] F.19 Exact5be2 public Document FormModule native-seven-field staging then
+  native2342 apply/full-export passed. Module187B exact, five unselected XML and
+  full rows preserved, CDI selected-only, Save0/FULL RELEASE. Common083a full
+  RPC/native cycle also passed; receipts and scope limits are recorded separately.
+- [ ] F.20 Final guarded Document FormModule editor RPC product/userflow and
+  corresponding current-head CI. Constructor/wiring source review,105server unit
+  tests and14editor_server integration tests passed; actual runtime still pending.

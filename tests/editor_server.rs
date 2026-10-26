@@ -1491,6 +1491,23 @@ fn sql_import_without_guarded_plan_refuses_before_source_or_sql() {
         "SQL editor import requires mandatory verification",
         "canonical file with verify disabled",
     ));
+    // Both supported module roles reach source custody; an absent owned source
+    // refuses there before any SQL socket. Unsupported roles above stay -32602.
+    let mut source_refusals = Vec::new();
+    for file in [
+        "CommonModules/Synthetic/Ext/Module.bsl",
+        "Documents/Synthetic/Forms/Main/Ext/Form/Module.bsl",
+    ] {
+        source_refusals.push(server.call(
+            "objects/import/prepare",
+            json!({
+                "infobase": infobase,
+                "sourceDir": source,
+                "files": [file],
+                "verify": true,
+            }),
+        ));
+    }
     server.ok("shutdown", Value::Null);
     assert_eq!(server.finish(true), 0);
     assert_eq!(
@@ -1529,5 +1546,10 @@ fn sql_import_without_guarded_plan_refuses_before_source_or_sql() {
             json!({"code": -32602, "message": message}),
             "{label}"
         );
+    }
+    assert_eq!(source_refusals.len(), 2);
+    for response in source_refusals {
+        assert!(response.get("result").is_none());
+        assert_eq!(response["error"]["code"], -32014);
     }
 }

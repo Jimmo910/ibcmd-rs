@@ -665,3 +665,70 @@ borrow mismatch are retained as setup failures, not claimed as the regression
 RED. The ignored live experiment now uses the structural envelope rather than
 claiming a1989 codec coordinate. Native Form staging/apply and editor routing
 remain unaccepted until a new exact-source Windows build and actual gates pass.
+
+
+## Native Form module staging and activation acceptance (5be2)
+
+The exact VM-local `5be2ee5ee9bc83b55be115a193b17aef5740f2e5` release and
+libtest builds both exited naturally zero; all4913 source files and Cargo.lock
+matched before/after. Build result
+`992026e5e8b9755d9fcb5337ffe947e0ebe88cd97ab12e0167bdc0722290150e`
+and FULL RELEASE
+`0f02ecb6c20728a5d43daad160d5609a53ee8ff6f2fa983ba4dd3b02e53e8614`
+bind the libtest131877888B/SHA256
+`2ab48f921187706209a9337f15f9fe7726ffa8bf882bcab1e312eb44bcc36cc6`.
+This is VM-local source provenance, not CI or embedded-Git attestation.
+
+The corrected sole ignored public Form test passed1/0, naturalexit0/stderr0,
+in4.948s. It acknowledged clean `Committed`, retained full CONFIG8/6073 exact,
+and staged only selected body plus versions: CONFIGSAVE2/1436 with full seal
+`2f128fb460641fa8f6ab6feac9e1c7568896a2485aa6fdef7bae246ca558ad1e`.
+Result `9a53090ca3db916b696f6a99ea4482f9d4d48cc19f6a0c0734c7bd49fbf67f57`
+and FULL RELEASE
+`800758d712a4aa111f0ca45e5d1f43b10acc27e7e29dd19182d3178874922ba1`
+record unchanged source/runtime pins, inherited headers, no reconciliation and
+zero workers. The earlier prestage refusal remains a separate preserved failure;
+no uncertain write was retried.
+
+One subsequent native8.3.27.2342 apply and one full export exited naturally zero
+with zero stderr, in3.054s and1.618s. Active selected payloads and versions were
+exactly staged; CONFIGSAVE became empty and CONFIG8/6074 had full seal
+`759214381ad28490f10ce72f53f572a593822ae1bef805f34dad8f9a77357640`.
+All unselected CONFIG rows were exact. The exported module was187B/SHA256
+`a2d21b5183f1b1f907fcf4a88c67a0127a3d9d7585bd0f0c5efabc2a82ab5f01`.
+All five other XML files, including Form.xml and both Document descriptors, were
+byte-exact. CDI retained ordered five-entry names/IDs and changed only the
+selected Form-body version to the actual staged version. Full SQL state was
+unchanged across export. Result
+`8087d9434fa65d9f9ae3c5219935d8b40d1ff957b80a5c36fa30c1a179ea1ded`
+and FULL RELEASE
+`c688e8c6168cd29bdd570355c783a0b3e89e3f471e09b27a9ff2939c0cd9e658`
+confirm closure and unchanged pins. No publication/activation was repeated.
+This establishes the native module-only operation on this exact Document-owned
+public cohort; it does not certify Form.xml rewriting, other owners, arbitrary
+multipart output, nonempty Form staging on this target or an exact native build
+inferred from SQL schema.
+
+## Guarded Document FormModule RPC candidate after native acceptance
+
+The server now dispatches either explicit canonical CommonModule or
+Document-owned FormModule selection through one retained-plan/publisher pipeline.
+Only request syntax chooses the role, before I/O; source/compiler/SQL failures
+never select a fallback. Immutable prepared backend identity is retained through
+confirmation and the acknowledged reply. The Form backend is
+`mssql-document-form-module-configsave`. Both roles retain original census bytes,
+private storage admission, complete capture/held CAS, single-part output, strict
+Document ownership where applicable, consumed TTL/epoch token, mandatory
+verification, finite transaction outcomes and external native activation.
+Form.xml, other owner families, object/changed selections and multiple files
+remain refused before source/SQL. The CommonModule API/messages and FileDb route
+remain compatible; publisher code is unchanged.
+
+Source review cleared the isolated constructor and final RPC wiring. Local server
+unit gates passed105/0 with four live SQL tests ignored; the full editor_server
+suite passed14/0. Existing ten no-token publication and thirteen unsupported
+preparation wire cases remain intact; two canonical role controls reach the
+missing-owned-source refusal with zero SQL TCP connections. Backend replies and
+late Committed/Unknown handling have focused coverage. These are source/local
+checks: the final Form RPC product build, actual token publication/readback and
+its native successor remain separate acceptance gates.
