@@ -54,7 +54,8 @@ fn assert_loads_back_objects(
     tag: &str,
     ext: &str,
 ) -> (serde_json::Value, String) {
-    load_back(tree, base, tag, ext, true)
+    let (report, dump_info, _) = load_back(tree, base, tag, ext, true);
+    (report, dump_info)
 }
 
 fn load_back(
@@ -63,7 +64,7 @@ fn load_back(
     tag: &str,
     ext: &str,
     objects_changed: bool,
-) -> (serde_json::Value, String) {
+) -> (serde_json::Value, String, PathBuf) {
     let out = fresh_output(&format!("{tag}-out"), ext);
     let run = load(tree, &out, base);
     assert!(
@@ -91,7 +92,7 @@ fn load_back(
         fs::remove_file(back.join("ConfigDumpInfo.xml")).unwrap();
     }
     assert_same_but_versions(tree, &back);
-    (serde_json::from_slice(&run.stdout).unwrap(), dump_info)
+    (serde_json::from_slice(&run.stdout).unwrap(), dump_info, out)
 }
 
 /// The trees are equal but for the configVersion values of
@@ -183,8 +184,7 @@ fn an_object_s_unchanged_bodies_stay_byte_for_byte() {
         "<Comment/>",
         "<Comment>x</Comment>",
     );
-    assert_loads_back(&tree, &base, "compiled-kept", "cf");
-    let out = common::temp_dir("compiled-kept-out").with_extension("cf");
+    let (_, _, out) = load_back(&tree, &base, "compiled-kept", "cf", false);
     let (before, after) = (packed_entries(&base), packed_entries(&out));
     let body = "5b6f3a52-0c0e-4d0b-9d49-3f7f2f8e1a21.0";
     assert_eq!(before[body], after[body]);
@@ -240,13 +240,12 @@ fn a_removed_common_form_of_a_configuration_loads() {
         "\r\n\t\t\t<CommonForm>ФормаДаты</CommonForm>",
         "",
     );
-    let (report, dump_info) = assert_loads_back_objects(&tree, &base, "compiled-removed", "cf");
+    let (report, dump_info, out) = load_back(&tree, &base, "compiled-removed", "cf", true);
     assert!(!dump_info.contains("5b6f3a52"), "{dump_info}");
     assert_eq!(
         report["removed_objects"],
         serde_json::json!(["CommonForms/ФормаДаты"])
     );
-    let out = common::temp_dir("compiled-removed-out").with_extension("cf");
     assert!(
         !packed_entries(&out)
             .keys()
@@ -313,8 +312,7 @@ fn an_extension_metadata_edit_loads_with_its_configinfo_digest() {
         "<Comment/>",
         "<Comment>правка</Comment>",
     );
-    assert_loads_back(&tree, &base, "compiled-ext", "cfe");
-    let out = common::temp_dir("compiled-ext-out").with_extension("cfe");
+    let (_, _, out) = load_back(&tree, &base, "compiled-ext", "cfe", false);
     let entries = packed_entries(&out);
     let digests = configinfo_digests(&entries);
     let key = "554f39c6-e029-4ee0-8535-8c15291a6a3f";
@@ -344,8 +342,7 @@ fn an_added_common_module_of_an_extension_is_listed_in_configinfo() {
         "<CommonModule>ТестРасширение_Модуль</CommonModule>",
         "<CommonModule>ТестРасширение_Модуль</CommonModule>\r\n\t\t\t<CommonModule>ТестРасширение_Второй</CommonModule>",
     );
-    assert_loads_back_objects(&tree, &base, "compiled-ext-added", "cfe");
-    let out = common::temp_dir("compiled-ext-added-out").with_extension("cfe");
+    let (_, _, out) = load_back(&tree, &base, "compiled-ext-added", "cfe", true);
     let entries = packed_entries(&out);
     let digests = configinfo_digests(&entries);
     for key in [
@@ -489,7 +486,7 @@ fn closed_module_replacement_is_fresh_on_both_load_routes() {
         assert!(common::export(&out, &back).status.success());
         assert_eq!(
             fs::read(back.join("CommonModules/ТестРасширение_Модуль/Ext/Module.bsl")).unwrap(),
-            text
+            b"\xef\xbb\xbfProcedure Reopened()\r\nEndProcedure\r\n"
         );
     }
 }

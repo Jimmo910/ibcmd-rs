@@ -103,8 +103,8 @@
   native Module3 apply/full-export passed. Constructor/wiring review,105server
   unit tests and14editor_server tests passed; hostedCI7/7 andproduct2/2 passed.
   The final scope is explicit singleton existing module bodies only; other modes
-  remain refused. Full local CI is still blocked by the unapproved empty catalog
-  registration for import_evidence.rs; item3.3 stays open, no merge/release readiness.
+  remain refused. The subsequently approved empty import_evidence.rs catalog
+  registration and local CF-verifier/oracle follow-up are recorded in the final evidence.
 
 
 The checked implementation/runtime items above refer to the two admitted

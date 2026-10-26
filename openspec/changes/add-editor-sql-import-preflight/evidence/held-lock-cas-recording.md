@@ -788,7 +788,7 @@ passed2/2 for87617. Prior5be2 CI40282592569 also passed. Each required dispatch
 was deduplicated; no permissions, token policy, secrets or allowlists changed.
 These hosted results remain distinct from the measured VM-local executable.
 
-## Final scope and unresolved local governance gate
+## Final scope and historical local governance gate
 
 Accepted production operations are one explicit existing CommonModule module or
 one Document-owned native FormModule file, with the closed storage/grammar,
@@ -817,3 +817,62 @@ The real baseline remains SHA256
 `c4bf9eeb5fdeda66191e11a984033d0bb2290fd4f688e9e9cae90095481173cd`.
 Thus hosted CI and runtime acceptance are green, but full local governance/CI is
 not claimed complete and the change must not be marked release/merge ready.
+
+
+## Approved catalog registration and final local quality follow-up
+
+The owner explicitly approved the single empty catalog record for
+`src/mssql_dump/import_evidence.rs` after the earlier pre-execution refusal.
+The approved retry added exactly62bytes and one `occurrences: []` record;
+all48 existing records and their ordering are unchanged, with no added literal
+allowances. The resulting baseline SHA256 is
+`4064964dbbaf7f3e5adca0d6e94339fd16433865fe32547c5745bf782d79af46`.
+The normal physical-adapter guard and its unchanged self-test both passed.
+The earlier refusal and original incomplete-CI outcome above remain historical
+receipts; they are not rewritten as a successful attempt.
+
+The first complete local CI attempt after this registration passed17 steps and
+exposed five `cf_load_compiled` failures. Four tests reconstructed a fresh UUID
+scratch output under `IBCMD_TEST_KEEP_FIXTURES=1` instead of retaining the actual
+published output path. Returning that path preserves the existing full packed
+body and configinfo digest assertions. The native exported BSL oracle now
+explicitly expects BOM+CRLF, while raw packed comparisons still use raw input.
+The next narrow run passed12 tests and exposed the compiled CF verifier's raw
+source-versus-native-file comparison. Only the already reviewed verifier hunks
+from donor `b6a1ec00` were reused: expected `.bsl` source may be projected through
+`native_module_file_bytes`; actual exported bytes remain exact, XML policy is
+unchanged, and altered content/malformed output/non-BSL cases remain refused.
+The final narrow suite passed13 tests with one existing ignored case; the
+expected-only verifier unit and its negative controls passed.
+
+A subsequent full CI attempt reached `offline_conversion_matrix` and exposed
+its equivalent raw-LF versus native-BOM+CRLF expectation. Its sole expected-byte
+literal was replaced with the same independently reviewed donor oracle; file
+inventory, pipeline, revision and content assertions remain intact. No producer,
+fixture or cleanup policy was changed for that test. Independent source reviews
+cleared the test paths, both native-file oracles and verifier-only port.
+The complete root integration command then exited0 with no failing suites.
+Its retained log SHA256 is
+`4e5a82d8f5d20da4117c686179ac591685d78742ed7667cd84fe2723a2725b35`.
+Initial CI and narrow failures remain retained separately.
+
+These quality fixes change only the CF-load verifier and test harness/oracles;
+SQL/RPC prepare, publication and codec/source-custody paths remain byte-identical
+to the accepted87617 product. The existing Common and Form RPC/native receipts
+retain that exact runtime attribution; no repeat database write or activation
+was dispatched for these local quality fixes. Native build-wide writer admission,
+all-format parity, merge and release remain outside this acceptance claim.
+
+
+The final staged local `cargo xtask ci` completed naturally with **19 passed**:
+format, both EDT governance checks, physical-adapter policy and self-test, four
+registered strict OpenSpec checks, workspace clippy, four Python checks, schema
+tests, all-target compile, all workspace crate tests, all root integration suites
+and root configuration contracts. Workspace tests took185seconds and root
+integration150seconds. Retained final log SHA256:
+`3ad87428be9dfbc6d8cd32a743946995b65e9fc489b1ae09449eedfd8e61d83b`.
+The additional strict validation of this change is recorded with the final
+publication checks. The release build, native micro-corpus matrix, SBOM and
+release audit are not claimed as local runs; existing scoped public runtime
+receipts are separate from those release gates. Hosted validation of the final
+published quality-fix head is tracked separately from87617 runtime acceptance.
