@@ -44585,7 +44585,7 @@ fn return_values_reuse_xml(value: ReturnValuesReuseValue) -> &'static str {
     }
 }
 
-fn sanitize_source_path_segment(value: &str) -> String {
+pub(crate) fn sanitize_source_path_segment(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     for ch in value.chars() {
         if ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {

@@ -6,6 +6,7 @@ use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::str;
 
+use ibcmd_1c_text::encode_base64;
 use ibcmd_core::artifact::{ProfileId, StorageProfileId};
 use ibcmd_core::asset::{Asset, AssetBuildError, MediaKind};
 use ibcmd_core::family::FamilyId;
@@ -1315,29 +1316,6 @@ fn decode_base64_token(value: &NativeValue) -> Result<Vec<u8>, AssetCodecError> 
         .strip_prefix("#base64:")
         .ok_or_else(|| AssetCodecError::InvalidModel("base64 field has no marker".into()))?;
     decode_base64(payload)
-}
-
-fn encode_base64(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let a = chunk[0];
-        let b = chunk.get(1).copied().unwrap_or(0);
-        let c = chunk.get(2).copied().unwrap_or(0);
-        output.push(TABLE[(a >> 2) as usize] as char);
-        output.push(TABLE[(((a & 0x03) << 4) | (b >> 4)) as usize] as char);
-        if chunk.len() > 1 {
-            output.push(TABLE[(((b & 0x0f) << 2) | (c >> 6)) as usize] as char);
-        } else {
-            output.push('=');
-        }
-        if chunk.len() > 2 {
-            output.push(TABLE[(c & 0x3f) as usize] as char);
-        } else {
-            output.push('=');
-        }
-    }
-    output
 }
 
 fn decode_base64(value: &str) -> Result<Vec<u8>, AssetCodecError> {
