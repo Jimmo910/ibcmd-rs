@@ -10,7 +10,7 @@
 - [x] 8. Reproduce and fix root XML plus added dialog/common-form import, hold it in the generated corpus and compare native round-trips on both platforms (#582).
 - [x] 9. Remove infobase-account requirements from direct SQL profile verification, preserve actual build/schema/registration checks and add no-account regressions (#582).
 - [x] 10. Repeat relevant gates and independent review for the follow-up, refresh artifacts/report and return PR #584 to review (#582).
-- [ ] 11. Verify post-publication review findings about root ChildObjects and verify membership against actual admitted descriptor changes (#582).
+- [x] 11. Verify post-publication review findings about root ChildObjects and verify membership against actual admitted descriptor changes (#582).
 - [x] 12. Close unmodeled structural-refusal fallbacks and validate SQL server capabilities before version-specific restructuring SQL (#582).
 - [x] 13. Harden isolated-test execution receipts and clarify historical gate identities and review documentation (#582).
 - [ ] 14. Integrate current master, repeat relevant local gates and fresh review, resolve verified review threads and prepare PR584 for authorized merge with required checks preserved (#582).
