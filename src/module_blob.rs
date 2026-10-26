@@ -23,9 +23,7 @@ use ibcmd_xml::{
     emit_dcs_filter_storage_document, emit_dcs_order_storage_document,
     emit_form_attributes_conditional_appearance_storage_document,
     emit_form_attributes_empty_storage_document, parse_dcs_conditional_appearance_storage_document,
-    parse_dcs_filter_storage_document, parse_dcs_order_storage_document,
-    parse_form_attributes_conditional_appearance_storage_document,
-    parse_form_attributes_empty_storage_document, parse_form_dcs_children,
+    parse_dcs_filter_storage_document, parse_dcs_order_storage_document, parse_form_dcs_children,
 };
 use quick_xml::Reader;
 use quick_xml::escape::{resolve_xml_entity, unescape};
@@ -115,6 +113,20 @@ pub struct PatchedVersionsBlob {
 // crate's (the form reader there reads them); this module unpacks them and
 // keeps their public paths.
 pub use ibcmd_form_body::ParsedFormBodyBlob;
+// The form body record (with the root-`42` upgrade it reads first), the
+// physical layout of its Form Attributes tail and the braced-record text
+// primitives both read moved to that crate too; the packers here patch
+// the ranges they locate.
+pub(crate) use ibcmd_form_body::parse_form_body_plain;
+pub(crate) use ibcmd_form_body::record_text::scan_braced_fields;
+use ibcmd_form_body::record_text::{
+    decode_base64_payload_field, parse_1c_quoted_string, scan_1c_quoted_string_end,
+    scan_balanced_braces, trim_ascii_ws_range,
+};
+use ibcmd_form_body::{
+    FormBodyContainer, parse_form_attributes_conditional_appearance_tail,
+    scan_form_attributes_tail_layout,
+};
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 struct FormXmlBodyProperties {
@@ -1074,7 +1086,6 @@ struct FlowchartXmlItem {
     events: BTreeMap<String, Option<String>>,
 }
 
-mod form_root_42;
 mod help_pages;
 mod interface_assets;
 
@@ -3080,16 +3091,6 @@ pub fn raw_deflated_help_content_sha256(blob: &[u8]) -> Result<String> {
     }
 
     Ok(format!("{:X}", hasher.finalize()))
-}
-
-fn decode_base64_payload_field(field: &str) -> Result<Vec<u8>> {
-    let Some(payload) = field
-        .strip_prefix("{#base64:")
-        .and_then(|value| value.strip_suffix('}'))
-    else {
-        return Err(anyhow!("base64 payload wrapper is missing"));
-    };
-    decode_base64_mime(payload).ok_or_else(|| anyhow!("base64 payload is invalid"))
 }
 
 fn hash_usize(hasher: &mut Sha256, value: usize) {
@@ -24232,255 +24233,6 @@ fn retain_form_body_attributes(text: &mut String, attributes: &[FormXmlAttribute
     Ok(())
 }
 
-/// The physical layout of everything a packed form body writes after its
-/// declared attribute entries.
-///
-/// Read off the packed body of all 4 997 forms the UT 11.5.27.75
-/// configuration carries, with no counterexample:
-///
-/// ```text
-/// tail    = 4, attrCount, attribute x attrCount, EXTRAS
-/// EXTRAS  = subCount, subTable x subCount,
-///           bindingCount, bindingField x (4 * bindingCount),
-///           storage document
-/// binding = "sourcePath", "resolvedPath", resolvedChain, ownerChain
-/// chain   = n, segment x n         segment = index | index, uuid
-/// ```
-///
-/// The two leading fields the previous reading took for a pair of activity
-/// markers are these two counts: `0,0` is a body with no sub-tables and no
-/// bindings, `0,1` one with a single binding. Reading them as an enumerated
-/// marker pair accounted for 4 538 of the 4 997 bodies and silently mis-read
-/// the rest, because a body with sub-tables, or with more than one binding,
-/// has no marker to match.
-struct FormAttributesTailLayout {
-    /// How many `sourcePath -> resolvedPath` bindings the tail declares.
-    binding_count: usize,
-    /// The trailing field carrying the Base64 storage document.
-    payload: Range<usize>,
-    /// Everything from the binding count through the storage document. The
-    /// sub-tables sit before it and belong to properties this code does not
-    /// own, so a rewrite replaces exactly this span and nothing earlier.
-    binding_block: Range<usize>,
-}
-
-/// Walks the packed tail of a form body and reports where the storage
-/// document sits, or `Ok(None)` when the body carries no such tail at all.
-///
-/// Every field is accounted for: a tail whose counts do not consume it
-/// exactly is refused rather than read past, so a layout this walk does not
-/// describe can never be mistaken for one it does.
-fn scan_form_attributes_tail_layout(text: &str) -> Result<Option<FormAttributesTailLayout>> {
-    let fields = scan_braced_fields(text, 0)?;
-    let policy = bundled_dcs_form_attributes_conditional_appearance_policy()
-        .map_err(|error| anyhow!(error.to_string()))?;
-    let container_marker = fields.first().map(|range| text[range.clone()].trim());
-    if container_marker != Some(policy.storage_container_marker()) {
-        return Ok(None);
-    }
-    let count = fields
-        .get(1)
-        .and_then(|range| text[range.clone()].trim().parse::<usize>().ok())
-        .ok_or_else(|| anyhow!("Form Attributes container has no valid declared count"))?;
-    let extras_start = 2usize
-        .checked_add(count)
-        .ok_or_else(|| anyhow!("Form Attributes declared count overflows"))?;
-    if fields.len() < extras_start {
-        return Err(anyhow!(
-            "Form Attributes container has fewer entries than its declared count"
-        ));
-    }
-    let extras = &fields[extras_start..];
-    if extras.is_empty() {
-        return Ok(None);
-    }
-    let sub_count = text[extras[0].clone()]
-        .trim()
-        .parse::<usize>()
-        .map_err(|_| anyhow!("Form Attributes tail has no valid sub-table count"))?;
-    let mut index = 1usize
-        .checked_add(sub_count)
-        .ok_or_else(|| anyhow!("Form Attributes tail sub-table count overflows"))?;
-    let binding_block_start = extras
-        .get(index)
-        .ok_or_else(|| anyhow!("Form Attributes tail sub-tables overrun the container"))?
-        .start;
-    let binding_count = text[extras[index].clone()]
-        .trim()
-        .parse::<usize>()
-        .map_err(|_| anyhow!("Form Attributes tail has no valid binding count"))?;
-    index += 1;
-    for _ in 0..binding_count {
-        let binding = extras
-            .get(index..index + FORM_ATTRIBUTES_TAIL_BINDING_FIELDS)
-            .ok_or_else(|| anyhow!("Form Attributes tail bindings overrun the container"))?;
-        validate_form_attributes_tail_binding(text, binding)?;
-        index += FORM_ATTRIBUTES_TAIL_BINDING_FIELDS;
-    }
-    if index + 1 != extras.len() {
-        return Err(anyhow!(
-            "Form Attributes tail carries fields its declared counts do not account for"
-        ));
-    }
-    let payload = extras[index].clone();
-    if !text[payload.clone()].trim().starts_with("{#base64:") {
-        // The trailing field is not a storage document at all. All 4 997 UT
-        // bodies do carry one -- a conditional appearance has nowhere else to
-        // live -- so this is a body that has none rather than one whose
-        // document failed to read, and only a tail that binds a path can
-        // contradict that.
-        if binding_count != 0 {
-            return Err(anyhow!(
-                "Form Attributes tail declares bindings but carries no storage document"
-            ));
-        }
-        return Ok(None);
-    }
-    Ok(Some(FormAttributesTailLayout {
-        binding_count,
-        binding_block: binding_block_start..payload.end,
-        payload,
-    }))
-}
-
-/// `"sourcePath"`, `"resolvedPath"`, `resolvedChain`, `ownerChain`.
-const FORM_ATTRIBUTES_TAIL_BINDING_FIELDS: usize = 4;
-
-/// Authenticates one binding against the two relations that hold across all
-/// 349 bindings the UT configuration carries.
-///
-/// Field 2 is the path as the settings document spells it and field 3 is the
-/// same path in its storage spelling (`ПометкаУдаления` -> `DeletionMark`),
-/// empty when it does not resolve. The chain in field 4 carries one segment
-/// per dot-separated step of that resolved path, and the owner chain in
-/// field 5 is either empty or a prefix of it. Both relations are checked
-/// here, so a tail split on the wrong field boundaries cannot pass.
-fn validate_form_attributes_tail_binding(text: &str, fields: &[Range<usize>]) -> Result<()> {
-    let [source_path, resolved_path, resolved_chain, owner_chain] = fields else {
-        return Err(anyhow!("Form Attributes tail binding is not four fields"));
-    };
-    parse_1c_quoted_string(&text[source_path.clone()])?;
-    let resolved = parse_1c_quoted_string(&text[resolved_path.clone()])?;
-    let resolved_chain = parse_form_attributes_tail_chain(text, resolved_chain)?;
-    let owner_chain = parse_form_attributes_tail_chain(text, owner_chain)?;
-    let steps = if resolved.is_empty() {
-        0
-    } else {
-        resolved.split('.').count()
-    };
-    if resolved_chain.len() != steps {
-        return Err(anyhow!(
-            "Form Attributes tail binding chain does not match its resolved path"
-        ));
-    }
-    if owner_chain.len() > resolved_chain.len()
-        || owner_chain != resolved_chain[..owner_chain.len()]
-    {
-        return Err(anyhow!(
-            "Form Attributes tail binding owner chain is not a prefix of its resolved chain"
-        ));
-    }
-    Ok(())
-}
-
-/// Reads one `{n, segment x n}` chain, returning its segments verbatim so the
-/// owner/resolved prefix relation can be compared without interpreting them.
-fn parse_form_attributes_tail_chain(text: &str, range: &Range<usize>) -> Result<Vec<String>> {
-    if scan_balanced_braces(text, range.start)? != range.end {
-        return Err(anyhow!(
-            "Form Attributes tail chain does not span its own field"
-        ));
-    }
-    let fields = scan_braced_fields(text, range.start)?;
-    let count = fields
-        .first()
-        .and_then(|field| text[field.clone()].trim().parse::<usize>().ok())
-        .ok_or_else(|| anyhow!("Form Attributes tail chain has no valid segment count"))?;
-    if fields.len() != count + 1 {
-        return Err(anyhow!(
-            "Form Attributes tail chain declares a segment count it does not carry"
-        ));
-    }
-    let mut segments = Vec::with_capacity(count);
-    for field in fields.iter().skip(1) {
-        let segment = scan_braced_fields(text, field.start)?;
-        let index = text[segment
-            .first()
-            .ok_or_else(|| anyhow!("Form Attributes tail chain segment is empty"))?
-            .clone()]
-        .trim();
-        if index.parse::<i64>().is_err() {
-            return Err(anyhow!(
-                "Form Attributes tail chain segment has no numeric index"
-            ));
-        }
-        match segment.len() {
-            1 => segments.push(index.to_string()),
-            2 => {
-                let uuid = text[segment[1].clone()].trim();
-                if uuid.is_empty()
-                    || !uuid
-                        .bytes()
-                        .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
-                {
-                    return Err(anyhow!(
-                        "Form Attributes tail chain segment reference is not a UUID"
-                    ));
-                }
-                segments.push(format!("{index}|{uuid}"));
-            }
-            _ => {
-                return Err(anyhow!(
-                    "Form Attributes tail chain segment is outside the evidenced shape"
-                ));
-            }
-        }
-    }
-    Ok(segments)
-}
-
-/// The storage document the packed tail carries, or `Ok(None)` when the body
-/// has no tail. Callers that cannot type the document re-spell it instead.
-pub(crate) fn form_attributes_conditional_appearance_tail_storage_document(
-    text: &str,
-) -> Result<Option<Vec<u8>>> {
-    let Some(layout) = scan_form_attributes_tail_layout(text)? else {
-        return Ok(None);
-    };
-    Ok(Some(decode_base64_payload_field(
-        text[layout.payload].trim(),
-    )?))
-}
-
-pub(crate) fn parse_form_attributes_conditional_appearance_tail(
-    text: &str,
-) -> Result<DcsChildParseOutcome<DcsConditionalAppearance>> {
-    let Some(layout) = scan_form_attributes_tail_layout(text)? else {
-        return Ok(DcsChildParseOutcome::Absent);
-    };
-    let bytes = decode_base64_payload_field(text[layout.payload].trim())?;
-    if layout.binding_count == 0 {
-        // A tail that binds no path carries the empty settings document, and
-        // that pairing holds for all 4 871 such UT bodies. Requiring it here
-        // keeps a document with content from being dropped as if absent.
-        parse_form_attributes_empty_storage_document(&bytes)
-            .map_err(|error| anyhow!(error.to_string()))?;
-        return Ok(DcsChildParseOutcome::Absent);
-    }
-    match parse_form_attributes_conditional_appearance_storage_document(&bytes)
-        .map_err(|error| anyhow!(error.to_string()))?
-    {
-        // The converse pairing: all 126 UT bodies that bind a path carry a
-        // conditional appearance. A document that reads as absent against a
-        // tail that declares bindings is not understood, so it is handed on
-        // as unsupported rather than silently dropping the property.
-        DcsChildParseOutcome::Absent => Ok(DcsChildParseOutcome::Unsupported(
-            "Form Attributes tail declares bindings but its storage document reads as absent",
-        )),
-        outcome => Ok(outcome),
-    }
-}
-
 fn format_form_attributes_type_index_descriptor(indexes: &[u32]) -> String {
     let mut output = format!("{{{}", indexes.len());
     for index in indexes {
@@ -25838,106 +25590,7 @@ pub fn parse_form_body_blob(blob: &[u8]) -> Result<ParsedFormBodyBlob> {
     parse_form_body_plain(&plain)
 }
 
-pub(crate) fn parse_form_body_plain(plain: &str) -> Result<ParsedFormBodyBlob> {
-    // An older platform's root-`42` form is read as 8.3.27 re-saves it.
-    let upgraded = form_root_42::upgrade_root_42_body(plain);
-    let plain = upgraded.as_deref().unwrap_or(plain);
-    let container = FormBodyContainer::parse(&plain)?;
-    let layout = plain[container.layout_range.clone()].trim().to_string();
-    let module_text = parse_1c_quoted_string(plain[container.module_range.clone()].trim())
-        .context("Form body module text field is not a quoted string")?;
-    Ok(ParsedFormBodyBlob {
-        revision: container.revision,
-        layout,
-        module_text,
-        trailing: container
-            .trailing_ranges
-            .into_iter()
-            .map(|range| plain[range].trim().to_string())
-            .collect(),
-        trailing_fields: container.trailing_fields,
-    })
-}
-
 pub use ibcmd_form_body::FormBodyRevision;
-
-/// Reading the revision a record declares stays here: as a method of the
-/// crate's type it would be public, and it is a step of this module's
-/// container check alone.
-trait FormBodyRevisionExt: Sized {
-    fn parse(declared: Option<&str>) -> Result<Self>;
-}
-
-impl FormBodyRevisionExt for FormBodyRevision {
-    /// Reads the revision the record itself declares. Fail-closed: an
-    /// undeclared or unnamed revision is refused, never assumed.
-    fn parse(declared: Option<&str>) -> Result<Self> {
-        match declared {
-            Some("3") => Ok(Self::V3),
-            Some("4") => Ok(Self::V4),
-            Some(other) => Err(anyhow!(
-                "Form body declares unsupported container revision {other}"
-            )),
-            None => Err(anyhow!("Form body declares no container revision")),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct FormBodyContainer {
-    revision: FormBodyRevision,
-    layout_range: Range<usize>,
-    module_range: Range<usize>,
-    trailing_ranges: Vec<Range<usize>>,
-    trailing_fields: usize,
-}
-
-impl FormBodyContainer {
-    fn parse(plain: &str) -> Result<Self> {
-        let body_start = plain
-            .find('{')
-            .ok_or_else(|| anyhow!("Form body has no braced payload"))?;
-        let fields = scan_braced_fields(plain, body_start)?;
-        let revision =
-            FormBodyRevision::parse(fields.first().map(|range| plain[range.clone()].trim()))?;
-        let layout_range = fields
-            .get(1)
-            .ok_or_else(|| anyhow!("Form body has no layout field"))?
-            .clone();
-        validate_form_body_layout(plain[layout_range.clone()].trim())?;
-        let module_range = fields
-            .get(2)
-            .ok_or_else(|| anyhow!("Form body has no module text field"))?
-            .clone();
-        if parse_1c_quoted_string(plain[module_range.clone()].trim()).is_err() {
-            return Err(anyhow!(
-                "Form body module text field is not a quoted string"
-            ));
-        }
-        Ok(Self {
-            revision,
-            layout_range,
-            module_range,
-            trailing_ranges: fields.iter().skip(3).cloned().collect(),
-            trailing_fields: fields.len().saturating_sub(3),
-        })
-    }
-}
-
-fn validate_form_body_layout(layout: &str) -> Result<()> {
-    let fields = scan_braced_fields(layout, 0)?;
-    if !fields.first().is_some_and(|range| {
-        layout[range.clone()]
-            .trim()
-            .chars()
-            .all(|ch| ch.is_ascii_digit())
-    }) {
-        return Err(anyhow!(
-            "Form body layout field does not start with a numeric marker"
-        ));
-    }
-    Ok(())
-}
 
 pub fn pack_role_rights_blob_from_xml(
     base_blob: &[u8],
@@ -31993,225 +31646,6 @@ fn replace_1c_quoted_string(text: &mut String, start: usize, value: &str) -> Res
     Ok(start + replacement.len())
 }
 
-fn scan_1c_quoted_string_end(text: &str, start: usize) -> Result<usize> {
-    let bytes = text.as_bytes();
-    if bytes.get(start) != Some(&b'"') {
-        return Err(anyhow!("expected 1C string at byte {start}"));
-    }
-    let mut index = start + 1;
-    while index < bytes.len() {
-        if bytes[index] == b'"' {
-            if bytes.get(index + 1) == Some(&b'"') {
-                index += 2;
-            } else if is_1c_string_escape_unit(bytes, index + 1) {
-                // A quote, a backslash and four lowercase hex digits spell one
-                // UTF-16 unit of a character outside the basic plane; the
-                // literal goes on behind them.
-                index += 6;
-            } else {
-                return Ok(index + 1);
-            }
-        } else {
-            index += 1;
-        }
-    }
-    Err(anyhow!("unterminated 1C string at byte {start}"))
-}
-
-/// Whether `bytes[at..]` starts with `\` and four lowercase hex digits (the
-/// rest of a `"\d83d`-style code unit escape inside a 1C string literal).
-fn is_1c_string_escape_unit(bytes: &[u8], at: usize) -> bool {
-    bytes.get(at) == Some(&b'\\')
-        && bytes.get(at + 1..at + 5).is_some_and(|digits| {
-            digits
-                .iter()
-                .all(|digit| digit.is_ascii_digit() || (b'a'..=b'f').contains(digit))
-        })
-}
-
-/// The characters of the inside of a 1C string literal: `""` is a quote and
-/// `"\xxxx` one UTF-16 code unit, a high one waiting for its low partner.
-fn decode_1c_string_body(inner: &str) -> Result<String> {
-    let mut output = String::with_capacity(inner.len());
-    let mut pending_high: Option<u16> = None;
-    let mut rest = inner;
-    while let Some(character) = rest.chars().next() {
-        if character != '"' {
-            if pending_high.is_some() {
-                return Err(anyhow!("unpaired high surrogate in a 1C string"));
-            }
-            output.push(character);
-            rest = &rest[character.len_utf8()..];
-            continue;
-        }
-        let tail = &rest[1..];
-        if tail.starts_with('"') {
-            if pending_high.is_some() {
-                return Err(anyhow!("unpaired high surrogate in a 1C string"));
-            }
-            output.push('"');
-            rest = &tail[1..];
-            continue;
-        }
-        if is_1c_string_escape_unit(tail.as_bytes(), 0) {
-            let unit = u16::from_str_radix(&tail[1..5], 16)
-                .map_err(|_| anyhow!("bad code unit escape in a 1C string"))?;
-            match unit {
-                0xD800..=0xDBFF => {
-                    if pending_high.is_some() {
-                        return Err(anyhow!("unpaired high surrogate in a 1C string"));
-                    }
-                    pending_high = Some(unit);
-                }
-                0xDC00..=0xDFFF => {
-                    let high = u32::from(
-                        pending_high
-                            .take()
-                            .ok_or_else(|| anyhow!("unpaired low surrogate in a 1C string"))?,
-                    );
-                    let scalar = 0x10000 + ((high - 0xD800) << 10) + (u32::from(unit) - 0xDC00);
-                    output.push(
-                        char::from_u32(scalar)
-                            .ok_or_else(|| anyhow!("bad surrogate pair in a 1C string"))?,
-                    );
-                }
-                _ => {
-                    if pending_high.is_some() {
-                        return Err(anyhow!("unpaired high surrogate in a 1C string"));
-                    }
-                    output.push(
-                        char::from_u32(u32::from(unit))
-                            .ok_or_else(|| anyhow!("bad code unit in a 1C string"))?,
-                    );
-                }
-            }
-            rest = &tail[5..];
-            continue;
-        }
-        return Err(anyhow!("unexpected quote inside a 1C string"));
-    }
-    if pending_high.is_some() {
-        return Err(anyhow!("unpaired high surrogate in a 1C string"));
-    }
-    Ok(output)
-}
-
-fn parse_1c_quoted_string(text: &str) -> Result<String> {
-    let text = text.trim();
-    let end = scan_1c_quoted_string_end(text, 0)?;
-    if end != text.len() {
-        return Err(anyhow!("unexpected trailing data after 1C string"));
-    }
-    decode_1c_string_body(&text[1..end - 1])
-}
-
-fn scan_balanced_braces(text: &str, start: usize) -> Result<usize> {
-    let bytes = text.as_bytes();
-    if bytes.get(start) != Some(&b'{') {
-        return Err(anyhow!("expected 1C braced expression at byte {start}"));
-    }
-
-    let mut index = start;
-    let mut depth = 0usize;
-    let mut in_string = false;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'"' if in_string && bytes.get(index + 1) == Some(&b'"') => {
-                index += 2;
-            }
-            b'"' => {
-                in_string = !in_string;
-                index += 1;
-            }
-            b'{' if !in_string => {
-                depth += 1;
-                index += 1;
-            }
-            b'}' if !in_string => {
-                depth = depth
-                    .checked_sub(1)
-                    .ok_or_else(|| anyhow!("unbalanced 1C braced expression"))?;
-                index += 1;
-                if depth == 0 {
-                    return Ok(index);
-                }
-            }
-            _ => {
-                index += 1;
-            }
-        }
-    }
-    Err(anyhow!("unterminated 1C braced expression at byte {start}"))
-}
-
-pub(crate) fn scan_braced_fields(text: &str, start: usize) -> Result<Vec<Range<usize>>> {
-    let bytes = text.as_bytes();
-    if bytes.get(start) != Some(&b'{') {
-        return Err(anyhow!("expected 1C braced expression at byte {start}"));
-    }
-
-    let mut fields = Vec::new();
-    let mut field_start = start + 1;
-    let mut index = start + 1;
-    let mut depth = 0usize;
-    let mut in_string = false;
-
-    while index < bytes.len() {
-        match bytes[index] {
-            b'"' if in_string && bytes.get(index + 1) == Some(&b'"') => {
-                index += 2;
-            }
-            b'"' => {
-                in_string = !in_string;
-                index += 1;
-            }
-            b'{' if !in_string => {
-                depth += 1;
-                index += 1;
-            }
-            b'}' if !in_string && depth > 0 => {
-                depth -= 1;
-                index += 1;
-            }
-            b'}' if !in_string => {
-                fields.push(trim_ascii_ws_range(text, field_start..index));
-                return Ok(fields);
-            }
-            b',' if !in_string && depth == 0 => {
-                fields.push(trim_ascii_ws_range(text, field_start..index));
-                field_start = index + 1;
-                index += 1;
-            }
-            _ => {
-                index += 1;
-            }
-        }
-    }
-
-    Err(anyhow!("unterminated 1C braced expression at byte {start}"))
-}
-
-fn trim_ascii_ws_range(text: &str, range: Range<usize>) -> Range<usize> {
-    let bytes = text.as_bytes();
-    let mut start = range.start;
-    let mut end = range.end;
-    while start < end
-        && bytes
-            .get(start)
-            .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
-    {
-        start += 1;
-    }
-    while end > start
-        && bytes
-            .get(end - 1)
-            .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
-    {
-        end -= 1;
-    }
-    start..end
-}
-
 fn skip_ascii_ws(text: &str, start: usize) -> usize {
     let bytes = text.as_bytes();
     let mut index = start;
@@ -33105,32 +32539,6 @@ mod tests {
         parse_common_command_representation,
     };
     use crate::v8_container::{V8Element, make_v8_element_header, parse_v8_container};
-
-    /// A character outside the basic plane is written inside a string literal
-    /// as two code unit escapes, each behind a quote (`"\d83d"\dcce`): the
-    /// literal goes on behind them, and neither the scan for the end of the
-    /// literal nor the decoding may stop at the quote.
-    #[test]
-    fn a_string_literal_holds_code_unit_escapes() {
-        let literal = "\"a>\"\\d83d\"\\dcce \"\" b\"";
-        assert_eq!(
-            super::scan_1c_quoted_string_end(literal, 0).unwrap(),
-            literal.len()
-        );
-        assert_eq!(
-            super::parse_1c_quoted_string(literal).unwrap(),
-            "a>\u{1F4CE} \" b"
-        );
-        // Lone halves are refused, not replaced.
-        assert!(super::parse_1c_quoted_string("\"\"\\d83d\"").is_err());
-        assert!(super::parse_1c_quoted_string("\"\"\\dcce\"").is_err());
-        // A closing quote followed by text that merely looks like an escape
-        // (uppercase digits, a short run) still closes the literal.
-        assert_eq!(
-            super::scan_1c_quoted_string_end("\"x\",\\D83D", 0).unwrap(),
-            3
-        );
-    }
 
     /// Every `<ExcludedCommand>` name the compiler accepts must be the name the
     /// export writes for the uuid it packs, and no accepted name may share its

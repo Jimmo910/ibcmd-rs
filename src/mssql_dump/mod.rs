@@ -1051,7 +1051,6 @@ mod form;
 // its items by their old names and paths through this import.
 use ibcmd_form_body::form_body;
 mod form_body_entry;
-mod form_body_host;
 mod form_extension;
 #[cfg(test)]
 mod revision_mix_tests;

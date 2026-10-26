@@ -2,6 +2,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::attributes_tail::{
+    form_attributes_conditional_appearance_tail_storage_document,
+    parse_form_attributes_conditional_appearance_tail,
+};
 use crate::layout_8_5_1;
 use crate::{
     CanonicalDcsSettingsAdapterError, CanonicalDcsSettingsContext, CanonicalDcsSettingsInput,
@@ -167,23 +171,9 @@ const FORM_XML_LINE_ENDING: &str = "\r\n";
 
 const MAX_FORM_SERVER_STATE_XML_BYTES: usize = 64 * 1_048_576;
 
-/// The readers of the Form Attributes conditional-appearance tail, which the
-/// reader is handed instead of naming them: they read the tail's physical
-/// layout (`module_blob`), not the form body record. `FormParseContext::new`
-/// fills in the root's (`form_body_host::ROOT_FORM_BODY_HOST`).
-#[derive(Clone, Copy)]
-pub struct FormBodyHost {
-    /// The storage document the packed tail carries, or `Ok(None)` when the
-    /// body has no tail.
-    pub conditional_appearance_tail_storage_document: fn(&str) -> anyhow::Result<Option<Vec<u8>>>,
-    /// The same tail's conditional appearance, typed.
-    pub parse_conditional_appearance_tail:
-        fn(&str) -> anyhow::Result<DcsChildParseOutcome<DcsConditionalAppearance>>,
-}
-
 /// What a form reads of the extension export running while it is read. A
-/// `FormParseContext` holds it from the moment it is built
-/// (`form_body_host::active_form_extension_export`), `None` in an ordinary
+/// `FormParseContext` holds it from the moment it is built (the root's
+/// `form_body_entry::active_form_extension_export`), `None` in an ordinary
 /// export: an export holds its extension context from before its first form
 /// to after its last, so the state is the same for every reader of one form.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -253,8 +243,6 @@ pub struct FormParseContext<'a> {
     /// (`FormCompatibility`); the platform's own edition by default.
     form_compatibility: FormCompatibility,
     trace_sink: Option<&'a dyn FormItemTraceSink>,
-    /// The readers of the Form Attributes tail (`FormBodyHost`).
-    host: FormBodyHost,
     /// The extension export running when the context was built; `None` in an
     /// ordinary export.
     extension_export: Option<FormExtensionExport>,
@@ -296,7 +284,6 @@ impl<'a> FormParseContext<'a> {
         information_register_field_refs: &'a InformationRegisterFieldReferenceIndex,
         information_register_master_dimensions: &'a Arc<InformationRegisterMasterDimensionIndex>,
         form_owner_reference: Option<&'a str>,
-        host: FormBodyHost,
         extension_export: Option<FormExtensionExport>,
     ) -> Self {
         Self {
@@ -320,7 +307,6 @@ impl<'a> FormParseContext<'a> {
             dcs_schema_namespace: true,
             form_compatibility: FormCompatibility::default(),
             trace_sink: None,
-            host,
             extension_export,
         }
     }
@@ -533,7 +519,7 @@ fn extract_form_body_xml_from_body_detailed_single(
         timings.source_asset_form_attributes_cpu_ms += elapsed_ms(started);
     }
     let attributes_section =
-        extract_form_body_attributes_section(&body.trailing, context.object_refs, context.host);
+        extract_form_body_attributes_section(&body.trailing, context.object_refs);
 
     // Read once from the attribute collection and shared by every consumer of
     // the fact: the root event reader, the root command set and the button's
@@ -4616,12 +4602,11 @@ pub(super) const FORM_ATTRIBUTES_CONDITIONAL_APPEARANCE_INDENT: &str = "\t\t";
 pub fn extract_form_body_attributes_section(
     trailing: &[String],
     object_refs: &BTreeMap<String, String>,
-    host: FormBodyHost,
 ) -> FormAttributesSection {
     let Some(text) = trailing.first() else {
         return FormAttributesSection::default();
     };
-    let storage = match (host.conditional_appearance_tail_storage_document)(text) {
+    let storage = match form_attributes_conditional_appearance_tail_storage_document(text) {
         Ok(Some(bytes)) => bytes,
         Ok(None) => {
             return FormAttributesSection {
@@ -4655,7 +4640,7 @@ pub fn extract_form_body_attributes_section(
                 reason,
             },
         };
-    let conditional_appearance = match (host.parse_conditional_appearance_tail)(text) {
+    let conditional_appearance = match parse_form_attributes_conditional_appearance_tail(text) {
         Ok(DcsChildParseOutcome::Typed(value)) => {
             Some(FormAttributesConditionalAppearance::Typed(value))
         }
