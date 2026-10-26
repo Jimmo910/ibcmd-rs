@@ -53021,14 +53021,7 @@ fn extension_export_for_test(mode: Option<&str>) -> FormExtensionExport {
 ///   `ConditionalAppearance` (`7dd764b6-…`), platform types only the
 ///   form-schema column table names.
 ///
-/// Read through a `FormParseContext` given `extension_export` when one is
-/// given, and otherwise the root's snapshot of the export running now
-/// (`form_body_host::active_form_extension_export`), as the root's callers
-/// pass it.
-fn extension_export_probe_xml(
-    own_mode: Option<&str>,
-    extension_export: Option<Option<FormExtensionExport>>,
-) -> String {
+fn extension_export_probe_body() -> ParsedFormBodyBlob {
     const GROUP: &str = r#"{22,{1,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,5,"ГруппаОсновная",{1,1,{"ru","Группа основная"}},{1,0},0,1,0,66,0,0,1,{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{29,0,0,0,0,{0},{1,0},{"Pattern"},"",{3,4,{0}},0,0,0,1,{1,0},0,0,3,3,2,0,1,0,{3,4,{0}},0,2,0,0,0},0,1,0,1,0,0,0,0,0}"#;
     const PLANNER: &str = r#"{37,
 {544,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,19,"Планировщик",0,0,
@@ -53100,7 +53093,7 @@ fn extension_export_probe_xml(
 {1,
 {1,0},0},0,0,1,0,0,1,0,3,3,0,0},3,3,0,0,0,0}"#;
     const INPUT: &str = r##"{37,{56,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,2,"Организация",2,0,{1,1,{"ru","От организации"}},{1,1,{"ru","Организация, от имени которой будете приглашать."}},{1,{3}},{0},1,0,2,0,2,{1,0},{1,0},1,1,0,3,0,3,1,3,0,{4,0,{0},"",-1,-1,1,0,""},{4,0,{0},"",-1,-1,1,0,""},{3,4,{0}},{7,3,0,1,100},{3,4,{0}},{3,4,{0}},{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{36,{3,0},0,0,2,2,1,2,2,2,2,2,2,2,2,2,{"U"},{"U"},"",0,{4,0,{0},"",-1,-1,1,0,""},0,0,2,3,00000000-0000-0000-0000-000000000000,{5006,0},{0,0},2,{1,0},{1,0},1,1,0,{"Pattern",{"#",f6841c6b-6c71-4c82-ae9e-d08b49db326c}},1,{0,1,0},{3,4,{0}},{3,4,{0}},{3,4,{0}},{7,3,0,1,100},1,{3,0,0},0,{1,1,{"ru","Организация, от имени которой будете приглашать."}},2,0,2,0,1,0,0,1,0,0,0,0,0,0,0,0,0,{0},0,{5007,0},0},{1,fe115cc8-9e33-4684-a166-bd5136fe7a9f,"ОрганизацияПриИзменении",1,0,fe115cc8-9e33-4684-a166-bd5136fe7a9f,0,1},1,{22,{57,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,8,"ОрганизацияКонтекстноеМеню",{1,0},{1,0},0,1,0,0,0,2,2,{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{1,1},0,1,0,0,0,3,3,0},1,{"Pattern"},{"Pattern"},"","",{0},0,3,1,{12,{58,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,0,"ОрганизацияРасширеннаяПодсказка",{1,0},{1,0},1,0,0,2,2,{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{5,0,0,3,0,{0,1,0},{3,4,{0}},{3,4,{0}},{3,0,{0},0,1,0,48312c09-257f-4b29-b280-284dd89efc1e}},0,1,2,{1,{1,0},0},0,0,1,0,0,1,0,3,3,0,0},3,3,0,0,0,0}"##;
-    let body = ParsedFormBodyBlob {
+    ParsedFormBodyBlob {
         revision: crate::module_blob::FormBodyRevision::V4,
         // The form's child items are `<count>,<uuid>,<item>` pairs.
         layout: format!(
@@ -53122,7 +53115,16 @@ fn extension_export_probe_xml(
             r##"{0,1,{0,"Оформление",{"Pattern",{"#",7dd764b6-b22f-4712-8edc-c0d634340e60}},0}}"##.to_string(),
         ],
         trailing_fields: 2,
-    };
+    }
+}
+
+/// [`extension_export_probe_body`] read under the own compatibility mode
+/// `own_mode` and the extension export `extension_export`.
+fn extension_export_probe_xml(
+    own_mode: Option<&str>,
+    extension_export: Option<FormExtensionExport>,
+) -> String {
+    let body = extension_export_probe_body();
     let type_index = BTreeMap::new();
     let type_index_collisions = BTreeSet::new();
     let dcs_type_index = DcsTypeIndex::new();
@@ -53141,7 +53143,7 @@ fn extension_export_probe_xml(
         &information_register_master_dimensions,
         None,
         super::form_body_host::ROOT_FORM_BODY_HOST,
-        extension_export.unwrap_or_else(super::form_body_host::active_form_extension_export),
+        extension_export,
     )
     .with_form_compatibility(FormCompatibility::of(own_mode));
     extract_form_body_xml_from_body_timed(&body, &context, None).expect("the probe form is written")
@@ -53164,7 +53166,7 @@ fn the_extension_export_snapshot_drives_every_reader_that_asks_for_it() {
     // list's element type are `dcsset:Filter`; the second value list's
     // element type, the additional column and the parameter
     // `ConditionalAppearance`).
-    let plain = extension_export_probe_xml(None, Some(None));
+    let plain = extension_export_probe_xml(None, None);
     assert_eq!(plain.matches(USUAL).count(), 1, "{plain}");
     assert_eq!(plain.matches(START_DRAG).count(), 1, "{plain}");
     assert_eq!(plain.matches(DRAG).count(), 0, "{plain}");
@@ -53183,7 +53185,7 @@ fn the_extension_export_snapshot_drives_every_reader_that_asks_for_it() {
 
     // No extension export: the configuration's own mode decides the group.
     assert_eq!(
-        extension_export_probe_xml(Some("Version8_3_14"), Some(None)),
+        extension_export_probe_xml(Some("Version8_3_14"), None),
         without_usual
     );
     // An extension export: the configuration it extends decides the group,
@@ -53197,7 +53199,7 @@ fn the_extension_export_snapshot_drives_every_reader_that_asks_for_it() {
             assert_eq!(
                 extension_export_probe_xml(
                     own_mode,
-                    Some(Some(extension_export_for_test(extended_mode))),
+                    Some(extension_export_for_test(extended_mode)),
                 ),
                 extension_xml(usual),
                 "own {own_mode:?}, extended {extended_mode:?}"
@@ -53233,46 +53235,52 @@ fn a_form_parse_context_takes_the_extension_export_running_when_it_is_built() {
     use super::extension::{BaseIndexProvider, ExtensionContext, ResolvedIndexes, activate};
     use super::form_body_host::active_form_extension_export;
 
-    for own_mode in [None, Some("Version8_3_14")] {
-        assert_eq!(active_form_extension_export(), None);
-        assert_eq!(
-            extension_export_probe_xml(own_mode, None),
-            extension_export_probe_xml(own_mode, Some(None))
-        );
-        for extended_mode in [None, Some("Version8_3_27"), Some("Version8_3_14")] {
-            let provider: BaseIndexProvider = std::sync::Arc::new(move || {
-                Some(ResolvedIndexes {
-                    compatibility_mode: extended_mode.map(str::to_owned),
-                    ..ResolvedIndexes::default()
-                })
-            });
-            let guard =
-                activate(ExtensionContext::new([]).with_base_provider(Some(provider))).unwrap();
-            let snapshot = extension_export_for_test(extended_mode);
-            assert_eq!(active_form_extension_export(), Some(snapshot.clone()));
-            let built_now = extension_export_probe_xml(own_mode, None);
-            drop(guard);
-            assert_eq!(
-                built_now,
-                extension_export_probe_xml(own_mode, Some(Some(snapshot))),
-                "own {own_mode:?}, extended {extended_mode:?}"
-            );
-        }
-        // A provider-less context (the `IBCMD_RS_EXTENSION_MODE` probe) reads
-        // no extended mode.
-        let guard = activate(ExtensionContext::default()).unwrap();
-        assert_eq!(
-            active_form_extension_export(),
-            Some(extension_export_for_test(None))
-        );
-        let built_now = extension_export_probe_xml(own_mode, None);
+    // The root's entry point builds the context it reads the form with from
+    // the extension export running now (`form_body_host`); its default
+    // context writes the platform's own edition, the probe's own mode `None`.
+    let read_now = || {
+        extract_form_body_xml_from_body(
+            &extension_export_probe_body(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        )
+        .expect("the probe form is written")
+    };
+    assert_eq!(active_form_extension_export(), None);
+    assert_eq!(read_now(), extension_export_probe_xml(None, None));
+    for extended_mode in [None, Some("Version8_3_27"), Some("Version8_3_14")] {
+        let provider: BaseIndexProvider = std::sync::Arc::new(move || {
+            Some(ResolvedIndexes {
+                compatibility_mode: extended_mode.map(str::to_owned),
+                ..ResolvedIndexes::default()
+            })
+        });
+        let guard = activate(ExtensionContext::new([]).with_base_provider(Some(provider))).unwrap();
+        let snapshot = extension_export_for_test(extended_mode);
+        assert_eq!(active_form_extension_export(), Some(snapshot.clone()));
+        let built_now = read_now();
         drop(guard);
         assert_eq!(
             built_now,
-            extension_export_probe_xml(own_mode, Some(Some(extension_export_for_test(None))))
+            extension_export_probe_xml(None, Some(snapshot)),
+            "extended {extended_mode:?}"
         );
     }
+    // A provider-less context (the `IBCMD_RS_EXTENSION_MODE` probe) reads no
+    // extended mode.
+    let guard = activate(ExtensionContext::default()).unwrap();
+    assert_eq!(
+        active_form_extension_export(),
+        Some(extension_export_for_test(None))
+    );
+    let built_now = read_now();
+    drop(guard);
+    assert_eq!(
+        built_now,
+        extension_export_probe_xml(None, Some(extension_export_for_test(None)))
+    );
     assert_eq!(active_form_extension_export(), None);
+    assert_eq!(read_now(), extension_export_probe_xml(None, None));
 }
 
 /// Evidence: fixture `graphical-schema-field-leftwidest-page`, a minimal
