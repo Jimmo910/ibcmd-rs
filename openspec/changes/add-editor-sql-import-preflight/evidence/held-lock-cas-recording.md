@@ -732,3 +732,88 @@ missing-owned-source refusal with zero SQL TCP connections. Backend replies and
 late Committed/Unknown handling have focused coverage. These are source/local
 checks: the final Form RPC product build, actual token publication/readback and
 its native successor remain separate acceptance gates.
+
+
+## Final guarded Form editor RPC and native Module3 acceptance (87617)
+
+The exact87617f1b408676d0ae1085a367bb09f2c7d56ba7 VM-local release and libtest
+builds both exited naturally zero. The previously lost observer session was
+reconciled from retained Windows completion markers, not rerun. All4913 source
+files matched before/after; package product63838720B/SHA256
+`3c823a29a1b01752d0d2bf388e71413ae17ca8469a2f7ac9de967ec1399905f5`
+is bound by build result
+`6e4cdb6dbfca49aa28d2d6281f6a7b4aa2fa44bbbc10a3af7b7751dbed5c9430`
+and FULL RELEASE
+`0eb285781fe800680efe7ea168e5b02228eb6ea6108db49344193a65b99d03c5`.
+
+The actual production Form JSON-RPC flow issued eleven requests: explicit target
+initialization/list/Windows connect before preparation; empty pending state;
+one mandatory verified singleton prepare; one confirmed token-only publish;
+pending MAIN tree/status with fresh native CDI baseline; replay refusal only
+after acknowledged Committed; shutdown/exit/natural process closure. The new
+intentional edit was only `Номер = 2;` to `Номер = 3;` over the fresh native
+Module2 export. This was not a repetition of the earlier Module2 staging.
+Prepared and acknowledged backend both were
+`mssql-document-form-module-configsave`, stagedRows2. Source freeze/census,
+MAIN Form owner/parent mapping, filesystem equality plus changed native version,
+expired-token refusal, exact SQL post-readset and lifecycle checks all passed.
+The process exited0. Stderr743B contained four known model summaries with no
+severity/unknown line; the boolean-summary parser matched the existing emitter.
+CONFIG8/6074 remained exact; CONFIGSAVE2/1437 had seal
+`563096707f3928efb7dac766b987e18383dd1881c6c84b3fec3d3b34c12c6436`.
+RPC result `907862e4f8f4621676bbff34c2506648e3e6231c750868adc8c0e8de840a66c6`
+and FULL RELEASE
+`b74993c05b21d690caf2745a9c06d1f1c6080d721fea09a6ab40e020f4b94124`
+confirm no reconciliation, zero workers and unchanged source/runtime pins.
+
+One native2342 apply and one full export then exited naturally zero with zero
+stderr, in3.036s and1.517s. Module3 was exactly187B/SHA256
+`4dd8a461dd70c0a2e4633bd83175f6a4e889f55a0b7cebc418e4fe01bf729b2c`.
+The five other XML files, including Form.xml, Form metadata, both Documents and
+Configuration.xml, were byte-exact. CDI retained ordered names/IDs/cardinality
+and changed only the selected Form-body version to the staged value. Active
+body/versions matched staging; CONFIGSAVE was empty, CONFIG8/6075. All unselected
+CONFIG full rows and the post-export full SQL readset were exact. Native result
+`072e4961733484bb4023bd7bc853b56b2870f1ca9d500616aeafa402a3e31a09`
+and FULL RELEASE
+`7e725e3cfaa666f4f0c926ba94f3d85ad7b02e53f69b404af98a5b252a4c000d`
+record clean closure, no retry and unchanged pins. No further publication or
+native activation is needed for this acceptance scenario.
+
+GitHub Actions was recovered by the owner accepting the fork banner. CI
+[40285744346](https://github.com/Jimmo910/ibcmd-rs/actions/runs/40285744346)
+passed7/7 and product
+[40285495021](https://github.com/Jimmo910/ibcmd-rs/actions/runs/40285495021)
+passed2/2 for87617. Prior5be2 CI40282592569 also passed. Each required dispatch
+was deduplicated; no permissions, token policy, secrets or allowlists changed.
+These hosted results remain distinct from the measured VM-local executable.
+
+## Final scope and unresolved local governance gate
+
+Accepted production operations are one explicit existing CommonModule module or
+one Document-owned native FormModule file, with the closed storage/grammar,
+current-context principal, ownership, full census/readset/CAS, single-part output
+and finite outcomes described above. Native activation remains separate.
+Objects/changed/multiple selection, Form.xml/metadata rewriting, other Form owner
+families, dynamic/unsupported layouts and arbitrary repartitioning remain
+refused. No generic native-build writer profile, production-database acceptance,
+all-format parity or new owner support is claimed. Historical nonempty-neighbour
+and cancellation/stale controls retain their own exact revision/target receipts.
+
+The required full local `cargo xtask ci` passed format and both EDT governance
+steps, then stopped before the remaining15 steps at physical-adapter policy.
+The missing catalog record is `src/mssql_dump/import_evidence.rs` (logical-path
+SHA2565574a62490168322556d12d020d387ae765a939f0f12587067ea69e930825999),
+not the SQL compiler diagnostic. Independent source audit found zero guarded
+occurrences; the existing baseline already has fourteen empty file records.
+The minimal proposed registration adds one empty occurrence record and62bytes,
+preserving all48 existing records and every previous byte after removing that
+insertion; no literal allowance increases. The unchanged guard's self-tests pass.
+
+Automatic approval review rejected that persistent catalog registration before
+execution because it changes governance coverage and requires explicit owner
+approval under the previous scope restriction. No workaround/retry followed.
+The real baseline remains SHA256
+`c4bf9eeb5fdeda66191e11a984033d0bb2290fd4f688e9e9cae90095481173cd`.
+Thus hosted CI and runtime acceptance are green, but full local governance/CI is
+not claimed complete and the change must not be marked release/merge ready.
