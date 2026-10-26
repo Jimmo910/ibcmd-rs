@@ -12,9 +12,10 @@
 //! `refs.rs`, `dcs.rs`, `source_assets.rs`, `timing.rs`, `form_ref_index.rs`,
 //! `form_extension.rs` and `form/layout_8_5_1.rs`, and `module_blob.rs`),
 //! which still reaches every item by its old name and path through imports.
-//! The bodies are unchanged; declarations and the fields the root reads or
-//! fills are `pub`. The builders of these indexes read the root's metadata
-//! rows and stay there, and so do the few methods that need a root type
+//! The bodies are unchanged but for mechanical clippy fixes (listed in #588);
+//! declarations and the fields the root reads or fills are `pub`. The
+//! builders of these indexes read the root's metadata rows and stay there,
+//! and so do the few methods that need a root type
 //! (`MetadataFieldDeclarationIndex::written_as` and the sums of
 //! `MssqlDumpTimingReport`) or would widen the root's public API
 //! (`FormBodyRevision::parse`), as root traits. The tests that decode a
