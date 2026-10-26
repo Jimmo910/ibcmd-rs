@@ -5043,30 +5043,6 @@ pub(super) fn format_ext_picture_xml(
     xml
 }
 
-#[cfg(test)]
-pub(super) fn encode_base64_for_test(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0];
-        let b1 = *chunk.get(1).unwrap_or(&0);
-        let b2 = *chunk.get(2).unwrap_or(&0);
-        output.push(ALPHABET[(b0 >> 2) as usize] as char);
-        output.push(ALPHABET[((b0 & 0x03) << 4 | (b1 >> 4)) as usize] as char);
-        if chunk.len() > 1 {
-            output.push(ALPHABET[((b1 & 0x0f) << 2 | (b2 >> 6)) as usize] as char);
-        } else {
-            output.push('=');
-        }
-        if chunk.len() > 2 {
-            output.push(ALPHABET[(b2 & 0x3f) as usize] as char);
-        } else {
-            output.push('=');
-        }
-    }
-    output
-}
-
 pub(super) fn format_help_xml(pages: &[HelpPage]) -> String {
     let mut xml = String::from(
         "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n\

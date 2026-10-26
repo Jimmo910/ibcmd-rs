@@ -41589,3 +41589,6 @@ fn format_form_chart_settings_body_xml(
     }
     Some(xml)
 }
+
+#[cfg(test)]
+mod tests;

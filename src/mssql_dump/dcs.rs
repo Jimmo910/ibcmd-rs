@@ -16,7 +16,6 @@ pub(crate) use ibcmd_form_body::normalize_data_composition_schema_template_docum
 pub(crate) use ibcmd_form_body::{
     FormListSettingsChildKind, FormListSettingsChildTransliteration,
     transliterate_form_list_settings_child_document,
-    transliterate_form_list_settings_group_items_document,
 };
 
 // The DCS type index is the `ibcmd-form-body` crate's (`FormParseContext`
