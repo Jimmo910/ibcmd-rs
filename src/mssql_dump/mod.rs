@@ -65,6 +65,15 @@ use ibcmd_core::characteristics::Characteristics;
 use ibcmd_core::diagnostic::{MetadataSourceFailureClass, ObjectPath};
 use ibcmd_core::family::FamilyId;
 use ibcmd_core::storage::StorageImage;
+// The indexes a form is parsed against (`FormParseContext`'s fields) are the
+// `ibcmd-form-body` crate's; `mssql_dump`'s modules reach them by their old
+// names through these imports, at their old visibility. Their builders stay
+// here and in `refs.rs`.
+use ibcmd_form_body::{FormObjectRefIndex, MetadataCommandReference};
+pub(crate) use ibcmd_form_body::{
+    InformationRegisterFieldReference, InformationRegisterFieldReferenceIndex,
+    InformationRegisterMasterDimensionIndex,
+};
 use ibcmd_schema::metadata_storage_facts::DataProcessorRevision16Layout;
 use ibcmd_schema::{
     GeneratedMetadataReferenceOwnerKind, parse_generated_metadata_reference_owner,
@@ -1042,7 +1051,6 @@ pub use postgres_infobase::PostgresExportSnapshot;
 mod form;
 mod form_body;
 mod form_extension;
-mod form_ref_index;
 #[cfg(test)]
 mod revision_mix_tests;
 pub(crate) use form::load_8_5_1::{
@@ -1132,12 +1140,11 @@ use config_rows::*;
 pub(crate) use dcs::*;
 use fetch::*;
 use form_body::*;
-use form_ref_index::FormObjectRefIndex;
 use forms::*;
 use metadata::*;
 use moxel_entry::*;
 pub(crate) use output_writer::FileSink;
-use output_writer::OutputWriter;
+use output_writer::{MssqlDumpTimingReportOutputExt, OutputWriter};
 use refs::*;
 use role_rights::*;
 use selected::*;
@@ -1232,6 +1239,7 @@ pub(crate) use moxel_entry::{
 };
 pub(crate) use source_assets::write_source_xml_file;
 
+use timing::MssqlDumpTimingReportExt;
 pub use timing::{
     MssqlDumpTableTimingSummary, MssqlDumpTimingReport, MssqlDumpTimingSummary,
     parse_dump_timing_summary, read_dump_timing_summaries, read_dump_timing_summary,
@@ -7808,68 +7816,6 @@ struct FlowchartBase {
     tab_order: String,
 }
 
-#[derive(Clone)]
-struct MetadataCommandReference {
-    kind: String,
-    name: String,
-    /// How many members the target's own `<BasedOn>` list declares, or `None`
-    /// when this reader cannot name the slot for the target's kind. A target
-    /// that declares none has no `CreateBasedOn` standard command at all, and
-    /// the platform keeps the raw `code:uuid` sentinel for it exactly as it
-    /// does for `use_standard_commands == false`. Evidence: over the eight
-    /// stand corpora every one of the 5 123 `<Command>`/`<CommandName>` values
-    /// naming a `.StandardCommand.CreateBasedOn` names a target whose
-    /// `<BasedOn>` is non-empty, and the five ERP УХ 3.2.12.6 documents whose
-    /// `<BasedOn/>` is empty -- `УдалитьЗаявкаНаКорректировкуЛимитов`,
-    /// `УдалитьКорректировкаЛимитов`, `СтрокаПланаЗакупок`,
-    /// `ОбоснованиеТребованийКЗакупочнойПроцедуре` and `ЗаявкаНаРасход` -- are
-    /// carried by 22 buttons the platform writes as `2:<uuid>`.
-    based_on_declared: Option<usize>,
-    /// How many owners the target's own `<Owners>` list declares, or `None`
-    /// when this reader cannot name the slot for the target's kind. A catalog
-    /// that declares none has nothing to be opened by, so it has no
-    /// `OpenByValue` standard command and the platform keeps the raw
-    /// `code:uuid` sentinel -- the same shape as `based_on_declared`.
-    ///
-    /// Evidence: over the eight stand corpora every one of the 112
-    /// `<Command>`/`<CommandName>` values naming a
-    /// `Catalog.X.StandardCommand.OpenByValue` names a catalog whose
-    /// `<Owners>` declares at least one owner, and ERP УХ 3.2.12.6 keeps
-    /// `Catalog.СхемаДоступностиРеквизитов` -- whose `<Owners/>` is empty --
-    /// as `4:bdd23491-0b0b-49b7-bda4-8a0b0870f4fd` in
-    /// `Catalogs/ЭтапыУниверсальныхПроцессов/Forms/ФормаЭлемента`.
-    owners_declared: Option<usize>,
-    /// Whether the target information register declares
-    /// `<WriteMode>RecorderSubordinate</WriteMode>`, or `None` for every other
-    /// kind. A register written independently has no recorder, so it has no
-    /// `OpenByRecorder` standard command.
-    ///
-    /// Evidence: over the eight stand corpora all ten
-    /// `<Command>`/`<CommandName>` values naming an
-    /// `InformationRegister.X.StandardCommand.OpenByRecorder` name a register
-    /// that declares `RecorderSubordinate`, and none names an `Independent`
-    /// one; ERP УХ 3.2.12.6 keeps
-    /// `InformationRegister.НастройкаРаспределенияПоНаправлениямДеятельности`
-    /// (`Independent`) as `2:7f22e01e-6dbf-4a58-a96b-b455c935ab6b` in
-    /// `Catalogs/Организации/Forms/ФормаЭлемента`.
-    recorder_subordinate: Option<bool>,
-    /// Whether the target metadata object itself declares
-    /// `<UseStandardCommands>true</UseStandardCommands>`. Both command-interface
-    /// readers (this object's own `Ext/CommandInterface.xml` and a form's
-    /// embedded `<CommandInterface>`) must decline to synthesize a
-    /// `.StandardCommand.X` name when this is `false`: the platform keeps the
-    /// raw `code:uuid` sentinel instead, because the standard command does not
-    /// exist on that target. Evidence: ERP UH `MDM_Management`,
-    /// `Catalog.ТабличныеЧастиБД` (`UseStandardCommands=false`) is kept as
-    /// `0:04c1ab92-f4fc-40e9-b0d6-a1c57a5a8b47` in
-    /// `Subsystems/.../Ext/CommandInterface.xml`, and `Catalog.СправочникиБД`
-    /// (also `false`) is kept as `4:67b8886f-f30d-480c-abb8-e3712f3c169c` in
-    /// `Catalogs/ТипыБазДанных/Forms/ФормаЭлемента/Ext/Form.xml`. Defaults to
-    /// `true` (today's behaviour) for every kind the index cannot yet prove a
-    /// value for -- only `Catalog` is evidenced so far.
-    use_standard_commands: bool,
-}
-
 fn parse_exchange_plan_content_blob(
     bytes: &[u8],
     object_refs: &BTreeMap<String, String>,
@@ -10553,18 +10499,6 @@ struct FormSourceReference {
     relative_path: PathBuf,
     kind: &'static str,
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct InformationRegisterFieldReference {
-    pub(crate) field_reference: String,
-    pub(crate) value_owner_references: BTreeSet<String>,
-}
-
-pub(crate) type InformationRegisterFieldReferenceIndex =
-    BTreeMap<String, Vec<InformationRegisterFieldReference>>;
-
-/// Register uuid -> its master dimension names in declaration order.
-pub(crate) type InformationRegisterMasterDimensionIndex = BTreeMap<String, Vec<String>>;
 
 /// The leaves a named type set declares, keyed by the name the set is written
 /// under (`cfg:DefinedType.X`, `cfg:Characteristic.X`).

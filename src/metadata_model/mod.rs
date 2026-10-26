@@ -35,7 +35,11 @@ pub mod objects;
 pub mod registers;
 pub mod root;
 pub mod simple;
-pub mod standard_pictures;
+/// The platform's standard pictures, the `ibcmd-1c-vocab` crate's table,
+/// under the path the crate's readers and writers name them by.
+pub mod standard_pictures {
+    pub(crate) use ibcmd_1c_vocab::{standard_picture_name, standard_picture_uuid};
+}
 
 #[cfg(test)]
 mod collection_tests;

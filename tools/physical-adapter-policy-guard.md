@@ -11,7 +11,12 @@ directories that hold code moved out of them (`$GuardedCrateDirectories`):
 formerly in `src/mssql_dump/mod.rs`, `source_assets.rs` and `refs.rs`),
 `crates/ibcmd-1c-vocab/src/` (the platform-type, standard-attribute, style and
 command vocabularies, formerly in `src/mssql_dump/mod.rs` and
-`source_assets.rs`) and `crates/ibcmd-moxel/src/root_helpers/`.  Code that
+`source_assets.rs`, and the standard-picture table, formerly
+`src/metadata_model/standard_pictures.rs`, which was outside the slice and
+joined it with its 221 identifiers), `crates/ibcmd-form-body/src/` (the indexes,
+compatibility rules and timing report the form reader is given, formerly in
+`src/mssql_dump/mod.rs`, `refs.rs`, `dcs.rs`, `source_assets.rs`, `timing.rs`
+and `form_ref_index.rs`) and `crates/ibcmd-moxel/src/root_helpers/`.  Code that
 leaves the slice for a crate takes the slice with it: its directory is listed
 there and its baseline entries move to the new path in the same change, never
 dropped.  Every `*.rs` file below a listed directory is scanned, so a file added

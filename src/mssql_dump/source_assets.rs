@@ -3457,11 +3457,7 @@ pub(super) struct HelpContent {
     pub(super) files: Vec<HelpFile>,
 }
 
-pub(super) struct FormItemAsset {
-    pub(super) item_name: String,
-    pub(super) file_name: String,
-    pub(super) content: Vec<u8>,
-}
+pub(super) use ibcmd_form_body::FormItemAsset;
 
 #[derive(Clone)]
 pub(super) struct PredefinedItem {
