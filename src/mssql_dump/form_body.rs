@@ -6,8 +6,50 @@ pub use field_map_observer::{
     observe_form_field_map_blob_with_context,
 };
 
-use super::*;
-use crate::form_schema::{
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
+use std::time::Instant;
+
+use anyhow::{Result, anyhow};
+use ibcmd_1c_text::{
+    decode_base64_mime, escape_xml_character_data, escape_xml_element_text, escape_xml_text,
+    extract_base64_payload, format_1c_date_time, is_uuid_text, parse_1c_quoted_string,
+    parse_1c_quoted_string_with_len, parse_1c_string, parse_1c_synonyms, parse_non_zero_uuid,
+    parse_uuid_field, register_brace_jumps, scan_1c_braced_value, split_1c_braced_fields, xml_bool,
+};
+use ibcmd_1c_vocab::{
+    CONSTANTS_SET_TYPE_UUID, ChartStandardTabularSectionDefinition, ConstantValueType,
+    DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME, DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID,
+    DOCUMENT_STANDARD_ATTRIBUTES, accumulation_register_record_set_standard_attribute_name,
+    builtin_type_reference, chart_of_accounts_sole_standard_tabular_section_name,
+    chart_of_accounts_standard_attribute_definitions, chart_of_accounts_standard_tabular_section,
+    command_interface_standard_command, elapsed_ms, ext_picture_file_name,
+    form_metadata_type_xml_tag, format_form_metadata_types_xml,
+    format_form_metadata_types_xml_with_indent, format_type_description_value_types_xml,
+    inflate_raw_deflate, information_register_decimal_is_valid, is_svg_content,
+    metadata_choice_folders_and_items_xml, metadata_reference_is_type_set,
+    metadata_type_pattern_field_type_id, parse_common_command_picture_value,
+    parse_common_command_shortcut_value, parse_design_time_reference, standard_style_item_for_code,
+    style_web_color_name, unique_metadata_type_reference,
+};
+use ibcmd_core::artifact::ProfileId;
+use ibcmd_core::dcs::{DcsConditionalAppearance, DcsFilter, DcsOrder};
+use ibcmd_form_body::layout_8_5_1;
+use ibcmd_form_body::{
+    CanonicalDcsSettingsAdapterError, CanonicalDcsSettingsContext, CanonicalDcsSettingsInput,
+    CanonicalFormServerStateFragment, DcsTypeIndex, FormCompatibility, FormItemAsset,
+    FormListSettingsChildKind, FormListSettingsChildTransliteration, FormObjectRefIndex,
+    InformationRegisterFieldReferenceIndex, InformationRegisterMasterDimensionIndex,
+    MetadataCommandReference, MetadataFieldDeclarationIndex, MssqlDumpTimingReport,
+    ParsedFormBodyBlob, canonicalize_form_server_state_conditional_appearances,
+    data_composition_type_id_xml, emit_canonical_dcs_settings_children,
+    emit_canonical_dcs_settings_parts, forms_write_usual_group_behavior, parse_form_event_block,
+    respell_form_server_state_namespaces,
+    transliterate_form_attributes_conditional_appearance_document,
+    transliterate_form_list_settings_child_document,
+    transliterate_form_list_settings_group_items_document,
+};
+use ibcmd_form_schema::{
     FORM_DECORATION_HEADER_XML_ORDER, FORM_EXTENDED_TOOLTIP_XML_ORDER,
     FORM_FIELD_HEADER_PICTURE_XML_ORDER, FORM_INPUT_FIELD_BUTTON_XML_ORDER,
     FORM_INPUT_FIELD_TAIL_XML_ORDER, FORM_LABEL_DECORATION_ALIGNMENT_TAIL_XML_ORDER,
@@ -60,7 +102,9 @@ use crate::form_schema::{
     form_text_document_context_menu_child_is_valid, form_tooltip_representation_schema,
     form_tooltip_representation_xml_order,
 };
-use ibcmd_core::dcs::{DcsConditionalAppearance, DcsFilter, DcsOrder};
+use ibcmd_moxel::{
+    format_moxel_spreadsheet_xml, moxel_style_ref_for_uuid, parse_moxel_style_ref_slot,
+};
 #[cfg(test)]
 use ibcmd_schema::parse_form_choice_list_item as parse_schema_form_choice_list_item;
 #[cfg(test)]
@@ -83,6 +127,7 @@ use ibcmd_schema::{
     parse_form_text_document_context_menu as parse_schema_form_text_document_context_menu,
     parse_generated_metadata_owner, parse_metadata_data_path,
 };
+use ibcmd_schema::{GeneratedMetadataReferenceOwnerKind, parse_generated_metadata_reference_owner};
 use ibcmd_xml::{
     DcsChildParseOutcome, DcsSettingsChildrenError, FormChoiceParametersEmitError, TypeRunMember,
     emit_form_attributes_conditional_appearance_fragment, emit_form_choice_parameter_links,
@@ -260,6 +305,8 @@ impl<'a> FormParseContext<'a> {
         information_register_field_refs: &'a InformationRegisterFieldReferenceIndex,
         information_register_master_dimensions: &'a Arc<InformationRegisterMasterDimensionIndex>,
         form_owner_reference: Option<&'a str>,
+        host: FormBodyHost,
+        extension_export: Option<FormExtensionExport>,
     ) -> Self {
         Self {
             foreign_types: None,
@@ -282,8 +329,8 @@ impl<'a> FormParseContext<'a> {
             dcs_schema_namespace: true,
             form_compatibility: FormCompatibility::default(),
             trace_sink: None,
-            host: super::form_body_host::ROOT_FORM_BODY_HOST,
-            extension_export: super::form_body_host::active_form_extension_export(),
+            host,
+            extension_export,
         }
     }
 
@@ -357,56 +404,6 @@ impl<'a> FormParseContext<'a> {
         self.trace_sink = Some(trace_sink);
         self
     }
-
-    /// Reads the form as under `extension_export` instead of the export
-    /// running now.
-    #[cfg(test)]
-    pub(super) fn with_extension_export(
-        mut self,
-        extension_export: Option<FormExtensionExport>,
-    ) -> Self {
-        self.extension_export = extension_export;
-        self
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) fn extract_form_body_xml(
-    bytes: &[u8],
-    object_refs: &BTreeMap<String, String>,
-) -> Option<String> {
-    let body = crate::compiler::bodies::form::decode_compatible_managed_form(bytes).ok()?;
-    // A platform 8.5 body is read through its 8.3.27 down-conversion, the way
-    // the source export reads one (`source_assets`). What the members 8.5
-    // appends say is only spelled by the 2.21 writer, which this 2.20 reading
-    // is not.
-    if super::form::layout_8_5_1::is_form_body_8_5_1(body.parsed()) {
-        let (converted, _) =
-            super::form::layout_8_5_1::down_convert_form_body_8_5_1(body.parsed()).ok()?;
-        return extract_form_body_xml_from_body(&converted, object_refs, object_refs);
-    }
-    extract_form_body_xml_from_body(body.parsed(), object_refs, object_refs)
-}
-
-pub(super) fn extract_form_body_xml_from_body(
-    body: &ParsedFormBodyBlob,
-    type_index: &BTreeMap<String, String>,
-    object_refs: &BTreeMap<String, String>,
-) -> Option<String> {
-    extract_form_body_xml_from_body_timed(
-        body,
-        &FormParseContext::new(
-            type_index,
-            &BTreeSet::new(),
-            &DcsTypeIndex::new(),
-            object_refs,
-            &Arc::new(BTreeMap::new()),
-            &BTreeMap::new(),
-            &Arc::new(InformationRegisterMasterDimensionIndex::new()),
-            None,
-        ),
-        None,
-    )
 }
 
 /// Numbers the items a form stores with id `0`.
@@ -996,7 +993,7 @@ fn extract_form_body_xml_from_body_detailed_single(
     xml.push_str(&format_form_body_close_xml(
         adoption.and_then(|adoption| adoption.base_form.as_ref()),
     ));
-    if let Some(timings) = timings.as_deref_mut() {
+    if let Some(timings) = timings {
         timings.source_asset_form_format_cpu_ms += elapsed_ms(started);
     }
     Some(DetailedFormBodyExtraction::Emitted { xml, diagnostics })
@@ -1123,9 +1120,9 @@ pub(super) fn writes_usual_group_behavior(
     extension: Option<&FormExtensionExport>,
 ) -> bool {
     match extension {
-        Some(extension) => super::refs::forms_write_usual_group_behavior(
-            extension.extended_compatibility_mode.as_deref(),
-        ),
+        Some(extension) => {
+            forms_write_usual_group_behavior(extension.extended_compatibility_mode.as_deref())
+        }
         None => own_mode_writes,
     }
 }
@@ -1372,33 +1369,6 @@ pub(crate) struct FormItemSchemaTraceEvent {
     pub(crate) root_attribute_id: Option<String>,
     pub(crate) root_attribute_name: Option<String>,
     pub(crate) root_attribute_dynamic_list: Option<bool>,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn trace_form_body_with_context(
-    body: &ParsedFormBodyBlob,
-    type_index: &BTreeMap<String, String>,
-    dcs_type_index: &DcsTypeIndex,
-    object_refs: &BTreeMap<String, String>,
-    field_type_refs: &Arc<BTreeMap<String, String>>,
-    information_register_field_refs: &InformationRegisterFieldReferenceIndex,
-    information_register_master_dimensions: &Arc<InformationRegisterMasterDimensionIndex>,
-    form_owner_reference: Option<&str>,
-    trace_sink: &dyn FormItemTraceSink,
-) -> Option<()> {
-    let type_index_collisions = BTreeSet::new();
-    let context = FormParseContext::new(
-        type_index,
-        &type_index_collisions,
-        dcs_type_index,
-        object_refs,
-        field_type_refs,
-        information_register_field_refs,
-        information_register_master_dimensions,
-        form_owner_reference,
-    )
-    .with_trace_sink(trace_sink);
-    extract_form_body_xml_from_body_timed(body, &context, None).map(|_| ())
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -2357,51 +2327,6 @@ pub(super) enum FormSchemaWriteError {
     },
 }
 
-impl FormSchemaWriteError {
-    /// A stable diagnostic code naming the refusal family, for the diagnostic
-    /// export that records a rejected form and keeps traversing.
-    pub(super) fn diagnostic_code(&self) -> &'static str {
-        match self {
-            Self::Corpus(_) => "source.form.rejected.writer-corpus",
-            Self::WriterRule(_) => "source.form.rejected.writer-rule",
-            Self::CanonicalDcs(_) => "source.form.rejected.canonical-dcs",
-            Self::DcsSettingsChildren(_) => "source.form.rejected.dcs-settings-children",
-            Self::UnexpectedPolicy { .. } => "source.form.rejected.unexpected-policy",
-            Self::OpaqueChoiceList { .. } => "source.form.rejected.opaque-choice-list",
-            Self::OpaqueChoiceParameters { .. } => "source.form.rejected.opaque-choice-parameters",
-            Self::OpaqueChoiceParameterLinks { .. } => {
-                "source.form.rejected.opaque-choice-parameter-links"
-            }
-            Self::OpaqueChoiceParameterAvailableTypes { .. } => {
-                "source.form.rejected.opaque-choice-parameter-available-types"
-            }
-            Self::UnexpectedAvailableTypesBlockShape => {
-                "source.form.rejected.available-types-block-shape"
-            }
-            Self::ChoiceParametersEmit(_) => "source.form.rejected.choice-parameters-emit",
-            Self::OpaqueDcsOrder { .. } => "source.form.rejected.opaque-dcs-order",
-            Self::OpaqueDcsFilter { .. } => "source.form.rejected.opaque-dcs-filter",
-            Self::OpaqueDcsConditionalAppearance { .. } => {
-                "source.form.rejected.opaque-dcs-conditional-appearance"
-            }
-            Self::OpaqueDcsFormAttributesConditionalAppearance { .. } => {
-                "source.form.rejected.opaque-dcs-form-attributes-conditional-appearance"
-            }
-        }
-    }
-
-    /// The static refusal reason when the variant carries one.
-    pub(super) fn diagnostic_reason(&self) -> &'static str {
-        match self {
-            Self::OpaqueDcsOrder { reason }
-            | Self::OpaqueDcsFilter { reason }
-            | Self::OpaqueDcsConditionalAppearance { reason }
-            | Self::OpaqueDcsFormAttributesConditionalAppearance { reason } => reason,
-            _ => "rejected",
-        }
-    }
-}
-
 impl From<WriterRuleLookupError> for FormSchemaWriteError {
     fn from(error: WriterRuleLookupError) -> Self {
         Self::WriterRule(error)
@@ -2861,7 +2786,7 @@ pub(super) fn extract_form_scale(fields: &[&str]) -> Option<String> {
         fields.get(tail_start..)?,
     )?;
     let value = fields.get(tail_start + 16 + blocks)?.trim();
-    crate::form_schema::form_nondefault_percent_scale(value)
+    ibcmd_form_schema::form_nondefault_percent_scale(value)
 }
 
 pub(super) fn extract_form_dimension(fields: &[&str], index: usize) -> Option<String> {
@@ -3774,6 +3699,10 @@ pub(super) fn form_standard_excluded_command_name(
     form_standard_command_suffix(uuid)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn extract_form_auto_command_bar(
     fields: &[&str],
     commands: &[FormCommand],
@@ -3802,6 +3731,10 @@ pub(super) fn extract_form_auto_command_bar(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn find_form_auto_command_bar(
     fields: &[&str],
     commands: &[FormCommand],
@@ -3857,6 +3790,10 @@ pub(super) fn find_form_auto_command_bar(
     None
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn parse_form_auto_command_bar_fields(
     fields: &[&str],
     commands: &[FormCommand],
@@ -4135,7 +4072,7 @@ pub(super) fn collect_form_body_events(
         // The whole event block, when the field is one: every handler of every
         // event, the ones after the first included (an adopted form's `After`
         // interceptors). See `form_extension`.
-        if let Some(bindings) = super::form_extension::parse_form_event_block(field) {
+        if let Some(bindings) = parse_form_event_block(field) {
             for binding in bindings {
                 let Some(name) = parse_form_root_event_identifier(&binding.event, write_extension)
                 else {
@@ -4243,10 +4180,10 @@ pub(super) fn parse_form_root_event_identifier(
     // other spelling is the identifier itself. An identifier that is not a
     // uuid has no other spelling and no observation of the platform dropping
     // it, so it keeps its name.
-    if !is_uuid_text(identifier) || form_root_event_extension_owns(identifier, write_extension) {
-        if let Some(name) = form_event_name_from_identifier(identifier) {
-            return Some(name.to_owned());
-        }
+    if (!is_uuid_text(identifier) || form_root_event_extension_owns(identifier, write_extension))
+        && let Some(name) = form_event_name_from_identifier(identifier)
+    {
+        return Some(name.to_owned());
     }
     is_uuid_text(identifier).then(|| identifier.to_string())
 }
@@ -5006,7 +4943,7 @@ fn parse_form_attribute_with_dcs_type_index(
     });
     let mut use_always = parse_form_attribute_direct_use_always(
         &name,
-        &id,
+        id,
         fields.get(8).copied(),
         &columns,
         object_refs,
@@ -6939,6 +6876,10 @@ pub(super) fn parse_form_dynamic_list_field_secondary_name_by_item_id(
         .collect()
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn parse_form_attribute_direct_use_always(
     attribute_name: &str,
     attribute_id: &str,
@@ -6962,17 +6903,17 @@ pub(super) fn parse_form_attribute_direct_use_always(
     else {
         return Vec::new();
     };
-    if value_type_uuid == Some(CONSTANTS_SET_TYPE_UUID) {
-        if let Some(constants) = declarations.and_then(|declarations| {
+    if value_type_uuid == Some(CONSTANTS_SET_TYPE_UUID)
+        && let Some(constants) = declarations.and_then(|declarations| {
             form_constants_set_use_always(
                 attribute_name,
                 fields.iter().skip(2).take(count).copied(),
                 object_refs,
                 declarations,
             )
-        }) {
-            return constants;
-        }
+        })
+    {
+        return constants;
     }
     let mut parsed = Vec::new();
     let mut seen = BTreeSet::<String>::new();
@@ -7025,9 +6966,8 @@ pub(super) fn parse_form_attribute_direct_use_always(
         // outside its configuration (`copyinfo`), and the type is an id
         // neither the configuration nor the built-in table knows -- an object
         // rebuilt from its own XML keeps such references as `<v8:TypeId>`.
-        let unknown_id = value_type_uuid.is_some_and(|uuid| {
-            value_type.is_none() && super::builtin_type_reference(uuid).is_none()
-        });
+        let unknown_id = value_type_uuid
+            .is_some_and(|uuid| value_type.is_none() && builtin_type_reference(uuid).is_none());
         let foreign = unknown_id
             || foreign_types.is_some_and(|set| {
                 value_type_uuid.is_some_and(|uuid| set.contains(&uuid.to_ascii_lowercase()))
@@ -7434,6 +7374,10 @@ pub(super) fn parse_form_dynamic_list_required_item_ids(settings_fields: &[&str]
 /// A required field-map id's `<UseAlways>` entry, marked `~` when the list has
 /// a field universe and `resolves(item id, name, twin)` says the name is not
 /// one of its fields.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 fn form_dynamic_list_use_always_field_name(
     attribute_name: &str,
     item_id: &str,
@@ -7914,7 +7858,7 @@ fn form_dynamic_list_query_selects_undeclared_field(
                 source_alias
                     .as_deref()
                     .is_some_and(|candidate| form_data_path_name_eq_ignore_case(candidate, alias))
-                    .then(|| reference.as_deref())
+                    .then_some(reference.as_deref())
                     .flatten()
             })
         else {
@@ -8698,8 +8642,7 @@ fn form_dynamic_list_deletion_mark_names(
 /// writes `~Список.Ref` beside a plain `Список.Ссылка` for a query that selects
 /// `Ссылка КАК Ссылка`. Not one list on any of the eight configurations of the
 /// stand needs an English spelling from here.
-
-fn form_dynamic_list_main_table_auto_fields(
+pub(super) fn form_dynamic_list_main_table_auto_fields(
     main_table: &str,
     selection: &FormDynamicListQuerySelection,
     object_refs: &BTreeMap<String, String>,
@@ -8771,525 +8714,6 @@ fn form_dynamic_list_reference_alias_loses_key(
         .get(&(source_alias.to_string(), reference_name.to_string()))
         .is_some_and(|selected_as| selected_as != reference_name)
         && !selection.aliases.contains(reference_name)
-}
-
-#[cfg(test)]
-mod reference_alias_tests {
-    use super::*;
-
-    fn deletion_mark_control_paths(arm: &str) -> (Vec<String>, String, String) {
-        deletion_mark_control_paths_with_bindings(arm, &[])
-    }
-
-    fn deletion_mark_control_paths_with_bindings(
-        arm: &str,
-        bindings: &[(&str, &str)],
-    ) -> (Vec<String>, String, String) {
-        deletion_mark_control_paths_with_field_sources(arm, bindings, None)
-    }
-
-    fn deletion_mark_control_paths_with_field_sources(
-        arm: &str,
-        bindings: &[(&str, &str)],
-        server_state: Option<&str>,
-    ) -> (Vec<String>, String, String) {
-        let query = match arm {
-            "A" | "F" => "ВЫБРАТЬ T.Ссылка КАК Ссылка ИЗ Справочник.CorpusList КАК T",
-            "B" | "E" => "ВЫБРАТЬ T.Ссылка КАК OwnedRef ИЗ Справочник.CorpusList КАК T",
-            "C" => {
-                "ВЫБРАТЬ T.Ссылка КАК OwnedRef, T.ПометкаУдаления КАК ПометкаУдаления ИЗ Справочник.CorpusList КАК T"
-            }
-            "D" => "ВЫБРАТЬ 1 КАК Marker ИЗ Справочник.CorpusList КАК T",
-            _ => panic!("unknown public arm"),
-        };
-        let refs = BTreeMap::from([(
-            "a4d6ccbb-a666-4217-ad1a-174221faba2b".into(),
-            "Catalog.CorpusList".into(),
-        )]);
-        let declarations = declarations_for_script(if arm == "E" { "0" } else { "1" }, &refs);
-        let mut properties = vec![
-            r#""ManualQuery",{"B",1}"#.to_string(),
-            format!(r#""QueryText",{{"S","{query}"}}"#),
-            r#""AutoFillAvailableFields",{"B",1}"#.to_string(),
-        ];
-        for (suffix, id, name, twin) in [
-            (
-                0,
-                3,
-                if arm == "F" {
-                    "Description"
-                } else {
-                    "Наименование"
-                },
-                None,
-            ),
-            (1, 4, "Code", Some("Код")),
-            (2, 9, "SortKey", None),
-            (3, 13, "Ref", Some("Ссылка")),
-            (
-                4,
-                14,
-                if arm == "F" {
-                    "ПометкаУдаления"
-                } else {
-                    "DeletionMark"
-                },
-                None,
-            ),
-        ] {
-            properties.push(format!(r#""FieldsMapItemId{suffix}",{{"N",{id}}}"#));
-            properties.push(format!(r#""FieldsMapItemName{suffix}",{{"S","{name}"}}"#));
-            if let Some(twin) = twin {
-                properties.push(format!(
-                    r#""FieldsMapItemSecondaryName{suffix}",{{"S","{twin}"}}"#
-                ));
-            }
-        }
-        for (path, name) in bindings {
-            properties.push(format!(r#""Field",{{"{path}","{name}"}}"#));
-        }
-        properties.push(r#""ReqMapFieldId0",{"N",3}"#.into());
-        properties.push(r#""ReqMapFieldId1",{"N",14}"#.into());
-        let bag = format!("{{0,{},{}}}", properties.len(), properties.join(","));
-        let mut settings = parse_form_dynamic_list_settings(&bag, &refs).unwrap();
-        settings.main_table = Some("Catalog.CorpusList".into());
-        settings.server_state_xml = server_state.map(str::to_string);
-        let facts = FormDynamicListFieldFacts::read(
-            &bag,
-            Some(&settings),
-            &refs,
-            Some(&declarations),
-            None,
-        )
-        .unwrap();
-        let mut paths = facts.use_always("Список", Some(&settings));
-        paths.sort(); // unchanged production final attribute ordering, line4990
-        let owners = BTreeMap::from([(
-            "26".into(),
-            FormAttributeMetadataOwner {
-                name: "Список".into(),
-                type_references: vec!["cfg:DynamicList".into()],
-                exact_single_type_reference: Some("cfg:DynamicList".into()),
-                has_dynamic_list_settings: true,
-                main_table: Some("Catalog.CorpusList".into()),
-                manual_query: true,
-                additional_columns: vec![],
-            },
-        )]);
-        let mut bindings = FormOwnerScopedBindingIndexes::default();
-        bindings.dynamic_list_attribute_ids.insert("26".into());
-        for (id, name) in &facts.field_names {
-            bindings.attribute_columns.insert(
-                FormAttributeColumnKey {
-                    attribute_id: "26".into(),
-                    column_id: id.clone(),
-                },
-                Some(name.clone()),
-            );
-        }
-        for id in facts.unresolvable_item_ids() {
-            bindings
-                .unresolvable_columns
-                .insert(FormAttributeColumnKey {
-                    attribute_id: "26".into(),
-                    column_id: id,
-                });
-        }
-        for (id, name) in facts.field_item_twins() {
-            bindings.column_twins.insert(
-                FormAttributeColumnKey {
-                    attribute_id: "26".into(),
-                    column_id: id,
-                },
-                name,
-            );
-        }
-        let path = |id| match resolve_form_attribute_column_data_path(
-            &format!("{{2,{{26}},{{{id}}}}}"),
-            &owners,
-            &bindings,
-        ) {
-            FormOwnerScopedDataPath::Resolved(path) => path,
-            _ => panic!("public column must remain explicitly bound"),
-        };
-        (paths, path(4), path(13))
-    }
-
-    // Native 8.3.27.2342 A-F: DeletionMark is the target of this correction.
-    // A/D deliberately preserve the existing, separate Description behavior;
-    // Code/Ref assertions below freeze unrelated production output, not parity.
-    // Full observations: public-form-six-arm-comparison-001, SHA48b28c51…dbde08.
-    #[test]
-    fn implicit_deletion_mark_matches_native_six_arm_controls() {
-        for arm in ["A", "B", "C", "D", "E", "F"] {
-            let (paths, code, reference) = deletion_mark_control_paths(arm);
-            let expected = match arm {
-                "A" | "D" => vec!["Список.DeletionMark", "Список.Наименование"],
-                "B" | "E" => vec!["~Список.Наименование", "Список.DeletionMark"],
-                "C" => vec!["~Список.DeletionMark", "~Список.Наименование"],
-                "F" => vec!["~Список.Description", "Список.DeletionMark"],
-                _ => unreachable!(),
-            };
-            assert_eq!(paths, expected, "DeletionMark native control {arm}");
-            assert_eq!(
-                code,
-                if matches!(arm, "B" | "C") {
-                    "~Список.Code~Список.Код"
-                } else {
-                    "Список.Code"
-                },
-                "unrelated Code behavior {arm}"
-            );
-            assert_eq!(
-                reference,
-                if matches!(arm, "B" | "C") {
-                    "~Список.Ref~Список.Ссылка"
-                } else {
-                    "Список.Ref"
-                },
-                "unrelated Ref behavior {arm}"
-            );
-        }
-    }
-
-    #[test]
-    fn implicit_deletion_mark_preserves_unique_declared_output_spelling() {
-        // The retained UT groups carry a direct ordinary RU -> RU Field
-        // declaration; public F has only a remembered map with that name.
-        let undeclared = deletion_mark_control_paths("F");
-        let declared = deletion_mark_control_paths_with_bindings(
-            "F",
-            &[("ПометкаУдаления", "ПометкаУдаления")],
-        );
-        assert_eq!(
-            declared.0,
-            vec!["~Список.Description", "Список.ПометкаУдаления"]
-        );
-        assert_eq!(
-            undeclared.0,
-            vec!["~Список.Description", "Список.DeletionMark"]
-        );
-        assert_eq!((&declared.1, &declared.2), (&undeclared.1, &undeclared.2));
-        for bindings in [
-            vec![("Description", "Description")],
-            vec![("ПометкаУдаления", "DeletionMark")],
-            vec![("Ref.ПометкаУдаления", "Ref.ПометкаУдаления")],
-            vec![
-                ("ПометкаУдаления", "ПометкаУдаления"),
-                ("ПометкаУдаления", "DeletionMark"),
-            ],
-            vec![
-                ("ПометкаУдаления", "ПометкаУдаления"),
-                ("ПометкаУдаления", "ПометкаУдаления"),
-            ],
-            vec![
-                ("ПометкаУдаления", "ПометкаУдаления"),
-                ("пометкаудаления", "пометкаудаления"),
-            ],
-        ] {
-            assert_eq!(
-                deletion_mark_control_paths_with_bindings("F", &bindings),
-                undeclared,
-                "a renamed, dotted or ambiguous binding cannot select the spelling"
-            );
-        }
-        // A declaration cannot make an explicitly projected-away name available.
-        assert_eq!(
-            deletion_mark_control_paths_with_bindings(
-                "C",
-                &[("ПометкаУдаления", "ПометкаУдаления")],
-            ),
-            deletion_mark_control_paths("C")
-        );
-    }
-
-    #[test]
-    fn implicit_deletion_mark_uses_only_emitted_server_state_bindings() {
-        let declaration = r#"<Field xsi:type="dcssch:DataSetFieldField"><dcssch:dataPath>ПометкаУдаления</dcssch:dataPath><dcssch:field>ПометкаУдаления</dcssch:field></Field>"#;
-        let declared = deletion_mark_control_paths_with_field_sources(
-            "F",
-            &[("ПометкаУдаления", "DeletionMark")],
-            Some(declaration),
-        );
-        assert_eq!(
-            declared.0,
-            vec!["~Список.Description", "Список.ПометкаУдаления"]
-        );
-        let undeclared = deletion_mark_control_paths("F");
-        assert_eq!((&declared.1, &declared.2), (&undeclared.1, &undeclared.2));
-        for fragment in [
-            "<Parameter/>",
-            &format!("<Container>{declaration}</Container>"),
-            &format!("{declaration}{declaration}"),
-            &declaration.replace("DataSetFieldField", "CalculatedField"),
-        ] {
-            assert_eq!(
-                deletion_mark_control_paths_with_field_sources(
-                    "F",
-                    &[("ПометкаУдаления", "ПометкаУдаления")],
-                    Some(fragment),
-                ),
-                undeclared,
-                "the emitted fragment replaces the bag; only a unique ordinary direct binding counts"
-            );
-        }
-        assert_eq!(
-            deletion_mark_control_paths_with_field_sources("C", &[], Some(declaration)),
-            deletion_mark_control_paths("C"),
-        );
-    }
-
-    #[test]
-    fn implicit_deletion_mark_cannot_unshadow_a_later_map_entry() {
-        let refs = BTreeMap::from([(
-            "a4d6ccbb-a666-4217-ad1a-174221faba2b".into(),
-            "Catalog.CorpusList".into(),
-        )]);
-        let declarations = declarations_for_script("1", &refs);
-        let bag = r#"{0,7,"ManualQuery",{"B",1},"QueryText",{"S","SELECT 1 AS Marker FROM Catalog.CorpusList AS T"},"FieldsMapItemId0",{"N",1},"FieldsMapItemName0",{"S","ПометкаУдаления"},"FieldsMapItemId1",{"N",2},"FieldsMapItemName1",{"S","ПометкаУдаления"},"ReqMapFieldId0",{"N",2}}"#;
-        let mut settings = parse_form_dynamic_list_settings(bag, &refs).unwrap();
-        settings.main_table = Some("Catalog.CorpusList".into());
-        let facts =
-            FormDynamicListFieldFacts::read(bag, Some(&settings), &refs, Some(&declarations), None)
-                .unwrap();
-        assert!(facts.shadowed_item_ids.contains("2"));
-        assert_eq!(
-            facts.use_always("List", Some(&settings)),
-            ["~List.ПометкаУдаления"]
-        );
-
-        // Explicit aliases keep the existing casefold spelling in DataPath.
-        let bag = r#"{0,5,"ManualQuery",{"B",1},"QueryText",{"S","SELECT T.ПометкаУдаления AS DeletionMark FROM Catalog.CorpusList AS T"},"FieldsMapItemId0",{"N",14},"FieldsMapItemName0",{"S","deletionmark"},"ReqMapFieldId0",{"N",14}}"#;
-        let mut settings = parse_form_dynamic_list_settings(bag, &refs).unwrap();
-        settings.main_table = Some("Catalog.CorpusList".into());
-        let facts =
-            FormDynamicListFieldFacts::read(bag, Some(&settings), &refs, Some(&declarations), None)
-                .unwrap();
-        let owners = BTreeMap::from([(
-            "26".into(),
-            FormAttributeMetadataOwner {
-                name: "List".into(),
-                type_references: vec!["cfg:DynamicList".into()],
-                exact_single_type_reference: Some("cfg:DynamicList".into()),
-                has_dynamic_list_settings: true,
-                main_table: Some("Catalog.CorpusList".into()),
-                manual_query: true,
-                additional_columns: vec![],
-            },
-        )]);
-        let key = FormAttributeColumnKey {
-            attribute_id: "26".into(),
-            column_id: "14".into(),
-        };
-        let mut bindings = FormOwnerScopedBindingIndexes::default();
-        bindings.dynamic_list_attribute_ids.insert("26".into());
-        bindings
-            .attribute_columns
-            .insert(key.clone(), Some("deletionmark".into()));
-        bindings
-            .column_twins
-            .insert(key, facts.field_item_twins().remove("14").unwrap());
-        assert!(
-            matches!(resolve_form_attribute_column_data_path("{2,{26},{14}}", &owners, &bindings),
-            FormOwnerScopedDataPath::Resolved(path) if path == "List.DeletionMark")
-        );
-    }
-
-    #[test]
-    fn implicit_deletion_mark_requires_an_unambiguous_main_source() {
-        let declarations = declarations_for_script("1", &BTreeMap::new());
-        fn parse(query: &str) -> FormDynamicListQuerySelection {
-            parse_form_dynamic_list_query_selection(query).unwrap()
-        }
-        let other = parse(
-            "SELECT X.ПометкаУдаления AS OtherMark FROM Catalog.CorpusList AS T LEFT JOIN Catalog.Other AS X ON T.Ссылка = X.Ссылка",
-        );
-        let names = form_dynamic_list_deletion_mark_names(
-            "Catalog.CorpusList",
-            &other,
-            Some(&declarations),
-        )
-        .unwrap();
-        assert!(names.implicit.contains("DeletionMark"));
-        for member in ["ПометкаУдаления", "DeletionMark"] {
-            let selected = parse(&format!(
-                "SELECT T.{member} AS SelectedMark FROM Catalog.CorpusList AS T"
-            ));
-            let names = form_dynamic_list_deletion_mark_names(
-                "Catalog.CorpusList",
-                &selected,
-                Some(&declarations),
-            )
-            .unwrap();
-            assert!(names.implicit.is_empty());
-            assert!(names.lexical.contains("SelectedMark"));
-        }
-        for query in [
-            "SELECT T.Ref AS SelectedRef FROM Catalog.CorpusList AS T JOIN Catalog.CorpusList AS U ON T.Ref = U.Ref",
-            "SELECT T.* FROM Catalog.CorpusList AS T",
-            "SELECT 1 AS DeletionMark FROM Catalog.CorpusList AS T",
-        ] {
-            assert!(
-                form_dynamic_list_deletion_mark_names(
-                    "Catalog.CorpusList",
-                    &parse(query),
-                    Some(&declarations)
-                )
-                .is_none()
-            );
-        }
-    }
-
-    #[test]
-    fn renamed_reference_removes_auto_fields_in_both_script_variants() {
-        for (script_code, reference, description) in
-            [("0", "Ref", "Description"), ("1", "Ссылка", "Наименование")]
-        {
-            let declarations = declarations_for_script(script_code, &BTreeMap::new());
-            assert_eq!(declarations.english_script(), script_code == "0");
-            let query = format!("SELECT P.{reference} AS SelectedRef FROM Catalog.Products AS P");
-            let selected = parse_form_dynamic_list_query_selection(&query).unwrap();
-            let fields = form_dynamic_list_main_table_auto_fields(
-                "Catalog.Products",
-                &selected,
-                &BTreeMap::new(),
-                Some(&declarations),
-                None,
-            )
-            .unwrap();
-            assert!(fields.is_empty());
-
-            let query = format!("SELECT P.{reference} AS {reference} FROM Catalog.Products AS P");
-            let selected = parse_form_dynamic_list_query_selection(&query).unwrap();
-            let fields = form_dynamic_list_main_table_auto_fields(
-                "Catalog.Products",
-                &selected,
-                &BTreeMap::new(),
-                Some(&declarations),
-                None,
-            )
-            .unwrap();
-            assert!(fields.contains(reference));
-            assert!(fields.contains(description));
-        }
-    }
-
-    fn declarations_for_script(
-        script_code: &str,
-        object_refs: &BTreeMap<String, String>,
-    ) -> MetadataFieldDeclarationIndex {
-        let mut fields = ["0"; 61];
-        fields[0] = "68";
-        fields[3] = script_code;
-        let root = MetadataTextRow {
-            file_name: "11111111-1111-4111-8111-111111111111".into(),
-            text: format!(
-                "{{9cd510cd-abfc-11d4-9434-004095e12fc7,{{{}}}}}",
-                fields.join(",")
-            ),
-            object_code: None,
-            header: None,
-            kind: None,
-            folder: None,
-        };
-        refs::build_metadata_field_declaration_index_from_texts(
-            &[root],
-            object_refs,
-            &BTreeMap::new(),
-        )
-    }
-
-    // Production-policy discriminators, not native golden expectations. Each
-    // synthetic input changes one source of the available-field universe.
-    // Actual UT XML facts are still needed to select a correction.
-    fn deletion_mark_paths(
-        script_code: &str,
-        auto_fill: Option<bool>,
-        calculated_path: Option<&str>,
-        secondary_name: Option<&str>,
-    ) -> Vec<String> {
-        let object_refs = BTreeMap::from([(
-            "22222222-2222-4222-8222-222222222222".to_string(),
-            "Catalog.Test".to_string(),
-        )]);
-        let declarations = declarations_for_script(script_code, &object_refs);
-        let auto_fill_property = auto_fill.map_or_else(String::new, |value| {
-            format!(r#","AutoFillAvailableFields",{{"B",{}}}"#, u8::from(value))
-        });
-        let secondary_property = secondary_name.map_or_else(String::new, |name| {
-            format!(r#","FieldsMapItemSecondaryName0",{{"S","{name}"}}"#)
-        });
-        let property_count =
-            5 + usize::from(auto_fill.is_some()) + usize::from(secondary_name.is_some());
-        let bag = format!(
-            r#"{{0,{property_count},"ManualQuery",{{"B",1}},"QueryText",{{"S","SELECT 1 AS Marker FROM Catalog.Test AS T"}},"FieldsMapItemId0",{{"N",10}},"FieldsMapItemName0",{{"S","DeletionMark"}},"ReqMapFieldId0",{{"N",10}}{auto_fill_property}{secondary_property}}}"#
-        );
-        let mut settings = parse_form_dynamic_list_settings(&bag, &object_refs).unwrap();
-        settings.main_table = Some("Catalog.Test".into());
-        settings.server_state_xml = calculated_path.map(|path| {
-            format!(
-                r#"<ServerState xmlns:dcssch="http://v8.1c.ru/8.1/data-composition-system/schema"><CalculatedField><dcssch:dataPath>{path}</dcssch:dataPath></CalculatedField></ServerState>"#
-            )
-        });
-        let facts = FormDynamicListFieldFacts::read(
-            &bag,
-            Some(&settings),
-            &object_refs,
-            Some(&declarations),
-            None,
-        )
-        .unwrap();
-        assert!(facts.universe.is_some());
-        facts.use_always("List", Some(&settings))
-    }
-
-    #[test]
-    fn use_always_auto_fill_controls_implicit_deletion_mark() {
-        for auto_fill in [None, Some(true)] {
-            assert_eq!(
-                deletion_mark_paths("0", auto_fill, None, None),
-                ["List.DeletionMark"],
-            );
-            assert_eq!(
-                deletion_mark_paths("1", auto_fill, None, None),
-                ["List.DeletionMark"],
-            );
-        }
-        for script_code in ["0", "1"] {
-            assert_eq!(
-                deletion_mark_paths(script_code, Some(false), None, None),
-                ["~List.DeletionMark"],
-            );
-        }
-    }
-
-    #[test]
-    fn use_always_calculated_membership_is_distinct_from_leaf_name_similarity() {
-        for path in ["DeletionMark", "dElEtIoNmArK"] {
-            assert_eq!(
-                deletion_mark_paths("1", Some(false), Some(path), None),
-                ["List.DeletionMark"],
-            );
-        }
-        for path in ["Other.DeletionMark", "Unrelated"] {
-            assert_eq!(
-                deletion_mark_paths("1", Some(false), Some(path), None),
-                ["~List.DeletionMark"],
-            );
-        }
-    }
-
-    #[test]
-    fn use_always_localized_twin_requires_real_universe_membership() {
-        assert_eq!(
-            deletion_mark_paths("1", None, None, Some("ПометкаУдаления")),
-            ["List.DeletionMark"],
-        );
-        assert_eq!(
-            deletion_mark_paths("1", Some(false), None, Some("ПометкаУдаления")),
-            ["~List.DeletionMark~List.ПометкаУдаления"],
-        );
-    }
 }
 
 /// What the final `SELECT` of a dynamic-list query names, read with the query
@@ -9849,7 +9273,7 @@ fn parse_form_dynamic_list_query_selection_projected(
         // OperationNumber`, `.NextOperation`).
         let is_alias = selection_tokens.last().is_some_and(|previous: &String| {
             // `AS <alias>`, or a member name behind `.` (`….Order`).
-            crate::form_schema::FormQueryLexeme::classify(previous).is_member_separator()
+            ibcmd_form_schema::FormQueryLexeme::classify(previous).is_member_separator()
                 || is_1c_query_keyword(previous, Q_AS)
         });
         if depth == 0
@@ -9942,7 +9366,7 @@ fn parse_form_dynamic_list_query_selection_projected(
                 _ => {}
             }
             let is_alias = clause.last().is_some_and(|previous: &String| {
-                crate::form_schema::FormQueryLexeme::classify(previous).is_member_separator()
+                ibcmd_form_schema::FormQueryLexeme::classify(previous).is_member_separator()
                     || is_1c_query_keyword(previous, Q_AS)
             });
             if depth == 0 && !is_alias && is_1c_query_keyword(token, Q_CLAUSE_END) {
@@ -10179,7 +9603,11 @@ pub(super) fn parse_form_spreadsheet_document_settings(
     }
     let body_start = field.find("{8,")?;
     let body_end = scan_1c_braced_value(field, body_start)?;
-    let mut spreadsheet = parse_moxel_spreadsheet_text(&field[body_start..body_end], object_refs)?;
+    let mut spreadsheet = ibcmd_moxel::parse_moxel_spreadsheet_text(
+        &field[body_start..body_end],
+        object_refs,
+        builtin_type_reference,
+    )?;
     // Group/header palette slots belong to the standalone spreadsheet
     // projection. The same MOXCEL body embedded as a form attribute does not
     // publish them: across all eight validation corpora, none of the 54 forms
@@ -11150,8 +10578,8 @@ pub(super) fn parse_form_button_parameter(
     if fields.len() != 3 || fields.first().map(|value| value.trim()) != Some("\"#\"") {
         return None;
     }
-    if !parse_non_zero_uuid(fields.get(1)?.trim())
-        .is_some_and(|uuid| uuid == FORM_METADATA_OBJECT_REFERENCE_TYPE_UUID)
+    if parse_non_zero_uuid(fields.get(1)?.trim())
+        .is_none_or(|uuid| uuid != FORM_METADATA_OBJECT_REFERENCE_TYPE_UUID)
     {
         return None;
     }
@@ -11601,6 +11029,10 @@ pub(super) fn normalize_form_type_pattern(
     types
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn extract_form_child_items(
     fields: &[&str],
     attributes: &[FormAttribute],
@@ -12330,12 +11762,10 @@ fn collect_form_attribute_data_path_columns(
         insert(&column.id, &column.name);
     }
     let is_dynamic_list = form_attribute_is_exact_dynamic_list(attribute);
-    if is_dynamic_list {
-        if let Some(settings) = &attribute.settings {
-            for field in &settings.fields {
-                if let Some(item_id) = &field.item_id {
-                    insert(item_id, &field.field);
-                }
+    if is_dynamic_list && let Some(settings) = &attribute.settings {
+        for field in &settings.fields {
+            if let Some(item_id) = &field.item_id {
+                insert(item_id, &field.field);
             }
         }
     }
@@ -13135,6 +12565,10 @@ pub(super) fn trace_form_item_indexes_for_test(field: &str, trace_sink: &dyn For
     );
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 fn collect_form_child_item_indexes_from_field_traced(
     field: &str,
     attribute_names_by_id: &BTreeMap<String, String>,
@@ -13167,12 +12601,12 @@ fn collect_form_child_item_indexes_from_field_traced(
             .filter_map(|(index, field)| (index != schema.prefix_slot()).then_some(*field))
             .collect::<Vec<_>>()
     });
-    let fields = normalized_fields.as_deref().unwrap_or(&raw_fields);
+    let fields = normalized_fields.as_deref().unwrap_or(raw_fields);
     let structural_identity = wrapper
-        .and_then(|wrapper| form_child_item_tag(wrapper, &fields).map(|tag| (wrapper, tag)))
-        .and_then(|(wrapper, tag)| form_child_item_id(&fields).map(|id| (wrapper, tag, id)))
+        .and_then(|wrapper| form_child_item_tag(wrapper, fields).map(|tag| (wrapper, tag)))
+        .and_then(|(wrapper, tag)| form_child_item_id(fields).map(|id| (wrapper, tag, id)))
         .and_then(|(wrapper, tag, id)| {
-            parse_form_child_item_name(wrapper, &fields).map(|name| (wrapper, tag, id, name))
+            parse_form_child_item_name(wrapper, fields).map(|name| (wrapper, tag, id, name))
         });
     if let (Some(trace_sink), Some((wrapper, tag, id, name))) = (trace_sink, &structural_identity) {
         let occurrence = *trace_occurrence;
@@ -13258,9 +12692,9 @@ fn collect_form_child_item_indexes_from_field_traced(
         }
     }
     if let Some(wrapper) = wrapper
-        && form_spreadsheet_document_field_layout(wrapper, &fields)
-        && let Some(id) = form_child_item_id(&fields)
-        && let Some(name) = parse_form_child_item_name(wrapper, &fields)
+        && form_spreadsheet_document_field_layout(wrapper, fields)
+        && let Some(id) = form_child_item_id(fields)
+        && let Some(name) = parse_form_child_item_name(wrapper, fields)
     {
         indexes.standard_command_owner_name_by_id.insert(
             id.to_string(),
@@ -13271,9 +12705,9 @@ fn collect_form_child_item_indexes_from_field_traced(
         );
     }
     if let Some(wrapper) = wrapper
-        && form_graphical_schema_field_layout(wrapper, &fields)
-        && let Some(id) = form_child_item_id(&fields)
-        && let Some(name) = parse_form_child_item_name(wrapper, &fields)
+        && form_graphical_schema_field_layout(wrapper, fields)
+        && let Some(id) = form_child_item_id(fields)
+        && let Some(name) = parse_form_child_item_name(wrapper, fields)
     {
         indexes.standard_command_owner_name_by_id.insert(
             id.to_string(),
@@ -13284,9 +12718,9 @@ fn collect_form_child_item_indexes_from_field_traced(
         );
     }
     if let Some(wrapper) = wrapper
-        && form_formatted_document_field_layout(wrapper, &fields)
-        && let Some(id) = form_child_item_id(&fields)
-        && let Some(name) = parse_form_child_item_name(wrapper, &fields)
+        && form_formatted_document_field_layout(wrapper, fields)
+        && let Some(id) = form_child_item_id(fields)
+        && let Some(name) = parse_form_child_item_name(wrapper, fields)
     {
         indexes.standard_command_owner_name_by_id.insert(
             id.to_string(),
@@ -13297,9 +12731,9 @@ fn collect_form_child_item_indexes_from_field_traced(
         );
     }
     if let Some(wrapper) = wrapper
-        && form_pdf_document_field_layout(wrapper, &fields)
-        && let Some(id) = form_child_item_id(&fields)
-        && let Some(name) = parse_form_child_item_name(wrapper, &fields)
+        && form_pdf_document_field_layout(wrapper, fields)
+        && let Some(id) = form_child_item_id(fields)
+        && let Some(name) = parse_form_child_item_name(wrapper, fields)
     {
         indexes.standard_command_owner_name_by_id.insert(
             id.to_string(),
@@ -13324,8 +12758,8 @@ fn collect_form_child_item_indexes_from_field_traced(
             .insert((*id).to_string(), name.clone());
     } else if let Some(wrapper) = wrapper
         && matches!(wrapper, "37" | "48")
-        && let Some(id) = form_child_item_id(&fields)
-        && let Some(name) = parse_form_child_item_name(wrapper, &fields)
+        && let Some(id) = form_child_item_id(fields)
+        && let Some(name) = parse_form_child_item_name(wrapper, fields)
     {
         indexes
             .command_source_owner_name_by_id
@@ -13336,7 +12770,7 @@ fn collect_form_child_item_indexes_from_field_traced(
     // 11.5.27.75 native tree the property resolves to 161 of its 163
     // occurrences from the top-level items alone and to all 163 once the
     // extended tooltips are in the same id index.
-    if let Some((tooltip_id, tooltip_name)) = form_child_item_extended_tooltip_identity(&fields) {
+    if let Some((tooltip_id, tooltip_name)) = form_child_item_extended_tooltip_identity(fields) {
         indexes.item_name_by_id.insert(tooltip_id, tooltip_name);
     }
     if let Some((_, tag, id, name)) = structural_identity.as_ref() {
@@ -13407,7 +12841,7 @@ fn collect_form_child_item_indexes_from_field_traced(
                 }
             }
             let mut columns = BTreeMap::new();
-            collect_form_table_column_names_for_table(&fields, &mut columns);
+            collect_form_table_column_names_for_table(fields, &mut columns);
             if !columns.is_empty() {
                 indexes
                     .table_column_names_by_id
@@ -13423,7 +12857,7 @@ fn collect_form_child_item_indexes_from_field_traced(
                 }
             }
             if let Some(group_id) =
-                parse_form_table_property_bag_number(&fields, TableBagKey::UserSettingsGroup)
+                parse_form_table_property_bag_number(fields, TableBagKey::UserSettingsGroup)
             {
                 indexes
                     .user_settings_group_id_by_table_id
@@ -13442,7 +12876,7 @@ fn collect_form_child_item_indexes_from_field_traced(
                 | "SpreadSheetDocumentField"
                 | "HTMLDocumentField"
         ) {
-            for binding in form_child_item_binding_fields(tag, &fields) {
+            for binding in form_child_item_binding_fields(tag, fields) {
                 if let Some(binding_key) = parse_form_bound_data_binding_key(binding)
                     && let Some(data_path) = parse_form_bound_data_path_with_metadata_owner(
                         binding,
@@ -13603,6 +13037,10 @@ pub(super) fn form_child_item_id<'a>(fields: &[&'a str]) -> Option<&'a str> {
     (id != "0").then_some(id)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn parse_form_child_item_pairs(
     fields: &[&str],
     main_data_path: Option<&str>,
@@ -13720,25 +13158,6 @@ pub(super) fn form_root_trailer_start(fields: &[&str]) -> Option<usize> {
     matched
 }
 
-fn form_root_child_items_tail_start_for(
-    fields: &[&str],
-    allowed_root_discriminators: &[&str],
-    root_trailer_field_counts: &[usize],
-) -> Option<usize> {
-    if !fields
-        .first()
-        .map(|field| field.trim())
-        .is_some_and(|value| allowed_root_discriminators.contains(&value))
-    {
-        return None;
-    }
-    root_trailer_field_counts
-        .iter()
-        .find_map(|&root_trailer_fields| {
-            form_root_child_items_tail_start_at(fields, root_trailer_fields)
-        })
-}
-
 fn form_root_child_items_tail_start_at(
     fields: &[&str],
     root_trailer_fields: usize,
@@ -13774,10 +13193,8 @@ fn form_root_child_items_tail_start_at(
                 break;
             }
         }
-        if complete {
-            if matched_tail.replace(tail_start).is_some() {
-                return None;
-            }
+        if complete && matched_tail.replace(tail_start).is_some() {
+            return None;
         }
     }
     matched_tail
@@ -13808,6 +13225,10 @@ pub(super) fn parse_form_child_item(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn parse_form_child_item_with_attrs(
     field: &str,
     main_data_path: Option<&str>,
@@ -13894,6 +13315,10 @@ pub(super) fn parse_form_child_item_with_dynamic_list_attrs(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn parse_form_child_item_with_context(
     field: &str,
     main_data_path: Option<&str>,
@@ -13962,6 +13387,10 @@ fn parse_form_control_border(
     schema.non_default_tuple_border(&tuple)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 fn parse_form_child_item_with_metadata_owners(
     field: &str,
     main_data_path: Option<&str>,
@@ -14041,7 +13470,7 @@ fn parse_form_child_item_with_metadata_owners(
             .filter_map(|(index, field)| (index != prefix_slot).then_some(*field))
             .collect::<Vec<_>>()
     });
-    let fields = normalized_fields.as_deref().unwrap_or(&raw_fields);
+    let fields = normalized_fields.as_deref().unwrap_or(raw_fields);
     let identity = split_1c_braced_fields(fields.get(1)?.trim(), 0)?;
     let id = identity.first()?.trim();
     // A Gantt chart's own nested table may carry id `0`: 1C:Документооборот
@@ -14061,27 +13490,29 @@ fn parse_form_child_item_with_metadata_owners(
     }
     let tag = form_child_item_tag(wrapper, fields)?;
     let name = parse_form_child_item_name(wrapper, fields)?;
-    let button_top_level_offset = (tag == "Button")
-        .then(|| form_button_top_level_offset(&fields))
-        .unwrap_or(0);
+    let button_top_level_offset = if tag == "Button" {
+        form_button_top_level_offset(fields)
+    } else {
+        0
+    };
     let input_field_extended_options = (matches!(tag, "InputField" | "TextDocumentField")
-        && form_input_field_layout_is_extended(&fields))
-    .then(|| form_input_field_extended_options(&fields))
+        && form_input_field_layout_is_extended(fields))
+    .then(|| form_input_field_extended_options(fields))
     .flatten();
     let picture_field_options = (tag == "PictureField")
-        .then(|| parse_form_picture_field_options(&fields))
+        .then(|| parse_form_picture_field_options(fields))
         .flatten();
     let radio_button_options = (tag == "RadioButtonField")
-        .then(|| parse_form_radio_button_options(&fields))
+        .then(|| parse_form_radio_button_options(fields))
         .flatten();
     let check_box_field_layout = (tag == "CheckBoxField")
-        .then(|| parse_form_check_box_field_layout(wrapper, &fields))
+        .then(|| parse_form_check_box_field_layout(wrapper, fields))
         .flatten();
     let special_field_layout = matches!(
         tag,
         "ProgressBarField" | "TrackBarField" | "ChartField" | "GanttChartField"
     )
-    .then(|| parse_form_special_field_layout(wrapper, &fields))
+    .then(|| parse_form_special_field_layout(wrapper, fields))
     .flatten();
     let input_field_top_level_offset = matches!(
         tag,
@@ -14123,8 +13554,8 @@ fn parse_form_child_item_with_metadata_owners(
             | "GanttChartField"
     )
     .then(|| {
-        form_input_field_layout_is_extended(&fields)
-            .then(|| form_input_field_top_level_offset(&fields))
+        form_input_field_layout_is_extended(fields)
+            .then(|| form_input_field_top_level_offset(fields))
     })
     .flatten()
     .unwrap_or(0);
@@ -14167,7 +13598,7 @@ fn parse_form_child_item_with_metadata_owners(
                 wrapper,
                 tag,
                 direct_discriminator,
-                &fields,
+                fields,
                 &options,
                 &source,
             )
@@ -14209,7 +13640,7 @@ fn parse_form_child_item_with_metadata_owners(
         });
     let spreadsheet_document_properties = field_schema_and_options
         .as_ref()
-        .and_then(|(schema, options)| schema.spreadsheet_document_properties(&fields, options));
+        .and_then(|(schema, options)| schema.spreadsheet_document_properties(fields, options));
     let button_color_schema =
         FormButtonColorSchema::from_raw_layout(wrapper, fields.len(), tag, button_top_level_offset);
     let button_shape_representation_schema = FormButtonShapeRepresentationSchema::from_raw_layout(
@@ -14275,9 +13706,9 @@ fn parse_form_child_item_with_metadata_owners(
         tag,
         button_top_level_offset,
     );
-    let table_schema = FormTableSchema::from_raw_layout(wrapper, tag, &fields);
+    let table_schema = FormTableSchema::from_raw_layout(wrapper, tag, fields);
     let strict_table_root_properties = table_schema
-        .and_then(|schema| parse_form_table_root_properties(schema, &fields))
+        .and_then(|schema| parse_form_table_root_properties(schema, fields))
         .unwrap_or_default();
     let button_data_path_slot = button_common_schema.and_then(|schema| schema.data_path_slot());
     // A progress bar, a track bar and a chart bind their data exactly the way
@@ -14294,7 +13725,7 @@ fn parse_form_child_item_with_metadata_owners(
     // read it strictly and got `Константы.<constant>`; the track bar did not
     // and got `Константы.<the label item's own name>`.
     let strict_field_data_path = field_schema_and_options.is_some()
-        || parse_form_special_field_layout(wrapper, &fields).is_some();
+        || parse_form_special_field_layout(wrapper, fields).is_some();
     // A `Table`'s own implicit display field (wrapper `35`) binds through the
     // identical owner-scoped `{2,{attribute_id},{column_id}}` chain the
     // `Table` item itself resolves through (`table_schema.is_some()` below)
@@ -14312,7 +13743,7 @@ fn parse_form_child_item_with_metadata_owners(
         || wrapper == "35";
     let data_paths = parse_form_child_item_data_path(
         tag,
-        &fields,
+        fields,
         &name,
         id,
         main_data_path,
@@ -14333,7 +13764,7 @@ fn parse_form_child_item_with_metadata_owners(
     );
     let mut data_path_resolution = data_paths.primary;
     if let Some(resolved) = data_path_resolution.as_mut()
-        && let Some(binding) = form_child_item_binding_fields(tag, &fields).first()
+        && let Some(binding) = form_child_item_binding_fields(tag, fields).first()
         && let Some(physical) = form_item_unnamed_binding_physical_path(
             binding,
             &resolved.data_path,
@@ -14429,7 +13860,7 @@ fn parse_form_child_item_with_metadata_owners(
         tag,
         id,
         direct_discriminator,
-        &fields,
+        fields,
     );
     let page_schema = show_title_options.as_deref().and_then(|options| {
         FormPageSchema::from_raw_layout(wrapper, fields.len(), tag, direct_discriminator, options)
@@ -14438,7 +13869,7 @@ fn parse_form_child_item_with_metadata_owners(
         .and_then(|schema| {
             show_title_options
                 .as_deref()
-                .map(|options| schema.properties(&fields, options))
+                .map(|options| schema.properties(fields, options))
         })
         // The short `17`/18 revision of the page bag answers four of the same
         // members out of the same slots; everything else it holds stays unread.
@@ -14449,7 +13880,7 @@ fn parse_form_child_item_with_metadata_owners(
                     fields.len(),
                     tag,
                     direct_discriminator,
-                    &fields,
+                    fields,
                     options,
                 )
             })
@@ -14473,7 +13904,7 @@ fn parse_form_child_item_with_metadata_owners(
         .flatten()
         .and_then(|options| FormPopupColorSchema::from_raw_layout(wrapper, tag, &options));
     let mut child_items = parse_form_child_item_pairs(
-        &fields,
+        fields,
         main_data_path,
         child_parent_data_path,
         Some(tag),
@@ -14497,7 +13928,7 @@ fn parse_form_child_item_with_metadata_owners(
     if tag == "Table" {
         append_form_table_service_child_items(
             &mut child_items,
-            &fields,
+            fields,
             main_data_path,
             child_parent_data_path,
             Some(tag),
@@ -14518,11 +13949,11 @@ fn parse_form_child_item_with_metadata_owners(
             object_refs,
         );
     } else if is_form_field_direct_service_parent(tag)
-        && !form_text_document_context_menu_owner_fields(&fields)
+        && !form_text_document_context_menu_owner_fields(fields)
     {
         append_form_child_items_by_tag(
             &mut child_items,
-            &fields,
+            fields,
             // The PDF viewer field owns a view-status addition of its own next
             // to its context menu: each of the five `PDFDocumentField` records
             // of UT 11.5.27.75 carries exactly one wrapper-`22` context menu
@@ -14560,7 +13991,7 @@ fn parse_form_child_item_with_metadata_owners(
     } else if tag.ends_with("Addition") {
         append_form_child_items_by_tag(
             &mut child_items,
-            &fields,
+            fields,
             &["ContextMenu"],
             main_data_path,
             child_parent_data_path,
@@ -14583,7 +14014,7 @@ fn parse_form_child_item_with_metadata_owners(
         );
     }
     match parse_form_text_document_context_menu(
-        &fields,
+        fields,
         main_data_path,
         child_parent_data_path,
         Some(tag),
@@ -14612,13 +14043,13 @@ fn parse_form_child_item_with_metadata_owners(
         Err(_) => return None,
     }
     let extended_group_options = (tag == "UsualGroup")
-        .then(|| parse_form_usual_group_extended_options(&fields))
+        .then(|| parse_form_usual_group_extended_options(fields))
         .flatten();
     let column_group_options = (tag == "ColumnGroup")
-        .then(|| parse_form_column_group_options(&fields))
+        .then(|| parse_form_column_group_options(fields))
         .flatten();
     let label_decoration_options = (tag == "LabelDecoration")
-        .then(|| parse_form_label_decoration_options(tag, &fields, object_refs))
+        .then(|| parse_form_label_decoration_options(tag, fields, object_refs))
         .flatten();
     let picture_decoration_options = (tag == "PictureDecoration")
         .then(|| {
@@ -14634,9 +14065,9 @@ fn parse_form_child_item_with_metadata_owners(
         direct_discriminator,
     );
     let picture_decoration_properties =
-        picture_decoration_schema.map(|schema| schema.properties(&fields));
+        picture_decoration_schema.map(|schema| schema.properties(fields));
     let label_field_options = (tag == "LabelField")
-        .then(|| parse_form_label_field_options(&fields, object_refs))
+        .then(|| parse_form_label_field_options(fields, object_refs))
         .flatten();
     let document_field_options_kind = match tag {
         "CalendarField" => Some("6"),
@@ -14662,16 +14093,18 @@ fn parse_form_child_item_with_metadata_owners(
     // height slot and the same event record in slot 5. The unprefixed read
     // landed on the scalar `1` beside it and answered nothing at all.
     let document_field_options = document_field_options_kind.and_then(|options_kind| {
-        let offset = form_input_field_layout_is_extended(&fields)
-            .then(|| form_input_field_top_level_offset(&fields))
-            .unwrap_or(0);
+        let offset = if form_input_field_layout_is_extended(fields) {
+            form_input_field_top_level_offset(fields)
+        } else {
+            0
+        };
         fields
             .get(39 + offset)
             .and_then(|field| split_1c_braced_fields(field.trim(), 0))
             .filter(|options| options.first().map(|field| field.trim()) == Some(options_kind))
     });
-    let ordinary_table_layout = tag == "Table" && form_table_ordinary_layout_variant(&fields);
-    let table_schema_skip_on_input = table_schema.and_then(|schema| schema.skip_on_input(&fields));
+    let ordinary_table_layout = tag == "Table" && form_table_ordinary_layout_variant(fields);
+    let table_schema_skip_on_input = table_schema.and_then(|schema| schema.skip_on_input(fields));
     let command_name = if tag == "Button" {
         fields.get(8 + button_top_level_offset).and_then(|field| {
             parse_form_button_command_name_with_main_attribute(
@@ -14696,7 +14129,7 @@ fn parse_form_child_item_with_metadata_owners(
     let (title, title_formatted) = parse_form_child_item_title(
         tag,
         wrapper,
-        &fields,
+        fields,
         field_schema_and_options.as_ref().map(|(schema, _)| *schema),
         input_field_top_level_offset,
     );
@@ -14706,9 +14139,11 @@ fn parse_form_child_item_with_metadata_owners(
         .and_then(|slot| fields.get(slot))
         .map(|field| parse_form_localized_strings(field))
         .unwrap_or_default();
-    let input_hint = (tag == "InputField")
-        .then(|| parse_form_input_field_input_hint(input_field_extended_options.as_deref()))
-        .unwrap_or_default();
+    let input_hint = if tag == "InputField" {
+        parse_form_input_field_input_hint(input_field_extended_options.as_deref())
+    } else {
+        Default::default()
+    };
     // An `InputField` whose record carries the conditional-appearance prefix
     // used to lose an `<InputHint>` that repeated its own `<Title>`, on the
     // unstated assumption that the shifted bag had answered the title twice.
@@ -14734,17 +14169,17 @@ fn parse_form_child_item_with_metadata_owners(
     let tooltip = parse_form_child_item_tooltip(
         tag,
         wrapper,
-        &fields,
+        fields,
         field_schema_and_options.as_ref().map(|(schema, _)| *schema),
         check_box_field_layout.as_ref().map(|(schema, _)| *schema),
         table_schema,
         input_field_top_level_offset,
     );
     let tooltip_representation =
-        parse_form_field_tooltip_representation(wrapper, tag, &fields, table_schema);
+        parse_form_field_tooltip_representation(wrapper, tag, fields, table_schema);
     let warning_on_edit_representation = field_schema_and_options
         .as_ref()
-        .and_then(|(schema, _)| schema.warning_on_edit_representation(&fields));
+        .and_then(|(schema, _)| schema.warning_on_edit_representation(fields));
     let warning_on_edit = field_schema_and_options
         .as_ref()
         .and_then(|(schema, _)| fields.get(schema.warning_on_edit_slot()))
@@ -14753,7 +14188,7 @@ fn parse_form_child_item_with_metadata_owners(
     let header_picture = parse_form_field_header_picture(
         wrapper,
         tag,
-        &fields,
+        fields,
         input_field_top_level_offset,
         object_refs,
     )
@@ -14761,7 +14196,7 @@ fn parse_form_child_item_with_metadata_owners(
     let footer_picture = parse_form_field_footer_picture(
         wrapper,
         tag,
-        &fields,
+        fields,
         input_field_top_level_offset,
         object_refs,
     );
@@ -14781,7 +14216,7 @@ fn parse_form_child_item_with_metadata_owners(
         parse_form_page_picture(schema, options, object_refs)
     });
     let rows_picture =
-        table_schema.and_then(|schema| parse_form_table_rows_picture(schema, &fields, object_refs));
+        table_schema.and_then(|schema| parse_form_table_rows_picture(schema, fields, object_refs));
     // A `Button` and a `PictureField` read the very slot that already feeds
     // their picture reference; when that slot holds an inline payload instead of
     // a reference there is nothing for the reference resolver to return, and the
@@ -14806,7 +14241,7 @@ fn parse_form_child_item_with_metadata_owners(
     // transparent pixel.  One schema read answers all three, from the one
     // record, so the three cannot disagree.
     let picture_decoration_picture = (tag == "PictureDecoration")
-        .then(|| parse_form_picture_decoration_picture(&fields, object_refs))
+        .then(|| parse_form_picture_decoration_picture(fields, object_refs))
         .flatten();
     // The transparent pixel of the picture a `Button`, a `PictureField`, a
     // `Popup` or a `Page` names by reference, read from the same slot the
@@ -14854,19 +14289,17 @@ fn parse_form_child_item_with_metadata_owners(
         id: id.to_string(),
         name,
         display_importance: display_importance_schema
-            .and_then(|schema| schema.display_importance(&fields)),
+            .and_then(|schema| schema.display_importance(fields)),
         auto_command_bar_empty_element: nested_auto_command_bar_schema
             .is_some_and(FormNestedAutoCommandBarSchema::is_empty_shape),
         autofill: if let Some(schema) = table_schema {
-            schema.autofill(&fields)
+            schema.autofill(fields)
         } else if tag == "ContextMenu" {
             fields
                 .get(20)
                 .and_then(|field| parse_form_context_menu_autofill(field))
-        } else if let Some(schema) = nested_auto_command_bar_schema {
-            Some(schema.autofill())
         } else {
-            None
+            nested_auto_command_bar_schema.map(|schema| schema.autofill())
         },
         group: if tag == "ColumnGroup" {
             column_group_options
@@ -15004,21 +14437,21 @@ fn parse_form_child_item_with_metadata_owners(
             .as_ref()
             .and_then(|options| options.show_left_margin),
         table_representation: if tag == "Table" {
-            parse_form_table_representation_from_fields(wrapper, &fields)
+            parse_form_table_representation_from_fields(wrapper, fields)
         } else {
             None
         },
         table_command_bar_location: if tag == "Table" {
-            parse_form_table_command_bar_location(wrapper, &fields)
+            parse_form_table_command_bar_location(wrapper, fields)
         } else {
             None
         },
         table_search_string_location: table_schema
-            .and_then(|schema| schema.search_string_location(&fields)),
+            .and_then(|schema| schema.search_string_location(fields)),
         table_view_status_location: table_schema
-            .and_then(|schema| schema.view_status_location(&fields)),
+            .and_then(|schema| schema.view_status_location(fields)),
         table_search_control_location: table_schema
-            .and_then(|schema| schema.search_control_location(&fields)),
+            .and_then(|schema| schema.search_control_location(fields)),
         height_in_table_rows: if tag == "Table" {
             fields
                 .get(21)
@@ -15028,7 +14461,7 @@ fn parse_form_child_item_with_metadata_owners(
             None
         },
         row_selection_mode: if wrapper == "55" {
-            table_schema.and_then(|schema| schema.row_selection_mode(&fields))
+            table_schema.and_then(|schema| schema.row_selection_mode(fields))
         } else if tag == "Table" {
             if ordinary_table_layout {
                 None
@@ -15044,23 +14477,23 @@ fn parse_form_child_item_with_metadata_owners(
         // the slot seed `plx-drag` moves; see the `PlannerField` row of
         // `FORM_DOCUMENT_FIELD_GEOMETRY`.
         enable_start_drag: table_schema
-            .and_then(|schema| schema.enable_start_drag(&fields))
+            .and_then(|schema| schema.enable_start_drag(fields))
             .or_else(|| {
                 parse_form_document_field_on_flag(tag, fields, |layout| layout.enable_start_drag)
             }),
         enable_drag: table_schema
-            .and_then(|schema| schema.enable_drag(&fields))
+            .and_then(|schema| schema.enable_drag(fields))
             .or_else(|| {
                 parse_planner_field_enable_drag(tag, fields, owner_scoped_bindings.extension_export)
             }),
         file_drag_mode: if tag == "Table" {
             if let Some(schema) = table_schema {
-                schema.file_drag_mode(&fields)
+                schema.file_drag_mode(fields)
             } else {
-                parse_form_table_file_drag_mode_from_fields(wrapper, &fields)
+                parse_form_table_file_drag_mode_from_fields(wrapper, fields)
             }
         } else if tag == "PictureDecoration" {
-            parse_form_picture_decoration_file_drag_mode(&fields)
+            parse_form_picture_decoration_file_drag_mode(fields)
         } else if tag == "PictureField" {
             field_schema_and_options
                 .as_ref()
@@ -15070,27 +14503,27 @@ fn parse_form_child_item_with_metadata_owners(
         },
         table_refresh_request: table_schema.and_then(|schema| schema.refresh_request(fields)),
         auto_refresh: if tag == "Table" {
-            parse_form_table_property_bag_bool(&fields, TableBagKey::AutoRefresh)
+            parse_form_table_property_bag_bool(fields, TableBagKey::AutoRefresh)
         } else {
             None
         },
         auto_refresh_period: if tag == "Table" {
-            parse_form_table_property_bag_number(&fields, TableBagKey::AutoRefreshPeriod)
+            parse_form_table_property_bag_number(fields, TableBagKey::AutoRefreshPeriod)
         } else {
             None
         },
         period: if tag == "Table" {
-            parse_form_table_period(&fields)
+            parse_form_table_period(fields)
         } else {
             None
         },
-        change_row_set: table_schema.and_then(|schema| schema.change_row_set(&fields)),
-        change_row_order: table_schema.and_then(|schema| schema.change_row_order(&fields)),
+        change_row_set: table_schema.and_then(|schema| schema.change_row_set(fields)),
+        change_row_order: table_schema.and_then(|schema| schema.change_row_order(fields)),
         command_set_excluded_commands: {
             // A dynamic list whose row set the form declares unchangeable has
             // no commands that change it, so the platform names none of them.
             let names_row_set_commands =
-                !(table_schema.and_then(|schema| schema.change_row_set(&fields)) == Some(false)
+                !(table_schema.and_then(|schema| schema.change_row_set(fields)) == Some(false)
                     && table_bound_to_dynamic_list);
             // The search history is a command of the search string, so a table
             // that shows neither a search string nor a search control does not
@@ -15101,20 +14534,20 @@ fn parse_form_child_item_with_metadata_owners(
             // the command and every one of them passes this test, 624 fail it
             // and none of them names it.
             let names_search_history = table_bound_to_dynamic_list
-                || table_schema.and_then(|schema| schema.search_string_location(&fields))
+                || table_schema.and_then(|schema| schema.search_string_location(fields))
                     != Some(FormTableSearchStringLocation::None)
-                || table_schema.and_then(|schema| schema.search_control_location(&fields))
+                || table_schema.and_then(|schema| schema.search_control_location(fields))
                     != Some(FormTableSearchControlLocation::None);
             let mut commands = table_schema
                 .map(|schema| {
                     parse_form_table_command_set_excluded_commands_for_table(
                         schema,
-                        &fields,
+                        fields,
                         names_row_set_commands,
                     )
                 })
                 .unwrap_or_else(|| {
-                    parse_form_field_command_set_excluded_commands(wrapper, tag, &fields)
+                    parse_form_field_command_set_excluded_commands(wrapper, tag, fields)
                 });
             if !names_search_history {
                 commands.retain(|command| *command != "SearchHistory");
@@ -15122,17 +14555,17 @@ fn parse_form_child_item_with_metadata_owners(
             commands
         },
         table_behavior_on_horizontal_compression: table_schema
-            .and_then(|schema| schema.behavior_on_horizontal_compression(&fields)),
-        table_current_row_use: table_schema.and_then(|schema| schema.current_row_use(&fields)),
-        table_search_on_input: table_schema.and_then(|schema| schema.search_on_input(&fields)),
-        table_initial_list_view: table_schema.and_then(|schema| schema.initial_list_view(&fields)),
+            .and_then(|schema| schema.behavior_on_horizontal_compression(fields)),
+        table_current_row_use: table_schema.and_then(|schema| schema.current_row_use(fields)),
+        table_search_on_input: table_schema.and_then(|schema| schema.search_on_input(fields)),
+        table_initial_list_view: table_schema.and_then(|schema| schema.initial_list_view(fields)),
         use_alternation_row_color: table_schema
-            .and_then(|schema| schema.use_alternation_row_color(&fields)),
+            .and_then(|schema| schema.use_alternation_row_color(fields)),
         default_item: if tag == "Table" {
-            table_schema.and_then(|schema| schema.default_item(&fields))
+            table_schema.and_then(|schema| schema.default_item(fields))
         } else if let Some(properties) = spreadsheet_document_properties.as_ref() {
             properties.default_item
-        } else if tag == "Button" && form_button_layout_is_extended(&fields) {
+        } else if tag == "Button" && form_button_layout_is_extended(fields) {
             fields
                 .get(13 + button_top_level_offset)
                 .and_then(|field| parse_form_child_item_show_title(field))
@@ -15172,17 +14605,17 @@ fn parse_form_child_item_with_metadata_owners(
         } else {
             None
         },
-        initial_tree_view: table_schema.and_then(|schema| schema.initial_tree_view(&fields)),
-        row_input_mode: table_schema.and_then(|schema| schema.row_input_mode(&fields)),
-        table_choice_mode: table_schema.and_then(|schema| schema.choice_mode(&fields)),
-        table_multiple_choice: table_schema.and_then(|schema| schema.multiple_choice(&fields)),
-        table_selection_mode: table_schema.and_then(|schema| schema.selection_mode(&fields)),
-        table_header: table_schema.and_then(|schema| schema.header(&fields)),
+        initial_tree_view: table_schema.and_then(|schema| schema.initial_tree_view(fields)),
+        row_input_mode: table_schema.and_then(|schema| schema.row_input_mode(fields)),
+        table_choice_mode: table_schema.and_then(|schema| schema.choice_mode(fields)),
+        table_multiple_choice: table_schema.and_then(|schema| schema.multiple_choice(fields)),
+        table_selection_mode: table_schema.and_then(|schema| schema.selection_mode(fields)),
+        table_header: table_schema.and_then(|schema| schema.header(fields)),
         table_footer: table_schema.and_then(|schema| schema.footer(fields)),
         table_horizontal_scroll_bar: table_schema
-            .and_then(|schema| schema.horizontal_scroll_bar(&fields)),
-        table_horizontal_lines: table_schema.and_then(|schema| schema.horizontal_lines(&fields)),
-        table_vertical_lines: table_schema.and_then(|schema| schema.vertical_lines(&fields)),
+            .and_then(|schema| schema.horizontal_scroll_bar(fields)),
+        table_horizontal_lines: table_schema.and_then(|schema| schema.horizontal_lines(fields)),
+        table_vertical_lines: table_schema.and_then(|schema| schema.vertical_lines(fields)),
         show_root: if table_schema.is_some() {
             strict_table_root_properties.show_root
         } else if tag == "Table" && !ordinary_table_layout {
@@ -15203,7 +14636,7 @@ fn parse_form_child_item_with_metadata_owners(
             None
         },
         choice_folders_and_items: if let Some(schema) = table_schema {
-            parse_form_table_choice_folders_and_items(schema, &fields)
+            parse_form_table_choice_folders_and_items(schema, fields)
         } else if tag == "InputField" {
             field_schema_and_options
                 .as_ref()
@@ -15216,7 +14649,7 @@ fn parse_form_child_item_with_metadata_owners(
         restore_current_row: if table_schema.is_some() {
             strict_table_root_properties.restore_current_row
         } else if tag == "Table" {
-            parse_form_table_property_bag_bool(&fields, TableBagKey::RestoreCurrentRow)
+            parse_form_table_property_bag_bool(fields, TableBagKey::RestoreCurrentRow)
         } else {
             None
         },
@@ -15227,18 +14660,18 @@ fn parse_form_child_item_with_metadata_owners(
         // member.  Over all 4 543 native tables the walk reproduces
         // `<RowFilter xsi:nil="true"/>` on exactly the 1 986 that carry it.
         row_filter_nil: if tag == "Table" {
-            form_table_counted_bag_undefined(&fields, TableBagKey::RowFilter)
+            form_table_counted_bag_undefined(fields, TableBagKey::RowFilter)
         } else {
             None
         },
         row_picture_data_path: if tag == "Table" {
-            parse_form_table_property_bag_string(&fields, TableBagKey::RowPictureDataPath)
+            parse_form_table_property_bag_string(fields, TableBagKey::RowPictureDataPath)
                 .filter(|value| !value.is_empty())
                 .or_else(|| {
                     table_schema.and_then(|schema| {
                         parse_form_table_row_picture_data_path(
                             schema,
-                            &fields,
+                            fields,
                             data_path_resolution
                                 .as_ref()
                                 .map(|resolved| resolved.data_path.as_str()),
@@ -15268,13 +14701,13 @@ fn parse_form_child_item_with_metadata_owners(
         top_level_parent_nil: if table_schema.is_some() {
             strict_table_root_properties.top_level_parent_nil
         } else if tag == "Table" && !ordinary_table_layout {
-            parse_form_table_property_bag_undefined(&fields, TableBagKey::TopLevelParent)
-                .or_else(|| parse_form_table_default_top_level_parent_nil(wrapper, &fields))
+            parse_form_table_property_bag_undefined(fields, TableBagKey::TopLevelParent)
+                .or_else(|| parse_form_table_default_top_level_parent_nil(wrapper, fields))
         } else {
             None
         },
         update_on_data_change: if tag == "Table" {
-            parse_form_table_update_on_data_change(&fields)
+            parse_form_table_update_on_data_change(fields)
         } else {
             None
         },
@@ -15330,16 +14763,16 @@ fn parse_form_child_item_with_metadata_owners(
         // value lists, 122 register record sets, the rest single). No table
         // disagrees in either direction.
         allow_getting_current_row_url: if tag == "Table" && table_bound_to_dynamic_list {
-            parse_form_table_property_bag_bool(&fields, TableBagKey::AllowGettingCurrentRowUrl)
+            parse_form_table_property_bag_bool(fields, TableBagKey::AllowGettingCurrentRowUrl)
                 .or_else(|| {
-                    form_table_property_bag_value(&fields, TableBagKey::AutoRefresh)
+                    form_table_property_bag_value(fields, TableBagKey::AutoRefresh)
                         .is_some()
                         .then_some(true)
                 })
         } else {
             None
         },
-        button_representation: if tag == "Button" && form_button_layout_is_extended(&fields) {
+        button_representation: if tag == "Button" && form_button_layout_is_extended(fields) {
             fields
                 .get(10 + button_top_level_offset)
                 .and_then(|field| parse_form_button_representation(field))
@@ -15347,10 +14780,10 @@ fn parse_form_child_item_with_metadata_owners(
             None
         },
         shape_representation: button_shape_representation_schema
-            .and_then(|schema| schema.shape_representation(&fields))
+            .and_then(|schema| schema.shape_representation(fields))
             .or(popup_shape_representation),
         shape: button_shape_schema
-            .and_then(|schema| schema.shape(&fields))
+            .and_then(|schema| schema.shape(fields))
             // A `Popup` keeps its own `<Shape>` in member 5 of its option
             // tuple, under the same two-code table the button reads.
             .or_else(|| {
@@ -15359,9 +14792,8 @@ fn parse_form_child_item_with_metadata_owners(
                     .and_then(|(schema, options)| schema.shape(options))
             }),
         associated_table_element_id: group_associated_table_element_id,
-        picture_location: button_shape_schema.and_then(|schema| schema.picture_location(&fields)),
-        representation_in_context_menu: if tag == "Button"
-            && form_button_layout_is_extended(&fields)
+        picture_location: button_shape_schema.and_then(|schema| schema.picture_location(fields)),
+        representation_in_context_menu: if tag == "Button" && form_button_layout_is_extended(fields)
         {
             fields
                 .get(43 + button_top_level_offset)
@@ -15371,21 +14803,21 @@ fn parse_form_child_item_with_metadata_owners(
         },
         group_horizontal_align: if let Some((schema, _)) = field_schema_and_options.as_ref() {
             schema
-                .group_horizontal_align(&fields)
+                .group_horizontal_align(fields)
                 .map(FormFieldGroupHorizontalAlign::xml_value)
         } else if let Some((schema, _)) = special_field_layout.as_ref() {
             schema
-                .group_horizontal_align(&fields)
+                .group_horizontal_align(fields)
                 .map(FormFieldGroupHorizontalAlign::xml_value)
         } else if let Some(schema) = command_bar_schema {
-            schema.group_horizontal_align(&fields)
+            schema.group_horizontal_align(fields)
         } else if let Some((schema, _)) = check_box_field_layout.as_ref() {
-            schema.group_horizontal_align(&fields)
+            schema.group_horizontal_align(fields)
         } else if tag == "UsualGroup" {
             extended_group_options
                 .as_ref()
                 .and_then(|options| options.group_horizontal_align)
-        } else if tag == "Button" && form_button_layout_is_extended(&fields) {
+        } else if tag == "Button" && form_button_layout_is_extended(fields) {
             fields
                 .get(41 + button_top_level_offset)
                 .and_then(|field| parse_form_button_group_horizontal_align(field))
@@ -15410,16 +14842,16 @@ fn parse_form_child_item_with_metadata_owners(
                 .get(20)
                 .and_then(|field| parse_form_command_bar_horizontal_location(field))
         } else if tag == "ViewStatusAddition" {
-            parse_form_view_status_addition_horizontal_location(&fields)
+            parse_form_view_status_addition_horizontal_location(fields)
         } else {
             None
         },
-        location_in_command_bar: if tag == "Button" && form_button_layout_is_extended(&fields) {
-            parse_form_button_location_in_command_bar_at_revision(&fields, button_top_level_offset)
+        location_in_command_bar: if tag == "Button" && form_button_layout_is_extended(fields) {
+            parse_form_button_location_in_command_bar_at_revision(fields, button_top_level_offset)
         } else {
             None
         },
-        default_button: if tag == "Button" && form_button_layout_is_extended(&fields) {
+        default_button: if tag == "Button" && form_button_layout_is_extended(fields) {
             fields
                 .get(11 + button_top_level_offset)
                 .and_then(|field| parse_form_child_item_show_title(field))
@@ -15568,11 +15000,11 @@ fn parse_form_child_item_with_metadata_owners(
         } else {
             field_schema_and_options
                 .as_ref()
-                .and_then(|(schema, _)| schema.show_in_header(&fields))
+                .and_then(|(schema, _)| schema.show_in_header(fields))
                 .or_else(|| {
                     (matches!(tag, "InputField" | "LabelField" | "CheckBoxField")
-                        && form_input_field_layout_is_extended(&fields))
-                    .then(|| parse_form_child_item_show_in_header(&fields))
+                        && form_input_field_layout_is_extended(fields))
+                    .then(|| parse_form_child_item_show_in_header(fields))
                     .flatten()
                 })
         },
@@ -15587,7 +15019,7 @@ fn parse_form_child_item_with_metadata_owners(
                         | "RadioButtonField"
                         | "TextDocumentField"
                         | "FormattedDocumentField"
-                ) && form_input_field_layout_is_extended(&fields)
+                ) && form_input_field_layout_is_extended(fields)
                     && input_field_top_level_offset > 0)
                     .then(|| {
                         Some(FormRightsSetting {
@@ -15605,26 +15037,26 @@ fn parse_form_child_item_with_metadata_owners(
             input_field_top_level_offset,
             button_top_level_offset,
         )
-        .and_then(|schema| schema.visible(&fields)),
+        .and_then(|schema| schema.visible(fields)),
         enabled: field_schema_and_options
             .as_ref()
-            .and_then(|(schema, _)| schema.enabled(&fields))
-            .or_else(|| button_common_schema.and_then(|schema| schema.enabled(&fields)))
-            .or_else(|| command_bar_schema.and_then(|schema| schema.enabled(&fields)))
+            .and_then(|(schema, _)| schema.enabled(fields))
+            .or_else(|| button_common_schema.and_then(|schema| schema.enabled(fields)))
+            .or_else(|| command_bar_schema.and_then(|schema| schema.enabled(fields)))
             .or_else(|| table_schema.and_then(|schema| schema.enabled(fields)))
             .or_else(|| parse_form_container_enabled(tag, fields)),
         read_only: if let Some(schema) = container_read_only_schema {
-            schema.read_only(&fields)
+            schema.read_only(fields)
         } else if tag == "UsualGroup" {
             extended_group_options
                 .as_ref()
                 .and_then(|options| options.read_only)
         } else if tag == "Table" {
-            table_schema.and_then(|schema| schema.read_only(&fields))
+            table_schema.and_then(|schema| schema.read_only(fields))
         } else {
             field_schema_and_options
                 .as_ref()
-                .and_then(|(schema, _)| schema.read_only(&fields))
+                .and_then(|(schema, _)| schema.read_only(fields))
                 .or_else(|| {
                     // A `RadioButtonField` reads the flag out of the same
                     // offset-corrected slot: over all 1 397 native radio
@@ -15653,7 +15085,7 @@ fn parse_form_child_item_with_metadata_owners(
                             // `CommonForms/АЛКОДлительнаяОперация`, field
                             // `ПроцентВыполнения`) and `0` on the other 149.
                             | "ProgressBarField"
-                    ) && form_input_field_layout_is_extended(&fields))
+                    ) && form_input_field_layout_is_extended(fields))
                     .then(|| {
                         fields
                             .get(14 + input_field_top_level_offset)
@@ -15670,12 +15102,12 @@ fn parse_form_child_item_with_metadata_owners(
                     .get(12)
                     .and_then(|field| parse_form_input_field_skip_on_input(field))
             }
-        } else if tag == "Button" && form_button_layout_is_extended(&fields) {
+        } else if tag == "Button" && form_button_layout_is_extended(fields) {
             fields
                 .get(29 + button_top_level_offset)
                 .and_then(|field| parse_form_input_field_skip_on_input(field))
         } else if let Some((schema, _)) = field_schema_and_options.as_ref() {
-            schema.skip_on_input(&fields)
+            schema.skip_on_input(fields)
         } else if tag == "LabelDecoration" {
             label_decoration_options
                 .as_ref()
@@ -15689,12 +15121,12 @@ fn parse_form_child_item_with_metadata_owners(
         },
         strict_table_schema: table_schema.is_some(),
         title_location: title_location_schema
-            .and_then(|schema| schema.title_location(&fields))
-            .or_else(|| table_schema.and_then(|schema| schema.title_location(&fields))),
+            .and_then(|schema| schema.title_location(fields))
+            .or_else(|| table_schema.and_then(|schema| schema.title_location(fields))),
         title_height: field_schema_and_options
             .as_ref()
-            .and_then(|(schema, _)| schema.title_height(&fields))
-            .or_else(|| button_common_schema.and_then(|schema| schema.title_height(&fields))),
+            .and_then(|(schema, _)| schema.title_height(fields))
+            .or_else(|| button_common_schema.and_then(|schema| schema.title_height(fields))),
         tooltip_representation,
         warning_on_edit_representation,
         warning_on_edit,
@@ -15722,7 +15154,7 @@ fn parse_form_child_item_with_metadata_owners(
                 | "SpreadSheetDocumentField"
                 | "CalendarField"
                 | "GraphicalSchemaField"
-        ) && form_input_field_layout_is_extended(&fields)
+        ) && form_input_field_layout_is_extended(fields)
         {
             fields
                 .get(26 + input_field_top_level_offset)
@@ -15732,7 +15164,7 @@ fn parse_form_child_item_with_metadata_owners(
         },
         fixing_in_table: field_schema_and_options
             .as_ref()
-            .and_then(|(schema, _)| schema.fixing_in_table(&fields))
+            .and_then(|(schema, _)| schema.fixing_in_table(fields))
             .or_else(|| {
                 column_group_options
                     .as_ref()
@@ -15740,7 +15172,7 @@ fn parse_form_child_item_with_metadata_owners(
             }),
         horizontal_align: field_schema_and_options
             .as_ref()
-            .and_then(|(schema, _)| schema.horizontal_align(&fields))
+            .and_then(|(schema, _)| schema.horizontal_align(fields))
             .map(FormChildItemAlignment::Horizontal)
             .or_else(|| {
                 nested_auto_command_bar_schema
@@ -15749,24 +15181,24 @@ fn parse_form_child_item_with_metadata_owners(
             })
             .or_else(|| {
                 if matches!(tag, "InputField" | "LabelField")
-                    && form_input_field_layout_is_extended(&fields)
+                    && form_input_field_layout_is_extended(fields)
                 {
-                    parse_form_input_field_horizontal_align(&fields)
+                    parse_form_input_field_horizontal_align(fields)
                         .map(FormChildItemAlignment::Horizontal)
-                } else if tag == "TextDocumentField" && form_input_field_layout_is_extended(&fields)
+                } else if tag == "TextDocumentField" && form_input_field_layout_is_extended(fields)
                 {
                     // Member 23 reads `0` on exactly the `TextDocumentField`s
                     // 1C:Конвертация данных writes `<HorizontalAlign>Left` on
                     // (4 of 19 in `Catalogs/Конвертации/Forms/ФормаЭлемента`)
                     // and `3` on the rest.
                     (fields
-                        .get(23 + form_input_field_top_level_offset(&fields))
+                        .get(23 + form_input_field_top_level_offset(fields))
                         .map(|field| field.trim())
                         == Some("0"))
                     .then_some(FormChildItemAlignment::Horizontal("Left"))
                 } else if let Some((schema, _)) = check_box_field_layout.as_ref() {
                     schema
-                        .horizontal_align(&fields)
+                        .horizontal_align(fields)
                         .map(FormChildItemAlignment::Horizontal)
                 } else if tag == "LabelDecoration" {
                     label_decoration_options
@@ -15778,17 +15210,17 @@ fn parse_form_child_item_with_metadata_owners(
             }),
         vertical_align: field_schema_and_options
             .as_ref()
-            .and_then(|(schema, _)| schema.vertical_align(&fields)),
+            .and_then(|(schema, _)| schema.vertical_align(fields)),
         group_vertical_align: if let Some((schema, _)) = field_schema_and_options.as_ref() {
             schema
-                .group_vertical_align(&fields)
+                .group_vertical_align(fields)
                 .map(FormFieldVerticalAlign::xml_value)
         } else if let Some(schema) = command_bar_schema {
-            schema.group_vertical_align(&fields)
+            schema.group_vertical_align(fields)
         } else if let Some((schema, _)) = check_box_field_layout.as_ref() {
-            schema.group_vertical_align(&fields)
+            schema.group_vertical_align(fields)
         } else if let Some(schema) = button_common_schema {
-            schema.group_vertical_align(&fields)
+            schema.group_vertical_align(fields)
         } else if tag == "PictureDecoration" {
             picture_decoration_properties
                 .as_ref()
@@ -15803,7 +15235,7 @@ fn parse_form_child_item_with_metadata_owners(
         } else {
             special_field_layout
                 .as_ref()
-                .and_then(|(schema, _)| schema.group_vertical_align(&fields))
+                .and_then(|(schema, _)| schema.group_vertical_align(fields))
         },
         label_decoration_visual_tail: label_decoration_options
             .as_ref()
@@ -15844,18 +15276,18 @@ fn parse_form_child_item_with_metadata_owners(
         },
         cell_hyperlink: field_schema_and_options
             .as_ref()
-            .and_then(|(schema, _)| schema.cell_hyperlink(&fields)),
+            .and_then(|(schema, _)| schema.cell_hyperlink(fields)),
         show_in_footer: check_box_field_layout
             .as_ref()
-            .and_then(|(schema, _)| schema.show_in_footer(&fields))
+            .and_then(|(schema, _)| schema.show_in_footer(fields))
             .or_else(|| {
                 field_schema_and_options
                     .as_ref()
-                    .and_then(|(schema, _)| schema.show_in_footer(&fields))
+                    .and_then(|(schema, _)| schema.show_in_footer(fields))
             }),
         footer_horizontal_align: field_schema_and_options
             .as_ref()
-            .and_then(|(schema, _)| schema.footer_horizontal_align(&fields)),
+            .and_then(|(schema, _)| schema.footer_horizontal_align(fields)),
         hiperlink: if (tag == "LabelField"
             && label_field_options
                 .as_ref()
@@ -15933,7 +15365,7 @@ fn parse_form_child_item_with_metadata_owners(
         {
             Some(value)
         } else if tag == "TextDocumentField" {
-            form_document_field_geometry_options(tag, &fields)
+            form_document_field_geometry_options(tag, fields)
                 .and_then(|(_, options)| options.get(7).copied())
                 .and_then(|field| parse_form_control_color(field, object_refs))
         } else if tag == "LabelDecoration" {
@@ -15950,24 +15382,21 @@ fn parse_form_child_item_with_metadata_owners(
             })
         {
             Some(value)
-        } else if let Some(value) = show_title_schema
-            .and_then(|schema| {
-                show_title_options
-                    .as_deref()?
-                    .get(schema.back_color_option_slot()?)
-            })
-            .and_then(|field| parse_form_control_color(field, object_refs))
-        {
-            Some(value)
         } else {
-            None
+            show_title_schema
+                .and_then(|schema| {
+                    show_title_options
+                        .as_deref()?
+                        .get(schema.back_color_option_slot()?)
+                })
+                .and_then(|field| parse_form_control_color(field, object_refs))
         },
         title_back_color: field_schema_and_options
             .as_ref()
             .and_then(|(schema, _)| fields.get(schema.title_back_color_slot()))
             .and_then(|field| parse_form_control_color(field, object_refs))
             .or_else(|| {
-                parse_form_column_group_title_back_color(wrapper, tag, &fields, object_refs)
+                parse_form_column_group_title_back_color(wrapper, tag, fields, object_refs)
             }),
         hidden_state_title_back_color: show_title_schema
             .and_then(|schema| {
@@ -16024,24 +15453,21 @@ fn parse_form_child_item_with_metadata_owners(
             })
         {
             Some(value)
-        } else if let Some(value) = field_schema_and_options
-            .as_ref()
-            .and_then(|(schema, options)| options.get(schema.border_color_option_slot()?))
-            .and_then(|field| parse_form_control_color(field, object_refs))
-        {
-            Some(value)
         } else {
-            None
+            field_schema_and_options
+                .as_ref()
+                .and_then(|(schema, options)| options.get(schema.border_color_option_slot()?))
+                .and_then(|field| parse_form_control_color(field, object_refs))
         },
         button_parameter: button_common_schema
             .and_then(|schema| fields.get(schema.parameter_slot()))
             .and_then(|field| parse_form_button_parameter(field, object_refs)),
-        button_check: button_common_schema.and_then(|schema| schema.check(&fields)),
+        button_check: button_common_schema.and_then(|schema| schema.check(fields)),
         control_border,
         // The title colour rides one slot ahead of the title font in every
         // layout family, so it is read exactly where the title font is read.
         title_text_color: if form_group_layout_tag(tag) {
-            parse_form_usual_group_title_text_color(&fields, object_refs)
+            parse_form_usual_group_title_text_color(fields, object_refs)
         } else if tag == "Table" {
             fields
                 .get(FORM_TABLE_TITLE_TEXT_COLOR_SLOT)
@@ -16073,13 +15499,13 @@ fn parse_form_child_item_with_metadata_owners(
             .and_then(|_| fields.get(FieldSlot::FooterFont.index(input_field_top_level_offset)))
             .and_then(|field| parse_form_font_tuple_xml_tag(field, object_refs, "FooterFont")),
         mark_required_complete: if tag == "InputField"
-            && form_input_field_layout_is_extended(&fields)
+            && form_input_field_layout_is_extended(fields)
         {
             parse_form_input_field_mark_required_complete(input_field_extended_options.as_deref())
         } else {
             None
         },
-        auto_edit_mode: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        auto_edit_mode: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             fields
                 .get(26 + input_field_top_level_offset)
                 .and_then(|field| parse_form_input_field_auto_edit_mode(field))
@@ -16109,15 +15535,15 @@ fn parse_form_child_item_with_metadata_owners(
             .or_else(|| {
                 (tag == "GraphicalSchemaField")
                     .then(|| {
-                        let (_, options) = form_document_field_geometry_options(tag, &fields)?;
-                        crate::form_schema::form_output_code(options.get(3).copied())
+                        let (_, options) = form_document_field_geometry_options(tag, fields)?;
+                        ibcmd_form_schema::form_output_code(options.get(3).copied())
                     })
                     .flatten()
             }),
         graphical_scheme_edit: parse_form_document_field_flag(tag, fields, |layout| layout.edit),
         excluded_commands: parse_form_excluded_commands(tag, fields),
-        auto_insert_new_row: table_schema.and_then(|schema| schema.auto_insert_new_row(&fields)),
-        auto_add_incomplete: table_schema.and_then(|schema| schema.auto_add_incomplete(&fields)),
+        auto_insert_new_row: table_schema.and_then(|schema| schema.auto_insert_new_row(fields)),
+        auto_add_incomplete: table_schema.and_then(|schema| schema.auto_add_incomplete(fields)),
         format: if tag == "UsualGroup" {
             extended_group_options
                 .as_ref()
@@ -16136,12 +15562,12 @@ fn parse_form_child_item_with_metadata_owners(
                 .as_ref()
                 .map(|options| options.format.clone())
                 .unwrap_or_default()
-        } else if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        } else if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_format(input_field_extended_options.as_deref())
         } else {
             Vec::new()
         },
-        edit_format: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        edit_format: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_edit_format(input_field_extended_options.as_deref())
         } else {
             check_box_field_layout
@@ -16150,7 +15576,7 @@ fn parse_form_child_item_with_metadata_owners(
                 .unwrap_or_default()
         },
         title_font_xml: if form_group_layout_tag(tag) {
-            parse_form_usual_group_title_font_xml(&fields, object_refs)
+            parse_form_usual_group_title_font_xml(fields, object_refs)
         } else if tag == "Table" {
             fields
                 .get(FORM_TABLE_TITLE_FONT_SLOT)
@@ -16199,11 +15625,11 @@ fn parse_form_child_item_with_metadata_owners(
             label_decoration_options
                 .as_ref()
                 .and_then(|options| options.font_xml.clone())
-        } else if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        } else if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_font_xml(input_field_extended_options.as_deref(), object_refs)
         } else if tag == "RadioButtonField" {
             parse_form_radio_button_font_xml(radio_button_options.as_deref(), object_refs)
-        } else if let Some(field) = button_common_schema.and_then(|schema| schema.font(&fields)) {
+        } else if let Some(field) = button_common_schema.and_then(|schema| schema.font(fields)) {
             parse_form_button_font_tuple_xml(field, object_refs)
         } else if tag == "PictureDecoration" {
             fields
@@ -16217,9 +15643,9 @@ fn parse_form_child_item_with_metadata_owners(
             parse_form_document_field_font_xml(tag, fields, object_refs)
         },
         width: if let Some(schema) = command_bar_schema {
-            schema.width(&fields)
+            schema.width(fields)
         } else if tag == "Table" {
-            table_schema.and_then(|schema| schema.width(&fields))
+            table_schema.and_then(|schema| schema.width(fields))
         } else if let Some(properties) = spreadsheet_document_properties.as_ref() {
             properties.width.clone()
         } else if tag == "CalendarField" {
@@ -16229,12 +15655,12 @@ fn parse_form_child_item_with_metadata_owners(
                 .map(|field| field.trim().to_string())
                 .filter(|value| value != "0" && value != "16" && value.parse::<u32>().is_ok())
         } else if tag == "UsualGroup" {
-            parse_form_usual_group_width(&fields)
+            parse_form_usual_group_width(fields)
         } else if tag == "PictureField" {
             field_schema_and_options
                 .as_ref()
                 .and_then(|(schema, options)| schema.width(options))
-        } else if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        } else if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_width(input_field_extended_options.as_deref())
         } else if tag == "LabelField" {
             label_field_options
@@ -16253,7 +15679,7 @@ fn parse_form_child_item_with_metadata_owners(
             .and_then(|(schema, options)| schema.width(options))
         {
             Some(value)
-        } else if tag == "Button" && form_button_layout_is_extended(&fields) {
+        } else if tag == "Button" && form_button_layout_is_extended(fields) {
             fields
                 .get(16 + button_top_level_offset)
                 .map(|field| field.trim().to_string())
@@ -16266,7 +15692,7 @@ fn parse_form_child_item_with_metadata_owners(
             parse_form_group_extent(tag, fields, FORM_GROUP_WIDTH_SLOT)
         },
         height: if let Some(schema) = command_bar_schema {
-            schema.height(&fields)
+            schema.height(fields)
         } else if tag == "UsualGroup" {
             extended_group_options
                 .as_ref()
@@ -16295,8 +15721,8 @@ fn parse_form_child_item_with_metadata_owners(
         {
             Some(value)
         } else if tag == "Table" {
-            table_schema.and_then(|schema| schema.height(&fields))
-        } else if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+            table_schema.and_then(|schema| schema.height(fields))
+        } else if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_height(input_field_extended_options.as_deref())
         } else if tag == "LabelField" {
             label_field_options
@@ -16316,7 +15742,7 @@ fn parse_form_child_item_with_metadata_owners(
                 .map(|field| field.trim().to_string())
                 .filter(|value| value != "0")
         } else if let Some(schema) = button_common_schema {
-            schema.height(&fields)
+            schema.height(fields)
         } else if let Some(value) =
             parse_form_document_field_extent(tag, fields, |layout| layout.height)
         {
@@ -16406,7 +15832,7 @@ fn parse_form_child_item_with_metadata_owners(
         // document fields without an `<AutoMaxWidth>` and `0` on all 3 that
         // say `false`).  Falling through on `None` lets that table answer.
         } else if matches!(tag, "InputField" | "TextDocumentField")
-            && form_input_field_layout_is_extended(&fields)
+            && form_input_field_layout_is_extended(fields)
             && let Some(value) =
                 parse_form_input_field_auto_max_width(input_field_extended_options.as_deref())
                     .or_else(|| {
@@ -16416,7 +15842,7 @@ fn parse_form_child_item_with_metadata_owners(
                     })
         {
             Some(value)
-        } else if tag == "Button" && form_button_layout_is_extended(&fields) {
+        } else if tag == "Button" && form_button_layout_is_extended(fields) {
             parse_form_button_auto_max_width(fields.get(34 + button_top_level_offset).copied())
         } else if tag == "LabelField" {
             label_field_options
@@ -16431,10 +15857,10 @@ fn parse_form_child_item_with_metadata_owners(
                 .as_ref()
                 .and_then(|properties| properties.auto_max_width())
         } else if tag == "ViewStatusAddition" {
-            parse_form_view_status_addition_auto_max_width(&fields)
+            parse_form_view_status_addition_auto_max_width(fields)
         } else if let Some((schema, options)) = special_field_layout.as_ref() {
             schema.auto_max_width(options)
-        } else if let Some(value) = table_schema.and_then(|schema| schema.auto_max_width(&fields)) {
+        } else if let Some(value) = table_schema.and_then(|schema| schema.auto_max_width(fields)) {
             Some(value)
         } else if let Some(value) = parse_form_table_off_flag(
             tag,
@@ -16444,9 +15870,9 @@ fn parse_form_child_item_with_metadata_owners(
         } else {
             parse_form_document_field_flag(tag, fields, |layout| layout.auto_max_width)
         },
-        max_width: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        max_width: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_max_width(input_field_extended_options.as_deref())
-        } else if tag == "Button" && form_button_layout_is_extended(&fields) {
+        } else if tag == "Button" && form_button_layout_is_extended(fields) {
             parse_form_button_max_width(fields.get(35 + button_top_level_offset).copied())
         } else if tag == "LabelField" {
             label_field_options
@@ -16474,9 +15900,9 @@ fn parse_form_child_item_with_metadata_owners(
         },
         auto_max_height: if let Some(properties) = spreadsheet_document_properties.as_ref() {
             properties.auto_max_height
-        } else if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        } else if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_auto_max_height(input_field_extended_options.as_deref())
-        } else if tag == "Button" && form_button_layout_is_extended(&fields) {
+        } else if tag == "Button" && form_button_layout_is_extended(fields) {
             parse_form_button_auto_max_width(fields.get(37 + button_top_level_offset).copied())
         } else if tag == "LabelField" {
             label_field_options
@@ -16500,9 +15926,9 @@ fn parse_form_child_item_with_metadata_owners(
         } else {
             parse_form_document_field_flag(tag, fields, |layout| layout.auto_max_height)
         },
-        max_height: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        max_height: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_max_height(input_field_extended_options.as_deref())
-        } else if tag == "Button" && form_button_layout_is_extended(&fields) {
+        } else if tag == "Button" && form_button_layout_is_extended(fields) {
             parse_form_button_max_width(fields.get(38 + button_top_level_offset).copied())
         } else if tag == "LabelField" {
             label_field_options
@@ -16524,10 +15950,10 @@ fn parse_form_child_item_with_metadata_owners(
             parse_form_document_field_max_extent(tag, fields, |layout| layout.max_height)
         },
         horizontal_stretch: if let Some(schema) = command_bar_schema {
-            schema.horizontal_stretch(&fields)
+            schema.horizontal_stretch(fields)
         } else if let Some(schema) = button_common_schema {
-            schema.horizontal_stretch(&fields)
-        } else if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+            schema.horizontal_stretch(fields)
+        } else if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_horizontal_stretch(input_field_extended_options.as_deref())
         } else if tag == "LabelField" {
             label_field_options
@@ -16552,7 +15978,7 @@ fn parse_form_child_item_with_metadata_owners(
         } else if tag == "Page" {
             page_properties.and_then(|properties| properties.horizontal_stretch())
         } else if tag == "ViewStatusAddition" {
-            parse_form_view_status_addition_horizontal_stretch(&fields)
+            parse_form_view_status_addition_horizontal_stretch(fields)
         } else if let Some(value) = special_field_layout
             .as_ref()
             .and_then(|(schema, options)| schema.horizontal_stretch(options))
@@ -16573,10 +15999,10 @@ fn parse_form_child_item_with_metadata_owners(
             parse_form_group_stretch(tag, fields, FORM_GROUP_HORIZONTAL_STRETCH_SLOT)
         },
         vertical_stretch: if let Some(schema) = button_common_schema {
-            schema.vertical_stretch(&fields)
+            schema.vertical_stretch(fields)
         } else if let Some(properties) = spreadsheet_document_properties.as_ref() {
             properties.vertical_stretch
-        } else if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        } else if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_vertical_stretch(input_field_extended_options.as_deref())
         } else if tag == "LabelField" {
             label_field_options
@@ -16600,7 +16026,7 @@ fn parse_form_child_item_with_metadata_owners(
         {
             Some(value)
         } else if tag == "UsualGroup" {
-            parse_form_usual_group_vertical_stretch(&fields)
+            parse_form_usual_group_vertical_stretch(fields)
         } else if tag == "Page" {
             page_properties.and_then(|properties| properties.vertical_stretch())
         } else if let Some(value) =
@@ -16654,10 +16080,10 @@ fn parse_form_child_item_with_metadata_owners(
         // from the end: over all 27 778 native buttons the slot reads `1` on
         // 27 777 that carry no `<CommandUniqueness>` and `0` on the one that
         // says `false`, in both button layouts, with no other code.
-        command_uniqueness: crate::form_schema::FormButtonCommandUniquenessSchema::decode(
+        command_uniqueness: ibcmd_form_schema::FormButtonCommandUniquenessSchema::decode(
             tag,
-            form_button_layout_is_extended(&fields),
-            &fields,
+            form_button_layout_is_extended(fields),
+            fields,
         ),
         // A `UsualGroup` keeps `CurrentRowUse` in member 25 of its extended
         // option tuple. Census of the dumped layouts of all eight stand
@@ -16670,7 +16096,7 @@ fn parse_form_child_item_with_metadata_owners(
         // ОтветНаЗапросРеквизитовДляВыплатыПособия, ОтветНаЗапросФССДляРасчетаПособия,
         // СведенияДляОплатыОтпускаСФР, СведенияОЗастрахованномЛицеФСС}/Forms/
         // ФормаДокумента` -- lost the element.
-        usual_group_current_row_use: crate::form_schema::FormContainerCurrentRowSchema::from_tag(
+        usual_group_current_row_use: ibcmd_form_schema::FormContainerCurrentRowSchema::from_tag(
             tag,
         )
         .and_then(|schema| {
@@ -16796,22 +16222,22 @@ fn parse_form_child_item_with_metadata_owners(
             label_field_options
                 .as_ref()
                 .and_then(|options| options.password_mode)
-        } else if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        } else if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_password_mode(input_field_extended_options.as_deref())
         } else {
             None
         },
-        multi_line: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        multi_line: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_multi_line(input_field_extended_options.as_deref())
         } else {
             None
         },
-        wrap: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        wrap: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_wrap(input_field_extended_options.as_deref())
         } else {
             None
         },
-        extended_edit: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        extended_edit: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_extended_edit(input_field_extended_options.as_deref())
         } else {
             None
@@ -16819,7 +16245,7 @@ fn parse_form_child_item_with_metadata_owners(
         mask: field_schema_and_options
             .as_ref()
             .and_then(|(schema, options)| parse_form_input_field_mask(*schema, options)),
-        text_edit: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        text_edit: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_text_edit(input_field_extended_options.as_deref())
         } else {
             None
@@ -16831,48 +16257,48 @@ fn parse_form_child_item_with_metadata_owners(
             }),
         auto_cell_height: field_schema_and_options
             .as_ref()
-            .and_then(|(schema, _)| schema.auto_cell_height(&fields))
+            .and_then(|(schema, _)| schema.auto_cell_height(fields))
             .or_else(|| {
-                (tag == "InputField" && form_input_field_layout_is_extended(&fields))
-                    .then(|| parse_form_input_field_auto_cell_height(&fields))
+                (tag == "InputField" && form_input_field_layout_is_extended(fields))
+                    .then(|| parse_form_input_field_auto_cell_height(fields))
                     .flatten()
             }),
-        drop_list_button: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        drop_list_button: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_drop_list_button(input_field_extended_options.as_deref())
         } else {
             None
         },
-        clear_button: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        clear_button: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_clear_button(input_field_extended_options.as_deref())
         } else {
             None
         },
-        open_button: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        open_button: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_open_button(input_field_extended_options.as_deref())
         } else {
             None
         },
-        create_button: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        create_button: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_create_button(input_field_extended_options.as_deref())
         } else {
             None
         },
-        choice_button: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        choice_button: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_choice_button(input_field_extended_options.as_deref())
         } else {
             None
         },
-        choice_list_button: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        choice_list_button: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_choice_list_button(input_field_extended_options.as_deref())
         } else {
             None
         },
-        spin_button: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        spin_button: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_spin_button(input_field_extended_options.as_deref())
         } else {
             None
         },
-        list_choice_mode: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        list_choice_mode: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_list_choice_mode(input_field_extended_options.as_deref())
         } else {
             None
@@ -16880,24 +16306,24 @@ fn parse_form_child_item_with_metadata_owners(
         extended_edit_multiple_values: field_schema_and_options
             .as_ref()
             .and_then(|(schema, options)| schema.extended_edit_multiple_values(options)),
-        quick_choice: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        quick_choice: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_quick_choice(input_field_extended_options.as_deref())
         } else {
             None
         },
-        choose_type: if tag == "InputField" && form_input_field_layout_is_extended(&fields) {
+        choose_type: if tag == "InputField" && form_input_field_layout_is_extended(fields) {
             parse_form_input_field_choose_type(input_field_extended_options.as_deref())
         } else {
             None
         },
         auto_choice_incomplete: if tag == "InputField"
-            && form_input_field_layout_is_extended(&fields)
+            && form_input_field_layout_is_extended(fields)
         {
             parse_form_input_field_auto_choice_incomplete(input_field_extended_options.as_deref())
         } else {
             None
         },
-        auto_mark_incomplete: if tag == "InputField" && form_input_field_layout_is_extended(&fields)
+        auto_mark_incomplete: if tag == "InputField" && form_input_field_layout_is_extended(fields)
         {
             parse_form_input_field_auto_mark_incomplete(input_field_extended_options.as_deref())
         } else {
@@ -16907,13 +16333,13 @@ fn parse_form_child_item_with_metadata_owners(
             .as_ref()
             .and_then(|(schema, options)| parse_form_input_field_choice_form(*schema, options)),
         table_height_control_variant: table_schema
-            .and_then(|schema| schema.height_control_variant(&fields)),
+            .and_then(|schema| schema.height_control_variant(fields)),
         table_auto_max_rows_count: table_schema
-            .and_then(|schema| schema.auto_max_rows_count(&fields)),
-        table_max_rows_count: table_schema.and_then(|schema| schema.max_rows_count(&fields)),
-        table_title_height: table_schema.and_then(|schema| schema.title_height(&fields)),
-        table_footer_height: table_schema.and_then(|schema| schema.footer_height(&fields)),
-        table_output: table_schema.and_then(|schema| schema.output(&fields)),
+            .and_then(|schema| schema.auto_max_rows_count(fields)),
+        table_max_rows_count: table_schema.and_then(|schema| schema.max_rows_count(fields)),
+        table_title_height: table_schema.and_then(|schema| schema.title_height(fields)),
+        table_footer_height: table_schema.and_then(|schema| schema.footer_height(fields)),
+        table_output: table_schema.and_then(|schema| schema.output(fields)),
         // A `Pages` group carries its own read-only switch in slot 11: on all
         // 2 687 traced `Pages` items the slot is `1` on exactly the 7 the
         // platform writes `<ReadOnly>true</ReadOnly>` on and `0` on the other
@@ -16922,7 +16348,7 @@ fn parse_form_child_item_with_metadata_owners(
             .then_some(true),
         search_string_addition_properties: search_string_addition
             .as_ref()
-            .map(|(schema, options)| schema.properties(&fields, options)),
+            .map(|(schema, options)| schema.properties(fields, options)),
         list_addition_tooltip_representation: (wrapper == "5"
             && fields.len() == 24
             && matches!(tag, "ViewStatusAddition" | "SearchControlAddition"))
@@ -16935,7 +16361,7 @@ fn parse_form_child_item_with_metadata_owners(
                 parse_form_input_field_incomplete_choice_mode(*schema, options)
             }),
         choice_button_representation: if tag == "InputField"
-            && form_input_field_layout_is_extended(&fields)
+            && form_input_field_layout_is_extended(fields)
         {
             parse_form_input_field_choice_button_representation(
                 input_field_extended_options.as_deref(),
@@ -16963,7 +16389,7 @@ fn parse_form_child_item_with_metadata_owners(
         auto_show_open_button_mode: field_schema_and_options.as_ref().and_then(
             |(schema, options)| parse_form_input_field_auto_show_open_button_mode(*schema, options),
         ),
-        item_type: if tag == "Button" && form_button_layout_is_extended(&fields) {
+        item_type: if tag == "Button" && form_button_layout_is_extended(fields) {
             fields
                 .get(form_extended_button_type_slot(
                     fields.len(),
@@ -17000,7 +16426,7 @@ fn parse_form_child_item_with_metadata_owners(
         } else {
             None
         },
-        picture_ref: if tag == "Button" && form_button_layout_is_extended(&fields) {
+        picture_ref: if tag == "Button" && form_button_layout_is_extended(fields) {
             fields
                 .get(25 + button_top_level_offset)
                 .and_then(|field| parse_form_child_item_picture_value(field, object_refs))
@@ -17024,7 +16450,7 @@ fn parse_form_child_item_with_metadata_owners(
         } else {
             None
         },
-        picture_load_transparent: if tag == "Button" && form_button_layout_is_extended(&fields) {
+        picture_load_transparent: if tag == "Button" && form_button_layout_is_extended(fields) {
             fields
                 .get(25 + button_top_level_offset)
                 .and_then(|field| parse_form_child_item_picture_value(field, object_refs))
@@ -17086,7 +16512,7 @@ fn parse_form_child_item_with_metadata_owners(
             .as_ref()
             .and_then(|picture| picture.transparent_pixel),
         picture_size: if tag == "PictureDecoration" {
-            parse_form_picture_decoration_picture_size(&fields)
+            parse_form_picture_decoration_picture_size(fields)
         } else if tag == "PictureField" {
             field_schema_and_options
                 .as_ref()
@@ -17115,7 +16541,7 @@ fn parse_form_child_item_with_metadata_owners(
             picture_decoration_options.as_deref().and_then(|options| {
                 let slot = FormPictureDecorationSchema.image_scale_option_slot(options)?;
                 let value = options.get(slot)?.trim();
-                crate::form_schema::form_nondefault_percent_scale(value)
+                ibcmd_form_schema::form_nondefault_percent_scale(value)
             })
         } else {
             None
@@ -17163,12 +16589,10 @@ fn parse_form_child_item_with_metadata_owners(
             embedded_picture
                 .as_ref()
                 .and_then(|picture| picture.transparent_pixel)
-                .or_else(|| {
-                    // A reference picture declares the pixel in the very
-                    // members the schema reads for the transparency flag, so
-                    // the owner that reads the reference answers about it too.
-                    reference_picture_transparent_pixel
-                })
+                // A reference picture declares the pixel in the very members
+                // the schema reads for the transparency flag, so the owner
+                // that reads the reference answers about it too.
+                .or(reference_picture_transparent_pixel)
         },
         title,
         usual_group_shortcut: extended_group_options
@@ -17241,30 +16665,30 @@ fn parse_form_child_item_with_metadata_owners(
             owner_scoped_bindings,
             object_refs,
         ),
-        extended_tooltip: parse_form_child_item_extended_tooltip(&fields, object_refs),
+        extended_tooltip: parse_form_child_item_extended_tooltip(fields, object_refs),
         events: {
             // A table with no data path brings no data extension, so it
             // cannot name the row-editing events it carries.
             let names_events = tag != "Table" || data_path_resolution.is_some();
-            let mut events = parse_form_child_item_event_fields(&fields, names_events);
+            let mut events = parse_form_child_item_event_fields(fields, names_events);
             append_unique_form_body_events(
                 &mut events,
                 parse_form_schema_backed_child_item_events(
                     wrapper,
                     tag,
-                    &fields,
+                    fields,
                     direct_discriminator,
                     field_schema_and_options.as_ref(),
                     special_field_layout.as_ref(),
                 ),
             );
-            if tag == "InputField" {
-                if let Some(extended_options) = input_field_extended_options.as_deref() {
-                    append_unique_form_body_events(
-                        &mut events,
-                        parse_form_nested_child_item_event_records(extended_options),
-                    );
-                }
+            if tag == "InputField"
+                && let Some(extended_options) = input_field_extended_options.as_deref()
+            {
+                append_unique_form_body_events(
+                    &mut events,
+                    parse_form_nested_child_item_event_records(extended_options),
+                );
             }
             append_unique_form_body_events(
                 &mut events,
@@ -17332,7 +16756,7 @@ fn parse_form_child_item_with_metadata_owners(
         title_data_path: parse_form_title_data_path(
             tag,
             wrapper,
-            &fields,
+            fields,
             attribute_metadata_owners_by_id,
             table_name_by_id,
             table_column_names_by_id,
@@ -17343,11 +16767,11 @@ fn parse_form_child_item_with_metadata_owners(
         command_name,
         command_record,
         command_source: if tag == "CommandBar" {
-            parse_form_command_bar_source_with_items(&fields, item_name_by_id)
+            parse_form_command_bar_source_with_items(fields, item_name_by_id)
         } else if tag == "ButtonGroup" {
-            parse_form_button_group_command_source_with_items(&fields, item_name_by_id)
+            parse_form_button_group_command_source_with_items(fields, item_name_by_id)
         } else if tag == "Popup" {
-            parse_form_popup_command_source_with_items(&fields, item_name_by_id)
+            parse_form_popup_command_source_with_items(fields, item_name_by_id)
         } else {
             None
         },
@@ -17446,6 +16870,10 @@ pub(super) fn is_form_field_direct_service_parent(tag: &str) -> bool {
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn append_form_table_service_child_items(
     child_items: &mut Vec<FormChildItem>,
     fields: &[&str],
@@ -17499,6 +16927,10 @@ pub(super) fn append_form_table_service_child_items(
     );
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn append_form_child_items_by_tag(
     child_items: &mut Vec<FormChildItem>,
     fields: &[&str],
@@ -17569,6 +17001,10 @@ pub(super) fn is_form_table_service_child_item(tag: &str) -> bool {
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn parse_form_text_document_context_menu(
     fields: &[&str],
     main_data_path: Option<&str>,
@@ -17612,7 +17048,7 @@ pub(super) fn parse_form_text_document_context_menu(
             type_index_collisions,
             object_refs,
         )
-        .filter(|item| form_text_document_context_menu_child_is_valid(&item.tag))
+        .filter(|item| form_text_document_context_menu_child_is_valid(item.tag))
     })? {
         FormTextDocumentContextMenu::Absent => Ok(None),
         FormTextDocumentContextMenu::Present(context_menu) => Ok(Some(context_menu)),
@@ -17822,7 +17258,7 @@ pub(super) fn parse_form_label_field_text_color(
     field: &str,
     object_refs: &BTreeMap<String, String>,
 ) -> Option<String> {
-    if let Some(name) = super::form::layout_8_5_1::palette_color_8_5_1(field) {
+    if let Some(name) = layout_8_5_1::palette_color_8_5_1(field) {
         return Some(name.to_owned());
     }
     let fields = split_1c_braced_fields(field.trim(), 0)?;
@@ -17863,7 +17299,7 @@ pub(super) fn parse_form_control_color(
     object_refs: &BTreeMap<String, String>,
 ) -> Option<String> {
     // An 8.5 palette colour keeps its own shape through the down-conversion.
-    if let Some(name) = super::form::layout_8_5_1::palette_color_8_5_1(field) {
+    if let Some(name) = layout_8_5_1::palette_color_8_5_1(field) {
         return Some(name.to_owned());
     }
     let color = split_1c_braced_fields(field.trim(), 0)?;
@@ -18652,9 +18088,11 @@ fn form_document_field_geometry_options<'a>(
     // `Catalogs/РасширенияПанелиНалоговогоМониторинга/Forms/ФормаЭлемента`.
     // The bag's own discriminator and length are still checked, so the offset
     // only decides where to look.
-    let offset = form_input_field_layout_is_extended(fields)
-        .then(|| form_input_field_top_level_offset(fields))
-        .unwrap_or(0);
+    let offset = if form_input_field_layout_is_extended(fields) {
+        form_input_field_top_level_offset(fields)
+    } else {
+        0
+    };
     let options = split_1c_braced_fields(fields.get(39 + offset)?.trim(), 0)?;
     (options.first()?.trim() == layout.discriminator && options.len() == layout.len)
         .then_some((layout, options))
@@ -18729,9 +18167,11 @@ fn parse_form_excluded_commands(tag: &str, fields: &[&str]) -> Vec<&'static str>
     if tag != "GraphicalSchemaField" {
         return Vec::new();
     }
-    let offset = form_input_field_layout_is_extended(fields)
-        .then(|| form_input_field_top_level_offset(fields))
-        .unwrap_or(0);
+    let offset = if form_input_field_layout_is_extended(fields) {
+        form_input_field_top_level_offset(fields)
+    } else {
+        0
+    };
     let Some(list) = fields
         .get(FORM_EXCLUDED_COMMAND_SLOT + offset)
         .and_then(|field| split_1c_braced_fields(field.trim(), 0))
@@ -18963,7 +18403,7 @@ pub(super) fn parse_form_usual_group_extended_options(
                 height: schema.height(fields),
                 shortcut: schema
                     .shortcut_field(fields)
-                    .and_then(|field| parse_common_command_shortcut_value(field)),
+                    .and_then(parse_common_command_shortcut_value),
                 enable_content_change: properties.enable_content_change(),
                 group_horizontal_align: properties.group_horizontal_align(),
                 group_vertical_align: properties.group_vertical_align(),
@@ -19596,6 +19036,10 @@ fn form_choice_parameter_link_standard_terminal_member(
 /// writes `20:02023637-…/0:2829c630-…` and `68:02023637-…/0:229f3065-…`, and
 /// `Documents/ВерсияСоглашенияКоммерческийДоговор/Forms/ФормаДокумента` writes
 /// `1932:02023637-…/0:47f6b07d-…`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn parse_form_input_field_choice_parameter_links_with_metadata(
     primary: &str,
     duplicate: Option<&str>,
@@ -19796,6 +19240,10 @@ pub(super) fn canonical_form_input_field_choice_parameter_links(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn canonical_form_input_field_choice_parameter_links_with_metadata(
     schema: FormFieldSchema,
     options: &[&str],
@@ -20782,7 +20230,7 @@ fn parse_form_font_mask_tuple_xml(
     // Мастер_ВопросОтключитьМультирежим` stores `{8,3,4,700,1,100}` on the
     // label decoration the platform writes `<Font bold="true" kind="AutoFont"/>`
     // (about 40 forms of one 8.3.27 corpus).
-    if !crate::form_schema::FormFontMaskLayout::recognizes_revision(fields.first()?.trim()) {
+    if !ibcmd_form_schema::FormFontMaskLayout::recognizes_revision(fields.first()?.trim()) {
         return None;
     }
     let kind = fields.get(1)?.trim();
@@ -22909,7 +22357,7 @@ fn form_child_item_conditional_prefix_slot(wrapper: &str, raw_fields: &[&str]) -
 /// Placeholder for a trailing member a short item-record revision does not
 /// carry; defined once, in `form_schema`, because the schema has to recognize
 /// it as an absence too.
-use crate::form_schema::FORM_ABSENT_MEMBER as FORM_ITEM_ABSENT_MEMBER;
+use ibcmd_form_schema::FORM_ABSENT_MEMBER as FORM_ITEM_ABSENT_MEMBER;
 
 /// The canonical revision of an item record whose own leading member declares
 /// a shorter one, and how many trailing members that shorter revision drops.
@@ -23004,7 +22452,7 @@ fn form_item_record_canonical_revision(
         // it every one is a tooltip or a class-anchored decoration. The arity
         // guard is therefore total over the measured corpus, not a filter that
         // happens to hold.
-        "11" if matches!(field_count, 33 | 34 | 35 | 36) => Some(("12", 1)),
+        "11" if matches!(field_count, 33..=36) => Some(("12", 1)),
         // `Button`'s arity invariant: `field_count - wrapper` is 21 with the
         // name at slot 5 and 22 with the conditional `UserVisible`-common
         // tuple at slot 4 pushing it to slot 6. Over the whole corpus each
@@ -23116,9 +22564,10 @@ fn normalize_form_property_bag_revision<'a>(options: &[&'a str]) -> Option<Vec<&
     let mut normalized = Vec::with_capacity(options.len() + dropped_trailing);
     normalized.push(canonical);
     normalized.extend(options[1..].iter().copied());
-    for _ in 0..dropped_trailing {
-        normalized.push(FORM_ITEM_ABSENT_MEMBER);
-    }
+    normalized.extend(std::iter::repeat_n(
+        FORM_ITEM_ABSENT_MEMBER,
+        dropped_trailing,
+    ));
     Some(normalized)
 }
 
@@ -23160,9 +22609,10 @@ fn normalize_form_item_record_revision<'a>(fields: &[&'a str]) -> Option<Vec<&'a
     let mut normalized = Vec::with_capacity(fields.len() + dropped_trailing);
     normalized.push(canonical);
     normalized.extend(fields[1..].iter().copied());
-    for _ in 0..dropped_trailing {
-        normalized.push(FORM_ITEM_ABSENT_MEMBER);
-    }
+    normalized.extend(std::iter::repeat_n(
+        FORM_ITEM_ABSENT_MEMBER,
+        dropped_trailing,
+    ));
     Some(normalized)
 }
 
@@ -23423,9 +22873,12 @@ fn parse_form_picture_decoration_title_formatted(fields: &[&str]) -> Option<bool
     }
 }
 
+/// A label decoration's title: its text by language and its formatted flag.
+pub(super) type FormLabelDecorationTitle = (Vec<(String, String)>, Option<bool>);
+
 pub(super) fn parse_form_label_decoration_title(
     fields: &[&str],
-) -> Option<(Vec<(String, String)>, Option<bool>)> {
+) -> Option<FormLabelDecorationTitle> {
     let options = split_1c_braced_fields(
         fields.get(FormLabelDecorationSchema::OPTIONS_SLOT)?.trim(),
         0,
@@ -23798,7 +23251,7 @@ pub(super) fn parse_form_child_item_extended_tooltip(
         tooltip.border_color = options
             .get(FormExtendedTooltipSchema::BORDER_COLOR_OPTION_SLOT)
             .and_then(|field| parse_form_control_color(field.trim(), object_refs));
-        tooltip.width = extract_form_dimension(&nested, schema.width_slot());
+        tooltip.width = extract_form_dimension(nested, schema.width_slot());
         tooltip.auto_max_width = match nested
             .get(schema.auto_max_width_slot())
             .map(|value| value.trim())
@@ -23806,8 +23259,8 @@ pub(super) fn parse_form_child_item_extended_tooltip(
             Some("0") => Some(false),
             _ => None,
         };
-        tooltip.max_width = extract_form_dimension(&nested, schema.max_width_slot());
-        tooltip.height = extract_form_dimension(&nested, schema.height_slot());
+        tooltip.max_width = extract_form_dimension(nested, schema.max_width_slot());
+        tooltip.height = extract_form_dimension(nested, schema.height_slot());
         tooltip.auto_max_height = match nested
             .get(schema.auto_max_height_slot())
             .map(|value| value.trim())
@@ -23815,7 +23268,7 @@ pub(super) fn parse_form_child_item_extended_tooltip(
             Some("0") => Some(false),
             _ => None,
         };
-        tooltip.max_height = extract_form_dimension(&nested, schema.max_height_slot());
+        tooltip.max_height = extract_form_dimension(nested, schema.max_height_slot());
         tooltip.horizontal_stretch = match nested
             .get(schema.horizontal_stretch_slot())
             .map(|value| value.trim())
@@ -23956,6 +23409,10 @@ fn parse_form_embedded_picture_file_name(
     })
 }
 
+/// The file name, transparency, transparent pixel and payload of an inline
+/// picture ([`parse_form_embedded_picture_payload`]).
+pub(super) type FormEmbeddedPicturePayload = (String, bool, Option<(i64, i64)>, Vec<u8>);
+
 /// An inline picture read from a platform 8.5 appended member: its `<xr:Abs>`
 /// file name (the owning property plus the payload's extension), transparency,
 /// transparent pixel and the payload itself, which the 2.21 writer publishes
@@ -23963,7 +23420,7 @@ fn parse_form_embedded_picture_file_name(
 pub(super) fn parse_form_embedded_picture_payload(
     field: &str,
     property_name: &str,
-) -> Option<(String, bool, Option<(i64, i64)>, Vec<u8>)> {
+) -> Option<FormEmbeddedPicturePayload> {
     let value = split_1c_braced_fields(field.trim(), 0)?;
     let schema = FormPictureValueSchema::from_raw_layout(&value)?;
     if schema.kind() != FormPictureValueKind::Embedded {
@@ -24898,6 +24355,10 @@ pub(super) fn parse_form_child_item_event_identifier(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn parse_form_child_item_data_path(
     tag: &str,
     fields: &[&str],
@@ -25381,7 +24842,7 @@ pub(super) fn parse_form_child_item_data_path(
     // `Копия` and `СкрытаяКопия` over `Объект.ПолучателиПисьма` and its two
     // siblings, each the additional column `Значение` (id 3) of its table.
     let multiple_value = multiple_value_paths.0.or_else(|| {
-        if !crate::form_schema::FormInputBindingLayout::applies_to(tag) {
+        if !ibcmd_form_schema::FormInputBindingLayout::applies_to(tag) {
             return None;
         }
         let primary = data_path.as_ref()?.data_path.as_str();
@@ -25427,7 +24888,7 @@ pub(super) fn parse_form_child_item_data_path(
     // platform writes `Объект.АнализыПретензии.СписокСотрудников.Ответственный`
     // for both.
     let metadata_member = |member: usize| -> Option<String> {
-        if !crate::form_schema::FormInputBindingLayout::applies_to(tag) {
+        if !ibcmd_form_schema::FormInputBindingLayout::applies_to(tag) {
             return None;
         }
         let primary = data_path.as_ref()?.data_path.as_str();
@@ -25453,14 +24914,14 @@ pub(super) fn parse_form_child_item_data_path(
     let multiple_value = multiple_value.or_else(|| metadata_member(9));
     let multiple_value_picture = multiple_value_paths.1.or_else(|| metadata_member(12));
     let multiple_value_present = multiple_value_paths.2.or_else(|| metadata_member(15));
-    let paths = FormChildItemDataPaths {
+
+    FormChildItemDataPaths {
         primary: data_path,
         footer: footer_data_path,
         multiple_value,
         multiple_value_picture,
         multiple_value_present,
-    };
-    paths
+    }
 }
 
 /// The physical spelling of a bound chain that names metadata the configuration
@@ -25512,12 +24973,12 @@ fn resolve_form_physical_verdict_data_path(
         [terminal]
             if terminal.as_slice().len() == 1
                 && terminal[0].trim()
-                    == crate::form_schema::FormStandardBindingMember::Period.marker()
+                    == ibcmd_form_schema::FormStandardBindingMember::Period.marker()
                 && owner_scoped_bindings
                     .undeclared_root_standard_attributes
                     .contains(&(
                         root_id.to_string(),
-                        crate::form_schema::FormStandardBindingMember::Period.name(),
+                        ibcmd_form_schema::FormStandardBindingMember::Period.name(),
                     )) =>
         {
             Some(format!("{root_id}/-2"))
@@ -26018,12 +25479,15 @@ fn resolve_form_dynamic_list_chain_data_path(
         attribute_id: attribute_id.to_string(),
         column_id: numeric[1].to_string(),
     };
-    let marker = (owner_scoped_bindings.invalid_nested_columns.contains(&key)
+    let marker = if owner_scoped_bindings.invalid_nested_columns.contains(&key)
         || owner_scoped_bindings
             .unresolvable_columns
-            .contains(&head_key))
-    .then_some("~")
-    .unwrap_or_default();
+            .contains(&head_key)
+    {
+        "~"
+    } else {
+        Default::default()
+    };
     FormOwnerScopedDataPath::Resolved(format!("{marker}{}.{}", attribute.name, field_name))
 }
 
@@ -26580,7 +26044,7 @@ fn resolve_form_owner_scoped_bound_data_path(
             // attribute itself; a longer chain routes through an intermediate
             // segment, so a foreign owner leaves the slot open for the
             // chain-aware resolvers rather than condemning it.
-            if !form_bound_chain_segment_fields(field).is_some_and(|segments| segments.len() > 2) {
+            if form_bound_chain_segment_fields(field).is_none_or(|segments| segments.len() <= 2) {
                 return FormOwnerScopedDataPath::Ambiguous;
             }
         }
@@ -26610,8 +26074,8 @@ fn resolve_form_owner_scoped_bound_data_path(
     // platform, not by the designer, so they are read off the marker before
     // the binding indexes -- which carry the designer's own spelling -- get a
     // chance to answer.
-    if let Some(attribute) = attribute_metadata_owners_by_id.get(&attribute_id) {
-        if let Some(data_path) = resolve_form_owner_scoped_standard_tabular_section_path(
+    if let Some(attribute) = attribute_metadata_owners_by_id.get(&attribute_id)
+        && let Some(data_path) = resolve_form_owner_scoped_standard_tabular_section_path(
             fields.first().map(|field| field.trim()).unwrap_or_default(),
             attribute,
             &table_key,
@@ -26619,9 +26083,9 @@ fn resolve_form_owner_scoped_bound_data_path(
                 .get(3)
                 .and_then(|field| parse_form_binding_key(field.trim()))
                 .as_deref(),
-        ) {
-            return FormOwnerScopedDataPath::Resolved(data_path);
-        }
+        )
+    {
+        return FormOwnerScopedDataPath::Resolved(data_path);
     }
     let table_lookup = FormBoundTableKey {
         attribute_id: attribute_id.clone(),
@@ -26880,7 +26344,7 @@ pub(super) fn resolve_form_bound_chain_member_path(
     // not supply the terminal's name.
     if members.len() == 2
         && members[0].as_slice()
-            == [crate::form_schema::FormStandardBindingMember::Reference.marker()]
+            == [ibcmd_form_schema::FormStandardBindingMember::Reference.marker()]
         && attribute
             .exact_single_type_reference
             .as_deref()
@@ -26893,7 +26357,7 @@ pub(super) fn resolve_form_bound_chain_member_path(
             .undeclared_root_standard_attributes
             .contains(&(
                 attribute_id.to_string(),
-                crate::form_schema::FormStandardBindingMember::Reference.name(),
+                ibcmd_form_schema::FormStandardBindingMember::Reference.name(),
             ))
         && let [marker] = members[1].as_slice()
         && let Some(name) =
@@ -27017,7 +26481,7 @@ fn walk_form_bound_chain_members(
                                 .map(String::as_str);
                         }
                         // `Ref` stands on the very reference the chain holds.
-                        if crate::form_schema::FormStandardBindingMember::retains_reference_type(
+                        if ibcmd_form_schema::FormStandardBindingMember::retains_reference_type(
                             name,
                         ) {
                             reached_type = Some(reference);
@@ -27051,10 +26515,7 @@ fn walk_form_bound_chain_members(
                     target.push_str(name);
                 }
             }
-            [column_id]
-                if previous_type
-                    .is_some_and(|reference| form_type_reference_is_standard_period(reference)) =>
-            {
+            [column_id] if previous_type.is_some_and(form_type_reference_is_standard_period) => {
                 // The built-in standard period the chain has just reached
                 // numbers its own three members; they are declared by the type,
                 // not by the attribute, so the declared-column index cannot
@@ -27070,10 +26531,7 @@ fn walk_form_bound_chain_members(
                     target.push_str(name);
                 }
             }
-            [column_id]
-                if previous_type
-                    .is_some_and(|reference| form_type_reference_is_value_list(reference)) =>
-            {
+            [column_id] if previous_type.is_some_and(form_type_reference_is_value_list) => {
                 // A built-in value list numbers its own four members the same
                 // way wherever it is reached, and they are declared by the
                 // type, so the declared-column index of the attribute the
@@ -28096,6 +27554,10 @@ fn resolve_form_attribute_column_data_path(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 fn parse_form_bound_data_path_with_metadata_owner(
     field: &str,
     attribute_names_by_id: &BTreeMap<String, String>,
@@ -29745,8 +29207,8 @@ pub(super) fn parse_form_button_command_name_with_main_attribute(
     // record whose `kind` is 1 resolves to `Form.Item.Товары.…GetURL` under a
     // table owner and to `Catalog.СезонныеГруппы.…Create` under the family rule,
     // from the very same `kind`.
-    if let Some(owner) = standard_command_owner_name_by_id.get(kind) {
-        if let Some(standard) = match owner.kind {
+    if let Some(owner) = standard_command_owner_name_by_id.get(kind)
+        && let Some(standard) = match owner.kind {
             FormStandardCommandOwnerKind::FormattedDocument => {
                 form_formatted_document_standard_command_suffix(&uuid)
             }
@@ -29761,14 +29223,14 @@ pub(super) fn parse_form_button_command_name_with_main_attribute(
             }
             FormStandardCommandOwnerKind::Table => form_table_standard_command_suffix(&uuid),
             FormStandardCommandOwnerKind::Planner => {
-                crate::form_schema::form_planner_standard_command_suffix(&uuid)
+                ibcmd_form_schema::form_planner_standard_command_suffix(&uuid)
             }
-        } {
-            return Some(format!(
-                "Form.Item.{}.StandardCommand.{standard}",
-                owner.name
-            ));
         }
+    {
+        return Some(format!(
+            "Form.Item.{}.StandardCommand.{standard}",
+            owner.name
+        ));
     }
     if let Some(reference) = object_refs.get(&uuid)
         && let Some(command_name) = form_object_family_standard_command_name(
@@ -30173,7 +29635,7 @@ pub(super) fn form_extension_owns_standard_command(
     // `Catalogs/лимсЛабораторноеОборудование/Forms/
     // ФормаВыбораОборудованияВСтатусеВработеНаДатуПоМетодикеИИзмерению` keeps
     // all five in its root command set and its XML has no `<CommandSet>`.
-    if crate::form_schema::form_list_row_command_requires_main_attribute(command) {
+    if ibcmd_form_schema::form_list_row_command_requires_main_attribute(command) {
         return !matches!(main_attribute, FormMainAttributeExtension::Absent);
     }
     if !matches!(
@@ -30887,7 +30349,7 @@ pub(super) fn form_object_reference_command_name(reference: &str) -> String {
     let Some((kind, _)) = reference.split_once('.') else {
         return reference.to_string();
     };
-    let standard = super::command_interface::command_interface_standard_command(kind);
+    let standard = command_interface_standard_command(kind);
     match standard {
         Some(standard) => format!("{reference}.StandardCommand.{standard}"),
         None => reference.to_string(),
@@ -31264,12 +30726,12 @@ pub(super) fn collect_form_table_column_names_for_table(
             .and_then(|field| split_1c_braced_fields(field, 0))
             && let (Some(id), Some(name)) = (
                 identity.first().map(|value| value.trim().to_string()),
-                parse_form_child_item_name(wrapper, &nested),
+                parse_form_child_item_name(wrapper, nested),
             )
         {
             columns.insert(id, name);
         }
-        collect_form_table_column_names_for_table(&nested, columns);
+        collect_form_table_column_names_for_table(nested, columns);
     }
 }
 
@@ -31563,8 +31025,16 @@ pub(super) fn extract_form_command_interface_with_context(
 pub(super) struct FormCommandInterfaceParseContext<'a> {
     commands: &'a [FormCommand],
     object_refs: &'a BTreeMap<String, String>,
+    #[allow(
+        dead_code,
+        reason = "carried by the context's builders and their callers; dropping it changes their signatures"
+    )]
     information_register_field_refs: &'a InformationRegisterFieldReferenceIndex,
     information_register_master_dimensions: &'a InformationRegisterMasterDimensionIndex,
+    #[allow(
+        dead_code,
+        reason = "carried by the context's builders and their callers; dropping it changes their signatures"
+    )]
     form_owner_reference: Option<&'a str>,
     attribute_names_by_id: &'a BTreeMap<String, String>,
     attribute_metadata_owners_by_id: &'a BTreeMap<String, FormAttributeMetadataOwner>,
@@ -32340,27 +31810,6 @@ fn resolve_information_register_open_by_value_command(
     None
 }
 
-pub(super) fn resolve_information_register_field_reference<'a>(
-    index: &'a InformationRegisterFieldReferenceIndex,
-    register_uuid: &str,
-    form_owner_reference: &str,
-) -> Option<&'a str> {
-    let fields = index.get(register_uuid)?;
-    let mut matches = fields
-        .iter()
-        .filter(|field| field.value_owner_references.contains(form_owner_reference));
-    if let Some(field) = matches.next() {
-        return matches
-            .next()
-            .is_none()
-            .then_some(field.field_reference.as_str());
-    }
-    match fields.as_slice() {
-        [field] => Some(&field.field_reference),
-        _ => None,
-    }
-}
-
 pub(super) fn form_information_register_open_by_value_reference(reference: &str) -> Option<String> {
     let parts = reference.split('.').collect::<Vec<_>>();
     if parts.len() != 4
@@ -32503,6 +31952,10 @@ fn format_form_mobile_device_command_bar_content_xml(items: &[String]) -> String
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
+)]
 pub(super) fn format_form_body_xml(
     properties: &FormBodyProperties,
     auto_command_bar: Option<&FormAutoCommandBar>,
@@ -32940,7 +32393,7 @@ fn format_form_body_open_xml_with_dcs_profiles(
     // `Scale` closes the scalar run, ahead of `AutoCommandBar` (the 2.21
     // element order in form/xml_2_21_order.rs).
     if let Some(value) = &properties.scale {
-        crate::form_schema::FormScalarXmlProperty::Scale.emit(
+        ibcmd_form_schema::FormScalarXmlProperty::Scale.emit(
             &mut xml,
             "\t",
             &escape_xml_text(value),
@@ -34741,7 +34194,7 @@ pub(super) fn format_form_child_item_xml(
     // (`LabelField` 17/19/3, `InputField` 13/1/13, `CheckBoxField` -/2/2), with
     // no pair observed in both directions.  The group pair used to split the
     // plain pair.
-    if FormFieldSchema::supports_item_tag(&item.tag)
+    if FormFieldSchema::supports_item_tag(item.tag)
         || matches!(
             item.tag,
             "ProgressBarField" | "TrackBarField" | "ChartField" | "GanttChartField"
@@ -36262,7 +35715,7 @@ pub(super) fn format_form_child_item_xml(
     if item.auto_show_open_button_mode.is_none()
         && let Some(value) = item.auto_correction_on_text_input
     {
-        crate::form_schema::FormScalarXmlProperty::AutoCorrectionOnTextInput.emit(
+        ibcmd_form_schema::FormScalarXmlProperty::AutoCorrectionOnTextInput.emit(
             &mut xml,
             &format!("{tab}\t"),
             &escape_xml_text(value),
@@ -36824,7 +36277,7 @@ pub(super) fn format_form_child_item_xml(
     if item.auto_show_open_button_mode.is_some()
         && let Some(value) = item.auto_correction_on_text_input
     {
-        crate::form_schema::FormScalarXmlProperty::AutoCorrectionOnTextInput.emit(
+        ibcmd_form_schema::FormScalarXmlProperty::AutoCorrectionOnTextInput.emit(
             &mut xml,
             &format!("{tab}\t"),
             &escape_xml_text(value),
@@ -36957,11 +36410,11 @@ pub(super) fn format_form_child_item_xml(
     // A pages container writes `CurrentRowUse` right behind its
     // representation (ЛИМС КОРП `Catalogs/ПодключаемоеОборудование/Forms/
     // ФормаЭлемента` `Закладки`).
-    if crate::form_schema::FormContainerCurrentRowSchema::from_tag(item.tag)
+    if ibcmd_form_schema::FormContainerCurrentRowSchema::from_tag(item.tag)
         .is_some_and(|schema| schema.is_pages())
         && let Some(value) = item.usual_group_current_row_use
     {
-        crate::form_schema::FormScalarXmlProperty::CurrentRowUse.emit(
+        ibcmd_form_schema::FormScalarXmlProperty::CurrentRowUse.emit(
             &mut xml,
             &format!("{tab}\t"),
             &escape_xml_text(value),
@@ -39311,11 +38764,6 @@ pub(super) fn format_form_command_interface_xml(
     xml
 }
 
-pub(crate) fn unpack_form_body_module_text(blob: &[u8]) -> Option<Vec<u8>> {
-    let body = crate::compiler::bodies::form::decode_compatible_managed_form(blob).ok()?;
-    form_body_module_text_bytes(body.parsed())
-}
-
 pub(super) fn form_body_module_text_bytes(body: &ParsedFormBodyBlob) -> Option<Vec<u8>> {
     if body.module_text.is_empty() {
         return None;
@@ -39764,7 +39212,7 @@ fn form_planner_labels_xml(
     }
     let record = split_1c_braced_fields(labels.get(1)?.trim(), 0)?;
     let count: usize = record.get(1)?.trim().parse().ok()?;
-    if !crate::form_schema::FormPlannerDatedLabelsSchema::recognizes_record(
+    if !ibcmd_form_schema::FormPlannerDatedLabelsSchema::recognizes_record(
         &record,
         count,
         MAX_FORM_PLANNER_ITEMS,
@@ -39778,18 +39226,18 @@ fn form_planner_labels_xml(
             .iter()
             .map(|field| form_chart_compact(field))
             .collect();
-        if !crate::form_schema::FormPlannerDatedLabelsSchema::recognizes_label(&compact) {
+        if !ibcmd_form_schema::FormPlannerDatedLabelsSchema::recognizes_label(&compact) {
             return None;
         }
-        labels.push(crate::form_schema::FormPlannerDatedLabel {
+        labels.push(ibcmd_form_schema::FormPlannerDatedLabel {
             key: form_planner_date(pair.first()?.trim())?,
             line_color: form_chart_color(label.get(4)?, object_refs)?,
             text_color: form_chart_color(label.get(5)?, object_refs)?,
         });
     }
-    let xml = crate::form_schema::FormPlannerDatedLabelsSchema::emit(
+    let xml = ibcmd_form_schema::FormPlannerDatedLabelsSchema::emit(
         &labels,
-        &form_chart_integer(record.last()?)?,
+        form_chart_integer(record.last()?)?,
         indent,
     );
     Some(xml)
@@ -40225,7 +39673,7 @@ fn parse_form_chart_settings_xml(
     // A chart stored in the 8.5 colour and font tuples (one 8.3.27 corpus
     // holds 21 such forms) reads through the same down-conversion the
     // business-process flowchart uses.
-    let converted = super::form::layout_8_5_1::down_convert_primitives_8_5_1_text(field).ok();
+    let converted = layout_8_5_1::down_convert_primitives_8_5_1_text(field).ok();
     let field = converted.as_deref().unwrap_or(field);
     let outer = split_1c_braced_fields(field.trim(), 0)?;
     if outer.len() != 4
@@ -40301,7 +39749,7 @@ fn parse_form_gantt_chart_settings_xml(
     // A chart stored in the 8.5 colour and font tuples (one 8.3.27 corpus
     // holds 21 such forms) reads through the same down-conversion the
     // business-process flowchart uses.
-    let converted = super::form::layout_8_5_1::down_convert_primitives_8_5_1_text(field).ok();
+    let converted = layout_8_5_1::down_convert_primitives_8_5_1_text(field).ok();
     let field = converted.as_deref().unwrap_or(field);
     let outer = split_1c_braced_fields(field.trim(), 0)?;
     if outer.len() != 4
@@ -40325,17 +39773,6 @@ fn parse_form_gantt_chart_settings_xml(
     format_form_gantt_chart_settings_xml(&wrapper, object_refs, indent)
 }
 
-/// Test-only entry point, the Gantt chart's counterpart to
-/// `parse_and_render_form_chart_settings_for_test`.
-#[cfg(test)]
-pub(super) fn parse_and_render_form_gantt_chart_settings_for_test(text: &str) -> Option<String> {
-    let value_types = [ConstantValueType::Reference {
-        reference: FORM_GANTT_CHART_TYPE_REFERENCE.to_string(),
-    }];
-    let object_refs = BTreeMap::new();
-    parse_form_gantt_chart_settings_xml(text, &value_types, &object_refs, 3)
-}
-
 /// The `<Settings xsi:type="d4p1:Chart">` block this exporter writes for a
 /// chart-typed attribute whose member 14 is `field`, at the indent it sits at
 /// inside `<Attribute>`. The form writer (`compiler::bodies::form_chart`) runs
@@ -40356,33 +39793,6 @@ pub(crate) fn render_form_gantt_chart_settings_value(field: &str) -> Option<Stri
         reference: FORM_GANTT_CHART_TYPE_REFERENCE.to_string(),
     }];
     parse_form_gantt_chart_settings_xml(field, &value_types, &BTreeMap::new(), 3)
-}
-
-/// The Form.xml this exporter writes for a whole form body, read against the
-/// offline context of a saved dump -- the form writer's whole-form harness
-/// renders a compiled body and the stored one through it and compares.
-#[cfg(test)]
-pub(crate) fn render_form_body_xml_offline(
-    body: &ParsedFormBodyBlob,
-    context: &super::offline_context::OfflineFormContext,
-    form_uuid: &str,
-) -> Option<String> {
-    let collisions = BTreeSet::new();
-    let owner = context
-        .form_owner_references
-        .get(form_uuid)
-        .map(String::as_str);
-    let parse_context = FormParseContext::new(
-        &context.type_index,
-        &collisions,
-        &context.dcs_type_index,
-        &context.object_refs,
-        &context.field_type_refs,
-        &context.information_register_field_refs,
-        &context.information_register_master_dimensions,
-        owner,
-    );
-    extract_form_body_xml_from_body_timed(body, &parse_context, None)
 }
 
 /// The `{0,{3,0,1,0,<value>,<contentCacheItem>,<autoText>,0}}` record the
@@ -40853,8 +40263,8 @@ fn format_form_gantt_chart_settings_xml(
 
 const FORM_CHART_TYPE_REFERENCE: &str = "d5p1:Chart";
 /// The type reference a Gantt-chart-typed form attribute declares.
-use super::GANTT_CHART_TYPE_REFERENCE as FORM_GANTT_CHART_TYPE_REFERENCE;
-use super::GANTT_CHART_TYPE_UUID;
+use ibcmd_1c_vocab::GANTT_CHART_TYPE_REFERENCE as FORM_GANTT_CHART_TYPE_REFERENCE;
+use ibcmd_1c_vocab::GANTT_CHART_TYPE_UUID;
 const FORM_CHART_VALUE_TYPE_UUID: &str = "3543ef08-3316-4f7e-9447-0cd0a1cbf1d5";
 const FORM_CHART_BORDER_UUID: &str = "48312c09-257f-4b29-b280-284dd89efc1e";
 const FORM_CHART_NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
@@ -41556,7 +40966,7 @@ fn format_form_chart_settings_body_xml(
     let mut owned = Vec::new();
     let data = if data.first().map(|value| value.trim()) == Some("75") {
         let cut =
-            crate::form_schema::FormChartColorTailLayout::payload_end(data, form_chart_compact)?;
+            ibcmd_form_schema::FormChartColorTailLayout::payload_end(data, form_chart_compact)?;
         // The eight colours are any colour: 8.3.27 has no element for them
         // and prints none, automatic or not (`ДиагностикаФормированияГрафика`
         // stores four `style` colours there).
@@ -42485,3 +41895,6 @@ fn format_form_chart_settings_body_xml(
     }
     Some(xml)
 }
+
+#[cfg(test)]
+mod tests;

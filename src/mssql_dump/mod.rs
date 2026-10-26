@@ -13,8 +13,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use ibcmd_1c_text::BRACE_JUMPS_MIN_TEXT;
 pub(crate) use ibcmd_1c_text::parse_1c_quoted_string;
 use ibcmd_1c_text::{
-    decode_base64_mime, escape_xml_character_data, escape_xml_element_text, escape_xml_text,
-    expect_comma_at, extract_base64_payload, format_1c_date_time, is_uuid_like_ascii, is_uuid_text,
+    decode_base64_mime, escape_xml_element_text, escape_xml_text, expect_comma_at,
+    extract_base64_payload, format_1c_date_time, is_uuid_like_ascii, is_uuid_text,
     parse_1c_bool_field, parse_1c_bool_field_or_default, parse_1c_bool_flag,
     parse_1c_quoted_string_with_len, parse_1c_string, parse_1c_synonyms, parse_1c_u32_field,
     parse_non_zero_uuid, parse_uuid_field, register_brace_jumps, registered_header_marker,
@@ -33,16 +33,13 @@ use ibcmd_1c_vocab::{
     ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES,
     ACCUMULATION_REGISTER_TURNOVERS_STANDARD_ATTRIBUTES,
     CHART_OF_ACCOUNTS_STANDARD_ATTRIBUTE_DEFINITIONS,
-    CHART_OF_ACCOUNTS_STANDARD_TABULAR_SECTION_DEFINITIONS, CONSTANTS_SET_TYPE_UUID,
-    ChartStandardTabularSectionDefinition, DCS_BUILTIN_REFERENCE_TYPE_SETS,
-    DOCUMENT_STANDARD_ATTRIBUTES, TYPE_DESCRIPTION_TYPE_UUID,
+    CHART_OF_ACCOUNTS_STANDARD_TABULAR_SECTION_DEFINITIONS, ChartStandardTabularSectionDefinition,
+    DCS_BUILTIN_REFERENCE_TYPE_SETS, DOCUMENT_STANDARD_ATTRIBUTES, TYPE_DESCRIPTION_TYPE_UUID,
     data_processor_builtin_type_reference, elapsed_ms, ext_picture_file_name,
-    form_metadata_type_xml_tag, format_form_metadata_types_xml,
-    format_form_metadata_types_xml_with_indent, format_type_description_value_types_xml,
-    inflate_raw_deflate, information_register_decimal_is_valid, is_svg_content,
-    metadata_choice_folders_and_items_xml, metadata_reference_is_type_set,
-    metadata_type_pattern_field_type_id, metadata_type_xml_name, metadata_type_xml_namespace_attr,
-    number_allowed_sign_xml, parse_common_command_picture_value,
+    format_type_description_value_types_xml, inflate_raw_deflate,
+    information_register_decimal_is_valid, metadata_choice_folders_and_items_xml,
+    metadata_reference_is_type_set, metadata_type_pattern_field_type_id, metadata_type_xml_name,
+    metadata_type_xml_namespace_attr, number_allowed_sign_xml, parse_common_command_picture_value,
     parse_common_command_shortcut_value, parse_design_time_reference,
     platform_reference_family_type_reference, push_binary_data_qualifiers_xml, scoped_value_type,
     standard_style_item_for_code, string_allowed_length_xml, style_system_color_name,
@@ -50,14 +47,13 @@ use ibcmd_1c_vocab::{
 };
 pub(super) use ibcmd_1c_vocab::{
     ConstantValueType, DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME,
-    DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID, GANTT_CHART_TYPE_REFERENCE, GANTT_CHART_TYPE_UUID,
+    DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID,
     accumulation_register_record_set_standard_attribute_name, builtin_type_reference,
-    chart_of_accounts_sole_standard_tabular_section_name,
-    chart_of_accounts_standard_attribute_definitions, chart_of_accounts_standard_tabular_section,
 };
 #[cfg(test)]
 use ibcmd_1c_vocab::{
     DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE, ShortcutModifierStyle,
+    format_form_metadata_types_xml, format_form_metadata_types_xml_with_indent,
     parse_common_command_shortcut_value_with_style,
 };
 pub(crate) use ibcmd_1c_vocab::{standard_style_item_code_for_name, style_web_color_name};
@@ -1057,6 +1053,7 @@ pub use form_body::{
     MAX_FORM_OBSERVER_COMPRESSED_BYTES, observe_form_field_map_blob,
     observe_form_field_map_blob_with_context,
 };
+mod form_body_entry;
 mod form_body_host;
 mod form_extension;
 #[cfg(test)]
@@ -1148,6 +1145,8 @@ use config_rows::*;
 pub(crate) use dcs::*;
 use fetch::*;
 use form_body::*;
+#[cfg(test)]
+use form_body_entry::extract_form_body_xml_from_body;
 use forms::*;
 use metadata::*;
 use moxel_entry::*;
@@ -1181,18 +1180,17 @@ pub(crate) use form_body::form_dynamic_list_std_attribute_pairs;
 /// The one table that names a form standard command uuid, shared with the
 /// source compiler so both directions read the same fact.
 pub(crate) use form_body::form_standard_command_suffix;
-#[cfg(test)]
-pub(crate) use form_body::render_form_body_xml_offline;
-pub(crate) use form_body::{
-    FormItemSchemaTraceEvent, FormItemTraceEvent, FormItemTraceSink, trace_form_body_with_context,
-};
-pub(crate) use form_body::{extract_form_body_xml, unpack_form_body_module_text};
+pub(crate) use form_body::{FormItemSchemaTraceEvent, FormItemTraceEvent, FormItemTraceSink};
 /// The exporter's reading of a chart attribute's member 14, which the form
 /// writer's chart codec checks every value it builds against.
 pub(crate) use form_body::{
     render_form_chart_settings_value, render_form_flowchart_settings_value,
     render_form_gantt_chart_settings_value, render_form_planner_settings_value,
 };
+#[cfg(test)]
+pub(crate) use form_body_entry::render_form_body_xml_offline;
+pub(crate) use form_body_entry::trace_form_body_with_context;
+pub(crate) use form_body_entry::{extract_form_body_xml, unpack_form_body_module_text};
 
 pub(crate) fn extract_standalone_metadata_source_xml(
     blob: &[u8],

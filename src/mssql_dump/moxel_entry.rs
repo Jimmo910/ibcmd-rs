@@ -143,6 +143,7 @@ pub(crate) fn extract_inflated_moxel_spreadsheet_xml_with_line_trace(
 
 /// [`ibcmd_moxel::parse_moxel_spreadsheet_text`] with the root's built-in
 /// type table.
+#[cfg(test)]
 pub(super) fn parse_moxel_spreadsheet_text(
     text: &str,
     object_refs: &BTreeMap<String, String>,
