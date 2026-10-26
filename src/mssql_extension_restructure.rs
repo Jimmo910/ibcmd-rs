@@ -228,6 +228,32 @@ fn validate_identities(old: &[Object], new: &[Object]) -> Result<()> {
     Ok(())
 }
 
+// The schema planner proves data descriptors. Every skipped source asset still
+// has to satisfy the source compiler's existing transition policy.
+fn require_source_asset_transition(path: &str, added: bool, removed: bool) -> Result<()> {
+    let diff = crate::load::TreeDiff {
+        changed: if !added && !removed {
+            vec![path.to_owned()]
+        } else {
+            vec![]
+        },
+        added: if added { vec![path.to_owned()] } else { vec![] },
+        removed: if removed {
+            vec![path.to_owned()]
+        } else {
+            vec![]
+        },
+    };
+    let refused = crate::mssql_extension_tree_load::structural_refusals(&diff, true);
+    if !refused.is_empty() {
+        bail!(
+            "extension schema update cannot override source-transition refusal: {}",
+            refused.join(", ")
+        );
+    }
+    Ok(())
+}
+
 /// Inspect every changed path: a schema planner never turns ignored families
 /// into an accidental permission to publish an unmodeled metadata change.
 fn classify(base: &Path, next: &Path, old: &[Object], new: &[Object]) -> Result<Vec<String>> {
@@ -279,6 +305,24 @@ fn classify(base: &Path, next: &Path, old: &[Object], new: &[Object]) -> Result<
             bail!("predefined-data edits require a separate data migration: {path}");
         }
         if DATA.contains(&family) {
+            // A separate schema delta does not prove the lifecycle of a
+            // retained object's assets. Reuse the source gate, including its
+            // explicit form-module exception, rather than another path policy.
+            if (left.is_none() || right.is_none())
+                && (path.contains("/Ext/")
+                    || parts
+                        .iter()
+                        .any(|part| matches!(*part, "Forms" | "Templates")))
+            {
+                let is_new_owner = new.iter().any(|object| {
+                    object.family == family
+                        && Some(object.name.as_str()) == parts.get(1).copied()
+                        && !old.iter().any(|before| before.uuid == object.uuid)
+                });
+                if !is_new_owner {
+                    require_source_asset_transition(path, left.is_none(), right.is_none())?;
+                }
+            }
             if parts.len() == 2 && path.ends_with(".xml") {
                 let n = new
                     .iter()
@@ -318,10 +362,8 @@ fn classify(base: &Path, next: &Path, old: &[Object], new: &[Object]) -> Result<
             }
             bail!("extension schema update has an unsupported data-object path: {path}");
         }
-        if TABLELESS.contains(&family) {
-            continue;
-        }
-        if family == "Ext" && path.ends_with(".bsl") {
+        if TABLELESS.contains(&family) || (family == "Ext" && path.ends_with(".bsl")) {
+            require_source_asset_transition(path, left.is_none(), right.is_none())?;
             continue;
         }
         bail!("extension schema update has an unmodeled changed path: {path}");
@@ -1629,7 +1671,12 @@ mod tests {
         assert!(base.join(module).is_file() && next.join(module).is_file());
         std::fs::remove_file(next.join(module)).unwrap();
         let refusal = plan_from_source_trees(
-            &base, &next, active.image(), proposed.image(), [0; 16], &state,
+            &base,
+            &next,
+            active.image(),
+            proposed.image(),
+            [0; 16],
+            &state,
         )
         .unwrap_err();
         assert!(
@@ -1639,11 +1686,15 @@ mod tests {
         );
     }
     #[test]
-    fn final_admission_moved_data_assets_preserve_source_rules_and_form_module_exception() {
+    fn final_admission_skipped_assets_preserve_source_rules_and_form_module_exception() {
         for (path, admitted) in [
             ("Catalogs/Existing/Ext/ObjectModule.bsl", false),
             ("Catalogs/Existing/Forms/Flow.xml", false),
             ("Catalogs/Existing/Templates/Print.xml", false),
+            ("Ext/SessionModule.bsl", false),
+            ("DataProcessors/Existing/Other/Unknown.xml", false),
+            ("DataProcessors/Existing/Ext/ObjectModule.bsl", true),
+            ("DataProcessors/Existing/Forms/Flow.xml", true),
             ("Catalogs/Existing/Forms/Flow/Ext/Form/Module.bsl", true),
         ] {
             for added in [false, true] {

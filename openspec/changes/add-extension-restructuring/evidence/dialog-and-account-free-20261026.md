@@ -34,7 +34,7 @@ Direct import/apply and direct LIVE continuation do not call authenticated
 infobase info or forward application credentials. Process regressions reject
 both operations and cover absent/legacy credential options. Exact agent build,
 registration existence and live SQL schema are checked independently; summary
-is not reported as a physical SQL binding. Managed owned-worker evidence remains
+is not reported as a physical SQL binding. Evidence of the managed worker's verified physical registration remains
 strong. Unbound RAS PIDs cannot exempt actual SQL sessions; direct LIVE requires
 an empty actual SQL target, including idle handles. Saved SQL identity, chain,
 schema, transaction and concurrency guards remain in place.

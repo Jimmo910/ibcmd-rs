@@ -1450,7 +1450,7 @@ mod tests {
             schemas: vec![],
             services: vec![],
         };
-        let no_ddl = crate::mssql_extension_restructure::plan_from_source_trees(
+        let schema_refusal = crate::mssql_extension_restructure::plan_from_source_trees(
             &baseline,
             &edited,
             archive.image(),
@@ -1458,12 +1458,9 @@ mod tests {
             [0; 16],
             &state,
         )
-        .unwrap();
-        assert!(
-            no_ddl.is_none(),
-            "this regression must exercise the None fallback"
-        );
-        let result = extension_transition_fallback(refusal, || Ok(no_ddl));
+        .unwrap_err();
+        assert!(schema_refusal.to_string().contains("ObjectModule.bsl"));
+        let result = extension_transition_fallback::<()>(refusal, || Ok(None));
         std::fs::remove_dir_all(edited).unwrap();
         assert!(
             result.is_err(),

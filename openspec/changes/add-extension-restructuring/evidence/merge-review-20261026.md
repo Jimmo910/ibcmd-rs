@@ -10,8 +10,8 @@ other evidence documents; no SQL/application writes were used for these fixes.
   the original refusal unless a concrete replacement schema plan exists.
 - Structural planning separately establishes SQL ProductVersion >=14 and
   database compatibility >=110 before modern catalog or ordered STRING_AGG
-  queries. Reads use legacy-compatible syntax; missing, ambiguous and wrongly
-  typed facts refuse. Code-only updates skip this structural preflight.
+  queries. Reads use legacy-compatible syntax; the preflight refuses if facts
+  are missing, ambiguous or incorrectly typed. Code-only updates skip this structural preflight.
 - An isolated --exact child that runs zero tests no longer counts as success.
   The completed-stage probe reuses the shared helper; the native dialog helper
   also proves one passing child per platform/case.
@@ -63,6 +63,18 @@ Source 8828b498215da13a88655b2d773dcd3af3e3bdb8 passed cargo xtask ci:
 suites and 4,108 root-library tests (0 failures, 16 existing ignored tests).
 The fresh critic returned APPROVE after verifying the terminal receipt and
 independently executing the targeted harness and corpus union checks.
-All eight verified CodeRabbit threads were answered and resolved. The final
-handoff only changes Markdown; strict OpenSpec is revalidated after that edit.
+All eight verified CodeRabbit threads were answered and resolved. That
+handoff changed only Markdown; strict OpenSpec was revalidated after that edit.
 Hosted checks remain mandatory for the final published head before merging.
+
+A subsequent review also reproduced removal of a retained catalog module
+alongside the valid native catalog update. The structural classifier now
+reuses the existing source refusal policy for moved assets of retained DATA
+owners; the explicit form-module exception and assets of new DATA owners
+remain admitted. The red/green source probe and path cases cover both the
+combined plan boundary and form/template lifecycle refusal. The same shared
+source policy also checks skipped table-less paths and root BSL lifecycle
+changes, so an unrelated schema delta cannot exempt those paths either.
+The original None-fallback proof remains explicit; the actual planner now
+refuses a removed retained module earlier. Final gates for these subsequent
+code changes are recorded against their published head in the PR.
