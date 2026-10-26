@@ -10,12 +10,14 @@
 //!
 //! Everything here moved from the root crate (`mssql_dump`'s `form_body.rs`,
 //! `mod.rs`, `refs.rs`, `dcs.rs`, `source_assets.rs`, `timing.rs`,
-//! `form_ref_index.rs`, `form_extension.rs` and `form/layout_8_5_1.rs`, and
-//! `module_blob.rs`), which still reaches every item by its old name and path
-//! through imports. The bodies are unchanged but for mechanical clippy fixes
-//! (listed in #588 and #592); declarations and the fields the root reads or
-//! fills are `pub`, and the few test helpers the root's own tests call are
-//! `#[doc(hidden)] pub`. The
+//! `form_ref_index.rs`, `form_extension.rs`, `form/layout_8_5_1.rs` and
+//! `form/xml_2_21_writer.rs`, and `module_blob.rs`), which still reaches every
+//! item by its old name and path through imports. The bodies are unchanged but
+//! for mechanical clippy fixes (listed in #588 and #592); declarations and the
+//! fields the root reads or fills are `pub`, and the four test helpers the
+//! root's own tests call (`parse_form_child_item`,
+//! `collect_form_child_item_indexes`, `extract_form_command_interface`,
+//! `format_form_attributes_section_xml`) are `#[doc(hidden)] pub`. The
 //! builders of these indexes read the root's metadata rows and stay there,
 //! and so do the few methods that need a root type
 //! (`MetadataFieldDeclarationIndex::written_as` and the sums of

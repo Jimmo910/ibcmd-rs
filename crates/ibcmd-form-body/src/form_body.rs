@@ -12907,12 +12907,11 @@ pub fn parse_form_child_item(
     )
 }
 
-#[doc(hidden)]
 #[allow(
     clippy::too_many_arguments,
     reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
 )]
-pub fn parse_form_child_item_with_attrs(
+pub(super) fn parse_form_child_item_with_attrs(
     field: &str,
     main_data_path: Option<&str>,
     parent_data_path: Option<&str>,
@@ -30634,8 +30633,7 @@ pub fn extract_form_command_interface(
     extract_form_command_interface_with_commands(trailing, &[], object_refs)
 }
 
-#[doc(hidden)]
-pub fn extract_form_command_interface_with_commands(
+pub(super) fn extract_form_command_interface_with_commands(
     trailing: &[String],
     commands: &[FormCommand],
     object_refs: &BTreeMap<String, String>,
@@ -37521,6 +37519,9 @@ pub(super) fn format_form_attributes_xml(attributes: &[FormAttribute]) -> String
         .expect("bundled DCS writer evidence must validate in tests")
 }
 
+/// A test helper: the attributes section written with the data-composition
+/// profiles pinned to the MSSQL provider and XML 2.20. The reader itself
+/// writes a form's attributes with its context's profiles.
 #[doc(hidden)]
 pub fn format_form_attributes_section_xml(
     attributes: &[FormAttribute],
