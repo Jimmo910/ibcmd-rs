@@ -2919,7 +2919,7 @@ fn resolves_form_attribute_save_field_bindings_for_main_attribute() {
         ]
     );
 
-    let xml = format_form_attributes_xml(&[object_attribute.clone()]);
+    let xml = format_form_attributes_xml(std::slice::from_ref(object_attribute));
     assert!(xml.contains("<Save>"));
     assert!(xml.contains("<Field>Объект.РезультатВыгрузкиXDTO</Field>"));
     assert!(xml.contains("<Field>Объект.ВерсияФормата</Field>"));
@@ -10023,7 +10023,7 @@ fn minimal_radio_button_literal_ref_choice_is_typed_and_near_misses_are_opaque()
     );
 }
 
-fn options_for_radio_choice_list_test<'a>(slot: usize, raw: &'a str) -> Vec<&'a str> {
+fn options_for_radio_choice_list_test(slot: usize, raw: &str) -> Vec<&str> {
     let mut options = vec!["0"; 12];
     options[slot] = raw;
     options
