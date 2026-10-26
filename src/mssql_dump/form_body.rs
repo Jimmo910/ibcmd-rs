@@ -1,5 +1,47 @@
-use super::*;
-use crate::form_schema::{
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
+use std::time::Instant;
+
+use anyhow::{Result, anyhow};
+use ibcmd_1c_text::{
+    decode_base64_mime, escape_xml_character_data, escape_xml_element_text, escape_xml_text,
+    extract_base64_payload, format_1c_date_time, is_uuid_text, parse_1c_quoted_string,
+    parse_1c_quoted_string_with_len, parse_1c_string, parse_1c_synonyms, parse_non_zero_uuid,
+    parse_uuid_field, register_brace_jumps, scan_1c_braced_value, split_1c_braced_fields, xml_bool,
+};
+use ibcmd_1c_vocab::{
+    CONSTANTS_SET_TYPE_UUID, ChartStandardTabularSectionDefinition, ConstantValueType,
+    DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME, DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID,
+    DOCUMENT_STANDARD_ATTRIBUTES, accumulation_register_record_set_standard_attribute_name,
+    builtin_type_reference, chart_of_accounts_sole_standard_tabular_section_name,
+    chart_of_accounts_standard_attribute_definitions, chart_of_accounts_standard_tabular_section,
+    command_interface_standard_command, elapsed_ms, ext_picture_file_name,
+    form_metadata_type_xml_tag, format_form_metadata_types_xml,
+    format_form_metadata_types_xml_with_indent, format_type_description_value_types_xml,
+    inflate_raw_deflate, information_register_decimal_is_valid, is_svg_content,
+    metadata_choice_folders_and_items_xml, metadata_reference_is_type_set,
+    metadata_type_pattern_field_type_id, parse_common_command_picture_value,
+    parse_common_command_shortcut_value, parse_design_time_reference, standard_style_item_for_code,
+    style_web_color_name, unique_metadata_type_reference,
+};
+use ibcmd_core::artifact::ProfileId;
+use ibcmd_core::dcs::{DcsConditionalAppearance, DcsFilter, DcsOrder};
+use ibcmd_form_body::layout_8_5_1;
+use ibcmd_form_body::{
+    CanonicalDcsSettingsAdapterError, CanonicalDcsSettingsContext, CanonicalDcsSettingsInput,
+    CanonicalFormServerStateFragment, DcsTypeIndex, FormCompatibility, FormItemAsset,
+    FormListSettingsChildKind, FormListSettingsChildTransliteration, FormObjectRefIndex,
+    InformationRegisterFieldReferenceIndex, InformationRegisterMasterDimensionIndex,
+    MetadataCommandReference, MetadataFieldDeclarationIndex, MssqlDumpTimingReport,
+    ParsedFormBodyBlob, canonicalize_form_server_state_conditional_appearances,
+    data_composition_type_id_xml, emit_canonical_dcs_settings_children,
+    emit_canonical_dcs_settings_parts, forms_write_usual_group_behavior, parse_form_event_block,
+    respell_form_server_state_namespaces,
+    transliterate_form_attributes_conditional_appearance_document,
+    transliterate_form_list_settings_child_document,
+    transliterate_form_list_settings_group_items_document,
+};
+use ibcmd_form_schema::{
     FORM_DECORATION_HEADER_XML_ORDER, FORM_EXTENDED_TOOLTIP_XML_ORDER,
     FORM_FIELD_HEADER_PICTURE_XML_ORDER, FORM_INPUT_FIELD_BUTTON_XML_ORDER,
     FORM_INPUT_FIELD_TAIL_XML_ORDER, FORM_LABEL_DECORATION_ALIGNMENT_TAIL_XML_ORDER,
@@ -52,7 +94,9 @@ use crate::form_schema::{
     form_text_document_context_menu_child_is_valid, form_tooltip_representation_schema,
     form_tooltip_representation_xml_order,
 };
-use ibcmd_core::dcs::{DcsConditionalAppearance, DcsFilter, DcsOrder};
+use ibcmd_moxel::{
+    format_moxel_spreadsheet_xml, moxel_style_ref_for_uuid, parse_moxel_style_ref_slot,
+};
 #[cfg(test)]
 use ibcmd_schema::parse_form_choice_list_item as parse_schema_form_choice_list_item;
 #[cfg(test)]
@@ -75,6 +119,7 @@ use ibcmd_schema::{
     parse_form_text_document_context_menu as parse_schema_form_text_document_context_menu,
     parse_generated_metadata_owner, parse_metadata_data_path,
 };
+use ibcmd_schema::{GeneratedMetadataReferenceOwnerKind, parse_generated_metadata_reference_owner};
 use ibcmd_xml::{
     DcsChildParseOutcome, DcsSettingsChildrenError, FormChoiceParametersEmitError, TypeRunMember,
     emit_form_attributes_conditional_appearance_fragment, emit_form_choice_parameter_links,
@@ -252,6 +297,8 @@ impl<'a> FormParseContext<'a> {
         information_register_field_refs: &'a InformationRegisterFieldReferenceIndex,
         information_register_master_dimensions: &'a Arc<InformationRegisterMasterDimensionIndex>,
         form_owner_reference: Option<&'a str>,
+        host: FormBodyHost,
+        extension_export: Option<FormExtensionExport>,
     ) -> Self {
         Self {
             foreign_types: None,
@@ -274,8 +321,8 @@ impl<'a> FormParseContext<'a> {
             dcs_schema_namespace: true,
             form_compatibility: FormCompatibility::default(),
             trace_sink: None,
-            host: super::form_body_host::ROOT_FORM_BODY_HOST,
-            extension_export: super::form_body_host::active_form_extension_export(),
+            host,
+            extension_export,
         }
     }
 
@@ -349,56 +396,6 @@ impl<'a> FormParseContext<'a> {
         self.trace_sink = Some(trace_sink);
         self
     }
-
-    /// Reads the form as under `extension_export` instead of the export
-    /// running now.
-    #[cfg(test)]
-    pub(super) fn with_extension_export(
-        mut self,
-        extension_export: Option<FormExtensionExport>,
-    ) -> Self {
-        self.extension_export = extension_export;
-        self
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) fn extract_form_body_xml(
-    bytes: &[u8],
-    object_refs: &BTreeMap<String, String>,
-) -> Option<String> {
-    let body = crate::compiler::bodies::form::decode_compatible_managed_form(bytes).ok()?;
-    // A platform 8.5 body is read through its 8.3.27 down-conversion, the way
-    // the source export reads one (`source_assets`). What the members 8.5
-    // appends say is only spelled by the 2.21 writer, which this 2.20 reading
-    // is not.
-    if super::form::layout_8_5_1::is_form_body_8_5_1(body.parsed()) {
-        let (converted, _) =
-            super::form::layout_8_5_1::down_convert_form_body_8_5_1(body.parsed()).ok()?;
-        return extract_form_body_xml_from_body(&converted, object_refs, object_refs);
-    }
-    extract_form_body_xml_from_body(body.parsed(), object_refs, object_refs)
-}
-
-pub(super) fn extract_form_body_xml_from_body(
-    body: &ParsedFormBodyBlob,
-    type_index: &BTreeMap<String, String>,
-    object_refs: &BTreeMap<String, String>,
-) -> Option<String> {
-    extract_form_body_xml_from_body_timed(
-        body,
-        &FormParseContext::new(
-            type_index,
-            &BTreeSet::new(),
-            &DcsTypeIndex::new(),
-            object_refs,
-            &Arc::new(BTreeMap::new()),
-            &BTreeMap::new(),
-            &Arc::new(InformationRegisterMasterDimensionIndex::new()),
-            None,
-        ),
-        None,
-    )
 }
 
 /// Numbers the items a form stores with id `0`.
@@ -1115,9 +1112,9 @@ pub(super) fn writes_usual_group_behavior(
     extension: Option<&FormExtensionExport>,
 ) -> bool {
     match extension {
-        Some(extension) => super::refs::forms_write_usual_group_behavior(
-            extension.extended_compatibility_mode.as_deref(),
-        ),
+        Some(extension) => {
+            forms_write_usual_group_behavior(extension.extended_compatibility_mode.as_deref())
+        }
         None => own_mode_writes,
     }
 }
@@ -1364,33 +1361,6 @@ pub(crate) struct FormItemSchemaTraceEvent {
     pub(crate) root_attribute_id: Option<String>,
     pub(crate) root_attribute_name: Option<String>,
     pub(crate) root_attribute_dynamic_list: Option<bool>,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn trace_form_body_with_context(
-    body: &ParsedFormBodyBlob,
-    type_index: &BTreeMap<String, String>,
-    dcs_type_index: &DcsTypeIndex,
-    object_refs: &BTreeMap<String, String>,
-    field_type_refs: &Arc<BTreeMap<String, String>>,
-    information_register_field_refs: &InformationRegisterFieldReferenceIndex,
-    information_register_master_dimensions: &Arc<InformationRegisterMasterDimensionIndex>,
-    form_owner_reference: Option<&str>,
-    trace_sink: &dyn FormItemTraceSink,
-) -> Option<()> {
-    let type_index_collisions = BTreeSet::new();
-    let context = FormParseContext::new(
-        type_index,
-        &type_index_collisions,
-        dcs_type_index,
-        object_refs,
-        field_type_refs,
-        information_register_field_refs,
-        information_register_master_dimensions,
-        form_owner_reference,
-    )
-    .with_trace_sink(trace_sink);
-    extract_form_body_xml_from_body_timed(body, &context, None).map(|_| ())
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -2854,7 +2824,7 @@ pub(super) fn extract_form_scale(fields: &[&str]) -> Option<String> {
         fields.get(tail_start..)?,
     )?;
     let value = fields.get(tail_start + 16 + blocks)?.trim();
-    crate::form_schema::form_nondefault_percent_scale(value)
+    ibcmd_form_schema::form_nondefault_percent_scale(value)
 }
 
 pub(super) fn extract_form_dimension(fields: &[&str], index: usize) -> Option<String> {
@@ -4128,7 +4098,7 @@ pub(super) fn collect_form_body_events(
         // The whole event block, when the field is one: every handler of every
         // event, the ones after the first included (an adopted form's `After`
         // interceptors). See `form_extension`.
-        if let Some(bindings) = super::form_extension::parse_form_event_block(field) {
+        if let Some(bindings) = parse_form_event_block(field) {
             for binding in bindings {
                 let Some(name) = parse_form_root_event_identifier(&binding.event, write_extension)
                 else {
@@ -6861,9 +6831,8 @@ pub(super) fn parse_form_attribute_direct_use_always(
         // outside its configuration (`copyinfo`), and the type is an id
         // neither the configuration nor the built-in table knows -- an object
         // rebuilt from its own XML keeps such references as `<v8:TypeId>`.
-        let unknown_id = value_type_uuid.is_some_and(|uuid| {
-            value_type.is_none() && super::builtin_type_reference(uuid).is_none()
-        });
+        let unknown_id = value_type_uuid
+            .is_some_and(|uuid| value_type.is_none() && builtin_type_reference(uuid).is_none());
         let foreign = unknown_id
             || foreign_types.is_some_and(|set| {
                 value_type_uuid.is_some_and(|uuid| set.contains(&uuid.to_ascii_lowercase()))
@@ -8422,7 +8391,7 @@ const FORM_DYNAMIC_LIST_REGISTER_KINDS: &[&str] = &[
 /// writes `~Список.Ref` beside a plain `Список.Ссылка` for a query that selects
 /// `Ссылка КАК Ссылка`. Not one list on any of the eight configurations of the
 /// stand needs an English spelling from here.
-fn form_dynamic_list_main_table_auto_fields(
+pub(super) fn form_dynamic_list_main_table_auto_fields(
     main_table: &str,
     selection: &FormDynamicListQuerySelection,
     object_refs: &BTreeMap<String, String>,
@@ -8494,63 +8463,6 @@ fn form_dynamic_list_reference_alias_loses_key(
         .get(&(source_alias.to_string(), reference_name.to_string()))
         .is_some_and(|selected_as| selected_as != reference_name)
         && !selection.aliases.contains(reference_name)
-}
-
-#[cfg(test)]
-mod reference_alias_tests {
-    use super::*;
-
-    #[test]
-    fn renamed_reference_removes_auto_fields_in_both_script_variants() {
-        for (script_code, reference, description) in
-            [("0", "Ref", "Description"), ("1", "Ссылка", "Наименование")]
-        {
-            let mut fields = ["0"; 61];
-            fields[0] = "68";
-            fields[3] = script_code;
-            let root = MetadataTextRow {
-                file_name: "11111111-1111-4111-8111-111111111111".into(),
-                text: format!(
-                    "{{9cd510cd-abfc-11d4-9434-004095e12fc7,{{{}}}}}",
-                    fields.join(",")
-                ),
-                object_code: None,
-                header: None,
-                kind: None,
-                folder: None,
-            };
-            let declarations = refs::build_metadata_field_declaration_index_from_texts(
-                &[root],
-                &BTreeMap::new(),
-                &BTreeMap::new(),
-            );
-            assert_eq!(declarations.english_script(), script_code == "0");
-            let query = format!("SELECT P.{reference} AS SelectedRef FROM Catalog.Products AS P");
-            let selected = parse_form_dynamic_list_query_selection(&query).unwrap();
-            let fields = form_dynamic_list_main_table_auto_fields(
-                "Catalog.Products",
-                &selected,
-                &BTreeMap::new(),
-                Some(&declarations),
-                None,
-            )
-            .unwrap();
-            assert!(fields.is_empty());
-
-            let query = format!("SELECT P.{reference} AS {reference} FROM Catalog.Products AS P");
-            let selected = parse_form_dynamic_list_query_selection(&query).unwrap();
-            let fields = form_dynamic_list_main_table_auto_fields(
-                "Catalog.Products",
-                &selected,
-                &BTreeMap::new(),
-                Some(&declarations),
-                None,
-            )
-            .unwrap();
-            assert!(fields.contains(reference));
-            assert!(fields.contains(description));
-        }
-    }
 }
 
 /// What the final `SELECT` of a dynamic-list query names, read with the query
@@ -9090,7 +9002,7 @@ pub(super) fn parse_form_dynamic_list_query_selection(
         // OperationNumber`, `.NextOperation`).
         let is_alias = selection_tokens.last().is_some_and(|previous: &String| {
             // `AS <alias>`, or a member name behind `.` (`….Order`).
-            crate::form_schema::FormQueryLexeme::classify(previous).is_member_separator()
+            ibcmd_form_schema::FormQueryLexeme::classify(previous).is_member_separator()
                 || is_1c_query_keyword(previous, Q_AS)
         });
         if depth == 0
@@ -9168,7 +9080,7 @@ pub(super) fn parse_form_dynamic_list_query_selection(
                 _ => {}
             }
             let is_alias = clause.last().is_some_and(|previous: &String| {
-                crate::form_schema::FormQueryLexeme::classify(previous).is_member_separator()
+                ibcmd_form_schema::FormQueryLexeme::classify(previous).is_member_separator()
                     || is_1c_query_keyword(previous, Q_AS)
             });
             if depth == 0 && !is_alias && is_1c_query_keyword(token, Q_CLAUSE_END) {
@@ -9405,7 +9317,11 @@ pub(super) fn parse_form_spreadsheet_document_settings(
     }
     let body_start = field.find("{8,")?;
     let body_end = scan_1c_braced_value(field, body_start)?;
-    let mut spreadsheet = parse_moxel_spreadsheet_text(&field[body_start..body_end], object_refs)?;
+    let mut spreadsheet = ibcmd_moxel::parse_moxel_spreadsheet_text(
+        &field[body_start..body_end],
+        object_refs,
+        builtin_type_reference,
+    )?;
     // Group/header palette slots belong to the standalone spreadsheet
     // projection. The same MOXCEL body embedded as a form attribute does not
     // publish them: across all eight validation corpora, none of the 54 forms
@@ -15336,7 +15252,7 @@ fn parse_form_child_item_with_metadata_owners(
                 (tag == "GraphicalSchemaField")
                     .then(|| {
                         let (_, options) = form_document_field_geometry_options(tag, &fields)?;
-                        crate::form_schema::form_output_code(options.get(3).copied())
+                        ibcmd_form_schema::form_output_code(options.get(3).copied())
                     })
                     .flatten()
             }),
@@ -15880,7 +15796,7 @@ fn parse_form_child_item_with_metadata_owners(
         // from the end: over all 27 778 native buttons the slot reads `1` on
         // 27 777 that carry no `<CommandUniqueness>` and `0` on the one that
         // says `false`, in both button layouts, with no other code.
-        command_uniqueness: crate::form_schema::FormButtonCommandUniquenessSchema::decode(
+        command_uniqueness: ibcmd_form_schema::FormButtonCommandUniquenessSchema::decode(
             tag,
             form_button_layout_is_extended(&fields),
             &fields,
@@ -15896,7 +15812,7 @@ fn parse_form_child_item_with_metadata_owners(
         // ОтветНаЗапросРеквизитовДляВыплатыПособия, ОтветНаЗапросФССДляРасчетаПособия,
         // СведенияДляОплатыОтпускаСФР, СведенияОЗастрахованномЛицеФСС}/Forms/
         // ФормаДокумента` -- lost the element.
-        usual_group_current_row_use: crate::form_schema::FormContainerCurrentRowSchema::from_tag(
+        usual_group_current_row_use: ibcmd_form_schema::FormContainerCurrentRowSchema::from_tag(
             tag,
         )
         .and_then(|schema| {
@@ -16341,7 +16257,7 @@ fn parse_form_child_item_with_metadata_owners(
             picture_decoration_options.as_deref().and_then(|options| {
                 let slot = FormPictureDecorationSchema.image_scale_option_slot(options)?;
                 let value = options.get(slot)?.trim();
-                crate::form_schema::form_nondefault_percent_scale(value)
+                ibcmd_form_schema::form_nondefault_percent_scale(value)
             })
         } else {
             None
@@ -17048,7 +16964,7 @@ pub(super) fn parse_form_label_field_text_color(
     field: &str,
     object_refs: &BTreeMap<String, String>,
 ) -> Option<String> {
-    if let Some(name) = super::form::layout_8_5_1::palette_color_8_5_1(field) {
+    if let Some(name) = layout_8_5_1::palette_color_8_5_1(field) {
         return Some(name.to_owned());
     }
     let fields = split_1c_braced_fields(field.trim(), 0)?;
@@ -17089,7 +17005,7 @@ pub(super) fn parse_form_control_color(
     object_refs: &BTreeMap<String, String>,
 ) -> Option<String> {
     // An 8.5 palette colour keeps its own shape through the down-conversion.
-    if let Some(name) = super::form::layout_8_5_1::palette_color_8_5_1(field) {
+    if let Some(name) = layout_8_5_1::palette_color_8_5_1(field) {
         return Some(name.to_owned());
     }
     let color = split_1c_braced_fields(field.trim(), 0)?;
@@ -20008,7 +19924,7 @@ fn parse_form_font_mask_tuple_xml(
     // Мастер_ВопросОтключитьМультирежим` stores `{8,3,4,700,1,100}` on the
     // label decoration the platform writes `<Font bold="true" kind="AutoFont"/>`
     // (about 40 forms of one 8.3.27 corpus).
-    if !crate::form_schema::FormFontMaskLayout::recognizes_revision(fields.first()?.trim()) {
+    if !ibcmd_form_schema::FormFontMaskLayout::recognizes_revision(fields.first()?.trim()) {
         return None;
     }
     let kind = fields.get(1)?.trim();
@@ -22135,7 +22051,7 @@ fn form_child_item_conditional_prefix_slot(wrapper: &str, raw_fields: &[&str]) -
 /// Placeholder for a trailing member a short item-record revision does not
 /// carry; defined once, in `form_schema`, because the schema has to recognize
 /// it as an absence too.
-use crate::form_schema::FORM_ABSENT_MEMBER as FORM_ITEM_ABSENT_MEMBER;
+use ibcmd_form_schema::FORM_ABSENT_MEMBER as FORM_ITEM_ABSENT_MEMBER;
 
 /// The canonical revision of an item record whose own leading member declares
 /// a shorter one, and how many trailing members that shorter revision drops.
@@ -24607,7 +24523,7 @@ pub(super) fn parse_form_child_item_data_path(
     // `Копия` and `СкрытаяКопия` over `Объект.ПолучателиПисьма` and its two
     // siblings, each the additional column `Значение` (id 3) of its table.
     let multiple_value = multiple_value_paths.0.or_else(|| {
-        if !crate::form_schema::FormInputBindingLayout::applies_to(tag) {
+        if !ibcmd_form_schema::FormInputBindingLayout::applies_to(tag) {
             return None;
         }
         let primary = data_path.as_ref()?.data_path.as_str();
@@ -24653,7 +24569,7 @@ pub(super) fn parse_form_child_item_data_path(
     // platform writes `Объект.АнализыПретензии.СписокСотрудников.Ответственный`
     // for both.
     let metadata_member = |member: usize| -> Option<String> {
-        if !crate::form_schema::FormInputBindingLayout::applies_to(tag) {
+        if !ibcmd_form_schema::FormInputBindingLayout::applies_to(tag) {
             return None;
         }
         let primary = data_path.as_ref()?.data_path.as_str();
@@ -24738,12 +24654,12 @@ fn resolve_form_physical_verdict_data_path(
         [terminal]
             if terminal.as_slice().len() == 1
                 && terminal[0].trim()
-                    == crate::form_schema::FormStandardBindingMember::Period.marker()
+                    == ibcmd_form_schema::FormStandardBindingMember::Period.marker()
                 && owner_scoped_bindings
                     .undeclared_root_standard_attributes
                     .contains(&(
                         root_id.to_string(),
-                        crate::form_schema::FormStandardBindingMember::Period.name(),
+                        ibcmd_form_schema::FormStandardBindingMember::Period.name(),
                     )) =>
         {
             Some(format!("{root_id}/-2"))
@@ -26106,7 +26022,7 @@ pub(super) fn resolve_form_bound_chain_member_path(
     // not supply the terminal's name.
     if members.len() == 2
         && members[0].as_slice()
-            == [crate::form_schema::FormStandardBindingMember::Reference.marker()]
+            == [ibcmd_form_schema::FormStandardBindingMember::Reference.marker()]
         && attribute
             .exact_single_type_reference
             .as_deref()
@@ -26119,7 +26035,7 @@ pub(super) fn resolve_form_bound_chain_member_path(
             .undeclared_root_standard_attributes
             .contains(&(
                 attribute_id.to_string(),
-                crate::form_schema::FormStandardBindingMember::Reference.name(),
+                ibcmd_form_schema::FormStandardBindingMember::Reference.name(),
             ))
         && let [marker] = members[1].as_slice()
         && let Some(name) =
@@ -26243,7 +26159,7 @@ fn walk_form_bound_chain_members(
                                 .map(String::as_str);
                         }
                         // `Ref` stands on the very reference the chain holds.
-                        if crate::form_schema::FormStandardBindingMember::retains_reference_type(
+                        if ibcmd_form_schema::FormStandardBindingMember::retains_reference_type(
                             name,
                         ) {
                             reached_type = Some(reference);
@@ -28981,7 +28897,7 @@ pub(super) fn parse_form_button_command_name_with_main_attribute(
             }
             FormStandardCommandOwnerKind::Table => form_table_standard_command_suffix(&uuid),
             FormStandardCommandOwnerKind::Planner => {
-                crate::form_schema::form_planner_standard_command_suffix(&uuid)
+                ibcmd_form_schema::form_planner_standard_command_suffix(&uuid)
             }
         } {
             return Some(format!(
@@ -29393,7 +29309,7 @@ pub(super) fn form_extension_owns_standard_command(
     // `Catalogs/лимсЛабораторноеОборудование/Forms/
     // ФормаВыбораОборудованияВСтатусеВработеНаДатуПоМетодикеИИзмерению` keeps
     // all five in its root command set and its XML has no `<CommandSet>`.
-    if crate::form_schema::form_list_row_command_requires_main_attribute(command) {
+    if ibcmd_form_schema::form_list_row_command_requires_main_attribute(command) {
         return !matches!(main_attribute, FormMainAttributeExtension::Absent);
     }
     if !matches!(
@@ -30107,7 +30023,7 @@ pub(super) fn form_object_reference_command_name(reference: &str) -> String {
     let Some((kind, _)) = reference.split_once('.') else {
         return reference.to_string();
     };
-    let standard = super::command_interface::command_interface_standard_command(kind);
+    let standard = command_interface_standard_command(kind);
     match standard {
         Some(standard) => format!("{reference}.StandardCommand.{standard}"),
         None => reference.to_string(),
@@ -32160,7 +32076,7 @@ fn format_form_body_open_xml_with_dcs_profiles(
     // `Scale` closes the scalar run, ahead of `AutoCommandBar` (the 2.21
     // element order in form/xml_2_21_order.rs).
     if let Some(value) = &properties.scale {
-        crate::form_schema::FormScalarXmlProperty::Scale.emit(
+        ibcmd_form_schema::FormScalarXmlProperty::Scale.emit(
             &mut xml,
             "\t",
             &escape_xml_text(value),
@@ -35482,7 +35398,7 @@ pub(super) fn format_form_child_item_xml(
     if item.auto_show_open_button_mode.is_none()
         && let Some(value) = item.auto_correction_on_text_input
     {
-        crate::form_schema::FormScalarXmlProperty::AutoCorrectionOnTextInput.emit(
+        ibcmd_form_schema::FormScalarXmlProperty::AutoCorrectionOnTextInput.emit(
             &mut xml,
             &format!("{tab}\t"),
             &escape_xml_text(value),
@@ -36044,7 +35960,7 @@ pub(super) fn format_form_child_item_xml(
     if item.auto_show_open_button_mode.is_some()
         && let Some(value) = item.auto_correction_on_text_input
     {
-        crate::form_schema::FormScalarXmlProperty::AutoCorrectionOnTextInput.emit(
+        ibcmd_form_schema::FormScalarXmlProperty::AutoCorrectionOnTextInput.emit(
             &mut xml,
             &format!("{tab}\t"),
             &escape_xml_text(value),
@@ -36177,11 +36093,11 @@ pub(super) fn format_form_child_item_xml(
     // A pages container writes `CurrentRowUse` right behind its
     // representation (ЛИМС КОРП `Catalogs/ПодключаемоеОборудование/Forms/
     // ФормаЭлемента` `Закладки`).
-    if crate::form_schema::FormContainerCurrentRowSchema::from_tag(item.tag)
+    if ibcmd_form_schema::FormContainerCurrentRowSchema::from_tag(item.tag)
         .is_some_and(|schema| schema.is_pages())
         && let Some(value) = item.usual_group_current_row_use
     {
-        crate::form_schema::FormScalarXmlProperty::CurrentRowUse.emit(
+        ibcmd_form_schema::FormScalarXmlProperty::CurrentRowUse.emit(
             &mut xml,
             &format!("{tab}\t"),
             &escape_xml_text(value),
@@ -38531,11 +38447,6 @@ pub(super) fn format_form_command_interface_xml(
     xml
 }
 
-pub(crate) fn unpack_form_body_module_text(blob: &[u8]) -> Option<Vec<u8>> {
-    let body = crate::compiler::bodies::form::decode_compatible_managed_form(blob).ok()?;
-    form_body_module_text_bytes(body.parsed())
-}
-
 pub(super) fn form_body_module_text_bytes(body: &ParsedFormBodyBlob) -> Option<Vec<u8>> {
     if body.module_text.is_empty() {
         return None;
@@ -38984,7 +38895,7 @@ fn form_planner_labels_xml(
     }
     let record = split_1c_braced_fields(labels.get(1)?.trim(), 0)?;
     let count: usize = record.get(1)?.trim().parse().ok()?;
-    if !crate::form_schema::FormPlannerDatedLabelsSchema::recognizes_record(
+    if !ibcmd_form_schema::FormPlannerDatedLabelsSchema::recognizes_record(
         &record,
         count,
         MAX_FORM_PLANNER_ITEMS,
@@ -38998,16 +38909,16 @@ fn form_planner_labels_xml(
             .iter()
             .map(|field| form_chart_compact(field))
             .collect();
-        if !crate::form_schema::FormPlannerDatedLabelsSchema::recognizes_label(&compact) {
+        if !ibcmd_form_schema::FormPlannerDatedLabelsSchema::recognizes_label(&compact) {
             return None;
         }
-        labels.push(crate::form_schema::FormPlannerDatedLabel {
+        labels.push(ibcmd_form_schema::FormPlannerDatedLabel {
             key: form_planner_date(pair.first()?.trim())?,
             line_color: form_chart_color(label.get(4)?, object_refs)?,
             text_color: form_chart_color(label.get(5)?, object_refs)?,
         });
     }
-    let xml = crate::form_schema::FormPlannerDatedLabelsSchema::emit(
+    let xml = ibcmd_form_schema::FormPlannerDatedLabelsSchema::emit(
         &labels,
         &form_chart_integer(record.last()?)?,
         indent,
@@ -39445,7 +39356,7 @@ fn parse_form_chart_settings_xml(
     // A chart stored in the 8.5 colour and font tuples (one 8.3.27 corpus
     // holds 21 such forms) reads through the same down-conversion the
     // business-process flowchart uses.
-    let converted = super::form::layout_8_5_1::down_convert_primitives_8_5_1_text(field).ok();
+    let converted = layout_8_5_1::down_convert_primitives_8_5_1_text(field).ok();
     let field = converted.as_deref().unwrap_or(field);
     let outer = split_1c_braced_fields(field.trim(), 0)?;
     if outer.len() != 4
@@ -39521,7 +39432,7 @@ fn parse_form_gantt_chart_settings_xml(
     // A chart stored in the 8.5 colour and font tuples (one 8.3.27 corpus
     // holds 21 such forms) reads through the same down-conversion the
     // business-process flowchart uses.
-    let converted = super::form::layout_8_5_1::down_convert_primitives_8_5_1_text(field).ok();
+    let converted = layout_8_5_1::down_convert_primitives_8_5_1_text(field).ok();
     let field = converted.as_deref().unwrap_or(field);
     let outer = split_1c_braced_fields(field.trim(), 0)?;
     if outer.len() != 4
@@ -39576,33 +39487,6 @@ pub(crate) fn render_form_gantt_chart_settings_value(field: &str) -> Option<Stri
         reference: FORM_GANTT_CHART_TYPE_REFERENCE.to_string(),
     }];
     parse_form_gantt_chart_settings_xml(field, &value_types, &BTreeMap::new(), 3)
-}
-
-/// The Form.xml this exporter writes for a whole form body, read against the
-/// offline context of a saved dump -- the form writer's whole-form harness
-/// renders a compiled body and the stored one through it and compares.
-#[cfg(test)]
-pub(crate) fn render_form_body_xml_offline(
-    body: &ParsedFormBodyBlob,
-    context: &super::offline_context::OfflineFormContext,
-    form_uuid: &str,
-) -> Option<String> {
-    let collisions = BTreeSet::new();
-    let owner = context
-        .form_owner_references
-        .get(form_uuid)
-        .map(String::as_str);
-    let parse_context = FormParseContext::new(
-        &context.type_index,
-        &collisions,
-        &context.dcs_type_index,
-        &context.object_refs,
-        &context.field_type_refs,
-        &context.information_register_field_refs,
-        &context.information_register_master_dimensions,
-        owner,
-    );
-    extract_form_body_xml_from_body_timed(body, &parse_context, None)
 }
 
 /// The `{0,{3,0,1,0,<value>,<contentCacheItem>,<autoText>,0}}` record the
@@ -40073,8 +39957,8 @@ fn format_form_gantt_chart_settings_xml(
 
 const FORM_CHART_TYPE_REFERENCE: &str = "d5p1:Chart";
 /// The type reference a Gantt-chart-typed form attribute declares.
-use super::GANTT_CHART_TYPE_REFERENCE as FORM_GANTT_CHART_TYPE_REFERENCE;
-use super::GANTT_CHART_TYPE_UUID;
+use ibcmd_1c_vocab::GANTT_CHART_TYPE_REFERENCE as FORM_GANTT_CHART_TYPE_REFERENCE;
+use ibcmd_1c_vocab::GANTT_CHART_TYPE_UUID;
 const FORM_CHART_VALUE_TYPE_UUID: &str = "3543ef08-3316-4f7e-9447-0cd0a1cbf1d5";
 const FORM_CHART_BORDER_UUID: &str = "48312c09-257f-4b29-b280-284dd89efc1e";
 const FORM_CHART_NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
@@ -40776,7 +40660,7 @@ fn format_form_chart_settings_body_xml(
     let mut owned = Vec::new();
     let data = if data.first().map(|value| value.trim()) == Some("75") {
         let cut =
-            crate::form_schema::FormChartColorTailLayout::payload_end(data, form_chart_compact)?;
+            ibcmd_form_schema::FormChartColorTailLayout::payload_end(data, form_chart_compact)?;
         // The eight colours are any colour: 8.3.27 has no element for them
         // and prints none, automatic or not (`ДиагностикаФормированияГрафика`
         // stores four `style` colours there).

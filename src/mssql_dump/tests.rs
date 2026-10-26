@@ -13224,6 +13224,8 @@ fn form_parse_context_matches_legacy_wrapper_byte_for_byte() {
         &information_register_field_refs,
         &information_register_master_dimensions,
         None,
+        super::form_body_host::ROOT_FORM_BODY_HOST,
+        super::form_body_host::active_form_extension_export(),
     )
     .with_trace_sink(&sink);
     let contextual = extract_form_body_xml_from_body_timed(&body, &context, None).unwrap();
@@ -26825,6 +26827,8 @@ fn detailed_form_extraction_preserves_malformed_link_rejection_diagnostics() {
         &information_register_field_refs,
         &information_register_master_dimensions,
         None,
+        super::form_body_host::ROOT_FORM_BODY_HOST,
+        super::form_body_host::active_form_extension_export(),
     );
 
     let extraction =
@@ -76978,8 +76982,10 @@ fn extension_export_for_test(mode: Option<&str>) -> FormExtensionExport {
 ///   `ConditionalAppearance` (`7dd764b6-…`), platform types only the
 ///   form-schema column table names.
 ///
-/// Read through `FormParseContext::new`, then under `extension_export` when
-/// one is given.
+/// Read through a `FormParseContext` given `extension_export` when one is
+/// given, and otherwise the root's snapshot of the export running now
+/// (`form_body_host::active_form_extension_export`), as the root's callers
+/// pass it.
 fn extension_export_probe_xml(
     own_mode: Option<&str>,
     extension_export: Option<Option<FormExtensionExport>>,
@@ -77095,12 +77101,10 @@ fn extension_export_probe_xml(
         &information_register_field_refs,
         &information_register_master_dimensions,
         None,
+        super::form_body_host::ROOT_FORM_BODY_HOST,
+        extension_export.unwrap_or_else(super::form_body_host::active_form_extension_export),
     )
     .with_form_compatibility(FormCompatibility::of(own_mode));
-    let context = match extension_export {
-        Some(extension_export) => context.with_extension_export(extension_export),
-        None => context,
-    };
     extract_form_body_xml_from_body_timed(&body, &context, None).expect("the probe form is written")
 }
 

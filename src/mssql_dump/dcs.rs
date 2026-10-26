@@ -8,17 +8,13 @@
 #[cfg(test)]
 use super::*;
 
-pub(super) use ibcmd_form_body::{
-    ANY_IB_REF_TYPE_ID, CanonicalDcsSettingsContext, CanonicalDcsSettingsInput,
-    emit_canonical_dcs_settings_children, emit_canonical_dcs_settings_parts,
-};
+pub(super) use ibcmd_form_body::ANY_IB_REF_TYPE_ID;
+pub(crate) use ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles;
+// The form reader (`form_body.rs`) imports the rest from the crate; the
+// root's tests read these by their old paths.
+#[cfg(test)]
 pub(crate) use ibcmd_form_body::{
-    CanonicalDcsSettingsAdapterError, CanonicalFormServerStateFragment, FormListSettingsChildKind,
-    FormListSettingsChildTransliteration, canonicalize_form_server_state_conditional_appearances,
-    data_composition_type_id_xml,
-    normalize_data_composition_schema_template_documents_with_profiles,
-    respell_form_server_state_namespaces,
-    transliterate_form_attributes_conditional_appearance_document,
+    FormListSettingsChildKind, FormListSettingsChildTransliteration,
     transliterate_form_list_settings_child_document,
     transliterate_form_list_settings_group_items_document,
 };
