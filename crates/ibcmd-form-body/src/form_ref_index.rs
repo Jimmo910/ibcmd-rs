@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-pub(super) struct FormObjectRefIndex<'a> {
+pub struct FormObjectRefIndex<'a> {
     source: &'a BTreeMap<String, String>,
     references: HashSet<&'a str>,
     /// `<owner>.<kind>.<name>` references, `kind` and `name` without a dot,
@@ -23,7 +23,7 @@ pub(super) struct FormObjectRefIndex<'a> {
 }
 
 impl<'a> FormObjectRefIndex<'a> {
-    pub(super) fn new(source: &'a BTreeMap<String, String>) -> Self {
+    pub fn new(source: &'a BTreeMap<String, String>) -> Self {
         let mut references = HashSet::with_capacity(source.len());
         let mut children = HashMap::<&str, Vec<(&str, &str, &str)>>::new();
         let mut common_attributes = Vec::new();
@@ -54,7 +54,7 @@ impl<'a> FormObjectRefIndex<'a> {
     }
 
     /// `index` when it was built from `object_refs` itself.
-    pub(super) fn of<'b>(
+    pub fn of<'b>(
         index: Option<&'b FormObjectRefIndex<'a>>,
         object_refs: &BTreeMap<String, String>,
     ) -> Option<&'b FormObjectRefIndex<'a>> {
@@ -62,17 +62,17 @@ impl<'a> FormObjectRefIndex<'a> {
     }
 
     /// Whether some key maps to exactly `reference`.
-    pub(super) fn contains(&self, reference: &str) -> bool {
+    pub fn contains(&self, reference: &str) -> bool {
         self.references.contains(reference)
     }
 
     /// The `<owner>.<kind>.<name>` references of `owner`, in key order.
-    pub(super) fn children(&self, owner: &str) -> &[(&'a str, &'a str, &'a str)] {
+    pub fn children(&self, owner: &str) -> &[(&'a str, &'a str, &'a str)] {
         self.children.get(owner).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// Common attribute names, in key order.
-    pub(super) fn common_attributes(&self) -> &[&'a str] {
+    pub fn common_attributes(&self) -> &[&'a str] {
         &self.common_attributes
     }
 }
