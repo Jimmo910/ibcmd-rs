@@ -1050,6 +1050,7 @@ pub(crate) use file_infobase::{
 pub use postgres_infobase::PostgresExportSnapshot;
 mod form;
 mod form_body;
+mod form_body_host;
 mod form_extension;
 #[cfg(test)]
 mod revision_mix_tests;
@@ -36961,7 +36962,9 @@ fn parse_metadata_type_pattern(
 }
 
 /// [`ibcmd_1c_vocab::parse_form_metadata_type_pattern`] with the
-/// extension-export state as its `keeps_unresolved_type_id`.
+/// extension-export state as its `keeps_unresolved_type_id`. The form reader
+/// passes the state it was built with instead (`form_body::parse_form_type_pattern`).
+#[cfg(test)]
 fn parse_form_metadata_type_pattern(
     value: &str,
     type_index: &BTreeMap<String, String>,
