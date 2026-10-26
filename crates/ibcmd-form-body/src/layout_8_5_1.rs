@@ -791,6 +791,15 @@ fn convert_values_and_commands(node: Node, facts: &mut FormFactsV8_5_1) -> Resul
     Ok(Node::List(members))
 }
 
+/// The events 8.5 lets a usual group handle, by the identifier its event
+/// record stores (8.5.1.1150 BSP: three `Click` handlers).
+pub fn group_event_name_8_5_1(id: &str) -> Option<&'static str> {
+    match id {
+        "a3da1388-983a-4d28-87f2-5096d7e3a4ef" => Some("Click"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

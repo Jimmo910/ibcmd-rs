@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use anyhow::{Result, anyhow, bail};
 
-use super::layout_8_5_1::{FormFactsV8_5_1, FormItemFactsV8_5_1, Node};
+use super::layout_8_5_1::{FormFactsV8_5_1, FormItemFactsV8_5_1, Node, group_event_name_8_5_1};
 
 /// The base form of an adopted form: a document of its own, written and passed
 /// by its own facts before the form's writer encloses it
@@ -1045,15 +1045,6 @@ fn apply_complex_settings_view_mode(
         "ComplexSettingsViewMode",
         &format!("<ComplexSettingsViewMode>{value}</ComplexSettingsViewMode>\r\n"),
     )
-}
-
-/// The events 8.5 lets a usual group handle, by the identifier its event
-/// record stores (8.5.1.1150 BSP: three `Click` handlers).
-pub(in crate::mssql_dump) fn group_event_name_8_5_1(id: &str) -> Option<&'static str> {
-    match id {
-        "a3da1388-983a-4d28-87f2-5096d7e3a4ef" => Some("Click"),
-        _ => None,
-    }
 }
 
 /// A usual group's event record, the member its 8.5 property bag appends:

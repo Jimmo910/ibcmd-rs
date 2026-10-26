@@ -10,8 +10,8 @@ use super::*;
 
 pub(super) use ibcmd_form_body::ANY_IB_REF_TYPE_ID;
 pub(crate) use ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles;
-// The form reader (`form_body.rs`) imports the rest from the crate; the
-// root's tests read these by their old paths.
+// The form reader, in the crate, reads the rest there; the root's tests read
+// these by their old paths.
 #[cfg(test)]
 pub(crate) use ibcmd_form_body::{
     FormListSettingsChildKind, FormListSettingsChildTransliteration,

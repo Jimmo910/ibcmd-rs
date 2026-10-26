@@ -2,6 +2,21 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::layout_8_5_1;
+use crate::{
+    CanonicalDcsSettingsAdapterError, CanonicalDcsSettingsContext, CanonicalDcsSettingsInput,
+    CanonicalFormServerStateFragment, DcsTypeIndex, FormCompatibility, FormItemAsset,
+    FormListSettingsChildKind, FormListSettingsChildTransliteration, FormObjectRefIndex,
+    InformationRegisterFieldReferenceIndex, InformationRegisterMasterDimensionIndex,
+    MetadataCommandReference, MetadataFieldDeclarationIndex, MssqlDumpTimingReport,
+    ParsedFormBodyBlob, canonicalize_form_server_state_conditional_appearances,
+    data_composition_type_id_xml, emit_canonical_dcs_settings_children,
+    emit_canonical_dcs_settings_parts, forms_write_usual_group_behavior, parse_form_event_block,
+    respell_form_server_state_namespaces,
+    transliterate_form_attributes_conditional_appearance_document,
+    transliterate_form_list_settings_child_document,
+    transliterate_form_list_settings_group_items_document,
+};
 use anyhow::{Result, anyhow};
 use ibcmd_1c_text::{
     decode_base64_mime, escape_xml_character_data, escape_xml_element_text, escape_xml_text,
@@ -26,21 +41,6 @@ use ibcmd_1c_vocab::{
 };
 use ibcmd_core::artifact::ProfileId;
 use ibcmd_core::dcs::{DcsConditionalAppearance, DcsFilter, DcsOrder};
-use ibcmd_form_body::layout_8_5_1;
-use ibcmd_form_body::{
-    CanonicalDcsSettingsAdapterError, CanonicalDcsSettingsContext, CanonicalDcsSettingsInput,
-    CanonicalFormServerStateFragment, DcsTypeIndex, FormCompatibility, FormItemAsset,
-    FormListSettingsChildKind, FormListSettingsChildTransliteration, FormObjectRefIndex,
-    InformationRegisterFieldReferenceIndex, InformationRegisterMasterDimensionIndex,
-    MetadataCommandReference, MetadataFieldDeclarationIndex, MssqlDumpTimingReport,
-    ParsedFormBodyBlob, canonicalize_form_server_state_conditional_appearances,
-    data_composition_type_id_xml, emit_canonical_dcs_settings_children,
-    emit_canonical_dcs_settings_parts, forms_write_usual_group_behavior, parse_form_event_block,
-    respell_form_server_state_namespaces,
-    transliterate_form_attributes_conditional_appearance_document,
-    transliterate_form_list_settings_child_document,
-    transliterate_form_list_settings_group_items_document,
-};
 use ibcmd_form_schema::{
     FORM_DECORATION_HEADER_XML_ORDER, FORM_EXTENDED_TOOLTIP_XML_ORDER,
     FORM_FIELD_HEADER_PICTURE_XML_ORDER, FORM_INPUT_FIELD_BUTTON_XML_ORDER,
@@ -172,13 +172,12 @@ const MAX_FORM_SERVER_STATE_XML_BYTES: usize = 64 * 1_048_576;
 /// layout (`module_blob`), not the form body record. `FormParseContext::new`
 /// fills in the root's (`form_body_host::ROOT_FORM_BODY_HOST`).
 #[derive(Clone, Copy)]
-pub(super) struct FormBodyHost {
+pub struct FormBodyHost {
     /// The storage document the packed tail carries, or `Ok(None)` when the
     /// body has no tail.
-    pub(super) conditional_appearance_tail_storage_document:
-        fn(&str) -> anyhow::Result<Option<Vec<u8>>>,
+    pub conditional_appearance_tail_storage_document: fn(&str) -> anyhow::Result<Option<Vec<u8>>>,
     /// The same tail's conditional appearance, typed.
-    pub(super) parse_conditional_appearance_tail:
+    pub parse_conditional_appearance_tail:
         fn(&str) -> anyhow::Result<DcsChildParseOutcome<DcsConditionalAppearance>>,
 }
 
@@ -188,15 +187,15 @@ pub(super) struct FormBodyHost {
 /// export: an export holds its extension context from before its first form
 /// to after its last, so the state is the same for every reader of one form.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct FormExtensionExport {
+pub struct FormExtensionExport {
     /// The compatibility mode of the configuration the extension extends
     /// (`Version8_3_27`), `None` when its references cannot be read.
-    pub(super) extended_compatibility_mode: Option<String>,
+    pub extended_compatibility_mode: Option<String>,
 }
 
 /// Immutable dependencies supplied by the source-asset caller for one form.
 /// Form-local indexes deliberately remain inside the parser.
-pub(super) struct FormParseContext<'a> {
+pub struct FormParseContext<'a> {
     /// Type ids the exported object carries from outside its configuration
     /// (`copyinfo` of an external data processor). The platform cannot name a
     /// `<UseAlways>` path through such a type and writes the raw
@@ -261,26 +260,26 @@ pub(super) struct FormParseContext<'a> {
     extension_export: Option<FormExtensionExport>,
 }
 
-pub(crate) trait FormItemTraceSink {
+pub trait FormItemTraceSink {
     fn record(&self, event: FormItemTraceEvent);
     fn record_schema(&self, _event: FormItemSchemaTraceEvent) {}
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, serde::Serialize)]
-pub(crate) struct FormItemTraceEvent {
-    pub(crate) id: String,
-    pub(crate) tag: String,
-    pub(crate) name: String,
-    pub(crate) occurrence: usize,
-    pub(crate) wrapper: String,
-    pub(crate) raw_field_count: usize,
-    pub(crate) normalized_field_count: usize,
-    pub(crate) owner_chain: Vec<String>,
-    pub(crate) top_level_scalars: Vec<FormItemTraceScalar>,
+pub struct FormItemTraceEvent {
+    pub id: String,
+    pub tag: String,
+    pub name: String,
+    pub occurrence: usize,
+    pub wrapper: String,
+    pub raw_field_count: usize,
+    pub normalized_field_count: usize,
+    pub owner_chain: Vec<String>,
+    pub top_level_scalars: Vec<FormItemTraceScalar>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, serde::Serialize)]
-pub(crate) struct FormItemTraceScalar {
+pub struct FormItemTraceScalar {
     pub(crate) index: usize,
     pub(crate) value: Option<String>,
     pub(crate) nested: bool,
@@ -288,7 +287,7 @@ pub(crate) struct FormItemTraceScalar {
 
 impl<'a> FormParseContext<'a> {
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn new(
+    pub fn new(
         type_index: &'a BTreeMap<String, String>,
         type_index_collisions: &'a BTreeSet<String>,
         dcs_type_index: &'a DcsTypeIndex,
@@ -326,7 +325,7 @@ impl<'a> FormParseContext<'a> {
         }
     }
 
-    pub(super) fn with_form_reference_index(
+    pub fn with_form_reference_index(
         mut self,
         form_reference_index: &'a BTreeMap<String, String>,
     ) -> Self {
@@ -334,12 +333,12 @@ impl<'a> FormParseContext<'a> {
         self
     }
 
-    pub(super) fn with_foreign_types(mut self, foreign_types: &'a BTreeSet<String>) -> Self {
+    pub fn with_foreign_types(mut self, foreign_types: &'a BTreeSet<String>) -> Self {
         self.foreign_types = Some(foreign_types);
         self
     }
 
-    pub(super) fn with_metadata_command_refs(
+    pub fn with_metadata_command_refs(
         mut self,
         metadata_command_refs: &'a BTreeMap<String, MetadataCommandReference>,
     ) -> Self {
@@ -347,7 +346,7 @@ impl<'a> FormParseContext<'a> {
         self
     }
 
-    pub(super) fn with_metadata_command_facts(
+    pub fn with_metadata_command_facts(
         mut self,
         metadata_command_facts: &'a Arc<BTreeMap<String, MetadataCommandReference>>,
     ) -> Self {
@@ -355,7 +354,7 @@ impl<'a> FormParseContext<'a> {
         self
     }
 
-    pub(super) fn with_metadata_field_declarations(
+    pub fn with_metadata_field_declarations(
         mut self,
         metadata_field_declarations: &'a MetadataFieldDeclarationIndex,
     ) -> Self {
@@ -363,15 +362,12 @@ impl<'a> FormParseContext<'a> {
         self
     }
 
-    pub(super) fn with_object_ref_index(
-        mut self,
-        object_ref_index: &'a FormObjectRefIndex<'a>,
-    ) -> Self {
+    pub fn with_object_ref_index(mut self, object_ref_index: &'a FormObjectRefIndex<'a>) -> Self {
         self.object_ref_index = Some(object_ref_index);
         self
     }
 
-    pub(super) fn with_dcs_profiles(
+    pub fn with_dcs_profiles(
         mut self,
         source_profile: ProfileId,
         target_profile: ProfileId,
@@ -381,18 +377,18 @@ impl<'a> FormParseContext<'a> {
         self
     }
 
-    pub(super) fn with_dcs_schema_namespace(mut self, declared: bool) -> Self {
+    pub fn with_dcs_schema_namespace(mut self, declared: bool) -> Self {
         self.dcs_schema_namespace = declared;
         self
     }
 
-    pub(super) fn with_form_compatibility(mut self, compatibility: FormCompatibility) -> Self {
+    pub fn with_form_compatibility(mut self, compatibility: FormCompatibility) -> Self {
         self.form_compatibility = compatibility;
         self
     }
 
     #[allow(dead_code)]
-    pub(super) fn with_trace_sink(mut self, trace_sink: &'a dyn FormItemTraceSink) -> Self {
+    pub fn with_trace_sink(mut self, trace_sink: &'a dyn FormItemTraceSink) -> Self {
         self.trace_sink = Some(trace_sink);
         self
     }
@@ -440,7 +436,7 @@ fn renumber_form_zero_item_ids(xml: String) -> String {
     out
 }
 
-pub(super) fn extract_form_body_xml_from_body_timed(
+pub fn extract_form_body_xml_from_body_timed(
     body: &ParsedFormBodyBlob,
     context: &FormParseContext<'_>,
     timings: Option<&mut MssqlDumpTimingReport>,
@@ -453,20 +449,20 @@ pub(super) fn extract_form_body_xml_from_body_timed(
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(super) struct FormSourceAssetDiagnostic {
-    pub(super) code: &'static str,
-    pub(super) classification: &'static str,
-    pub(super) parse_error_class: Option<&'static str>,
-    pub(super) property: &'static str,
-    pub(super) property_profile: &'static str,
-    pub(super) property_slot: usize,
-    pub(super) form_item_id: String,
-    pub(super) form_item_tag: &'static str,
-    pub(super) raw_length: usize,
-    pub(super) raw_sha256: String,
+pub struct FormSourceAssetDiagnostic {
+    pub code: &'static str,
+    pub classification: &'static str,
+    pub parse_error_class: Option<&'static str>,
+    pub property: &'static str,
+    pub property_profile: &'static str,
+    pub property_slot: usize,
+    pub form_item_id: String,
+    pub form_item_tag: &'static str,
+    pub raw_length: usize,
+    pub raw_sha256: String,
 }
 
-pub(super) enum DetailedFormBodyExtraction {
+pub enum DetailedFormBodyExtraction {
     Emitted {
         xml: String,
         diagnostics: Vec<FormSourceAssetDiagnostic>,
@@ -483,7 +479,7 @@ pub(super) enum DetailedFormBodyExtraction {
 /// `adoption` is what the writer spells for an adopted form beyond its body:
 /// the call types of its handlers, and its base form after its own tree
 /// (`form_extension::form_adoption`), for every source of forms.
-pub(super) fn extract_form_body_xml_from_body_detailed_timed(
+pub fn extract_form_body_xml_from_body_detailed_timed(
     body: &ParsedFormBodyBlob,
     context: &FormParseContext<'_>,
     adoption: Option<&super::form_extension::FormAdoption>,
@@ -1027,7 +1023,7 @@ const FORM_ITEM_IDENTITY_UUID: &str = "02023637-7868-4a5f-8576-835a76e0c9ba";
 /// this way; 8.3.27.2214 dumps them numbered 33, 34, … behind items 1..7 and
 /// 20..32, the first table's nine before the second's (fixture
 /// `unnumbered_additions`). `None` when no item lacks an id.
-pub(super) fn with_unidentified_form_items_numbered(layout: &str) -> Option<String> {
+pub fn with_unidentified_form_items_numbered(layout: &str) -> Option<String> {
     const UNIDENTIFIED: &str = "{0},";
     let identity_tail = format!(",{FORM_ITEM_IDENTITY_UUID}}}");
     // An unidentified item: `{<wrapper>,{0},a,b,c,d,"<name>"` with four
@@ -1221,7 +1217,7 @@ const ROOT_DCS_SCHEMA_NAMESPACE: &str =
 /// writes it under a compatibility mode before 8.3.19. A form that still uses
 /// the prefix keeps the declaration: no evidence says where the platform
 /// would declare it then, and the document must stay well formed.
-pub(super) fn without_root_dcs_schema_namespace(xml: String) -> String {
+pub fn without_root_dcs_schema_namespace(xml: String) -> String {
     let dropped = xml.replacen(ROOT_DCS_SCHEMA_NAMESPACE, "", 1);
     if dropped.contains("dcssch:") {
         xml
@@ -1335,11 +1331,11 @@ fn form_choice_parameter_links_parse_error_class(
 /// Table-specific evidence captured alongside the production layout selection.
 /// It is intentionally emitted only when a trace sink is present.
 #[derive(Debug, Clone, Eq, PartialEq, serde::Serialize)]
-pub(crate) struct FormItemSchemaTraceEvent {
-    pub(crate) id: String,
-    pub(crate) tag: String,
-    pub(crate) name: String,
-    pub(crate) occurrence: usize,
+pub struct FormItemSchemaTraceEvent {
+    pub id: String,
+    pub tag: String,
+    pub name: String,
+    pub occurrence: usize,
     pub(crate) wrapper: String,
     pub(crate) raw_field_count: usize,
     pub(crate) normalized_field_count: usize,
@@ -1350,17 +1346,17 @@ pub(crate) struct FormItemSchemaTraceEvent {
     pub(crate) auto_max_width_slot: Option<usize>,
     pub(crate) auto_max_width_raw: Option<String>,
     pub(crate) auto_max_width_auxiliary_raw: Option<String>,
-    pub(crate) effective_auto_max_width: Option<bool>,
-    pub(crate) evidence_complete: bool,
-    pub(crate) evidence_stage: &'static str,
-    pub(crate) hierarchical_suppressed: Option<bool>,
-    pub(crate) emitted_auto_max_width: Option<bool>,
+    pub effective_auto_max_width: Option<bool>,
+    pub evidence_complete: bool,
+    pub evidence_stage: &'static str,
+    pub hierarchical_suppressed: Option<bool>,
+    pub emitted_auto_max_width: Option<bool>,
     pub(crate) auto_max_width_xml_order: Option<usize>,
-    pub(crate) resolved_data_path: Option<String>,
-    pub(crate) data_path_provenance: Option<&'static str>,
-    pub(crate) root_attribute_id: Option<String>,
-    pub(crate) root_attribute_name: Option<String>,
-    pub(crate) root_attribute_dynamic_list: Option<bool>,
+    pub resolved_data_path: Option<String>,
+    pub data_path_provenance: Option<&'static str>,
+    pub root_attribute_id: Option<String>,
+    pub root_attribute_name: Option<String>,
+    pub root_attribute_dynamic_list: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -1429,17 +1425,17 @@ pub(super) const FORM_UPDATE_ON_DATA_CHANGE_UUID: &str = "eac7bfa0-10b4-4369-996
 pub(super) const FORM_COMMAND_CUSTOMIZE_FORM_UUID: &str = "198ea630-fda2-4cda-8a23-f999f4c67ee6";
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub(super) struct FormBodyEvent {
-    pub(super) name: String,
-    pub(super) handler: String,
+pub struct FormBodyEvent {
+    pub name: String,
+    pub handler: String,
     /// The call type of the handler on an adopted form (`Before`, `After` or
     /// `Override`), `None` where the writer spells no `callType`
     /// (`form_extension::FormAdoption::mark`).
-    pub(super) call_type: Option<&'static str>,
+    pub call_type: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(super) struct FormAutoCommandBar {
+pub struct FormAutoCommandBar {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) display_importance: Option<&'static str>,
@@ -1449,40 +1445,40 @@ pub(super) struct FormAutoCommandBar {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(super) struct FormAttribute {
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) title: Vec<(String, String)>,
-    pub(super) value_types: Vec<ConstantValueType>,
-    pub(super) exact_single_type_uuid: Option<String>,
-    pub(super) explicit_empty_type: bool,
-    pub(super) columns: Vec<FormAttributeColumn>,
-    pub(super) additional_columns: Vec<FormAttributeAdditionalColumns>,
-    pub(super) view_rights: Option<FormRightsSetting>,
-    pub(super) edit_rights: Option<FormRightsSetting>,
-    pub(super) main_attribute: bool,
-    pub(super) saved_data: bool,
-    pub(super) fill_check: Option<&'static str>,
-    pub(super) save_fields: Vec<String>,
-    pub(super) use_always: Vec<String>,
-    pub(super) functional_options: Vec<String>,
-    pub(super) settings: Option<FormDynamicListSettings>,
-    pub(super) spreadsheet_document_settings: Option<String>,
-    pub(super) design_time_settings: Option<String>,
-    pub(super) type_description_settings: Option<Vec<ConstantValueType>>,
+pub struct FormAttribute {
+    pub id: String,
+    pub name: String,
+    pub title: Vec<(String, String)>,
+    pub value_types: Vec<ConstantValueType>,
+    pub exact_single_type_uuid: Option<String>,
+    pub explicit_empty_type: bool,
+    pub columns: Vec<FormAttributeColumn>,
+    pub additional_columns: Vec<FormAttributeAdditionalColumns>,
+    pub view_rights: Option<FormRightsSetting>,
+    pub edit_rights: Option<FormRightsSetting>,
+    pub main_attribute: bool,
+    pub saved_data: bool,
+    pub fill_check: Option<&'static str>,
+    pub save_fields: Vec<String>,
+    pub use_always: Vec<String>,
+    pub functional_options: Vec<String>,
+    pub settings: Option<FormDynamicListSettings>,
+    pub spreadsheet_document_settings: Option<String>,
+    pub design_time_settings: Option<String>,
+    pub type_description_settings: Option<Vec<ConstantValueType>>,
     /// The field-map ids of a dynamic list whose field name is outside the
     /// list's resolvable-field universe. The platform marks a path onto one of
     /// them with a leading `~`, exactly as it does in `<UseAlways>`.
-    pub(super) unresolvable_field_item_ids: BTreeSet<String>,
+    pub unresolvable_field_item_ids: BTreeSet<String>,
     /// Field-map ids whose dotted path is structurally invalid: its first
     /// member resolves, but the metadata value reached there does not declare
     /// the following member. This is narrower than the top-level list
     /// universe, which intentionally knows nothing about valid dereferences.
-    pub(super) invalid_nested_field_item_ids: BTreeSet<String>,
+    pub invalid_nested_field_item_ids: BTreeSet<String>,
     /// The localized twin the field map remembers beside a field's own name,
     /// for the ids that carry one and spell it differently. A marked path names
     /// both, exactly as `<UseAlways>` already writes them.
-    pub(super) field_item_twins: BTreeMap<String, String>,
+    pub field_item_twins: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -1529,7 +1525,7 @@ enum FormAttributeSaveEntry {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(super) struct FormAttributeColumn {
+pub struct FormAttributeColumn {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) title: Vec<(String, String)>,
@@ -1542,7 +1538,7 @@ pub(super) struct FormAttributeColumn {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(super) struct FormAttributeAdditionalColumns {
+pub struct FormAttributeAdditionalColumns {
     pub(super) table: String,
     pub(super) columns: Vec<FormAttributeColumn>,
 }
@@ -1556,7 +1552,7 @@ pub(super) struct FormParameter {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(super) struct FormDynamicListSettings {
+pub struct FormDynamicListSettings {
     pub(super) manual_query: bool,
     pub(super) manual_query_explicit: bool,
     /// The packed bag's own `AutoSaveUserSettings` value, `None` when the bag
@@ -1622,12 +1618,12 @@ pub(super) struct FormDynamicListField {
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub(super) struct FormAttributesSection {
-    pub(super) conditional_appearance: Option<FormAttributesConditionalAppearance>,
+pub struct FormAttributesSection {
+    pub conditional_appearance: Option<FormAttributesConditionalAppearance>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(super) enum FormAttributesConditionalAppearance {
+pub enum FormAttributesConditionalAppearance {
     Typed(DcsConditionalAppearance),
     /// The storage document re-spelled as the inline source fragment, for
     /// payloads the typed cohort refuses but the lexical writer accounts for.
@@ -1740,7 +1736,7 @@ impl FormListSettingsOrder {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(super) struct FormCommand {
+pub struct FormCommand {
     pub(super) id: String,
     pub(super) reference_uuid: String,
     pub(super) name: String,
@@ -1774,7 +1770,7 @@ pub(super) struct FormCommandCurrentRowProperties {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(super) struct FormCommandInterface {
+pub struct FormCommandInterface {
     pub(super) command_bar: Vec<FormCommandInterfaceItem>,
     pub(super) navigation_panel: Vec<FormCommandInterfaceItem>,
 }
@@ -1791,7 +1787,7 @@ pub(super) struct FormCommandInterfaceItem {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(super) struct FormCommandInterfaceVisibility {
+pub struct FormCommandInterfaceVisibility {
     pub(super) common: bool,
     pub(super) role_values: Vec<(String, bool)>,
 }
@@ -1876,15 +1872,15 @@ pub(super) enum FormChildItemDataPathProvenance {
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub(super) struct FormChildItem {
-    pub(super) tag: &'static str,
+pub struct FormChildItem {
+    pub tag: &'static str,
     pub(super) id: String,
     pub(super) name: String,
     pub(super) display_importance: Option<&'static str>,
     pub(super) auto_command_bar_empty_element: bool,
     pub(super) autofill: Option<bool>,
     pub(super) group: Option<&'static str>,
-    pub(super) behavior: Option<&'static str>,
+    pub behavior: Option<&'static str>,
     pub(super) representation: Option<&'static str>,
     pub(super) usual_group_enabled: Option<bool>,
     pub(super) enable_content_change: Option<bool>,
@@ -2055,7 +2051,7 @@ pub(super) struct FormChildItem {
     pub(super) marking_appearance: Option<&'static str>,
     pub(super) input_min_value: Option<FormInputBoundValue>,
     pub(super) input_max_value: Option<FormInputBoundValue>,
-    pub(super) command_uniqueness: Option<bool>,
+    pub command_uniqueness: Option<bool>,
     pub(super) usual_group_current_row_use: Option<&'static str>,
     pub(super) decoration_enable_start_drag: Option<bool>,
     pub(super) decoration_enable_drag: Option<bool>,
@@ -2278,7 +2274,7 @@ pub(super) type CanonicalFormChoiceParameterCluster = FormChoiceParameterCluster
 >;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(super) enum FormSchemaWriteError {
+pub enum FormSchemaWriteError {
     Corpus(SchemaError),
     WriterRule(WriterRuleLookupError),
     CanonicalDcs(CanonicalDcsSettingsAdapterError),
@@ -4340,7 +4336,7 @@ pub(super) fn is_probable_form_event_handler(value: &str) -> bool {
 }
 
 #[allow(dead_code)]
-pub(super) fn extract_form_item_assets(bytes: &[u8]) -> Vec<FormItemAsset> {
+pub fn extract_form_item_assets(bytes: &[u8]) -> Vec<FormItemAsset> {
     let Ok(inflated) = inflate_raw_deflate(bytes) else {
         return Vec::new();
     };
@@ -4358,7 +4354,7 @@ pub(super) fn extract_form_item_assets(bytes: &[u8]) -> Vec<FormItemAsset> {
     extract_form_item_assets_from_text(text)
 }
 
-pub(super) fn extract_form_item_assets_from_text(text: &str) -> Vec<FormItemAsset> {
+pub fn extract_form_item_assets_from_text(text: &str) -> Vec<FormItemAsset> {
     // Each marker is placed by scanning every value that opens before it.
     let _brace_jumps = register_brace_jumps([text]);
     let mut assets = Vec::new();
@@ -4398,7 +4394,7 @@ pub(super) fn is_form_item_picture_content(bytes: &[u8]) -> bool {
         || is_svg_content(bytes)
 }
 
-pub(super) fn form_item_picture_owner_at(
+pub fn form_item_picture_owner_at(
     text: &str,
     marker_start: usize,
 ) -> Option<(String, &'static str)> {
@@ -4617,7 +4613,7 @@ fn extract_form_body_attributes_with_dcs_type_index(
 /// level in from `<Attributes>`.
 pub(super) const FORM_ATTRIBUTES_CONDITIONAL_APPEARANCE_INDENT: &str = "\t\t";
 
-pub(super) fn extract_form_body_attributes_section(
+pub fn extract_form_body_attributes_section(
     trailing: &[String],
     object_refs: &BTreeMap<String, String>,
     host: FormBodyHost,
@@ -8164,7 +8160,7 @@ fn form_dynamic_list_main_table_children(
 /// use-always list stores. The sets are deliberately property-blind — they do
 /// not condition on hierarchy, owners, periodicity or write mode — and the
 /// whole-tree measurement above holds with them as written.
-pub(crate) fn form_dynamic_list_std_attribute_pairs(
+pub fn form_dynamic_list_std_attribute_pairs(
     kind: &str,
 ) -> Option<&'static [(&'static str, &'static str)]> {
     const CATALOG: [(&str, &str); 10] = [
@@ -8357,7 +8353,7 @@ const FORM_DYNAMIC_LIST_REGISTER_KINDS: &[&str] = &[
 /// query itself produces, so the English spelling of a standard attribute is
 /// not a name of the list — a remembered field that carries the English one
 /// resolves through the localized twin the field map stores beside it (see
-/// [`parse_form_dynamic_list_field_secondary_name_by_item_id`]), not through
+/// `parse_form_dynamic_list_field_secondary_name_by_item_id`), not through
 /// this set.
 ///
 /// Evidence: ERP УХ 3.2.12.6 — 39 dynamic lists whose `<UseAlways>` the added
@@ -8366,7 +8362,7 @@ const FORM_DYNAMIC_LIST_REGISTER_KINDS: &[&str] = &[
 /// writes `~Список.Ref` beside a plain `Список.Ссылка` for a query that selects
 /// `Ссылка КАК Ссылка`. Not one list on any of the eight configurations of the
 /// stand needs an English spelling from here.
-pub(super) fn form_dynamic_list_main_table_auto_fields(
+pub fn form_dynamic_list_main_table_auto_fields(
     main_table: &str,
     selection: &FormDynamicListQuerySelection,
     object_refs: &BTreeMap<String, String>,
@@ -8443,7 +8439,7 @@ fn form_dynamic_list_reference_alias_loses_key(
 /// What the final `SELECT` of a dynamic-list query names, read with the query
 /// language's own naming rules rather than a text scan.
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
-pub(super) struct FormDynamicListQuerySelection {
+pub struct FormDynamicListQuerySelection {
     /// Result column names of the top-level selection list.
     pub(super) aliases: BTreeSet<String>,
     /// One entry per `*` item of the selection list, holding the qualifier the
@@ -8891,10 +8887,10 @@ fn form_query_source_reference(source: &[String]) -> Option<String> {
 }
 
 /// Parses the final `SELECT` batch of a dynamic-list query: the last batch that
-/// declares a selection of its own (see [`query_batch_declares_selection`]) and
+/// declares a selection of its own (see `query_batch_declares_selection`) and
 /// does not store it into a temporary table. `None` when no such batch exists
 /// or it has no selection list.
-pub(super) fn parse_form_dynamic_list_query_selection(
+pub fn parse_form_dynamic_list_query_selection(
     query_text: &str,
 ) -> Option<FormDynamicListQuerySelection> {
     let tokens = tokenize_1c_query(query_text);
@@ -10575,7 +10571,7 @@ pub(super) fn parse_form_command_representation(field: Option<&str>) -> Option<&
     }
 }
 
-pub(super) fn parse_form_localized_strings(field: &str) -> Vec<(String, String)> {
+pub fn parse_form_localized_strings(field: &str) -> Vec<(String, String)> {
     parse_1c_synonyms(field)
 }
 
@@ -10697,9 +10693,7 @@ pub(super) fn parse_form_type_pattern(
         .map(normalize_form_type_pattern)
 }
 
-pub(super) fn normalize_form_type_pattern(
-    value_types: Vec<ConstantValueType>,
-) -> Vec<ConstantValueType> {
+pub fn normalize_form_type_pattern(value_types: Vec<ConstantValueType>) -> Vec<ConstantValueType> {
     let normalized = value_types
         .into_iter()
         .map(|value_type| match value_type {
@@ -10722,7 +10716,7 @@ pub(super) fn normalize_form_type_pattern(
     clippy::too_many_arguments,
     reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
 )]
-pub(super) fn extract_form_child_items(
+pub fn extract_form_child_items(
     fields: &[&str],
     attributes: &[FormAttribute],
     commands: &[FormCommand],
@@ -11219,7 +11213,7 @@ fn parse_exact_form_attribute_binding_id(field: &str) -> Option<String> {
 }
 
 #[derive(Default)]
-pub(super) struct FormChildItemIndexes {
+pub struct FormChildItemIndexes {
     pub(super) table_name_by_id: BTreeMap<String, String>,
     pub(super) standard_command_owner_name_by_id: BTreeMap<String, FormStandardCommandOwner>,
     pub(super) table_column_names_by_id: BTreeMap<String, BTreeMap<String, String>>,
@@ -11846,8 +11840,8 @@ mod planner_command_tests {
     }
 }
 
-#[cfg(test)]
-pub(super) fn collect_form_child_item_indexes(
+#[doc(hidden)]
+pub fn collect_form_child_item_indexes(
     fields: &[&str],
     attributes: &[FormAttribute],
 ) -> FormChildItemIndexes {
@@ -12889,8 +12883,8 @@ fn form_root_child_items_tail_start_at(
     matched_tail
 }
 
-#[cfg(test)]
-pub(super) fn parse_form_child_item(
+#[doc(hidden)]
+pub fn parse_form_child_item(
     field: &str,
     main_data_path: Option<&str>,
     parent_data_path: Option<&str>,
@@ -12913,12 +12907,12 @@ pub(super) fn parse_form_child_item(
     )
 }
 
-#[cfg(test)]
+#[doc(hidden)]
 #[allow(
     clippy::too_many_arguments,
     reason = "takes the form's indexes one by one; bundling them changes the signature and every caller"
 )]
-pub(super) fn parse_form_child_item_with_attrs(
+pub fn parse_form_child_item_with_attrs(
     field: &str,
     main_data_path: Option<&str>,
     parent_data_path: Option<&str>,
@@ -16983,7 +16977,7 @@ pub(super) fn parse_form_label_field_text_color(
 /// written value, and the shape alone decides whether an element is written:
 /// across ~250 000 item/slot observations `{3,4,{0}}` never coincides with a
 /// written element and no other shape ever coincides with its absence.
-pub(super) fn parse_form_control_color(
+pub fn parse_form_control_color(
     field: &str,
     object_refs: &BTreeMap<String, String>,
 ) -> Option<String> {
@@ -17060,7 +17054,7 @@ fn parse_form_control_color_space(
 /// follows its arm. This is a different palette from the one the style and
 /// spreadsheet decoders read, and the two disagree on six shared codes, so a
 /// form colour never goes through `style_system_color_name`.
-pub(super) fn form_control_system_color_name(code: i32) -> Option<&'static str> {
+pub fn form_control_system_color_name(code: i32) -> Option<&'static str> {
     match code {
         -1 => Some("style:FormBackColor"),              // 120
         -3 => Some("style:FormTextColor"),              // 339
@@ -23106,7 +23100,7 @@ pub(super) type FormEmbeddedPicturePayload = (String, bool, Option<(i64, i64)>, 
 /// file name (the owning property plus the payload's extension), transparency,
 /// transparent pixel and the payload itself, which the 2.21 writer publishes
 /// beside the form because the item record no longer holds it.
-pub(super) fn parse_form_embedded_picture_payload(
+pub fn parse_form_embedded_picture_payload(
     field: &str,
     property_name: &str,
 ) -> Option<FormEmbeddedPicturePayload> {
@@ -23485,7 +23479,7 @@ pub(super) fn parse_form_picture_decoration_file_drag_mode(
     }
 }
 
-pub(super) fn parse_form_child_item_picture_value(
+pub fn parse_form_child_item_picture_value(
     field: &str,
     object_refs: &BTreeMap<String, String>,
 ) -> Option<(String, bool)> {
@@ -26575,7 +26569,7 @@ fn form_bound_chain_collection_path(path: &str) -> String {
 /// and `10002` is `LeftValue` on a filter but `Setting` on a user setting. Each
 /// table below lists only the ids its own type was observed to carry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum FormSettingsComposerType {
+pub enum FormSettingsComposerType {
     SettingsComposer,
     Settings,
     Filter,
@@ -26618,7 +26612,7 @@ fn form_settings_composer_row_type(
 /// `SettingsStorages/ХранилищеВариантовОтчетов/Forms/ЭлементУсловногоОформления`
 /// carries `{5,{1},{4},{0,e67e2953-…},{10002},{10003}}` and the platform writes
 /// `КомпоновщикНастроек.Settings.ConditionalAppearance[0].Filter.ComparisonType`.
-pub(super) fn form_settings_composer_member(
+pub fn form_settings_composer_member(
     owner: FormSettingsComposerType,
     member_id: &str,
 ) -> Option<(&'static str, Option<FormSettingsComposerType>)> {
@@ -29125,7 +29119,7 @@ fn form_command_interface_target_use_standard_commands(
 /// `45bea91e-…` is new to every table: the same button join names it
 /// `Form.StandardCommand.CompactViewMode` on one record, and three ERP УХ
 /// report forms carry it in an excluded-command list.
-pub(crate) fn form_standard_command_suffix(uuid: &str) -> Option<&'static str> {
+pub fn form_standard_command_suffix(uuid: &str) -> Option<&'static str> {
     match uuid {
         FORM_COMMAND_CUSTOMIZE_FORM_UUID => Some("CustomizeForm"),
         "0ce53bd5-a3c5-43e0-b051-54c835a87be5" => Some("CreateByParameter"),
@@ -29784,21 +29778,21 @@ fn retain_form_table_list_owned_commands(
 /// two of the three answers are the very sets the table's own `<CommandSet>`
 /// reader has just produced.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct FormTableCommandOwnership {
+pub struct FormTableCommandOwnership {
     /// The names the table's own `<CommandSet>` excludes, as finally written.
-    pub(super) excluded_commands: Vec<&'static str>,
+    pub excluded_commands: Vec<&'static str>,
     /// The table shows a dynamic list whose row set the form declares
     /// unchangeable.
-    pub(super) row_set_unchangeable: bool,
+    pub row_set_unchangeable: bool,
     /// The table shows a dynamic list that declares no `<MainTable>`.
-    pub(super) list_without_main_table: bool,
+    pub list_without_main_table: bool,
     /// The table selects one row at a time (`<SelectionMode>SingleRow`).
-    pub(super) single_row: bool,
+    pub single_row: bool,
     /// The family of the dynamic list's declared main table, when one is
     /// present. The command record itself carries only the table-item id, so
     /// this is the structural fact that lets its system-command revision be
     /// interpreted without consulting an object name.
-    pub(super) main_table_family: Option<String>,
+    pub main_table_family: Option<String>,
 }
 
 /// Index every `<Table>` of the tree by its item id, which is exactly the
@@ -29885,7 +29879,7 @@ fn collect_form_table_command_ownership(
 /// `20:49602716-…` in `Reports/ПлатежныйКалендарьУХ/Forms/ФормаОтчета`
 /// (`Find`, `CancelSearch` and `OutputList`, all three excluded by that
 /// table's own `<CommandSet>`).
-pub(super) fn form_table_owns_button_standard_command(
+pub fn form_table_owns_button_standard_command(
     command: &str,
     command_uuid: &str,
     ownership: &FormTableCommandOwnership,
@@ -30632,16 +30626,16 @@ fn resolve_form_item_current_data_path(
     Some(format!("Items.{table_name}.CurrentData.{field_name}"))
 }
 
-#[cfg(test)]
-pub(super) fn extract_form_command_interface(
+#[doc(hidden)]
+pub fn extract_form_command_interface(
     trailing: &[String],
     object_refs: &BTreeMap<String, String>,
 ) -> Option<FormCommandInterface> {
     extract_form_command_interface_with_commands(trailing, &[], object_refs)
 }
 
-#[cfg(test)]
-pub(super) fn extract_form_command_interface_with_commands(
+#[doc(hidden)]
+pub fn extract_form_command_interface_with_commands(
     trailing: &[String],
     commands: &[FormCommand],
     object_refs: &BTreeMap<String, String>,
@@ -31570,7 +31564,7 @@ pub(super) fn form_standard_command_group_name(uuid: &str) -> Option<&'static st
     }
 }
 
-pub(super) fn dedup_form_item_assets(assets: Vec<FormItemAsset>) -> Vec<FormItemAsset> {
+pub fn dedup_form_item_assets(assets: Vec<FormItemAsset>) -> Vec<FormItemAsset> {
     let mut seen = BTreeSet::<(String, String)>::new();
     let mut deduped = Vec::new();
     for asset in assets {
@@ -32259,7 +32253,7 @@ fn format_form_body_open_xml_with_dcs_profiles(
     Ok(xml)
 }
 
-pub(super) fn format_form_child_items_xml(items: &[FormChildItem], indent: usize) -> String {
+pub fn format_form_child_items_xml(items: &[FormChildItem], indent: usize) -> String {
     if items.is_empty() {
         return String::new();
     }
@@ -36999,7 +36993,7 @@ fn format_form_tooltip_representation_xml(
 /// transparent pixel.  Every owner used to spell this out for itself, and each
 /// spelling that predated the pixel dropped it; with one writer a picture
 /// cannot be written two ways.
-pub(super) fn format_form_picture_element(
+pub fn format_form_picture_element(
     element: &str,
     reference: Option<&str>,
     file_name: Option<&str>,
@@ -37322,7 +37316,7 @@ fn format_form_extended_tooltip_title_xml(
     xml
 }
 
-pub(super) fn format_form_events_xml(events: &[FormBodyEvent], indent: usize) -> String {
+pub fn format_form_events_xml(events: &[FormBodyEvent], indent: usize) -> String {
     if events.is_empty() {
         return String::new();
     }
@@ -37527,8 +37521,8 @@ pub(super) fn format_form_attributes_xml(attributes: &[FormAttribute]) -> String
         .expect("bundled DCS writer evidence must validate in tests")
 }
 
-#[cfg(test)]
-pub(super) fn format_form_attributes_section_xml(
+#[doc(hidden)]
+pub fn format_form_attributes_section_xml(
     attributes: &[FormAttribute],
     attributes_section: &FormAttributesSection,
 ) -> Result<String, FormSchemaWriteError> {
@@ -38293,7 +38287,7 @@ fn push_form_localized_item(xml: &mut String, tab: &str, lang: &str, content: &s
     xml.push_str(&format!("{tab}\t</v8:item>\r\n"));
 }
 
-pub(super) fn format_form_localized_section(
+pub fn format_form_localized_section(
     name: &str,
     values: &[(String, String)],
     indent: usize,
@@ -38447,7 +38441,7 @@ pub(super) fn format_form_command_interface_xml(
     xml
 }
 
-pub(super) fn form_body_module_text_bytes(body: &ParsedFormBodyBlob) -> Option<Vec<u8>> {
+pub fn form_body_module_text_bytes(body: &ParsedFormBodyBlob) -> Option<Vec<u8>> {
     if body.module_text.is_empty() {
         return None;
     }
@@ -39281,7 +39275,7 @@ pub(super) fn parse_and_render_form_flowchart_settings_for_test(text: &str) -> O
 }
 
 /// The planner counterpart of `render_form_chart_settings_value`.
-pub(crate) fn render_form_planner_settings_value(field: &str) -> Option<String> {
+pub fn render_form_planner_settings_value(field: &str) -> Option<String> {
     let value_types = [ConstantValueType::Reference {
         reference: FORM_PLANNER_TYPE_REFERENCE.to_string(),
     }];
@@ -39289,7 +39283,7 @@ pub(crate) fn render_form_planner_settings_value(field: &str) -> Option<String> 
 }
 
 /// The graphical-scheme counterpart of `render_form_chart_settings_value`.
-pub(crate) fn render_form_flowchart_settings_value(field: &str) -> Option<String> {
+pub fn render_form_flowchart_settings_value(field: &str) -> Option<String> {
     let value_types = [ConstantValueType::Reference {
         reference: FORM_FLOWCHART_TYPE_REFERENCE.to_string(),
     }];
@@ -39463,7 +39457,7 @@ fn parse_form_gantt_chart_settings_xml(
 /// export to the XML it was built from. No object list is consulted: a style
 /// colour the configuration declares is never written by that writer, and a
 /// dangling one reads back as the `<kind>:<uuid>` it was written from.
-pub(crate) fn render_form_chart_settings_value(field: &str) -> Option<String> {
+pub fn render_form_chart_settings_value(field: &str) -> Option<String> {
     let value_types = [ConstantValueType::Reference {
         reference: FORM_CHART_TYPE_REFERENCE.to_string(),
     }];
@@ -39471,7 +39465,7 @@ pub(crate) fn render_form_chart_settings_value(field: &str) -> Option<String> {
 }
 
 /// The Gantt chart's counterpart to `render_form_chart_settings_value`.
-pub(crate) fn render_form_gantt_chart_settings_value(field: &str) -> Option<String> {
+pub fn render_form_gantt_chart_settings_value(field: &str) -> Option<String> {
     let value_types = [ConstantValueType::Reference {
         reference: FORM_GANTT_CHART_TYPE_REFERENCE.to_string(),
     }];
