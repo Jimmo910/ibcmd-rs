@@ -26,7 +26,9 @@ use ibcmd_1c_text::{
 // `ibcmd-1c-vocab` crate's, and so are a few payload helpers; `mssql_dump`'s
 // modules reach them by their old names through these imports, at their old
 // visibility. The two pattern readers that need the extension-export state
-// are wrappers further down (`parse_form_metadata_type_pattern`).
+// are wrappers further down (`parse_metadata_type_pattern_element_with_builtin`,
+// and `parse_form_metadata_type_pattern`, kept for tests: the form reader
+// passes the state it was built with).
 use ibcmd_1c_vocab::{
     ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES,
     ACCUMULATION_REGISTER_TURNOVERS_STANDARD_ATTRIBUTES,

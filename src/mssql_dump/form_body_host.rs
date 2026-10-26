@@ -18,7 +18,7 @@ pub(super) const ROOT_FORM_BODY_HOST: FormBodyHost = FormBodyHost {
 /// The extension export running now, as a form reads it; `None` in an
 /// ordinary export. The extended configuration's compatibility mode is read
 /// once, right after the export activates its context
-/// (`extension::export_extension_image_to_source`), so this is a cached read.
+/// (`extension::export_extension_records_to_source`), so this is a cached read.
 pub(super) fn active_form_extension_export() -> Option<FormExtensionExport> {
     super::extension::active().map(|extension| FormExtensionExport {
         extended_compatibility_mode: extension.extended_compatibility_mode().map(str::to_owned),

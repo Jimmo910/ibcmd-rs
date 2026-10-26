@@ -76963,15 +76963,23 @@ fn extension_export_for_test(mode: Option<&str>) -> FormExtensionExport {
     }
 }
 
-/// One form for every reader of the extension-export state: a group with an
-/// explicit `Usual` behavior (the record of
-/// `parses_live_usual_group_width_false_stretch_and_usual_behavior`), the
-/// planner of `planner_field_writes_its_own_geometry_drag_flag_and_events`
-/// with its `EnableDrag` slot (6) set as the ServiceDesk extension's planner
-/// stores it, and an attribute and a parameter typed by two platform types
-/// only the form-schema column table names (`dcsset:Filter`,
-/// `ConditionalAppearance`). Read through `FormParseContext::new`, then under
-/// `extension_export` when one is given.
+/// One form for every reader of the extension-export state:
+/// - a group with an explicit `Usual` behavior (the record of
+///   `parses_live_usual_group_width_false_stretch_and_usual_behavior`);
+/// - the planner of `planner_field_writes_its_own_geometry_drag_flag_and_events`
+///   with its `EnableDrag` slot (6) set, as the ServiceDesk extension's planner
+///   stores it;
+/// - the input field of
+///   `detailed_form_extraction_preserves_malformed_link_rejection_diagnostics`
+///   with its `AvailableTypes` slot (34) holding a type;
+/// - an attribute, a table column, two value lists' `ElementType` (one as a
+///   type description, one as a bare pattern), an additional column and a
+///   parameter, each typed by `dcsset:Filter` (`f6841c6b-…`) or
+///   `ConditionalAppearance` (`7dd764b6-…`), platform types only the
+///   form-schema column table names.
+///
+/// Read through `FormParseContext::new`, then under `extension_export` when
+/// one is given.
 fn extension_export_probe_xml(
     own_mode: Option<&str>,
     extension_export: Option<Option<FormExtensionExport>>,
@@ -77046,16 +77054,26 @@ fn extension_export_probe_xml(
 },0,1,2,
 {1,
 {1,0},0},0,0,1,0,0,1,0,3,3,0,0},3,3,0,0,0,0}"#;
+    const INPUT: &str = r##"{37,{56,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,2,"Организация",2,0,{1,1,{"ru","От организации"}},{1,1,{"ru","Организация, от имени которой будете приглашать."}},{1,{3}},{0},1,0,2,0,2,{1,0},{1,0},1,1,0,3,0,3,1,3,0,{4,0,{0},"",-1,-1,1,0,""},{4,0,{0},"",-1,-1,1,0,""},{3,4,{0}},{7,3,0,1,100},{3,4,{0}},{3,4,{0}},{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{36,{3,0},0,0,2,2,1,2,2,2,2,2,2,2,2,2,{"U"},{"U"},"",0,{4,0,{0},"",-1,-1,1,0,""},0,0,2,3,00000000-0000-0000-0000-000000000000,{5006,0},{0,0},2,{1,0},{1,0},1,1,0,{"Pattern",{"#",f6841c6b-6c71-4c82-ae9e-d08b49db326c}},1,{0,1,0},{3,4,{0}},{3,4,{0}},{3,4,{0}},{7,3,0,1,100},1,{3,0,0},0,{1,1,{"ru","Организация, от имени которой будете приглашать."}},2,0,2,0,1,0,0,1,0,0,0,0,0,0,0,0,0,{0},0,{5007,0},0},{1,fe115cc8-9e33-4684-a166-bd5136fe7a9f,"ОрганизацияПриИзменении",1,0,fe115cc8-9e33-4684-a166-bd5136fe7a9f,0,1},1,{22,{57,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,8,"ОрганизацияКонтекстноеМеню",{1,0},{1,0},0,1,0,0,0,2,2,{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{1,1},0,1,0,0,0,3,3,0},1,{"Pattern"},{"Pattern"},"","",{0},0,3,1,{12,{58,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,0,"ОрганизацияРасширеннаяПодсказка",{1,0},{1,0},1,0,0,2,2,{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{5,0,0,3,0,{0,1,0},{3,4,{0}},{3,4,{0}},{3,0,{0},0,1,0,48312c09-257f-4b29-b280-284dd89efc1e}},0,1,2,{1,{1,0},0},0,0,1,0,0,1,0,3,3,0,0},3,3,0,0,0,0}"##;
     let body = ParsedFormBodyBlob {
         revision: crate::module_blob::FormBodyRevision::V4,
         // The form's child items are `<count>,<uuid>,<item>` pairs.
         layout: format!(
-            "{{59,2,aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa,{GROUP},\
-             bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb,{PLANNER}}}"
+            "{{59,3,aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa,{GROUP},\
+             bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb,{PLANNER},\
+             cccccccc-cccc-4ccc-8ccc-cccccccccccc,{INPUT}}}"
         ),
         module_text: String::new(),
         trailing: vec![
-            r##"{4,1,{9,{3},0,"Отбор",{1,0},{"Pattern",{"#",f6841c6b-6c71-4c82-ae9e-d08b49db326c}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},{0,0},0,0,0,0},0,0,{0}}"##.to_string(),
+            concat!(
+                r##"{4,4,"##,
+                r##"{9,{3},0,"Отбор",{1,0},{"Pattern",{"#",f6841c6b-6c71-4c82-ae9e-d08b49db326c}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},{0,0},0,0,0,0},"##,
+                r##"{9,{4},0,"Таблица",{1,0},{"Pattern",{"S"}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},{0,0},0,0,0,1,{5,8,0,"Строки",{1,0},{"Pattern",{"#",f6841c6b-6c71-4c82-ae9e-d08b49db326c}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},0}},"##,
+                r##"{9,{7},0,"СписокОтборов",{1,0},{"Pattern",{"#",4772b3b4-f4a3-49c0-a1a5-8cb5961511a3}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},{0,0},0,0,0,0,{0,1,"ElementType",{"#",f5c65050-3bbb-11d5-b988-0050bae0a95d,{"Pattern",{"#",f6841c6b-6c71-4c82-ae9e-d08b49db326c}}},{0,0}},{0,0}},"##,
+                r##"{9,{9},0,"СписокОформлений",{1,0},{"Pattern",{"#",4772b3b4-f4a3-49c0-a1a5-8cb5961511a3}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},{0,0},0,0,0,0,{0,1,"ElementType",{"Pattern",{"#",7dd764b6-b22f-4712-8edc-c0d634340e60}},{0,0}},{0,0}},"##,
+                r##"1,{0,{2,{4},{8}},1,{5,1,0,"Оформление",{1,0},{"Pattern",{"#",7dd764b6-b22f-4712-8edc-c0d634340e60}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},0}},0,{0}}"##,
+            )
+            .to_string(),
             r##"{0,1,{0,"Оформление",{"Pattern",{"#",7dd764b6-b22f-4712-8edc-c0d634340e60}},0}}"##.to_string(),
         ],
         trailing_fields: 2,
@@ -77115,45 +77133,59 @@ fn an_extension_export_snapshot_decides_the_explicit_usual_group_behavior() {
 
 #[test]
 fn the_extension_export_snapshot_drives_every_reader_that_asks_for_it() {
-    const USUAL: &str = "<Behavior>Usual</Behavior>";
-    const ENABLE_DRAG: &str = "<EnableDrag>true</EnableDrag>";
-    const FILTER_TYPE: &str = "<v8:Type>dcsset:Filter</v8:Type>";
-    const FILTER_TYPE_ID: &str = "<v8:TypeId>f6841c6b-6c71-4c82-ae9e-d08b49db326c</v8:TypeId>";
-    const APPEARANCE_TYPE_ID: &str = "<v8:TypeId>7dd764b6-b22f-4712-8edc-c0d634340e60</v8:TypeId>";
+    const USUAL: &str = "\t\t\t<Behavior>Usual</Behavior>\r\n";
+    const START_DRAG: &str = "\t\t\t<EnableStartDrag>true</EnableStartDrag>\r\n";
+    const DRAG: &str = "\t\t\t<EnableDrag>true</EnableDrag>\r\n";
+    const FILTER: &str = "<v8:Type>dcsset:Filter</v8:Type>";
+    const FILTER_ID: &str = "<v8:TypeId>f6841c6b-6c71-4c82-ae9e-d08b49db326c</v8:TypeId>";
+    const APPEARANCE: &str = "<v8:Type xmlns:d7p1=\"http://v8.1c.ru/8.3/data/entext\">d7p1:ConditionalAppearance</v8:Type>";
+    const APPEARANCE_ID: &str = "<v8:TypeId>7dd764b6-b22f-4712-8edc-c0d634340e60</v8:TypeId>";
 
-    // No extension export: the configuration's own mode decides the group,
-    // the planner's drag flag is not read, and the column table names both
-    // platform types.
-    for (own_mode, usual) in [(None, true), (Some("Version8_3_14"), false)] {
-        let xml = extension_export_probe_xml(own_mode, Some(None));
-        assert_eq!(xml.contains(USUAL), usual, "own {own_mode:?}: {xml}");
-        assert!(!xml.contains(ENABLE_DRAG), "{xml}");
-        assert!(xml.contains(FILTER_TYPE), "{xml}");
-        assert!(xml.contains("ConditionalAppearance</v8:Type>"), "{xml}");
-        assert!(!xml.contains("<v8:TypeId>"), "{xml}");
-    }
-    // An extension export: the extended configuration decides the group
-    // whatever the own mode says, the drag flag is read, and both pattern
-    // members keep their type ids.
+    // No extension export, under the platform's own edition: the group writes
+    // its `Usual`, the planner's drag flag is not read, and the column table
+    // names both platform types at all seven places (the input field's
+    // available types, the attribute, the table column and the first value
+    // list's element type are `dcsset:Filter`; the second value list's
+    // element type, the additional column and the parameter
+    // `ConditionalAppearance`).
+    let plain = extension_export_probe_xml(None, Some(None));
+    assert_eq!(plain.matches(USUAL).count(), 1, "{plain}");
+    assert_eq!(plain.matches(START_DRAG).count(), 1, "{plain}");
+    assert_eq!(plain.matches(DRAG).count(), 0, "{plain}");
+    assert_eq!(plain.matches(FILTER).count(), 4, "{plain}");
+    assert_eq!(plain.matches(APPEARANCE).count(), 3, "{plain}");
+    assert_eq!(plain.matches("<v8:TypeId>").count(), 0, "{plain}");
+    let without_usual = plain.replacen(USUAL, "", 1);
+    // Under an extension export: the planner's drag flag is read, and every
+    // one of the seven keeps the type id the configuration does not resolve.
+    let extension_xml = |usual: bool| {
+        let xml = if usual { &plain } else { &without_usual };
+        xml.replacen(START_DRAG, &format!("{START_DRAG}{DRAG}"), 1)
+            .replace(FILTER, FILTER_ID)
+            .replace(APPEARANCE, APPEARANCE_ID)
+    };
+
+    // No extension export: the configuration's own mode decides the group.
+    assert_eq!(
+        extension_export_probe_xml(Some("Version8_3_14"), Some(None)),
+        without_usual
+    );
+    // An extension export: the configuration it extends decides the group,
+    // whatever the own mode says; one that cannot be read writes it.
     for (extended_mode, usual) in [
         (None, true),
         (Some("Version8_3_27"), true),
         (Some("Version8_3_14"), false),
     ] {
         for own_mode in [None, Some("Version8_3_14")] {
-            let xml = extension_export_probe_xml(
-                own_mode,
-                Some(Some(extension_export_for_test(extended_mode))),
-            );
             assert_eq!(
-                xml.contains(USUAL),
-                usual,
-                "own {own_mode:?}, extended {extended_mode:?}: {xml}"
+                extension_export_probe_xml(
+                    own_mode,
+                    Some(Some(extension_export_for_test(extended_mode))),
+                ),
+                extension_xml(usual),
+                "own {own_mode:?}, extended {extended_mode:?}"
             );
-            assert!(xml.contains(ENABLE_DRAG), "{xml}");
-            assert!(xml.contains(FILTER_TYPE_ID), "{xml}");
-            assert!(xml.contains(APPEARANCE_TYPE_ID), "{xml}");
-            assert!(!xml.contains(FILTER_TYPE), "{xml}");
         }
     }
 }
@@ -77164,6 +77196,9 @@ fn the_extension_export_snapshot_keeps_a_pattern_type_id_only_the_column_table_n
     let type_id = |type_id: &str| ConstantValueType::TypeId {
         type_id: type_id.to_owned(),
     };
+    let reference = |reference: &str| ConstantValueType::Reference {
+        reference: reference.to_owned(),
+    };
     assert_eq!(
         parse_form_type_pattern(pattern, &BTreeMap::new(), true),
         Some(vec![
@@ -77171,11 +77206,12 @@ fn the_extension_export_snapshot_keeps_a_pattern_type_id_only_the_column_table_n
             type_id("7dd764b6-b22f-4712-8edc-c0d634340e60"),
         ])
     );
-    assert!(
-        parse_form_type_pattern(pattern, &BTreeMap::new(), false)
-            .unwrap()
-            .iter()
-            .all(|value_type| matches!(value_type, ConstantValueType::Reference { .. }))
+    assert_eq!(
+        parse_form_type_pattern(pattern, &BTreeMap::new(), false),
+        Some(vec![
+            reference("dcsset:Filter"),
+            reference("d7p1:ConditionalAppearance"),
+        ])
     );
 }
 
