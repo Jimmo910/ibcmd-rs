@@ -322,9 +322,14 @@ pub(crate) fn require_nonstructural_stage(
             );
         }
     }
-    let diff = diff_trees_normalized(&base.0, &next.0)?;
-    let old = std::fs::read_to_string(base.0.join("Configuration.xml"))?;
-    let new = std::fs::read_to_string(next.0.join("Configuration.xml"))?;
+    require_nonstructural_source_transition(&base.0, &next.0)
+}
+
+/// The same pure source proof used by activation after its complete exports.
+pub(crate) fn require_nonstructural_source_transition(base: &Path, next: &Path) -> Result<()> {
+    let diff = diff_trees_normalized(base, next)?;
+    let old = std::fs::read_to_string(base.join("Configuration.xml"))?;
+    let new = std::fs::read_to_string(next.join("Configuration.xml"))?;
     let root_supported =
         root_children_only_change(&old, &new) || root_version_edit(&old, &new).is_some();
     let refused = structural_refusals(&diff, root_supported);
