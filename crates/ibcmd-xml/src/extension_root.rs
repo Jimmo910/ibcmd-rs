@@ -3,9 +3,57 @@ use crate::source_comparison::{documents_equal, source_elements_equal};
 use crate::{QName, XmlDocument, XmlElement, XmlNode, XmlReader};
 use std::collections::BTreeSet;
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RootChildReference {
+    pub kind: String,
+    pub name: String,
+}
 #[derive(Debug, PartialEq, Eq)]
 pub struct ExtensionRootEdit {
     pub version: Option<(String, String)>,
+    pub retained_children: Vec<RootChildReference>,
+    pub added_children: Vec<RootChildReference>,
+    pub removed_children: Vec<RootChildReference>,
+}
+fn references(configuration: &XmlElement) -> Result<Vec<RootChildReference>, Vec<String>> {
+    let mut seen = BTreeSet::new();
+    let mut references = Vec::new();
+    for element in elements(one(configuration, "ChildObjects")?) {
+        if !element
+            .children()
+            .iter()
+            .all(|node| matches!(node, XmlNode::Text(_)))
+        {
+            continue;
+        }
+        let name = element
+            .children()
+            .iter()
+            .filter_map(|node| match node {
+                XmlNode::Text(text) => Some(text.value()),
+                _ => None,
+            })
+            .collect::<String>();
+        if name.is_empty() || name.contains(['/', '\\', ':']) || matches!(name.as_str(), "." | "..")
+        {
+            return Err(vec![format!(
+                "ChildObjects/{} has an invalid reference",
+                element.name().raw()
+            )]);
+        }
+        let reference = RootChildReference {
+            kind: element.name().raw().into(),
+            name,
+        };
+        if !seen.insert(reference.clone()) {
+            return Err(vec![format!(
+                "ChildObjects/{}.{} is duplicated",
+                reference.kind, reference.name
+            )]);
+        }
+        references.push(reference);
+    }
+    Ok(references)
 }
 fn elements(e: &XmlElement) -> impl Iterator<Item = &XmlElement> {
     e.children().iter().filter_map(|n| {
@@ -133,7 +181,9 @@ fn masked_document(d: &XmlDocument, allowed: &impl Fn(&str) -> bool) -> XmlDocum
     )
 }
 /// Compare complete roots after masking only Version and caller-admitted
-/// child collections. Errors name real changed properties or malformed paths.
+/// child collections. Membership deltas are proposals: callers must prove
+/// their descriptor counterparts, and the compiled image must reproduce the
+/// requested order. Errors name changed properties or malformed references.
 pub fn extension_root_edit(
     active: &[u8],
     edited: &[u8],
@@ -144,8 +194,8 @@ pub fn extension_root_edit(
     let (a, b) = (parse(active)?, parse(edited)?);
     let (x, y) = (configuration(&a)?, configuration(&b)?);
     let (xp, yp) = (one(x, "Properties")?, one(y, "Properties")?);
-    one(x, "ChildObjects")?;
-    one(y, "ChildObjects")?;
+    let old_children = references(x)?;
+    let new_children = references(y)?;
     let (old, new) = (version(xp)?, version(yp)?);
     let version = if old == new {
         None
@@ -165,7 +215,26 @@ pub fn extension_root_edit(
         &masked_document(&a, &allowed),
         &masked_document(&b, &allowed),
     ) {
-        return Ok(ExtensionRootEdit { version });
+        let before = old_children.iter().collect::<BTreeSet<_>>();
+        let after = new_children.iter().collect::<BTreeSet<_>>();
+        return Ok(ExtensionRootEdit {
+            version,
+            retained_children: old_children
+                .iter()
+                .filter(|child| after.contains(child))
+                .cloned()
+                .collect(),
+            added_children: new_children
+                .iter()
+                .filter(|child| !before.contains(child))
+                .cloned()
+                .collect(),
+            removed_children: old_children
+                .iter()
+                .filter(|child| !after.contains(child))
+                .cloned()
+                .collect(),
+        });
     }
     let mut changed = Vec::new();
     let names = elements(xp)

@@ -176,18 +176,8 @@ fn compile_tree_edit_from_export(
     if diff.changed.is_empty() && diff.added.is_empty() && diff.removed.is_empty() {
         return Ok(None);
     }
-    let version_edit =
-        if diff.changed.iter().any(|path| path == "Configuration.xml") {
-            let active_root = std::fs::read_to_string(base_export.join("Configuration.xml"))?;
-            let tree_root = std::fs::read_to_string(input_dir.join("Configuration.xml"))?;
-            let edit = root_policy(&active_root, &tree_root, true).map_err(|changed| anyhow!(
-            "unsupported extension root transition, nothing was staged: Configuration.xml ({})",
-            changed.join(", ")
-        ))?;
-            edit.version
-        } else {
-            None
-        };
+    let root_edit = compilation_root_edit(base_export, input_dir, &diff, &prefixes)?;
+    let version_edit = root_edit.version;
 
     let base_rows = active
         .entries()
@@ -332,9 +322,11 @@ pub(crate) fn require_nonstructural_source_transition(base: &Path, next: &Path) 
     let diff = diff_trees_normalized(base, next)?;
     let old = std::fs::read_to_string(base.join("Configuration.xml"))?;
     let new = std::fs::read_to_string(next.join("Configuration.xml"))?;
-    let root_supported =
-        root_children_only_change(&old, &new) || root_version_edit(&old, &new).is_some();
-    let refused = structural_refusals(&diff, root_supported);
+    let root_edit = root_policy(&old, &new, false).map_err(|paths| anyhow!(
+        "extension stage requires an unmodeled schema transition, nothing was published: Configuration.xml ({})", paths.join(", ")
+    ))?;
+    validate_root_membership(base, next, &diff, &root_edit)?;
+    let refused = structural_refusals(&diff, true);
     if !refused.is_empty() {
         bail!(
             "extension stage requires an unmodeled schema transition, nothing was published: {}",
@@ -342,6 +334,190 @@ pub(crate) fn require_nonstructural_source_transition(base: &Path, next: &Path) 
         );
     }
     Ok(())
+}
+
+fn reference_path(reference: &ibcmd_xml::extension_root::RootChildReference) -> Option<String> {
+    crate::mssql_dump::root_family_folder(&reference.kind)
+        .map(|folder| format!("{folder}/{}.xml", reference.name))
+}
+fn descriptor_identity(
+    root: &Path,
+    path: &str,
+    reference: &ibcmd_xml::extension_root::RootChildReference,
+) -> Result<uuid::Uuid> {
+    use ibcmd_xml::{AttributeKind, XmlNode, XmlReader};
+    let xml = XmlReader::from_slice(&std::fs::read(root.join(path)).with_context(|| {
+        format!(
+            "root reference {}.{} lacks descriptor {path}",
+            reference.kind, reference.name
+        )
+    })?)?;
+    fn children(element: &ibcmd_xml::XmlElement) -> Vec<&ibcmd_xml::XmlElement> {
+        element
+            .children()
+            .iter()
+            .filter_map(|node| {
+                if let XmlNode::Element(element) = node {
+                    Some(element)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+    }
+    let objects = children(xml.root());
+    let [object] = objects.as_slice() else {
+        bail!("descriptor {path} has no unique metadata object");
+    };
+    if xml.root().name().raw() != "MetaDataObject" || object.name().raw() != reference.kind {
+        bail!(
+            "descriptor {path} does not have root reference kind {}",
+            reference.kind
+        );
+    }
+    let properties = children(object)
+        .into_iter()
+        .filter(|e| e.name().raw() == "Properties")
+        .collect::<Vec<_>>();
+    let [properties] = properties.as_slice() else {
+        bail!("descriptor {path} lacks unique Properties");
+    };
+    let names = children(properties)
+        .into_iter()
+        .filter(|e| e.name().raw() == "Name")
+        .collect::<Vec<_>>();
+    let [name] = names.as_slice() else {
+        bail!("descriptor {path} lacks unique Name");
+    };
+    let value = name
+        .children()
+        .iter()
+        .filter_map(|node| {
+            if let XmlNode::Text(text) = node {
+                Some(text.value())
+            } else {
+                None
+            }
+        })
+        .collect::<String>();
+    if value != reference.name
+        || !name.attributes().is_empty()
+        || name
+            .children()
+            .iter()
+            .any(|n| !matches!(n, XmlNode::Text(_)))
+    {
+        bail!(
+            "descriptor {path} does not have root reference name {}",
+            reference.name
+        );
+    }
+    let id = object
+        .attributes()
+        .iter()
+        .find_map(|attribute| match attribute.kind() {
+            AttributeKind::Ordinary(name) if name.raw() == "uuid" => Some(attribute.value()),
+            _ => None,
+        })
+        .with_context(|| format!("descriptor {path} lacks uuid"))?;
+    uuid::Uuid::parse_str(id).with_context(|| format!("descriptor {path} has invalid uuid"))
+}
+fn validate_root_membership(
+    base: &Path,
+    next: &Path,
+    diff: &TreeDiff,
+    edit: &ibcmd_xml::extension_root::ExtensionRootEdit,
+) -> Result<()> {
+    let selected = |path: &String| {
+        diff.changed.contains(path) || diff.added.contains(path) || diff.removed.contains(path)
+    };
+    let mut retained = BTreeMap::new();
+    let mut removed = BTreeMap::new();
+    for child in &edit.removed_children {
+        let path = reference_path(child).context("removed root reference has unknown family")?;
+        if !diff.removed.contains(&path) || next.join(&path).exists() {
+            bail!(
+                "root removal {}.{} requires the selected removal of descriptor {path}",
+                child.kind,
+                child.name
+            );
+        }
+        removed.insert(descriptor_identity(base, &path, child)?, child);
+    }
+    for child in &edit.retained_children {
+        let Some(path) = reference_path(child) else {
+            continue;
+        };
+        if !edit.added_children.is_empty() || selected(&path) {
+            let before = descriptor_identity(base, &path, child)?;
+            if selected(&path) && descriptor_identity(next, &path, child)? != before {
+                bail!(
+                    "retained root reference {}.{} changes descriptor uuid",
+                    child.kind,
+                    child.name
+                );
+            }
+            if retained.insert(before, child).is_some() {
+                bail!("retained root references share a descriptor uuid");
+            }
+        }
+    }
+    let mut added = BTreeSet::new();
+    for child in &edit.added_children {
+        let path = reference_path(child).context("added root reference has unknown family")?;
+        if !(diff.added.contains(&path) || diff.changed.contains(&path)) {
+            bail!(
+                "root addition {}.{} requires descriptor {path} selected for compilation",
+                child.kind,
+                child.name
+            );
+        }
+        let id = descriptor_identity(next, &path, child)?;
+        if retained.contains_key(&id) || !added.insert(id) {
+            bail!(
+                "root addition {}.{} aliases another descriptor uuid",
+                child.kind,
+                child.name
+            );
+        }
+        if removed
+            .get(&id)
+            .is_some_and(|before| before.kind != child.kind)
+        {
+            bail!(
+                "root addition {}.{} reuses the identity of a different metadata kind",
+                child.kind,
+                child.name
+            );
+        }
+    }
+    Ok(())
+}
+fn compilation_root_edit(
+    base: &Path,
+    input: &Path,
+    diff: &TreeDiff,
+    prefixes: &[String],
+) -> Result<ibcmd_xml::extension_root::ExtensionRootEdit> {
+    let root_selected = prefixes.is_empty() || under_prefixes("Configuration.xml", prefixes);
+    if !root_selected && diff.added.iter().chain(&diff.removed).any(|path| {
+        let parts = path.split('/').collect::<Vec<_>>();
+        matches!(parts.as_slice(), [family,file] if file.ends_with(".xml") && crate::metadata_model::index::kind_of_collection(family).is_some())
+    }) {
+        bail!("top-level descriptor additions/removals require selecting Configuration.xml with the descriptor");
+    }
+    let old = std::fs::read_to_string(base.join("Configuration.xml"))?;
+    let new = std::fs::read_to_string(
+        if root_selected { input } else { base }.join("Configuration.xml"),
+    )?;
+    let edit = root_policy(&old, &new, true).map_err(|changed| {
+        anyhow!(
+            "unsupported extension root transition, nothing was staged: Configuration.xml ({})",
+            changed.join(", ")
+        )
+    })?;
+    validate_root_membership(base, input, diff, &edit)?;
+    Ok(edit)
 }
 
 /// Materialises the stage's content rows as an extension image. The caller
@@ -727,6 +903,7 @@ fn refusal(path: &str, moved: Option<&str>, root_edit_supported: bool) -> Option
 
 /// The root descriptors differ in the `<ChildObjects>` lines of table-less
 /// families and nowhere else.
+#[cfg(test)]
 pub(crate) fn root_children_only_change(active: &str, tree: &str) -> bool {
     root_children_change(active, tree, false)
 }
@@ -744,12 +921,15 @@ fn root_policy(
         }
     })
 }
+#[cfg(test)]
 fn root_children_change(active: &str, tree: &str, all_families: bool) -> bool {
     root_policy(active, tree, all_families).is_ok_and(|edit| edit.version.is_none())
 }
+#[cfg(test)]
 fn root_version_edit(active: &str, tree: &str) -> Option<(String, String)> {
     root_version_edit_for_policy(active, tree, false)
 }
+#[cfg(test)]
 fn root_version_edit_for_policy(
     active: &str,
     tree: &str,
@@ -1231,6 +1411,14 @@ mod tests {
                             String::from_utf8_lossy(&output.stdout),
                             String::from_utf8_lossy(&output.stderr)
                         );
+                        assert!(
+                            String::from_utf8_lossy(&output.stdout)
+                                .lines()
+                                .any(|line| line.starts_with(
+                                    "test result: ok. 1 passed; 0 failed; 0 ignored;"
+                                )),
+                            "{platform}/{case}: child did not run the exact native fixture test"
+                        );
                     }
                 }
                 return;
@@ -1411,5 +1599,199 @@ mod tests {
                 .any(|p| p.starts_with("DataProcessors/"))
         );
     }
-
+    fn root_review_tree(children: &str, descriptors: &[(&str, &str, &str, &str)]) -> Scratch {
+        let root = Scratch::new("root-review");
+        std::fs::create_dir_all(&root.0).unwrap();
+        std::fs::write(root.0.join("Configuration.xml"), format!("<Configuration><Properties><Version>1.2.0.0</Version></Properties><ChildObjects>{children}</ChildObjects></Configuration>")).unwrap();
+        for (path, kind, name, uuid) in descriptors {
+            let file = root.0.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file,format!("<MetaDataObject xmlns='http://v8.1c.ru/8.3/MDClasses' version='2.20'><{kind} uuid='{uuid}'><Properties><Name>{name}</Name></Properties></{kind}></MetaDataObject>")).unwrap();
+        }
+        root
+    }
+    #[test]
+    fn root_review_rejects_unbacked_membership_and_identity_deltas() {
+        let a = (
+            "CommonModules/A.xml",
+            "CommonModule",
+            "A",
+            "aaaaaaaa-0000-4000-8000-000000000001",
+        );
+        let b = (
+            "CommonModules/B.xml",
+            "CommonModule",
+            "B",
+            "aaaaaaaa-0000-4000-8000-000000000002",
+        );
+        let old = root_review_tree("<CommonModule>A</CommonModule>", &[a]);
+        let mut accepted = Vec::new();
+        for (label, children, files) in [
+            ("root-only removal", "", vec![a]),
+            (
+                "root-only rename",
+                "<CommonModule>B</CommonModule>",
+                vec![a],
+            ),
+            (
+                "missing addition descriptor",
+                "<CommonModule>A</CommonModule><CommonModule>B</CommonModule>",
+                vec![a],
+            ),
+            (
+                "duplicate membership",
+                "<CommonModule>A</CommonModule><CommonModule>A</CommonModule>",
+                vec![a],
+            ),
+            (
+                "retained UUID replacement",
+                "<CommonModule>A</CommonModule>",
+                vec![(a.0, a.1, a.2, b.3)],
+            ),
+            (
+                "addition name mismatch",
+                "<CommonModule>A</CommonModule><CommonModule>B</CommonModule>",
+                vec![a, (b.0, b.1, "Other", b.3)],
+            ),
+            (
+                "addition aliases retained UUID",
+                "<CommonModule>A</CommonModule><CommonModule>B</CommonModule>",
+                vec![a, (b.0, b.1, b.2, a.3)],
+            ),
+        ] {
+            let next = root_review_tree(children, &files);
+            if require_nonstructural_source_transition(&old.0, &next.0).is_ok() {
+                accepted.push(label);
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "unsafe source transitions accepted: {accepted:?}"
+        );
+    }
+    #[test]
+    fn root_review_keeps_coordinated_tableless_edits_and_requested_order() {
+        let a = (
+            "CommonModules/A.xml",
+            "CommonModule",
+            "A",
+            "aaaaaaaa-0000-4000-8000-000000000001",
+        );
+        let b = (
+            "CommonModules/B.xml",
+            "CommonModule",
+            "B",
+            "aaaaaaaa-0000-4000-8000-000000000002",
+        );
+        let old = root_review_tree("<CommonModule>A</CommonModule>", &[a]);
+        for (children, files) in [
+            ("", vec![]),
+            ("<CommonModule>B</CommonModule>", vec![(b.0, b.1, b.2, a.3)]),
+            (
+                "<CommonModule>A</CommonModule><CommonModule>B</CommonModule>",
+                vec![a, b],
+            ),
+        ] {
+            let next = root_review_tree(children, &files);
+            require_nonstructural_source_transition(&old.0, &next.0).unwrap();
+        }
+        let old = root_review_tree(
+            "<CommonModule>A</CommonModule><CommonModule>B</CommonModule>",
+            &[a, b],
+        );
+        let next = root_review_tree(
+            "<CommonModule>B</CommonModule><CommonModule>A</CommonModule>",
+            &[a, b],
+        );
+        require_nonstructural_source_transition(&old.0, &next.0).unwrap();
+    }
+    #[test]
+    fn root_review_keeps_http_and_nested_subsystems_tableless() {
+        let old = root_review_tree("", &[]);
+        let next = root_review_tree(
+            "<HTTPService>H</HTTPService><Subsystem>S</Subsystem>",
+            &[
+                (
+                    "HTTPServices/H.xml",
+                    "HTTPService",
+                    "H",
+                    "aaaaaaaa-0000-4000-8000-000000000001",
+                ),
+                (
+                    "Subsystems/S.xml",
+                    "Subsystem",
+                    "S",
+                    "aaaaaaaa-0000-4000-8000-000000000002",
+                ),
+                (
+                    "Subsystems/S/Subsystems/Child.xml",
+                    "Subsystem",
+                    "Child",
+                    "aaaaaaaa-0000-4000-8000-000000000003",
+                ),
+            ],
+        );
+        let asset = next
+            .0
+            .join("Subsystems/S/Subsystems/Child/Ext/CommandInterface.xml");
+        std::fs::create_dir_all(asset.parent().unwrap()).unwrap();
+        std::fs::write(asset, b"<CommandInterface/>").unwrap();
+        require_nonstructural_source_transition(&old.0, &next.0).unwrap();
+        std::fs::create_dir_all(next.0.join("Subsystems/S/Other")).unwrap();
+        std::fs::write(next.0.join("Subsystems/S/Other/Unknown.xml"), b"unknown").unwrap();
+        assert!(require_nonstructural_source_transition(&old.0, &next.0).is_err());
+    }
+    #[test]
+    fn root_review_selected_imports_require_selected_counterparts() {
+        let a = (
+            "CommonModules/A.xml",
+            "CommonModule",
+            "A",
+            "aaaaaaaa-0000-4000-8000-000000000001",
+        );
+        let b = (
+            "CommonModules/B.xml",
+            "CommonModule",
+            "B",
+            "aaaaaaaa-0000-4000-8000-000000000002",
+        );
+        let old = root_review_tree("<CommonModule>A</CommonModule>", &[a]);
+        let next = root_review_tree(
+            "<CommonModule>A</CommonModule><CommonModule>B</CommonModule>",
+            &[a, b],
+        );
+        for (prefixes, valid) in [
+            (vec![], true),
+            (vec!["Configuration.xml".to_owned()], false),
+            (vec!["CommonModules/B".to_owned()], false),
+            (
+                vec!["Configuration.xml".to_owned(), "CommonModules/B".to_owned()],
+                true,
+            ),
+        ] {
+            let mut diff = diff_trees_normalized(&old.0, &next.0).unwrap();
+            if !prefixes.is_empty() {
+                for files in [&mut diff.changed, &mut diff.added, &mut diff.removed] {
+                    files.retain(|p| under_prefixes(p, &prefixes));
+                }
+            }
+            assert_eq!(
+                compilation_root_edit(&old.0, &next.0, &diff, &prefixes).is_ok(),
+                valid,
+                "{prefixes:?}"
+            );
+        }
+        let next = root_review_tree("<CommonModule>B</CommonModule>", &[a]);
+        for (root, text) in [(&old.0, "before"), (&next.0, "after")] {
+            let file = root.join("CommonModules/A/Ext/Module.bsl");
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, text).unwrap();
+        }
+        let prefixes = vec!["CommonModules/A/Ext/Module.bsl".to_owned()];
+        let mut diff = diff_trees_normalized(&old.0, &next.0).unwrap();
+        for files in [&mut diff.changed, &mut diff.added, &mut diff.removed] {
+            files.retain(|p| under_prefixes(p, &prefixes));
+        }
+        compilation_root_edit(&old.0, &next.0, &diff, &prefixes).unwrap();
+    }
 }
