@@ -4,8 +4,9 @@
 use super::*;
 use crate::compiler::{
     bodies::form::{
-        ManagedFormCodecProfile, decode_managed_form, decode_managed_form_layout,
+        ManagedFormCodecProfile, decode_managed_form, decode_native_managed_form_module_layout,
         validate_original_managed_form_layout, verify_module_only_edit,
+        verify_native_form_module_only_edit,
     },
     families::{
         document::{DocumentMetadataProfile, decode_document_blob, decode_document_layout},
@@ -92,6 +93,18 @@ pub fn prepare_form_module_file_layout(
     check: &Check,
 ) -> Result<ModuleEdit> {
     prepare_form_module_text(snapshot, selected_path, text, None, limits, check, true)
+}
+
+/// Prepare held storage text in the native V4/marker50 module-only envelope.
+/// This is a grammar witness, not a platform build or SQL write admission.
+pub fn prepare_form_module_layout(
+    snapshot: &Readset,
+    selected_path: &str,
+    text: &[u8],
+    limits: Limits,
+    check: &Check,
+) -> Result<ModuleEdit> {
+    prepare_form_module_text(snapshot, selected_path, text, None, limits, check, false)
 }
 
 fn prepare_form_module_text(
@@ -224,11 +237,14 @@ fn prepare_form_module_text(
         .context("selected SQL Form body is missing")?;
     let plain = budget.inflate(base)?;
     require_nesting_bound(&plain, check)?;
-    // Reject an original unsupported layout before the legacy reader can upgrade it.
-    validate_original_managed_form_layout(base)?;
+    // Original grammar is checked before any legacy reader upgrade. The
+    // profile-selected base-free codec and native module envelope stay distinct.
     let old = match profile {
-        Some(profile) => decode_managed_form(&profile.body, base)?,
-        None => decode_managed_form_layout(base)?,
+        Some(profile) => {
+            validate_original_managed_form_layout(base)?;
+            decode_managed_form(&profile.body, base)?
+        }
+        None => decode_native_managed_form_module_layout(base)?,
     };
     // Expected projection only: never normalize the original source/custody bytes.
     let old_text = old.module_text().as_bytes();
@@ -256,10 +272,13 @@ fn prepare_form_module_text(
         let packed = crate::module_blob::pack_form_body_blob_from_module_text(base, text)?;
         let plain = budget.inflate(&packed.blob)?;
         require_nesting_bound(&plain, check)?;
-        verify_module_only_edit(base, &packed.blob)?;
+        match profile {
+            Some(_) => verify_module_only_edit(base, &packed.blob)?,
+            None => verify_native_form_module_only_edit(base, &packed.blob)?,
+        }
         let new = match profile {
             Some(profile) => decode_managed_form(&profile.body, &packed.blob)?,
-            None => decode_managed_form_layout(&packed.blob)?,
+            None => decode_native_managed_form_module_layout(&packed.blob)?,
         };
         let a = old.parsed();
         let b = new.parsed();

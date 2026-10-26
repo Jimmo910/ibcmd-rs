@@ -131,6 +131,76 @@ pub fn verify_module_only_edit(old: &[u8], new: &[u8]) -> Result<(), ManagedForm
     Ok(())
 }
 
+/// Decode the original native V4/marker50 module-only envelope. This grammar
+/// witness admits no Form.xml rewrite, platform build or SQL write authority.
+/// Five trailing blocks are retained as opaque bytes; both final scalars are zero.
+/// The base-free four-tail compiler/profile APIs keep their existing contract.
+pub fn decode_native_managed_form_module_layout(
+    blob: &[u8],
+) -> Result<ManagedFormBody, ManagedFormCodecError> {
+    native_module_layout(blob).map(|(body, _)| body)
+}
+
+fn native_module_layout(
+    blob: &[u8],
+) -> Result<(ManagedFormBody, std::ops::Range<usize>), ManagedFormCodecError> {
+    use crate::compiler::families::native::parse;
+
+    let plain = inflate(blob)?;
+    // One existing bounded lexical parser checks BOM, depth, quoting and full
+    // input consumption. Never serialize this tree back into storage.
+    let native = parse(&plain)?;
+    let fields = native.as_list().ok_or_else(|| {
+        ManagedFormCodecError::InvalidShape("native Form envelope is not a list".into())
+    })?;
+    if fields.len() != 10
+        || fields[0].as_token() != Some("4")
+        || fields[1]
+            .as_list()
+            .and_then(|v| v.first())
+            .and_then(|v| v.as_token())
+            != Some("50")
+        || fields[2].as_text().is_none()
+        || fields[3..8].iter().any(|v| v.as_list().is_none())
+        || fields[8].as_token() != Some("0")
+        || fields[9].as_token() != Some("0")
+    {
+        return Err(ManagedFormCodecError::InvalidShape(
+            "native module edit requires V4/marker50, five blocks and two zero scalars".into(),
+        ));
+    }
+    let text = std::str::from_utf8(&plain)
+        .map_err(|error| ManagedFormCodecError::NativeBody(error.to_string()))?;
+    let (parsed, range) = crate::module_blob::parse_original_form_body_plain(text)
+        .map_err(|error| ManagedFormCodecError::NativeBody(error.to_string()))?;
+    // Original container only: no legacy layout upgrade or module reformatting.
+    if parsed.revision != crate::module_blob::FormBodyRevision::V4
+        || parsed.trailing_fields != 7
+        || parsed.trailing.len() != 7
+    {
+        return Err(ManagedFormCodecError::InvalidShape(
+            "native Form parsers disagree".into(),
+        ));
+    }
+    Ok((ManagedFormBody { plain, parsed }, range))
+}
+
+/// Preserve every original plaintext byte outside the quoted module token.
+/// Opaque native sections are copied, never interpreted or rebuilt by this API.
+pub fn verify_native_form_module_only_edit(
+    old: &[u8],
+    new: &[u8],
+) -> Result<(), ManagedFormCodecError> {
+    let (old, a) = native_module_layout(old)?;
+    let (new, b) = native_module_layout(new)?;
+    if old.plain[..a.start] != new.plain[..b.start] || old.plain[a.end..] != new.plain[b.end..] {
+        return Err(ManagedFormCodecError::InvalidShape(
+            "native Form edit changed bytes outside the quoted module".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Transitional reader for historic synthetic fixtures that did not carry a
 /// UTF-8 BOM. New profile-selected compilation and decoding remain strict.
 pub(crate) fn decode_compatible_managed_form(
@@ -242,6 +312,129 @@ mod tests {
 
     use super::*;
     use crate::compiler::families::native::deflate_bytes;
+
+    fn native_module_fixture() -> Vec<u8> {
+        deflate_bytes(
+            "\u{feff}{4,{50,0}, \"old\" ,{4,1,{7,0}},{0,0},{0,0},{0,0},{0,0},0,0}".as_bytes(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn native_module_envelope_is_distinct_and_preserves_exact_raw_bytes() {
+        let old = native_module_fixture();
+        let decoded = decode_native_managed_form_module_layout(&old).unwrap();
+        assert_eq!(decoded.module_text(), "old");
+        assert_eq!(decoded.parsed().trailing_fields, 7);
+        assert!(decode_managed_form(&ManagedFormCodecProfile::fixture(), &old).is_err());
+        let changed = crate::module_blob::pack_form_body_blob_from_module_text(
+            &old,
+            "новый \"quoted\"\r\n".as_bytes(),
+        )
+        .unwrap()
+        .blob;
+        verify_native_form_module_only_edit(&old, &changed).unwrap();
+        assert_eq!(
+            decode_native_managed_form_module_layout(&changed)
+                .unwrap()
+                .module_text(),
+            "новый \"quoted\"\r\n"
+        );
+        let text = String::from_utf8(inflate(&changed).unwrap()).unwrap();
+        let (_, token) = native_module_layout(&changed).unwrap();
+        let mut before_quote = text.clone();
+        before_quote.insert(token.start, ' ');
+        let mut after_quote = text.clone();
+        after_quote.insert(token.end, '\t');
+        for altered in [
+            before_quote,
+            after_quote,
+            text.replacen("{50,0}", "{50,1}", 1),
+            text.replacen("{4,1,{7,0}}", "{4,1,{7,1}}", 1),
+            text.replacen("{0,0}", "{0,1}", 1),
+            format!("{text} "),
+        ] {
+            let packed = deflate_bytes(altered.as_bytes()).unwrap();
+            assert!(decode_native_managed_form_module_layout(&packed).is_ok());
+            assert!(verify_native_form_module_only_edit(&old, &packed).is_err());
+        }
+    }
+
+    #[test]
+    fn native_module_envelope_refuses_unmeasured_shapes_and_partial_input() {
+        let old = native_module_fixture();
+        let text = String::from_utf8(inflate(&old).unwrap()).unwrap();
+        for altered in [
+            text.replacen("{4,", "{3,", 1),
+            text.replacen("{50,", "{49,", 1),
+            text.replacen("{50,", "{42,", 1),
+            text.replacen("{4,1,{7,0}}", "0", 1),
+            text.replacen(",{0,0},0,0}", ",{0,0},1,0}", 1),
+            text.replacen(",{0,0},0,0}", ",{0,0},0,0,0}", 1),
+            format!("\u{feff}garbage{}", text.trim_start_matches('\u{feff}')),
+            format!("{text}garbage"),
+            text[..text.len() - 1].into(),
+            text.trim_start_matches('\u{feff}').into(),
+        ] {
+            assert_ne!(altered, text);
+            assert!(
+                decode_native_managed_form_module_layout(
+                    &deflate_bytes(altered.as_bytes()).unwrap()
+                )
+                .is_err()
+            );
+        }
+        let abbreviated = compile_managed_form(
+            &ManagedFormCodecProfile::fixture(),
+            SIMPLE_FORM,
+            Some(b"old"),
+            None,
+        )
+        .unwrap();
+        assert!(decode_managed_form(&ManagedFormCodecProfile::fixture(), &abbreviated).is_ok());
+        assert!(decode_native_managed_form_module_layout(&abbreviated).is_err());
+    }
+
+    #[test]
+    #[ignore = "read-only offline check: explicit retained public synthetic native body required"]
+    fn measured_public_native_form_module_envelope() {
+        use sha2::{Digest, Sha256};
+        use std::io::Read;
+        let path =
+            std::env::var_os("IBCMD_TEST_PUBLIC_FORM_BODY").expect("public fixture path required");
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)
+            .unwrap()
+            .take(1154)
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(bytes.len(), 1153);
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&bytes)),
+            "7f989004e1b22bd2896b74cdf8c4b2df9bc0562eae5f5069be806ff8b73043ff"
+        );
+        let old = decode_native_managed_form_module_layout(&bytes).unwrap();
+        assert_eq!(old.plaintext().len(), 3012);
+        assert_eq!(old.module_text().matches("Номер = 1;").count(), 1);
+        let edited = old.module_text().replacen("Номер = 1;", "Номер = 2;", 1);
+        let new =
+            crate::module_blob::pack_form_body_blob_from_module_text(&bytes, edited.as_bytes())
+                .unwrap()
+                .blob;
+        verify_native_form_module_only_edit(&bytes, &new).unwrap();
+        assert_eq!(
+            decode_native_managed_form_module_layout(&new)
+                .unwrap()
+                .module_text(),
+            edited
+        );
+        let export = crate::mssql_dump::native_module_file_bytes(edited.as_bytes());
+        assert_eq!(export.len(), 187);
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&export)),
+            "a2d21b5183f1b1f907fcf4a88c67a0127a3d9d7585bd0f0c5efabc2a82ab5f01"
+        );
+    }
 
     const SIMPLE_FORM: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
 <Form xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core" version="2.20">

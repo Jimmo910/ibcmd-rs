@@ -485,11 +485,11 @@ fn filesystem_form_native_noop_keeps_raw_storage_layout_and_versions() {
     )
     .unwrap();
     assert!(edit.replacements().is_empty());
-    let layout_edit =
-        prepare_form_module_file_layout(&captured, &path(0), &source, Limits::default(), &check())
-            .unwrap();
-    assert!(layout_edit.replacements().is_empty());
-    assert_eq!(layout_edit.readset_digest(), edit.readset_digest());
+    // The native module-only route refuses the abbreviated base-free envelope.
+    assert!(
+        prepare_form_module_file_layout(&captured, &path(0), &source, Limits::default(), &check(),)
+            .is_err()
+    );
 
     // The storage API retains its original EOL semantics for the same bytes.
     assert!(
@@ -549,16 +549,11 @@ fn filesystem_form_edit_reuses_loader_policy_and_preserves_exact_nonmodule_state
         edit.replacements().keys().cloned().collect::<BTreeSet<_>>(),
         BTreeSet::from([key.clone(), "versions".into()])
     );
-    let layout_edit =
-        prepare_form_module_file_layout(&captured, &path(0), &source, Limits::default(), &check())
-            .unwrap();
-    assert_eq!(layout_edit.replacements()[&key], edit.replacements()[&key]);
-    assert_eq!(layout_edit.readset_digest(), edit.readset_digest());
-    crate::compiler::bodies::form::verify_module_only_edit(
-        &rows[&key],
-        &layout_edit.replacements()[&key],
-    )
-    .unwrap();
+    // The native module-only route refuses the abbreviated base-free envelope.
+    assert!(
+        prepare_form_module_file_layout(&captured, &path(0), &source, Limits::default(), &check(),)
+            .is_err()
+    );
     let old = decode_managed_form(&profile().body, &rows[&key]).unwrap();
     let new = decode_managed_form(&profile().body, &edit.replacements()[&key]).unwrap();
     assert_eq!(
@@ -686,4 +681,58 @@ fn filesystem_form_post_loader_cancellation_retains_typed_error_and_inputs() {
     assert_eq!(calls.load(Ordering::SeqCst), post_loader_check);
     assert_eq!(source, original_source);
     assert_eq!(captured.digest().unwrap(), before);
+}
+
+#[test]
+fn native_module_envelope_preparation_preserves_full_form_and_staged_neighbour() {
+    // Clean-room ten-field envelope, not a new base-free compiler profile.
+    let (mut rows, key, raw) = raw_filesystem_form_case();
+    let mut plain =
+        String::from_utf8(crate::module_blob::inflate_raw(&rows[&key]).unwrap()).unwrap();
+    let close = plain.rfind('}').unwrap();
+    plain.insert_str(close, ",{0,0},0,0");
+    rows.insert(key.clone(), pack(plain.as_bytes()));
+    let parsed = crate::module_blob::parse_form_body_blob(&rows[&key]).unwrap();
+    assert_eq!(parsed.revision, crate::module_blob::FormBodyRevision::V4);
+    assert_eq!(parsed.trailing_fields, 7);
+    assert!(decode_managed_form(&profile().body, &rows[&key]).is_err());
+    let saved = Rows::from([
+        (id(101), rows[&id(101)].clone()),
+        ("versions".into(), rows["versions"].clone()),
+    ]);
+    let captured = snapshot(&rows, &saved);
+    let before = captured.digest().unwrap();
+    let source = crate::mssql_dump::native_module_file_bytes(&raw);
+    let noop =
+        prepare_form_module_file_layout(&captured, &path(0), &source, Limits::default(), &check())
+            .unwrap();
+    assert!(noop.replacements().is_empty());
+    let changed_source = "\u{feff}// changed native module\n// Юникод \"quoted\"\n".as_bytes();
+    let expected = crate::load::module_text_from_bytes(changed_source, &path(0)).unwrap();
+    let edit = prepare_form_module_file_layout(
+        &captured,
+        &path(0),
+        changed_source,
+        Limits::default(),
+        &check(),
+    )
+    .unwrap();
+    assert_eq!(
+        edit.replacements().keys().cloned().collect::<BTreeSet<_>>(),
+        BTreeSet::from([key.clone(), "versions".into()])
+    );
+    let changed = crate::module_blob::parse_form_body_blob(&edit.replacements()[&key]).unwrap();
+    assert_eq!(
+        changed.module_text,
+        std::str::from_utf8(&expected)
+            .unwrap()
+            .trim_start_matches('\u{feff}')
+    );
+    assert_eq!(changed.revision, parsed.revision);
+    assert_eq!(changed.layout, parsed.layout);
+    assert_eq!(changed.trailing, parsed.trailing);
+    assert_eq!(changed.trailing_fields, parsed.trailing_fields);
+    assert_eq!(captured.digest().unwrap(), before);
+    assert_eq!(edit.readset_digest(), &before);
+    assert_eq!(crate::mssql_dump::native_module_file_bytes(&raw), source);
 }

@@ -572,3 +572,96 @@ This proves the predicate through ADO, not the product/TDS path. Corrected-head
 Windows product/libtest and actual Common RPC/Form/native gates remain pending;
 97cf artifacts do not inherit the SQL correction. The unrelated full-branch
 policy refusal remains unchanged; no whitelist/baseline growth is included.
+
+
+## Actual guarded editor RPC and native CommonModule acceptance (083a)
+
+The VM-local exact-source build of `083a4360c59885dc44ef960491da006613aed972`
+completed the production JSON-RPC prepare/confirmed publish flow on the fresh
+public CommonModule SQL target. Preparation, acknowledged `Committed`, pending
+state, MAIN tree/status, single-use token replay refusal and full post-readset
+checks passed. CONFIG remained eight parts / 3314 bytes; CONFIGSAVE became only
+selected body plus versions, two parts / 452 bytes. The original result
+`3dcc24cdd740590c36e0b06b4398bfbd1f6d676d5d949846351692e5649a31e1`
+retains `COMMITTED_NEEDS_RECONCILIATION`: its stderr classifier expected numbers
+where the existing exporter emits three Rust boolean skip flags. Four retained
+lines were classified as known exporter summaries, with no severity or unknown
+line. The separate assessment
+`5f1e7faa4db70e69ab032e37a49e3513184a758577e90616d2a9a5530ade420c`
+closes that diagnostic-only reconciliation without changing either original
+receipt or repeating publication. Its independent review used source emitters
+and hash-bound sanitized classification, not an independent reparse of raw VM
+stderr.
+
+The subsequent sole-operator native 8.3.27.2342 apply and full export both exited
+naturally with code zero and zero stderr, in 3.248 and 1.529 seconds. Active
+body and versions exactly matched staging; CONFIGSAVE became empty. The exported
+module was exactly 56 bytes with SHA256
+`fea4fcfe9697b678655b03d9a670313961e20ce8e11e32956c97cd35fb6daebc`.
+Four unselected XML files and every unselected CONFIG row were byte-exact. CDI
+retained the ordered five-entry inventory and changed only the selected version,
+matching the actual staged version. Export left the full SQL readset unchanged.
+Result SHA256:
+`41e160daf0473bbaa644502c697be9e8b2046e0e126f7f8ee0d1472d236c8e78`;
+FULL RELEASE SHA256:
+`2a2eea16d3e2a748413667c50fcabf73278bda9b111be9142be90819a2378a97`.
+This proves the existing CommonModule user route and native cycle on this exact
+public target and VM-local build; it is not CI attestation or general writer
+admission. Previous nonempty-neighbour/cancellation/stale evidence remains a
+separate measured target and revision.
+
+## Native Form envelope refusal before staging (083a)
+
+The subsequent ignored public Form experiment exited 101 at the original-body
+decoder, before module preparation and before its sole transaction stage call.
+The measured native Form has seven trailing fields; the base-free compiler
+codec admits four. The retained reason was exactly `native Form body is invalid:
+expected 4 trailing sections, got 7`. Independent full seals remained identical:
+CONFIG eight parts / 6073 bytes and CONFIGSAVE empty. Result
+`3e17596b8e7b4bb94db7d665c4b89296f343663f4c76a8e620529511a007559d`
+and FULL RELEASE
+`c454df71fbce00d521e65aa0bf773f93b64e2b9fdcc8d4855dbabd87aba46721`
+retain their original indeterminate classification. Separate source/receipt
+assessment `71667e12cdfd4c25570c84bcb2ea241bce7006b960282945a852a5e7617c45a6`
+identifies a prestage decoder refusal with no stage dispatch and no state change;
+it does not convert the experiment to PASS. No Form native apply or automatic
+retry followed. A separately validated native module-only envelope and corrected
+build are required before another experiment; the four-tail base-free compiler
+contract and Form editor route remain unchanged.
+
+
+### Measured native envelope and separate module-only correction
+
+One bounded read-only extraction of the known synthetic public Form body verified
+part0 / DataSize1153 and packed SHA256
+`7f989004e1b22bd2896b74cdf8c4b2df9bc0562eae5f5069be806ff8b73043ff`.
+Before/after full CONFIG and CONFIGSAVE seals were unchanged; no neighbouring
+payload, SQL write, test or native command was included. Extraction result
+`a2837483bb296448ccc3a30426afcc43922b116fbe293bc833f592b56aa4287a`
+and FULL RELEASE
+`4f761bb98c26144a362a7fde81aa0ed5e8d24054c52a9de0cd0abe1cfe87fc91`
+bind the exact body to the public native CF baseline. Inflated bytes were3012,
+SHA256 `55bec38f031bc49be0c2d7f45a6e66381b1e8657e79906dbba8acb7a898c9836`:
+UTF8 BOM, container revision4, layout50, quoted module, five blocks, final0/0.
+The packed payload remains outside the repository and is not published.
+
+The correction adds a separate native module-only decoder and raw edit witness.
+It uses the existing bounded complete lexical parser, requires that precise
+outer grammar before parsing original spans, performs no legacy upgrade, and
+never serializes the validation tree. Five trailing blocks remain opaque and
+byte-preserved. Both original containers must be valid, and every plaintext byte
+outside the quoted module token must match. Existing four-tail compiler/profile
+APIs remain unchanged; no Form.xml or additional owner family is admitted.
+
+A clean-room selected preparation regression first failed for the same
+four-versus-seven reason. Corrected local gates passed: ten body tests (one
+opt-in fixture test ignored by the normal filter), the explicit offline known
+public-body test, and76 SQL tests with four live tests ignored. The offline
+fixture check replaces only `Номер = 1;` with `Номер = 2;`, verifies exact raw
+non-module preservation and the expected187-byte native projection SHA256
+`a2d21b5183f1b1f907fcf4a88c67a0127a3d9d7585bd0f0c5efabc2a82ab5f01`.
+Earlier attempts that stopped at a wrong compiler environment and a test-only
+borrow mismatch are retained as setup failures, not claimed as the regression
+RED. The ignored live experiment now uses the structural envelope rather than
+claiming a1989 codec coordinate. Native Form staging/apply and editor routing
+remain unaccepted until a new exact-source Windows build and actual gates pass.

@@ -1720,11 +1720,8 @@ mod selected_acceptance;
 #[ignore = "sole operator: new native-CF PUBLICFORM baseline and separate staging opt-in required; native writer profile unadmitted"]
 fn public_sql_existing_form_module_stage_experiment() -> Result<()> {
     use crate::{
-        compiler::bodies::form::{ManagedFormCodecProfile, decode_managed_form},
-        server::sql_import::{
-            selected::form::{DocumentFormProfile, prepare_form_module},
-            snapshot,
-        },
+        compiler::bodies::form::decode_native_managed_form_module_layout,
+        server::sql_import::{selected::form::prepare_form_module_layout, snapshot},
         sql::{SqlLogin, SqlTarget, mssql::MssqlClient},
     };
     use sha2::{Digest, Sha256};
@@ -1828,14 +1825,7 @@ fn public_sql_existing_form_module_stage_experiment() -> Result<()> {
         actual_hash == PACKED_FORM_BODY_SHA256,
         "PUBLICFORM native body pin changed"
     );
-    let registry = crate::profile_registry::load_bundled_profile_registry()?;
-    let codec_id = ibcmd_core::artifact::ProfileId::parse("platform-8.3.27.1989")?;
-    let effective = registry
-        .get(&codec_id)
-        .context("experimental Form codec missing")?;
-    let codec = DocumentFormProfile::from_effective(effective)?;
-    let body_codec = ManagedFormCodecProfile::from_effective(effective)?;
-    let old = decode_managed_form(&body_codec, old_packed)?;
+    let old = decode_native_managed_form_module_layout(old_packed)?;
     let old_text = old.module_text();
     ensure!(
         old_text.matches("Номер = 1;").count() == 1
@@ -1849,12 +1839,11 @@ fn public_sql_existing_form_module_stage_experiment() -> Result<()> {
         "PUBLICFORM edit changed more than the selected statement"
     );
     // Immutable decoded storage text, NOT filesystem/source-custody admission.
-    // Native consumer2342 and experimental codec1989 remain distinct coordinates.
-    let edit = prepare_form_module(
+    // Native consumer2342 is distinct from the structural module-only witness.
+    let edit = prepare_form_module_layout(
         &before,
         PATH,
         edited.as_bytes(),
-        &codec,
         super::super::selected::Limits::default(),
         &check,
     )?;
@@ -1863,7 +1852,7 @@ fn public_sql_existing_form_module_stage_experiment() -> Result<()> {
             == BTreeSet::from([BODY_KEY.into(), "versions".into()]),
         "PUBLICFORM compiler changed an unselected row"
     );
-    let changed = decode_managed_form(&body_codec, &edit.replacements()[BODY_KEY])?;
+    let changed = decode_native_managed_form_module_layout(&edit.replacements()[BODY_KEY])?;
     ensure!(
         changed.module_text() == edited
             && old.parsed().revision == changed.parsed().revision
@@ -1938,7 +1927,7 @@ fn public_sql_existing_form_module_stage_experiment() -> Result<()> {
         staged[0].1.binary.as_slice() == edit.replacements()[BODY_KEY].as_slice(),
         "PUBLICFORM staged body bytes differ from planned compiler output"
     );
-    let actual = decode_managed_form(&body_codec, &staged[0].1.binary)?;
+    let actual = decode_native_managed_form_module_layout(&staged[0].1.binary)?;
     ensure!(
         actual.parsed() == changed.parsed(),
         "PUBLICFORM staged typed body differs from verified plan"
@@ -1946,7 +1935,7 @@ fn public_sql_existing_form_module_stage_experiment() -> Result<()> {
     check()?;
     drop(client);
     println!(
-        "PUBLIC_SQL_FORM_EXPERIMENTAL_STAGE_PASS experimental_staging_only=true codec_profile=platform-8.3.27.1989 actual_native_build=8.3.27.2342 target_platform_admitted=false native_apply_verified=false form_xml_supported=false initial_staging_empty=true automatic_retry=false"
+        "PUBLIC_SQL_FORM_EXPERIMENTAL_STAGE_PASS experimental_staging_only=true codec_profile=native-managed-form-module-envelope-v1 actual_native_build=8.3.27.2342 target_platform_admitted=false native_apply_verified=false form_xml_supported=false initial_staging_empty=true automatic_retry=false"
     );
     Ok(())
 }
