@@ -31,7 +31,7 @@
 //! # Naming, and what a new build needs
 //!
 //! Code that depends on the platform is named after the FULL version in which
-//! its subject first appeared -- `mssql_dump/form/layout_8_5_1.rs`,
+//! its subject first appeared -- `layout_8_5_1.rs` (in `crates/ibcmd-form-body`),
 //! `FormFactsV8_5_1`, [`FormLayout::V8_5_1`] -- and code of an XML dialect
 //! after the XML format (`mssql_dump/form/xml_2_21_writer.rs`), never after a
 //! nickname such as "85". When a new build arrives, say 8.5.4:
@@ -41,7 +41,7 @@
 //!   `profile_registry::BUNDLED_PROFILES`, declaring the XML format, form
 //!   layout and features it shares with 8.5.1;
 //! - its stored layout changed: in addition a delta module
-//!   `mssql_dump/form/layout_8_5_4.rs` (and `load_8_5_4.rs`) converting
+//!   `layout_8_5_4.rs` beside `layout_8_5_1.rs` (and `load_8_5_4.rs`) converting
 //!   between it and the 8.5.1 layout, a `FormLayout::V8_5_4`, and the entry
 //!   declares `"platform.form_layout": "8.5.4"`;
 //! - its XML format changed (say to 2.22): `xml_2_22_*` modules, an

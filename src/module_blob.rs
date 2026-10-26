@@ -105,15 +105,10 @@ pub struct PatchedVersionsBlob {
     pub replacements: Vec<VersionReplacement>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct ParsedFormBodyBlob {
-    /// The container revision the record declared in its own first slot.
-    pub revision: FormBodyRevision,
-    pub layout: String,
-    pub module_text: String,
-    pub trailing: Vec<String>,
-    pub trailing_fields: usize,
-}
+// A form body record and its container revision are the `ibcmd-form-body`
+// crate's (the form reader there reads them); this module unpacks them and
+// keeps their public paths.
+pub use ibcmd_form_body::ParsedFormBodyBlob;
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 struct FormXmlBodyProperties {
@@ -25895,22 +25890,16 @@ pub(crate) fn parse_form_body_plain(plain: &str) -> Result<ParsedFormBodyBlob> {
     })
 }
 
-/// The container revision a Form body declares in its own first slot.
-///
-/// Both admitted revisions carry the identical ten-slot container -- marker,
-/// layout, module text, five blocks and two scalars. Measured over every form
-/// of all eight stand corpora (22,646 forms): revision `4` on 22,535 managed
-/// forms of all eight, revision `3` on 102 managed forms of ERP УХ 3.2.12.6
-/// only, and no other value anywhere. Layout revision `49` occurs under both
-/// container revisions, layout `50` only under `4`. See
-/// `docs/evidence/uh-form-body-container-revision-20260826.md`.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum FormBodyRevision {
-    V3,
-    V4,
+pub use ibcmd_form_body::FormBodyRevision;
+
+/// Reading the revision a record declares stays here: as a method of the
+/// crate's type it would be public, and it is a step of this module's
+/// container check alone.
+trait FormBodyRevisionExt: Sized {
+    fn parse(declared: Option<&str>) -> Result<Self>;
 }
 
-impl FormBodyRevision {
+impl FormBodyRevisionExt for FormBodyRevision {
     /// Reads the revision the record itself declares. Fail-closed: an
     /// undeclared or unnamed revision is refused, never assumed.
     fn parse(declared: Option<&str>) -> Result<Self> {
@@ -25921,13 +25910,6 @@ impl FormBodyRevision {
                 "Form body declares unsupported container revision {other}"
             )),
             None => Err(anyhow!("Form body declares no container revision")),
-        }
-    }
-
-    pub const fn declared_marker(self) -> &'static str {
-        match self {
-            Self::V3 => "3",
-            Self::V4 => "4",
         }
     }
 }

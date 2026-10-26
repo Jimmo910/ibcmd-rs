@@ -10353,7 +10353,11 @@ fn extracts_form_attributes_conditional_appearance_from_body_tail() {
         "{{4,0,0,1,\"Список.SortKey\",\"Список.SortKey\",{{2,{{26}},{{9}}}},{{1,{{26}}}},{{#base64:{}}}}}",
         encoded.trim()
     );
-    let section = extract_form_body_attributes_section(&[tail], &BTreeMap::new());
+    let section = extract_form_body_attributes_section(
+        &[tail],
+        &BTreeMap::new(),
+        super::form_body_host::ROOT_FORM_BODY_HOST,
+    );
     let Some(FormAttributesConditionalAppearance::Typed(value)) =
         section.conditional_appearance.as_ref()
     else {
@@ -10383,6 +10387,7 @@ fn form_attributes_conditional_appearance_outside_the_cohort_is_transliterated()
             "{{4,0,0,1,\"Список.SortKey\",\"Список.SortKey\",{{2,{{26}},{{9}}}},{{1,{{26}}}},{{#base64:{payload}}}}}"
         )],
         &BTreeMap::new(),
+        super::form_body_host::ROOT_FORM_BODY_HOST,
     );
     let Some(FormAttributesConditionalAppearance::Transliterated(fragment)) =
         section.conditional_appearance.as_ref()
@@ -10420,6 +10425,7 @@ fn form_attributes_malformed_conditional_appearance_fails_closed() {
             "{{4,0,0,1,\"Список.SortKey\",\"Список.SortKey\",{{2,{{26}},{{9}}}},{{1,{{26}}}},{{#base64:{payload}}}}}"
         )],
         &BTreeMap::new(),
+        super::form_body_host::ROOT_FORM_BODY_HOST,
     );
     assert!(matches!(
         section.conditional_appearance,
@@ -10467,6 +10473,7 @@ fn form_attributes_tail_counts_sub_tables_and_bindings_independently() {
             empty.trim()
         )],
         &BTreeMap::new(),
+        super::form_body_host::ROOT_FORM_BODY_HOST,
     );
     assert!(section.conditional_appearance.is_none());
 
@@ -10481,6 +10488,7 @@ fn form_attributes_tail_counts_sub_tables_and_bindings_independently() {
             filled.trim()
         )],
         &BTreeMap::new(),
+        super::form_body_host::ROOT_FORM_BODY_HOST,
     );
     assert!(matches!(
         section.conditional_appearance,
@@ -10510,6 +10518,7 @@ fn form_attributes_tail_binding_relations_fail_closed() {
                 filled.trim()
             )],
             &BTreeMap::new(),
+            super::form_body_host::ROOT_FORM_BODY_HOST,
         );
         assert!(
             matches!(
@@ -10534,6 +10543,7 @@ fn form_attributes_tail_with_unaccounted_fields_fails_closed() {
     let section = extract_form_body_attributes_section(
         &[format!("{{4,0,0,0,{{0}},{{#base64:{}}}}}", empty.trim())],
         &BTreeMap::new(),
+        super::form_body_host::ROOT_FORM_BODY_HOST,
     );
     assert!(matches!(
         section.conditional_appearance,
@@ -10553,7 +10563,11 @@ fn formats_form_attributes_section_conditional_appearance_inside_attributes() {
         "{{4,0,0,1,\"Список.SortKey\",\"Список.SortKey\",{{2,{{26}},{{9}}}},{{1,{{26}}}},{{#base64:{}}}}}",
         encoded.trim()
     );
-    let section = extract_form_body_attributes_section(&[tail], &BTreeMap::new());
+    let section = extract_form_body_attributes_section(
+        &[tail],
+        &BTreeMap::new(),
+        super::form_body_host::ROOT_FORM_BODY_HOST,
+    );
     let xml = format_form_attributes_section_xml(&[], &section).unwrap();
 
     assert!(xml.contains("\t<Attributes>\r\n"), "{xml}");
@@ -11979,7 +11993,7 @@ fn form_attribute_column_type_pattern_resolves_platform_references() {
         ),
     ] {
         assert_eq!(
-            parse_form_attribute_column_type_pattern(raw, &BTreeMap::new()),
+            parse_form_attribute_column_type_pattern(raw, &BTreeMap::new(), false),
             Some(expected.clone()),
             "column pattern {raw} must resolve"
         );
@@ -12017,6 +12031,7 @@ fn form_attribute_column_type_pattern_resolves_platform_references() {
         parse_form_attribute_column_type_pattern(
             r##"{"Pattern",{"#",00000000-0000-4000-8000-000000000009}}"##,
             &BTreeMap::new(),
+            false,
         ),
         Some(vec![ConstantValueType::TypeId {
             type_id: "00000000-0000-4000-8000-000000000009".to_string(),
@@ -25838,6 +25853,7 @@ fn input_field_available_types_read_the_observed_slot_and_keep_empty_absent() {
             make_schema(&options),
             &options,
             &BTreeMap::new(),
+            false,
         ),
         CanonicalFormChoiceParameterAvailableTypes::Absent
     );
@@ -25849,6 +25865,7 @@ fn input_field_available_types_read_the_observed_slot_and_keep_empty_absent() {
             make_schema(&options),
             &options,
             &BTreeMap::new(),
+            false,
         ),
         CanonicalFormChoiceParameterAvailableTypes::Typed(vec![ConstantValueType::String {
             length: None,
@@ -25865,6 +25882,7 @@ fn input_field_available_types_read_the_observed_slot_and_keep_empty_absent() {
                     make_schema(&options),
                     &options,
                     &BTreeMap::new(),
+                    false,
                 ),
             ),
             1,
@@ -25889,6 +25907,7 @@ fn input_field_available_types_read_the_observed_slot_and_keep_empty_absent() {
             "a1f87530-5261-4cac-aad9-a636c0e39e38".to_owned(),
             "cfg:CatalogRef.ЗначенияКатегорийНовостей".to_owned(),
         )]),
+        false,
     );
     let CanonicalFormChoiceParameterAvailableTypes::Typed(value_types) = &typed else {
         panic!("the observed five-element pattern must decode, got {typed:?}");
@@ -25914,7 +25933,7 @@ fn input_field_available_types_read_the_observed_slot_and_keep_empty_absent() {
         canonical_form_input_field_available_types(
             make_schema(&options),
             &options,
-            &BTreeMap::new(),
+            &BTreeMap::new(), false,
         ),
         CanonicalFormChoiceParameterAvailableTypes::Opaque(value) if value.slot == slot
     ));
@@ -76540,6 +76559,7 @@ fn preserves_an_unresolved_form_pattern_member_as_type_id() {
     let value_types = parse_form_type_pattern(
         &format!(r##"{{"Pattern",{{"#",{type_id}}}}}"##),
         &BTreeMap::new(),
+        false,
     )
     .expect("well-formed unresolved form pattern");
     assert_eq!(
@@ -76559,7 +76579,7 @@ fn preserves_an_unresolved_form_pattern_member_as_type_id() {
 
     let known_column_types = parse_form_type_pattern(
         r##"{"Pattern",{"#",f6841c6b-6c71-4c82-ae9e-d08b49db326c},{"#",7dd764b6-b22f-4712-8edc-c0d634340e60}}"##,
-        &BTreeMap::new(),
+        &BTreeMap::new(), false,
     )
     .expect("well-formed known column types");
     assert_eq!(
@@ -76932,6 +76952,336 @@ fn parses_bot_properties_with_short_header_wrapper() {
     // Negative control: the pre-fix code's bare `rfind("{3,")` never finds
     // this text's `"{2,"`-tagged header at all.
     assert!(!short_text.contains("{3,"));
+}
+
+/// The extension-export state a form is read under, as
+/// `form_body_host::active_form_extension_export` takes it: the extended
+/// configuration's compatibility mode, or `None` when it cannot be read.
+fn extension_export_for_test(mode: Option<&str>) -> FormExtensionExport {
+    FormExtensionExport {
+        extended_compatibility_mode: mode.map(str::to_owned),
+    }
+}
+
+/// One form for every reader of the extension-export state:
+/// - a group with an explicit `Usual` behavior (the record of
+///   `parses_live_usual_group_width_false_stretch_and_usual_behavior`);
+/// - the planner of `planner_field_writes_its_own_geometry_drag_flag_and_events`
+///   with its `EnableDrag` slot (6) set, as the ServiceDesk extension's planner
+///   stores it;
+/// - the input field of
+///   `detailed_form_extraction_preserves_malformed_link_rejection_diagnostics`
+///   with its `AvailableTypes` slot (34) holding a type;
+/// - an attribute, a table column, two value lists' `ElementType` (one as a
+///   type description, one as a bare pattern), an additional column and a
+///   parameter, each typed by `dcsset:Filter` (`f6841c6b-…`) or
+///   `ConditionalAppearance` (`7dd764b6-…`), platform types only the
+///   form-schema column table names.
+///
+/// Read through `FormParseContext::new`, then under `extension_export` when
+/// one is given.
+fn extension_export_probe_xml(
+    own_mode: Option<&str>,
+    extension_export: Option<Option<FormExtensionExport>>,
+) -> String {
+    const GROUP: &str = r#"{22,{1,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,5,"ГруппаОсновная",{1,1,{"ru","Группа основная"}},{1,0},0,1,0,66,0,0,1,{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{29,0,0,0,0,{0},{1,0},{"Pattern"},"",{3,4,{0}},0,0,0,1,{1,0},0,0,3,3,2,0,1,0,{3,4,{0}},0,2,0,0,0},0,1,0,1,0,0,0,0,0}"#;
+    const PLANNER: &str = r#"{37,
+{544,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,19,"Планировщик",0,0,
+{1,1,
+{"ru","Планировщик"}
+},
+{1,0},
+{1,
+{7}
+},
+{0},1,0,2,0,2,
+{1,0},
+{1,0},1,1,0,3,0,3,1,3,0,
+{4,0,
+{0},"",-1,-1,1,0,""},
+{4,0,
+{0},"",-1,-1,1,0,""},
+{3,4,
+{0}
+},
+{7,3,0,1,100},
+{3,4,
+{0}
+},
+{3,4,
+{0}
+},
+{3,4,
+{0}
+},
+{7,3,0,1,100},
+{0,0,0},1,
+{1,50,15,1,1,1,1,
+{6,5e6c8466-44d0-4fd0-8d87-ac749c16ff60,"ПланировщикПриСменеТекущегоПериодаОтображения",68fc3ed6-a517-4843-a7a4-473cf4e27209,"ПланировщикПриОкончанииРедактирования",6f758c30-b414-4949-a236-584bccb0102a,"ПланировщикПередУдалением",82f5f464-5aa5-4efc-9813-51432c74ff8e,"ПланировщикПередНачаломРедактирования",b56fa930-855b-4e67-a87c-8ea917d1dfab,"ПланировщикПередНачаломБыстрогоРедактирования",b6aaed5c-8a5a-4a03-bd5b-1f14d0f099ec,"ПланировщикВыбор",1,0,5e6c8466-44d0-4fd0-8d87-ac749c16ff60,0,1,68fc3ed6-a517-4843-a7a4-473cf4e27209,0,1,6f758c30-b414-4949-a236-584bccb0102a,0,1,82f5f464-5aa5-4efc-9813-51432c74ff8e,0,1,b56fa930-855b-4e67-a87c-8ea917d1dfab,0,1,b6aaed5c-8a5a-4a03-bd5b-1f14d0f099ec,0,1},0,0,0},
+{0,1,0},1,
+{22,
+{545,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,8,"ПланировщикКонтекстноеМеню",
+{1,0},
+{1,0},0,1,0,0,0,2,2,
+{3,4,
+{0}
+},
+{7,3,0,1,100},
+{0,0,0},1,
+{1,1},0,1,0,0,0,3,3,0},1,
+{"Pattern"},
+{"Pattern"},"","",
+{0},0,0,1,
+{12,
+{546,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,0,"ПланировщикРасширеннаяПодсказка",
+{1,0},
+{1,0},1,0,0,2,2,
+{3,4,
+{0}
+},
+{7,3,0,1,100},
+{0,0,0},1,
+{5,0,0,3,0,
+{0,1,0},
+{3,4,
+{0}
+},
+{3,4,
+{0}
+},
+{3,0,
+{0},0,1,0,48312c09-257f-4b29-b280-284dd89efc1e}
+},0,1,2,
+{1,
+{1,0},0},0,0,1,0,0,1,0,3,3,0,0},3,3,0,0,0,0}"#;
+    const INPUT: &str = r##"{37,{56,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,2,"Организация",2,0,{1,1,{"ru","От организации"}},{1,1,{"ru","Организация, от имени которой будете приглашать."}},{1,{3}},{0},1,0,2,0,2,{1,0},{1,0},1,1,0,3,0,3,1,3,0,{4,0,{0},"",-1,-1,1,0,""},{4,0,{0},"",-1,-1,1,0,""},{3,4,{0}},{7,3,0,1,100},{3,4,{0}},{3,4,{0}},{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{36,{3,0},0,0,2,2,1,2,2,2,2,2,2,2,2,2,{"U"},{"U"},"",0,{4,0,{0},"",-1,-1,1,0,""},0,0,2,3,00000000-0000-0000-0000-000000000000,{5006,0},{0,0},2,{1,0},{1,0},1,1,0,{"Pattern",{"#",f6841c6b-6c71-4c82-ae9e-d08b49db326c}},1,{0,1,0},{3,4,{0}},{3,4,{0}},{3,4,{0}},{7,3,0,1,100},1,{3,0,0},0,{1,1,{"ru","Организация, от имени которой будете приглашать."}},2,0,2,0,1,0,0,1,0,0,0,0,0,0,0,0,0,{0},0,{5007,0},0},{1,fe115cc8-9e33-4684-a166-bd5136fe7a9f,"ОрганизацияПриИзменении",1,0,fe115cc8-9e33-4684-a166-bd5136fe7a9f,0,1},1,{22,{57,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,8,"ОрганизацияКонтекстноеМеню",{1,0},{1,0},0,1,0,0,0,2,2,{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{1,1},0,1,0,0,0,3,3,0},1,{"Pattern"},{"Pattern"},"","",{0},0,3,1,{12,{58,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,0,"ОрганизацияРасширеннаяПодсказка",{1,0},{1,0},1,0,0,2,2,{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{5,0,0,3,0,{0,1,0},{3,4,{0}},{3,4,{0}},{3,0,{0},0,1,0,48312c09-257f-4b29-b280-284dd89efc1e}},0,1,2,{1,{1,0},0},0,0,1,0,0,1,0,3,3,0,0},3,3,0,0,0,0}"##;
+    let body = ParsedFormBodyBlob {
+        revision: crate::module_blob::FormBodyRevision::V4,
+        // The form's child items are `<count>,<uuid>,<item>` pairs.
+        layout: format!(
+            "{{59,3,aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa,{GROUP},\
+             bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb,{PLANNER},\
+             cccccccc-cccc-4ccc-8ccc-cccccccccccc,{INPUT}}}"
+        ),
+        module_text: String::new(),
+        trailing: vec![
+            concat!(
+                r##"{4,4,"##,
+                r##"{9,{3},0,"Отбор",{1,0},{"Pattern",{"#",f6841c6b-6c71-4c82-ae9e-d08b49db326c}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},{0,0},0,0,0,0},"##,
+                r##"{9,{4},0,"Таблица",{1,0},{"Pattern",{"S"}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},{0,0},0,0,0,1,{5,8,0,"Строки",{1,0},{"Pattern",{"#",f6841c6b-6c71-4c82-ae9e-d08b49db326c}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},0}},"##,
+                r##"{9,{7},0,"СписокОтборов",{1,0},{"Pattern",{"#",4772b3b4-f4a3-49c0-a1a5-8cb5961511a3}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},{0,0},0,0,0,0,{0,1,"ElementType",{"#",f5c65050-3bbb-11d5-b988-0050bae0a95d,{"Pattern",{"#",f6841c6b-6c71-4c82-ae9e-d08b49db326c}}},{0,0}},{0,0}},"##,
+                r##"{9,{9},0,"СписокОформлений",{1,0},{"Pattern",{"#",4772b3b4-f4a3-49c0-a1a5-8cb5961511a3}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},{0,0},0,0,0,0,{0,1,"ElementType",{"Pattern",{"#",7dd764b6-b22f-4712-8edc-c0d634340e60}},{0,0}},{0,0}},"##,
+                r##"1,{0,{2,{4},{8}},1,{5,1,0,"Оформление",{1,0},{"Pattern",{"#",7dd764b6-b22f-4712-8edc-c0d634340e60}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},0}},0,{0}}"##,
+            )
+            .to_string(),
+            r##"{0,1,{0,"Оформление",{"Pattern",{"#",7dd764b6-b22f-4712-8edc-c0d634340e60}},0}}"##.to_string(),
+        ],
+        trailing_fields: 2,
+    };
+    let type_index = BTreeMap::new();
+    let type_index_collisions = BTreeSet::new();
+    let dcs_type_index = DcsTypeIndex::new();
+    let object_refs = BTreeMap::new();
+    let field_type_refs = std::sync::Arc::new(BTreeMap::new());
+    let information_register_field_refs = InformationRegisterFieldReferenceIndex::default();
+    let information_register_master_dimensions =
+        std::sync::Arc::new(InformationRegisterMasterDimensionIndex::new());
+    let context = FormParseContext::new(
+        &type_index,
+        &type_index_collisions,
+        &dcs_type_index,
+        &object_refs,
+        &field_type_refs,
+        &information_register_field_refs,
+        &information_register_master_dimensions,
+        None,
+    )
+    .with_form_compatibility(FormCompatibility::of(own_mode));
+    let context = match extension_export {
+        Some(extension_export) => context.with_extension_export(extension_export),
+        None => context,
+    };
+    extract_form_body_xml_from_body_timed(&body, &context, None).expect("the probe form is written")
+}
+
+#[test]
+fn an_extension_export_snapshot_decides_the_explicit_usual_group_behavior() {
+    // An ordinary export follows the configuration's own mode.
+    assert!(writes_usual_group_behavior(true, None));
+    assert!(!writes_usual_group_behavior(false, None));
+    // An extension's forms follow the configuration it extends, whatever its
+    // own rows say; one that cannot be read leaves the platform's own edition.
+    for own_mode_writes in [false, true] {
+        for (mode, writes) in [
+            (Some("Version8_3_27"), true),
+            (Some("Version8_3_20"), true),
+            (Some("Version8_3_19"), false),
+            (Some("Version8_3_14"), false),
+            (None, true),
+        ] {
+            assert_eq!(
+                writes_usual_group_behavior(
+                    own_mode_writes,
+                    Some(&extension_export_for_test(mode))
+                ),
+                writes,
+                "own {own_mode_writes}, extended {mode:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_extension_export_snapshot_drives_every_reader_that_asks_for_it() {
+    const USUAL: &str = "\t\t\t<Behavior>Usual</Behavior>\r\n";
+    const START_DRAG: &str = "\t\t\t<EnableStartDrag>true</EnableStartDrag>\r\n";
+    const DRAG: &str = "\t\t\t<EnableDrag>true</EnableDrag>\r\n";
+    const FILTER: &str = "<v8:Type>dcsset:Filter</v8:Type>";
+    const FILTER_ID: &str = "<v8:TypeId>f6841c6b-6c71-4c82-ae9e-d08b49db326c</v8:TypeId>";
+    const APPEARANCE: &str = "<v8:Type xmlns:d7p1=\"http://v8.1c.ru/8.3/data/entext\">d7p1:ConditionalAppearance</v8:Type>";
+    const APPEARANCE_ID: &str = "<v8:TypeId>7dd764b6-b22f-4712-8edc-c0d634340e60</v8:TypeId>";
+
+    // No extension export, under the platform's own edition: the group writes
+    // its `Usual`, the planner's drag flag is not read, and the column table
+    // names both platform types at all seven places (the input field's
+    // available types, the attribute, the table column and the first value
+    // list's element type are `dcsset:Filter`; the second value list's
+    // element type, the additional column and the parameter
+    // `ConditionalAppearance`).
+    let plain = extension_export_probe_xml(None, Some(None));
+    assert_eq!(plain.matches(USUAL).count(), 1, "{plain}");
+    assert_eq!(plain.matches(START_DRAG).count(), 1, "{plain}");
+    assert_eq!(plain.matches(DRAG).count(), 0, "{plain}");
+    assert_eq!(plain.matches(FILTER).count(), 4, "{plain}");
+    assert_eq!(plain.matches(APPEARANCE).count(), 3, "{plain}");
+    assert_eq!(plain.matches("<v8:TypeId>").count(), 0, "{plain}");
+    let without_usual = plain.replacen(USUAL, "", 1);
+    // Under an extension export: the planner's drag flag is read, and every
+    // one of the seven keeps the type id the configuration does not resolve.
+    let extension_xml = |usual: bool| {
+        let xml = if usual { &plain } else { &without_usual };
+        xml.replacen(START_DRAG, &format!("{START_DRAG}{DRAG}"), 1)
+            .replace(FILTER, FILTER_ID)
+            .replace(APPEARANCE, APPEARANCE_ID)
+    };
+
+    // No extension export: the configuration's own mode decides the group.
+    assert_eq!(
+        extension_export_probe_xml(Some("Version8_3_14"), Some(None)),
+        without_usual
+    );
+    // An extension export: the configuration it extends decides the group,
+    // whatever the own mode says; one that cannot be read writes it.
+    for (extended_mode, usual) in [
+        (None, true),
+        (Some("Version8_3_27"), true),
+        (Some("Version8_3_14"), false),
+    ] {
+        for own_mode in [None, Some("Version8_3_14")] {
+            assert_eq!(
+                extension_export_probe_xml(
+                    own_mode,
+                    Some(Some(extension_export_for_test(extended_mode))),
+                ),
+                extension_xml(usual),
+                "own {own_mode:?}, extended {extended_mode:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_extension_export_snapshot_keeps_a_pattern_type_id_only_the_column_table_names() {
+    let pattern = r##"{"Pattern",{"#",f6841c6b-6c71-4c82-ae9e-d08b49db326c},{"#",7dd764b6-b22f-4712-8edc-c0d634340e60}}"##;
+    let type_id = |type_id: &str| ConstantValueType::TypeId {
+        type_id: type_id.to_owned(),
+    };
+    let reference = |reference: &str| ConstantValueType::Reference {
+        reference: reference.to_owned(),
+    };
+    assert_eq!(
+        parse_form_type_pattern(pattern, &BTreeMap::new(), true),
+        Some(vec![
+            type_id("f6841c6b-6c71-4c82-ae9e-d08b49db326c"),
+            type_id("7dd764b6-b22f-4712-8edc-c0d634340e60"),
+        ])
+    );
+    assert_eq!(
+        parse_form_type_pattern(pattern, &BTreeMap::new(), false),
+        Some(vec![
+            reference("dcsset:Filter"),
+            reference("d7p1:ConditionalAppearance"),
+        ])
+    );
+}
+
+#[test]
+fn a_form_parse_context_takes_the_extension_export_running_when_it_is_built() {
+    // The extension context is process-wide: activate it in a child process
+    // so the forms read beside this test see none.
+    const CHILD: &str = "IBCMD_RS_FORM_EXTENSION_EXPORT_SNAPSHOT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "mssql_dump::tests::a_form_parse_context_takes_the_extension_export_running_when_it_is_built",
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "isolated extension-export snapshot test failed: {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    use super::extension::{BaseIndexProvider, ExtensionContext, ResolvedIndexes, activate};
+    use super::form_body_host::active_form_extension_export;
+
+    for own_mode in [None, Some("Version8_3_14")] {
+        assert_eq!(active_form_extension_export(), None);
+        assert_eq!(
+            extension_export_probe_xml(own_mode, None),
+            extension_export_probe_xml(own_mode, Some(None))
+        );
+        for extended_mode in [None, Some("Version8_3_27"), Some("Version8_3_14")] {
+            let provider: BaseIndexProvider = std::sync::Arc::new(move || {
+                Some(ResolvedIndexes {
+                    compatibility_mode: extended_mode.map(str::to_owned),
+                    ..ResolvedIndexes::default()
+                })
+            });
+            let guard =
+                activate(ExtensionContext::new([]).with_base_provider(Some(provider))).unwrap();
+            let snapshot = extension_export_for_test(extended_mode);
+            assert_eq!(active_form_extension_export(), Some(snapshot.clone()));
+            let built_now = extension_export_probe_xml(own_mode, None);
+            drop(guard);
+            assert_eq!(
+                built_now,
+                extension_export_probe_xml(own_mode, Some(Some(snapshot))),
+                "own {own_mode:?}, extended {extended_mode:?}"
+            );
+        }
+        // A provider-less context (the `IBCMD_RS_EXTENSION_MODE` probe) reads
+        // no extended mode.
+        let guard = activate(ExtensionContext::default()).unwrap();
+        assert_eq!(
+            active_form_extension_export(),
+            Some(extension_export_for_test(None))
+        );
+        let built_now = extension_export_probe_xml(own_mode, None);
+        drop(guard);
+        assert_eq!(
+            built_now,
+            extension_export_probe_xml(own_mode, Some(Some(extension_export_for_test(None))))
+        );
+    }
+    assert_eq!(active_form_extension_export(), None);
 }
 
 #[test]

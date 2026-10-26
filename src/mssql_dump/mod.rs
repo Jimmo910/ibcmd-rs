@@ -26,7 +26,9 @@ use ibcmd_1c_text::{
 // `ibcmd-1c-vocab` crate's, and so are a few payload helpers; `mssql_dump`'s
 // modules reach them by their old names through these imports, at their old
 // visibility. The two pattern readers that need the extension-export state
-// are wrappers further down (`parse_form_metadata_type_pattern`).
+// are wrappers further down (`parse_metadata_type_pattern_element_with_builtin`,
+// and `parse_form_metadata_type_pattern`, kept for tests: the form reader
+// passes the state it was built with).
 use ibcmd_1c_vocab::{
     ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES,
     ACCUMULATION_REGISTER_TURNOVERS_STANDARD_ATTRIBUTES,
@@ -40,7 +42,8 @@ use ibcmd_1c_vocab::{
     inflate_raw_deflate, information_register_decimal_is_valid, is_svg_content,
     metadata_choice_folders_and_items_xml, metadata_reference_is_type_set,
     metadata_type_pattern_field_type_id, metadata_type_xml_name, metadata_type_xml_namespace_attr,
-    number_allowed_sign_xml, parse_common_command_shortcut_value, parse_design_time_reference,
+    number_allowed_sign_xml, parse_common_command_picture_value,
+    parse_common_command_shortcut_value, parse_design_time_reference,
     platform_reference_family_type_reference, push_binary_data_qualifiers_xml, scoped_value_type,
     standard_style_item_for_code, string_allowed_length_xml, style_system_color_name,
     unique_metadata_type_reference,
@@ -65,6 +68,15 @@ use ibcmd_core::characteristics::Characteristics;
 use ibcmd_core::diagnostic::{MetadataSourceFailureClass, ObjectPath};
 use ibcmd_core::family::FamilyId;
 use ibcmd_core::storage::StorageImage;
+// The indexes a form is parsed against (`FormParseContext`'s fields) are the
+// `ibcmd-form-body` crate's; `mssql_dump`'s modules reach them by their old
+// names through these imports, at their old visibility. Their builders stay
+// here and in `refs.rs`.
+use ibcmd_form_body::{FormObjectRefIndex, MetadataCommandReference};
+pub(crate) use ibcmd_form_body::{
+    InformationRegisterFieldReference, InformationRegisterFieldReferenceIndex,
+    InformationRegisterMasterDimensionIndex,
+};
 use ibcmd_schema::metadata_storage_facts::DataProcessorRevision16Layout;
 use ibcmd_schema::{
     GeneratedMetadataReferenceOwnerKind, parse_generated_metadata_reference_owner,
@@ -80,7 +92,6 @@ use ibcmd_xml::{
 };
 use quick_xml::NsReader;
 use quick_xml::events::Event;
-use quick_xml::name::ResolveResult;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
@@ -1041,8 +1052,8 @@ pub(crate) use file_infobase::{
 pub use postgres_infobase::PostgresExportSnapshot;
 mod form;
 mod form_body;
+mod form_body_host;
 mod form_extension;
-mod form_ref_index;
 #[cfg(test)]
 mod revision_mix_tests;
 pub(crate) use form::load_8_5_1::{
@@ -1132,12 +1143,11 @@ use config_rows::*;
 pub(crate) use dcs::*;
 use fetch::*;
 use form_body::*;
-use form_ref_index::FormObjectRefIndex;
 use forms::*;
 use metadata::*;
 use moxel_entry::*;
 pub(crate) use output_writer::FileSink;
-use output_writer::OutputWriter;
+use output_writer::{MssqlDumpTimingReportOutputExt, OutputWriter};
 use refs::*;
 use role_rights::*;
 use selected::*;
@@ -1232,6 +1242,7 @@ pub(crate) use moxel_entry::{
 };
 pub(crate) use source_assets::write_source_xml_file;
 
+use timing::MssqlDumpTimingReportExt;
 pub use timing::{
     MssqlDumpTableTimingSummary, MssqlDumpTimingReport, MssqlDumpTimingSummary,
     parse_dump_timing_summary, read_dump_timing_summaries, read_dump_timing_summary,
@@ -7808,68 +7819,6 @@ struct FlowchartBase {
     tab_order: String,
 }
 
-#[derive(Clone)]
-struct MetadataCommandReference {
-    kind: String,
-    name: String,
-    /// How many members the target's own `<BasedOn>` list declares, or `None`
-    /// when this reader cannot name the slot for the target's kind. A target
-    /// that declares none has no `CreateBasedOn` standard command at all, and
-    /// the platform keeps the raw `code:uuid` sentinel for it exactly as it
-    /// does for `use_standard_commands == false`. Evidence: over the eight
-    /// stand corpora every one of the 5 123 `<Command>`/`<CommandName>` values
-    /// naming a `.StandardCommand.CreateBasedOn` names a target whose
-    /// `<BasedOn>` is non-empty, and the five ERP УХ 3.2.12.6 documents whose
-    /// `<BasedOn/>` is empty -- `УдалитьЗаявкаНаКорректировкуЛимитов`,
-    /// `УдалитьКорректировкаЛимитов`, `СтрокаПланаЗакупок`,
-    /// `ОбоснованиеТребованийКЗакупочнойПроцедуре` and `ЗаявкаНаРасход` -- are
-    /// carried by 22 buttons the platform writes as `2:<uuid>`.
-    based_on_declared: Option<usize>,
-    /// How many owners the target's own `<Owners>` list declares, or `None`
-    /// when this reader cannot name the slot for the target's kind. A catalog
-    /// that declares none has nothing to be opened by, so it has no
-    /// `OpenByValue` standard command and the platform keeps the raw
-    /// `code:uuid` sentinel -- the same shape as `based_on_declared`.
-    ///
-    /// Evidence: over the eight stand corpora every one of the 112
-    /// `<Command>`/`<CommandName>` values naming a
-    /// `Catalog.X.StandardCommand.OpenByValue` names a catalog whose
-    /// `<Owners>` declares at least one owner, and ERP УХ 3.2.12.6 keeps
-    /// `Catalog.СхемаДоступностиРеквизитов` -- whose `<Owners/>` is empty --
-    /// as `4:bdd23491-0b0b-49b7-bda4-8a0b0870f4fd` in
-    /// `Catalogs/ЭтапыУниверсальныхПроцессов/Forms/ФормаЭлемента`.
-    owners_declared: Option<usize>,
-    /// Whether the target information register declares
-    /// `<WriteMode>RecorderSubordinate</WriteMode>`, or `None` for every other
-    /// kind. A register written independently has no recorder, so it has no
-    /// `OpenByRecorder` standard command.
-    ///
-    /// Evidence: over the eight stand corpora all ten
-    /// `<Command>`/`<CommandName>` values naming an
-    /// `InformationRegister.X.StandardCommand.OpenByRecorder` name a register
-    /// that declares `RecorderSubordinate`, and none names an `Independent`
-    /// one; ERP УХ 3.2.12.6 keeps
-    /// `InformationRegister.НастройкаРаспределенияПоНаправлениямДеятельности`
-    /// (`Independent`) as `2:7f22e01e-6dbf-4a58-a96b-b455c935ab6b` in
-    /// `Catalogs/Организации/Forms/ФормаЭлемента`.
-    recorder_subordinate: Option<bool>,
-    /// Whether the target metadata object itself declares
-    /// `<UseStandardCommands>true</UseStandardCommands>`. Both command-interface
-    /// readers (this object's own `Ext/CommandInterface.xml` and a form's
-    /// embedded `<CommandInterface>`) must decline to synthesize a
-    /// `.StandardCommand.X` name when this is `false`: the platform keeps the
-    /// raw `code:uuid` sentinel instead, because the standard command does not
-    /// exist on that target. Evidence: ERP UH `MDM_Management`,
-    /// `Catalog.ТабличныеЧастиБД` (`UseStandardCommands=false`) is kept as
-    /// `0:04c1ab92-f4fc-40e9-b0d6-a1c57a5a8b47` in
-    /// `Subsystems/.../Ext/CommandInterface.xml`, and `Catalog.СправочникиБД`
-    /// (also `false`) is kept as `4:67b8886f-f30d-480c-abb8-e3712f3c169c` in
-    /// `Catalogs/ТипыБазДанных/Forms/ФормаЭлемента/Ext/Form.xml`. Defaults to
-    /// `true` (today's behaviour) for every kind the index cannot yet prove a
-    /// value for -- only `Catalog` is evidenced so far.
-    use_standard_commands: bool,
-}
-
 fn parse_exchange_plan_content_blob(
     bytes: &[u8],
     object_refs: &BTreeMap<String, String>,
@@ -10553,18 +10502,6 @@ struct FormSourceReference {
     relative_path: PathBuf,
     kind: &'static str,
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct InformationRegisterFieldReference {
-    pub(crate) field_reference: String,
-    pub(crate) value_owner_references: BTreeSet<String>,
-}
-
-pub(crate) type InformationRegisterFieldReferenceIndex =
-    BTreeMap<String, Vec<InformationRegisterFieldReference>>;
-
-/// Register uuid -> its master dimension names in declaration order.
-pub(crate) type InformationRegisterMasterDimensionIndex = BTreeMap<String, Vec<String>>;
 
 /// The leaves a named type set declares, keyed by the name the set is written
 /// under (`cfg:DefinedType.X`, `cfg:Characteristic.X`).
@@ -36161,169 +36098,6 @@ fn parse_command_group_picture_value(
     Some((None, load_transparent))
 }
 
-fn parse_common_command_picture_value(
-    value: &str,
-    object_refs: &BTreeMap<String, String>,
-) -> Option<(Option<String>, bool)> {
-    let fields = split_1c_braced_fields(value, 0)?;
-    if fields.first()?.trim() != "4" {
-        return None;
-    }
-    let picture_kind = fields.get(1)?.trim().parse::<i32>().ok()?;
-    let load_transparent = fields
-        .get(6)
-        .and_then(|field| parse_1c_bool_flag(field.trim()))
-        .unwrap_or(false);
-    if picture_kind == 0 {
-        return Some((None, load_transparent));
-    }
-    if picture_kind == 1 {
-        let ref_fields = split_1c_braced_fields(fields.get(2)?, 0)?;
-        if ref_fields.first()?.trim() == "-1" {
-            return Some((
-                Some("StdPicture.InputFieldSelect".to_string()),
-                load_transparent,
-            ));
-        }
-        if ref_fields.first()?.trim() == "-2" {
-            return Some((
-                Some("StdPicture.InputFieldClear".to_string()),
-                load_transparent,
-            ));
-        }
-        if ref_fields.first()?.trim() == "-3" {
-            return Some((Some("StdPicture.MoveUp".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-4" {
-            return Some((Some("StdPicture.MoveDown".to_string()), load_transparent));
-        }
-        // `-5` was the one negative code this table lacked while its sibling
-        // table for help-topic picture tokens already carried it, so the two
-        // disagreed about the same platform identity. The native tree writes
-        // `StdPicture.InputFieldCalendar` for all 12 of its occurrences.
-        if ref_fields.first()?.trim() == "-5" {
-            return Some((
-                Some("StdPicture.InputFieldCalendar".to_string()),
-                load_transparent,
-            ));
-        }
-        if ref_fields.first()?.trim() == "-9" {
-            return Some((Some("StdPicture.MoveRight".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-8" {
-            return Some((Some("StdPicture.MoveLeft".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-7" {
-            return Some((
-                Some("StdPicture.InputFieldOpen".to_string()),
-                load_transparent,
-            ));
-        }
-        if ref_fields.first()?.trim() == "-10" {
-            return Some((Some("StdPicture.CheckAll".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-11" {
-            return Some((Some("StdPicture.UncheckAll".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-13" {
-            return Some((Some("StdPicture.Print".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-14" {
-            return Some((
-                Some("StdPicture.InputFieldChooseType".to_string()),
-                load_transparent,
-            ));
-        }
-        // `-15` and `-16` continue the same ordinal run as the codes above and
-        // were the only two negative codes the reference tree observes that this
-        // table did not carry: over all 5 200 forms `-15` reads
-        // `StdPicture.ZoomOut` on all 8 of its occurrences and `-16`
-        // `StdPicture.ZoomIn` on all 7, with no counter-example and no other
-        // table in the crate mapping either code in a picture context.
-        if ref_fields.first()?.trim() == "-15" {
-            return Some((Some("StdPicture.ZoomOut".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-16" {
-            return Some((Some("StdPicture.ZoomIn".to_string()), load_transparent));
-        }
-        // The corpus-wide source difference leaves one further published
-        // negative picture code: `-100` is paired with `StdPicture.Select`.
-        // It occurs once; no other negative descriptor or native picture name
-        // remains unmatched after the already enumerated codes are removed.
-        if ref_fields.first()?.trim() == "-100" {
-            return Some((Some("StdPicture.Select".to_string()), load_transparent));
-        }
-        // The last two codes the reference trees observe and this table did not
-        // carry.  Census over all 12 895 ERP УХ 3.2.12.6 form layouts and all
-        // 1 738 Документооборот КОРП 3.0.21.3 ones, pairing each layout's
-        // one-member negative reference descriptors against the
-        // `StdPicture.*` names the native body of the same form writes and
-        // subtracting the codes this table already spells: exactly two codes
-        // are left unspelled anywhere, `-6` in 3 records and `-200` in 6, and
-        // exactly two names are left unexplained, `StdPicture.
-        // InputFieldCalculator` and `StdPicture.Clear`, each alone with its
-        // code in every form that carries it and never seen beside the other.
-        // `-6` also has a second, independent authority inside this crate:
-        // `spreadsheet_standard_picture_ref` already writes it for
-        // `StdPicture.InputFieldCalculator` on the packing side.
-        //
-        // `-200` is off the ordinal run the codes above form, which is why it
-        // is spelled out rather than interpolated: nothing between `-17` and
-        // `-199` occurs in any reference tree, so the run says nothing about
-        // what those codes would mean.
-        if ref_fields.first()?.trim() == "-6" {
-            return Some((
-                Some("StdPicture.InputFieldCalculator".to_string()),
-                load_transparent,
-            ));
-        }
-        if ref_fields.first()?.trim() == "-200" {
-            return Some((Some("StdPicture.Clear".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "0" {
-            // Same bare-index reference the register table admits; reading past
-            // the end of a one-element reference used to abort the whole
-            // descriptor here, which is a third answer neither table means.
-            let Some(uuid) = ref_fields.get(1).map(|field| field.trim()) else {
-                return Some((Some("0".to_string()), load_transparent));
-            };
-            if let Some(reference) = standard_picture_name(uuid) {
-                return Some((Some(reference.to_string()), load_transparent));
-            }
-            if let Some(reference) = object_refs.get(uuid)
-                && reference.starts_with("CommonPicture.")
-            {
-                return Some((Some(reference.clone()), load_transparent));
-            }
-            // A uuid that names nothing in the configuration is still a
-            // reference the platform writes: it spells it `<code>:<uuid>` --
-            // the descriptor's own two members, joined -- rather than dropping
-            // the picture.  Answering `None` here dropped the whole `<Picture>`
-            // element, not just the name.
-            //
-            // Census over ERP УХ 3.2.12.6, Документооборот КОРП 3.0.21.3,
-            // УТ 11.5.27.75, БСП демо и БСП базовая: of the 63 449 `<xr:Ref>`
-            // values those five trees write, exactly three spellings occur --
-            // 39 566 `CommonPicture.<name>`, 23 873 `StdPicture.<name>` and 16
-            // of this shape, all of them `0:<uuid>`, all in ERP УХ, over 10
-            // distinct uuids.  Every one of those uuids occurs *only* inside
-            // form bodies and names no object anywhere in the configuration,
-            // which is why the lookups above cannot answer them; the one that
-            // also occurs outside a form body is an equally dangling
-            // `<xr:Item xsi:type="xr:MDObjectRef">` of a subsystem's content
-            // list, written there as the bare uuid.
-            //
-            // Restricted to a uuid the object index does not carry at all: a
-            // uuid that does resolve, to something that is not a common
-            // picture, is a different question this corpus does not observe.
-            if !object_refs.contains_key(uuid) {
-                return Some((Some(format!("0:{uuid}")), load_transparent));
-            }
-        }
-    }
-    Some((None, load_transparent))
-}
-
 /// The platform's standard pictures, named and stored through the one table
 /// of the crate (`metadata_model::standard_pictures`).
 pub(crate) use crate::metadata_model::standard_pictures::{
@@ -37190,7 +36964,9 @@ fn parse_metadata_type_pattern(
 }
 
 /// [`ibcmd_1c_vocab::parse_form_metadata_type_pattern`] with the
-/// extension-export state as its `keeps_unresolved_type_id`.
+/// extension-export state as its `keeps_unresolved_type_id`. The form reader
+/// passes the state it was built with instead (`form_body::parse_form_type_pattern`).
+#[cfg(test)]
 fn parse_form_metadata_type_pattern(
     value: &str,
     type_index: &BTreeMap<String, String>,

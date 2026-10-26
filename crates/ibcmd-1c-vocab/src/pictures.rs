@@ -317,7 +317,7 @@ static STANDARD_PICTURE_NAMES: LazyLock<HashMap<&'static str, &'static str>> =
 /// The `StdPicture.<Name>` the platform writes for a picture identifier,
 /// `None` for an identifier that is no standard picture (a configuration's
 /// own common picture, or one the table has not measured).
-pub(crate) fn standard_picture_name(uuid: &str) -> Option<&'static str> {
+pub fn standard_picture_name(uuid: &str) -> Option<&'static str> {
     STANDARD_PICTURE_NAMES
         .get(uuid.to_ascii_lowercase().as_str())
         .copied()
@@ -325,7 +325,7 @@ pub(crate) fn standard_picture_name(uuid: &str) -> Option<&'static str> {
 
 /// The identifier a `StdPicture.<Name>` is stored by, read off the same
 /// table.
-pub(crate) fn standard_picture_uuid(reference: &str) -> Option<&'static str> {
+pub fn standard_picture_uuid(reference: &str) -> Option<&'static str> {
     STANDARD_PICTURES
         .iter()
         .find_map(|(uuid, name)| (*name == reference).then_some(*uuid))
