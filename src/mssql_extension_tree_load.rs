@@ -36,6 +36,8 @@ const CONFIG_DUMP_INFO: &str = "ConfigDumpInfo.xml";
 const TABLELESS_FAMILIES: &[(&str, &str)] = &[
     ("CommonForms", "CommonForm"),
     ("DataProcessors", "DataProcessor"),
+    ("HTTPServices", "HTTPService"),
+    ("Subsystems", "Subsystem"),
     ("CommonModules", "CommonModule"),
     ("CommonPictures", "CommonPicture"),
     ("CommonTemplates", "CommonTemplate"),
@@ -649,11 +651,25 @@ fn is_tableless_family(family: &str) -> bool {
     TABLELESS_FAMILIES.iter().any(|(dir, _)| *dir == family)
 }
 
+fn subsystem_metadata_path(mut parts: &[&str]) -> bool {
+    loop {
+        match parts {
+            ["Subsystems", file] => return file.ends_with(".xml"),
+            ["Subsystems", _, "Ext", ..] => return true,
+            ["Subsystems", _, rest @ ..] if rest.first() == Some(&"Subsystems") => parts = rest,
+            _ => return false,
+        }
+    }
+}
+
 fn refusal(path: &str, moved: Option<&str>, root_edit_supported: bool) -> Option<&'static str> {
     if path == CONFIG_DUMP_INFO {
         return None;
     }
     let segments = path.split('/').collect::<Vec<_>>();
+    if subsystem_metadata_path(&segments) {
+        return None;
+    }
     if let Some(moved) = moved {
         // An object of a table-less family comes or goes with its descriptor
         // and its bodies (the root's child list follows, see
@@ -1395,4 +1411,5 @@ mod tests {
                 .any(|p| p.starts_with("DataProcessors/"))
         );
     }
+
 }
