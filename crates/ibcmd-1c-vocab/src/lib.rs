@@ -8,9 +8,10 @@
 //! Everything here moved from the root crate's `mssql_dump` (`mod.rs`, the
 //! picture-payload helpers from `source_assets.rs` and the standard command
 //! of a metadata kind from `command_interface.rs`), and the standard
-//! pictures from its `metadata_model::standard_pictures`; `inflate_raw`, which
-//! `inflate_raw_deflate` names in its context, is `module_blob`'s raw inflater
-//! and `module_blob`'s SVG check is `is_svg_content`. The root still
+//! pictures from its `metadata_model::standard_pictures`; `inflate_raw_deflate`
+//! names in its context the raw inflater of `ibcmd-module-blob` (formerly
+//! `module_blob`'s, then this crate's), and `module_blob`'s SVG check is
+//! `is_svg_content`. The root still
 //! reaches every item by its old name through imports. The bodies are unchanged but
 //! for one argument: the two pattern readers take
 //! `keeps_unresolved_type_id`, which answers whether a type id nothing
@@ -56,9 +57,7 @@ pub use style::{
     standard_style_item_code_for_name, standard_style_item_for_code, style_system_color_name,
     style_web_color_name,
 };
-pub use support::{
-    elapsed_ms, ext_picture_file_name, inflate_raw, inflate_raw_deflate, is_svg_content,
-};
+pub use support::{elapsed_ms, ext_picture_file_name, inflate_raw_deflate, is_svg_content};
 pub use type_xml::{
     DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE, form_metadata_type_xml_tag,
     format_form_metadata_types_xml, format_form_metadata_types_xml_with_indent,

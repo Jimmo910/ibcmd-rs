@@ -674,6 +674,7 @@ dependencies = [
  "flate2",
  "ibcmd-1c-text",
  "ibcmd-form-schema",
+ "ibcmd-module-blob",
  "ibcmd-schema",
  "ibcmd-xml",
 ]
@@ -757,6 +758,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-module-blob"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "ibcmd-1c-text",
+ "ibcmd-v8",
+ "serde",
+ "sha2",
+ "uuid",
+]
+
+[[package]]
 name = "ibcmd-moxel"
 version = "0.1.0"
 dependencies = [
@@ -805,6 +819,7 @@ dependencies = [
  "ibcmd-form-body",
  "ibcmd-form-native",
  "ibcmd-form-schema",
+ "ibcmd-module-blob",
  "ibcmd-moxel",
  "ibcmd-postgres",
  "ibcmd-restructure",

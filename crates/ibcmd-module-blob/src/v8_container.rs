@@ -1,13 +1,13 @@
 use anyhow::{Result, anyhow};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(crate) struct V8Element {
-    pub(crate) name: String,
-    pub(crate) header: Vec<u8>,
-    pub(crate) data: Vec<u8>,
+pub struct V8Element {
+    pub name: String,
+    pub header: Vec<u8>,
+    pub data: Vec<u8>,
 }
 
-pub(crate) fn parse_v8_container(bytes: &[u8]) -> Result<Vec<V8Element>> {
+pub fn parse_v8_container(bytes: &[u8]) -> Result<Vec<V8Element>> {
     let container = ibcmd_v8::format15::parse(bytes).map_err(anyhow::Error::new)?;
     container
         .elements
@@ -25,14 +25,14 @@ pub(crate) fn parse_v8_container(bytes: &[u8]) -> Result<Vec<V8Element>> {
         .collect()
 }
 
-pub(crate) fn read_v8_element_data(bytes: &[u8], target_name: &str) -> Result<Option<Vec<u8>>> {
+pub fn read_v8_element_data(bytes: &[u8], target_name: &str) -> Result<Option<Vec<u8>>> {
     Ok(parse_v8_container(bytes)?
         .into_iter()
         .find(|element| element.name == target_name)
         .map(|element| element.data))
 }
 
-pub(crate) fn build_v8_container(elements: &[V8Element]) -> Result<Vec<u8>> {
+pub fn build_v8_container(elements: &[V8Element]) -> Result<Vec<u8>> {
     let document = ibcmd_v8::writer::Format15Document::new(
         1,
         elements
@@ -48,7 +48,7 @@ pub(crate) fn build_v8_container(elements: &[V8Element]) -> Result<Vec<u8>> {
     ibcmd_v8::writer::write_format15_to_vec(&document).map_err(anyhow::Error::new)
 }
 
-pub(crate) fn make_v8_element_header(name: &str) -> Vec<u8> {
+pub fn make_v8_element_header(name: &str) -> Vec<u8> {
     ibcmd_v8::writer::make_element_header(name)
 }
 
