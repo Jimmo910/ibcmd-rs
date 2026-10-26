@@ -5903,7 +5903,7 @@ fn native_button_command(
     if let Some((head, tail)) = path.split_once(':')
         && !head.is_empty()
         && head.bytes().all(|byte| byte.is_ascii_digit())
-        && is_uuid_reference(tail)
+        && is_uuid_like_ascii(tail.as_bytes())
     {
         return Ok(format!("{{{head},{tail}}}"));
     }
@@ -16442,7 +16442,7 @@ fn native_command_interface_item(
         None => "{0}".to_string(),
         Some(name) => {
             let uuid = common_command_group_uuid(name)
-                .or_else(|| is_uuid_reference(name).then(|| name.to_string()))
+                .or_else(|| is_uuid_like_ascii(name.as_bytes()).then(|| name.to_string()))
                 .or_else(|| {
                     let name = name.strip_prefix("CommandGroup.")?;
                     source?
@@ -16504,7 +16504,7 @@ fn native_command_interface_command(
     if let Some((head, tail)) = reference.split_once(':')
         && head.bytes().all(|byte| byte.is_ascii_digit())
         && !head.is_empty()
-        && is_uuid_reference(tail)
+        && is_uuid_like_ascii(tail.as_bytes())
     {
         return Ok(format!("{{{head},{tail}}}"));
     }
@@ -16630,19 +16630,6 @@ const OBJECT_STANDARD_COMMAND_ORDINALS: &[(&str, &str, u32)] = &[
     ("InformationRegister", "OpenList", 0),
     ("Report", "Open", 0),
 ];
-
-/// Whether a string is a bare uuid, which both a command and a command group
-/// can be spelled as when the export could not name the target.
-fn is_uuid_reference(value: &str) -> bool {
-    value.len() == 36
-        && value.bytes().enumerate().all(|(index, byte)| {
-            if matches!(index, 8 | 13 | 18 | 23) {
-                byte == b'-'
-            } else {
-                byte.is_ascii_hexdigit()
-            }
-        })
-}
 
 /// Whether a path sits under a command interface panel, either of the two.
 ///
@@ -25238,7 +25225,7 @@ fn form_setting_base64_xml(existing: &str) -> Result<Option<String>> {
 }
 
 fn find_form_setting_value_range(text: &str, key: &str) -> Option<Range<usize>> {
-    let needle = format!("\"{}\"", key.replace('"', "\"\""));
+    let needle = format_1c_string(key);
     let mut offset = 0usize;
     while let Some(relative) = text[offset..].find(&needle) {
         let key_start = offset + relative;
