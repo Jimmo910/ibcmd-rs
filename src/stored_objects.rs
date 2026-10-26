@@ -1769,7 +1769,9 @@ mod tests {
     fn immutable_snapshot_after_rebinding()
     -> (StoredConfiguration, crate::test_scratch::TestScratch) {
         use std::io::Read;
-        let root = std::env::temp_dir().join(format!("derived-snapshot-{}", uuid::Uuid::new_v4()));
+        let root = crate::test_scratch::TestScratch::adopt(
+            std::env::temp_dir().join(format!("derived-snapshot-{}", uuid::Uuid::new_v4())),
+        );
         let db = root.join("db");
         fs::create_dir_all(&db).unwrap();
         let fixture =
@@ -1793,7 +1795,7 @@ mod tests {
         );
         fs::rename(db.join("1Cv8.1CD"), root.join("preserved.1CD")).unwrap();
         fs::write(db.join("1Cv8.1CD"), b"replacement must never be opened").unwrap();
-        (configuration, crate::test_scratch::TestScratch::adopt(root))
+        (configuration, root)
     }
 
     fn isolated_snapshot_test(name: &str) -> bool {

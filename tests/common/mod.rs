@@ -170,9 +170,10 @@ pub fn temp_file(tag: &str, extension: &str) -> Scratch {
 
 /// The fixed directory `ibcmd-external-<tag>`, cleared here and left in place
 /// after the test, for tools that look for it by name: the VS Code tests read
-/// `ibcmd-external-editor-server-protocol/rows/demo` (`IBCMD_TEST_ROWS`). It
-/// is the one test directory a run leaves behind, and the CI leftover check
-/// allows it. Two runs on one machine share it.
+/// the `editor-server-protocol` and `editor-server-export` corpora
+/// (`tests/editor_server.rs`, `Corpus::kept`). They are the only test
+/// directories a run leaves behind, and the CI leftover check allows them.
+/// Two runs on one machine share them.
 #[track_caller]
 pub fn kept_temp_dir(tag: &str) -> PathBuf {
     claim_tag(tag, std::panic::Location::caller().file());

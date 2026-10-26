@@ -79,10 +79,11 @@ machine never share a directory.
 `IBCMD_TEST_KEEP_FIXTURES=1` keeps the fixtures for debugging; no other value
 does, and no gate sets it for the Rust tests.
 
-A run leaves two names on purpose: `ibcmd-external-editor-server-protocol`,
-whose `rows/demo` the VS Code tests read (`IBCMD_TEST_ROWS`,
-`editors/vscode/README.md`), and the empty `ibcmd-rs`, the parent that the
-engine's own scratch folders share. The offline matrix runs its tests with
+A run leaves three names on purpose. Two are the editor-server corpora that
+the VS Code tests read by name: `ibcmd-external-editor-server-protocol`
+(`IBCMD_TEST_ROWS`, `editors/vscode/README.md`) and
+`ibcmd-external-editor-server-export`. The third is the empty `ibcmd-rs`,
+the parent that the engine's own scratch folders share. The offline matrix runs its tests with
 `TEMP`, `TMP` and `TMPDIR` set to an empty directory and fails when anything
 else is left there; `cargo xtask ci` runs the cargo test steps with
 `target/xtask/tmp` and checks it the same way.

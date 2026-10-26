@@ -39,10 +39,13 @@ const MERGE_WORKFLOW: &str = ".github/workflows/offline-e2e.yml";
 /// `ci`, emptied before them and checked after them, as the offline matrix
 /// checks its own (docs/testing.md, "Temporary directories").
 const TEST_TEMP: &str = "target/xtask/tmp";
-/// The two names a test run leaves there on purpose: the editor-server corpus
-/// whose rows the VS Code tests read by name, and the parent the engine's
-/// scratch folders share, when it is empty.
-const KEPT_TEMP: &str = "ibcmd-external-editor-server-protocol";
+/// The names a test run leaves there on purpose: the editor-server corpora
+/// the VS Code tests read by name, and the parent the engine's scratch
+/// folders share, when it is empty.
+const KEPT_TEMP: [&str; 2] = [
+    "ibcmd-external-editor-server-protocol",
+    "ibcmd-external-editor-server-export",
+];
 const SHARED_SCRATCH_PARENT: &str = "ibcmd-rs";
 const TAIL_LINES: usize = 40;
 
@@ -515,14 +518,14 @@ fn temp_left(dir: &Path) -> ExitCode {
     }
 }
 
-/// The names in `dir` but [`KEPT_TEMP`] and an empty [`SHARED_SCRATCH_PARENT`],
-/// sorted.
+/// The names in `dir` but those of [`KEPT_TEMP`] and an empty
+/// [`SHARED_SCRATCH_PARENT`], sorted.
 fn left_in(dir: &Path) -> io::Result<Vec<String>> {
     let mut left = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        let kept = name == KEPT_TEMP
+        let kept = KEPT_TEMP.contains(&name.as_str())
             || (name == SHARED_SCRATCH_PARENT
                 && fs::read_dir(entry.path()).is_ok_and(|mut inner| inner.next().is_none()));
         if !kept {
@@ -985,7 +988,9 @@ mod tests {
         }
         let dir = Scratch(env::temp_dir().join(format!("xtask-temp-left-{}", std::process::id())));
         let _ = fs::remove_dir_all(&dir.0);
-        fs::create_dir_all(dir.0.join(KEPT_TEMP).join("rows")).unwrap();
+        for kept in KEPT_TEMP {
+            fs::create_dir_all(dir.0.join(kept).join("rows")).unwrap();
+        }
         fs::create_dir(dir.0.join(SHARED_SCRATCH_PARENT)).unwrap();
         assert!(left_in(&dir.0).unwrap().is_empty());
         fs::write(dir.0.join(SHARED_SCRATCH_PARENT).join("stale"), b"").unwrap();

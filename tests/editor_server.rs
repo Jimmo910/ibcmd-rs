@@ -79,8 +79,10 @@ impl Corpus {
     }
 
     /// The corpus in the fixed folder `ibcmd-external-editor-server-<tag>`,
-    /// left in place after the test: the VS Code tests read its `rows/demo`
-    /// (`IBCMD_TEST_ROWS`, editors/vscode/README.md).
+    /// left in place after the test: the VS Code tests read the `protocol`
+    /// corpus's `rows/demo` (`IBCMD_TEST_ROWS`, editors/vscode/README.md) and
+    /// the `export` corpus's `rows/demo` and `reference/demo`
+    /// (`editors/vscode/test/real.test.js`, `source-host-suite.js`).
     fn kept(tag: &str) -> Self {
         Self::fill(common::kept_temp_dir(&format!("editor-server-{tag}")))
     }
@@ -527,7 +529,8 @@ fn invalid_rpc_envelopes_do_not_dispatch_operations() {
 
 #[test]
 fn serve_exports_objects_as_the_command_line_does() {
-    let corpus = Corpus::new("export");
+    // The VS Code tests read this corpus's rows and references after the run.
+    let corpus = Corpus::kept("export");
     let mut server = Server::start(&corpus);
     server.ok("initialize", corpus.initialize_params());
     for (id, _) in FIXTURES {

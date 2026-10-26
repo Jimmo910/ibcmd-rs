@@ -22,8 +22,9 @@ fn unpack(path: &Path) -> Vec<u8> {
     bytes
 }
 fn case() -> Case {
-    let root =
-        std::env::temp_dir().join(format!("editor-export-read-scope-{}", uuid::Uuid::new_v4()));
+    let root = crate::test_scratch::TestScratch::adopt(
+        std::env::temp_dir().join(format!("editor-export-read-scope-{}", uuid::Uuid::new_v4())),
+    );
     fs::create_dir_all(root.join("db")).unwrap();
     let db = root.join("db/1Cv8.1CD");
     fs::write(&db, unpack(&fixture("tiny.1CD.gz"))).unwrap();
@@ -37,7 +38,7 @@ fn case() -> Case {
     let stage = root.join("stage");
     fs::create_dir(&stage).unwrap();
     Case {
-        root: crate::test_scratch::TestScratch::adopt(root),
+        root,
         db,
         source,
         stage,
