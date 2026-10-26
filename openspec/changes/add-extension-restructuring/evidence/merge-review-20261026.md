@@ -56,3 +56,13 @@ The integration into the product is c0aa7c6ab6847d91d8b4490b172808bceb01a289;
 it adds current master's tests/scripts/baselines without changing the reviewed
 production code. Complete local CI and final review are recorded separately
 with the exact final revision in the PR and local immutable receipts.
+## Terminal local gates
+
+Source 8828b498215da13a88655b2d773dcd3af3e3bdb8 passed cargo xtask ci:
+28 steps, including the integrated corpus, workspace crates, root integration
+suites and 4,108 root-library tests (0 failures, 16 existing ignored tests).
+The fresh critic returned APPROVE after verifying the terminal receipt and
+independently executing the targeted harness and corpus union checks.
+All eight verified CodeRabbit threads were answered and resolved. The final
+handoff only changes Markdown; strict OpenSpec is revalidated after that edit.
+Hosted checks remain mandatory for the final published head before merging.

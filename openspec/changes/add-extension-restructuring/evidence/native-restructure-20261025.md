@@ -123,7 +123,7 @@ both retained; no extension restructuring behavior changed during the merge.
 
 Local gates do not replace the hosted release-build, native micro-corpus,
 SBOM or release-audit checks. Their current result remains visible in PR #584.
-The published corpus PR is Untru/1c-fixtures#2; neither PR is self-merged.
+At that historical handoff, product PR584 and corpus PR Untru/1c-fixtures#2 were both unmerged.
 The ready dev debug=0 binary for that gated source has SHA-256
 2a7a2a0abc5d8d6c28c5f756cfad0927be072cf5d22092c22560a196919022cd.
 It is distinct from the native/own SQL-execution binaries identified above.

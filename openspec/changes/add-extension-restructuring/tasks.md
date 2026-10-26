@@ -13,4 +13,4 @@
 - [x] 11. Verify post-publication review findings about root ChildObjects and verify membership against actual admitted descriptor changes (#582).
 - [x] 12. Close unmodeled structural-refusal fallbacks and validate SQL server capabilities before version-specific restructuring SQL (#582).
 - [x] 13. Harden isolated-test execution receipts and clarify historical gate identities and review documentation (#582).
-- [ ] 14. Integrate current master, repeat relevant local gates and fresh review, resolve verified review threads and prepare PR584 for authorized merge with required checks preserved (#582).
+- [x] 14. Integrate current master, repeat relevant local gates and fresh review, resolve verified review threads and prepare PR584 for authorized merge with required checks preserved (#582).
