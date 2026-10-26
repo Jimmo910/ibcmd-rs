@@ -893,8 +893,61 @@ fn allocation_steps(
     Ok(steps)
 }
 
-/// A complete stage is classified before any data/schema writes. `None`
-/// means all changed paths were proven to need no SQL schema/data update.
+// This is a separate request, not an IF around modern syntax in the same
+// batch: old servers must return a precise refusal before parsing STRING_AGG
+// or SQL2016 catalog columns. ProductVersion is readable on older servers.
+fn with_structural_sql_capability<T>(
+    database: &str,
+    mut query: impl FnMut(&str) -> Result<Vec<crate::sql::SqlRow>>,
+    next: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    fn scalar(rows: Vec<crate::sql::SqlRow>, label: &str) -> Result<crate::sql::SqlValue> {
+        let [row] = rows.as_slice() else {
+            bail!("extension restructuring requires one unambiguous {label} result");
+        };
+        if row.result_set != 0 || row.values.len() != 1 || row.value(0)?.is_null() {
+            bail!("extension restructuring requires known {label}");
+        }
+        Ok(row.value(0)?.clone())
+    }
+    let version = scalar(
+        query("SELECT CONVERT(nvarchar(128), SERVERPROPERTY(N'ProductVersion'))")?,
+        "SQL ProductVersion",
+    )?;
+    let text = version
+        .as_str()
+        .context("extension restructuring requires a textual SQL ProductVersion")?;
+    let parts = text
+        .trim()
+        .split('.')
+        .map(str::parse::<u32>)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("extension restructuring cannot parse SQL ProductVersion")?;
+    if parts.len() != 4 || parts[0] < 14 {
+        bail!(
+            "extension restructuring requires SQL Server 2017 (major14) or later for ordered STRING_AGG and catalog checks; observed {text:?}"
+        );
+    }
+    let compatibility = scalar(
+        query(&format!(
+            "SELECT CONVERT(int, compatibility_level) FROM sys.databases WHERE name=N'{}'",
+            quote_string(database)
+        ))?,
+        "target database compatibility_level",
+    )?;
+    let compatibility = compatibility.as_i64().context(
+        "extension restructuring requires an integer target database compatibility_level",
+    )?;
+    if compatibility < 110 {
+        bail!(
+            "extension restructuring requires target database compatibility_level >=110 for STRING_AGG WITHIN GROUP; observed {compatibility}"
+        );
+    }
+    next()
+}
+
+/// Classify a stage before data/schema writes. `None` proves only that no
+/// SQL schema/data update was planned, not that a prior source refusal is safe.
 pub(crate) fn prepare(
     sql: &SqlExec,
     database: &str,
@@ -941,8 +994,18 @@ pub(crate) fn prepare(
     if changed.is_empty() {
         return Ok(None);
     }
-    let s = state(sql, database, extension_id)?;
-    plan_from_source_trees(&base, &next, active, &proposed, extension_id, &s)
+    with_structural_sql_capability(
+        database,
+        |query| {
+            sql.client()
+                .context("extension restructuring requires the built-in SQL client")?
+                .query_rows(query, &[])
+        },
+        || {
+            let s = state(sql, database, extension_id)?;
+            plan_from_source_trees(&base, &next, active, &proposed, extension_id, &s)
+        },
+    )
 }
 
 /// Plan an already exported and fully validated pair without database access.
@@ -1329,6 +1392,154 @@ mod tests {
             dropped: EMPTY_GENERATION.to_vec(),
         }]
     }
+    #[test]
+    fn final_admission_sql_capability_accepts_evidenced_floor_and_denies_ambiguous_rows() {
+        use crate::sql::{SqlRow, SqlValue};
+        for (version, level) in [
+            ("14.0.1000.169", 110),
+            ("17.0.1135.8", 170),
+            ("18.0.1.2", 110),
+        ] {
+            let mut queries = Vec::new();
+            let result = with_structural_sql_capability(
+                "target'quoted",
+                |query| {
+                    queries.push(query.to_owned());
+                    let value = if queries.len() == 1 {
+                        assert_eq!(
+                            query,
+                            "SELECT CONVERT(nvarchar(128), SERVERPROPERTY(N'ProductVersion'))"
+                        );
+                        SqlValue::Text(version.into())
+                    } else {
+                        assert!(query.contains("name=N'target''quoted'"));
+                        SqlValue::Int(level)
+                    };
+                    Ok(vec![SqlRow {
+                        result_set: 0,
+                        values: vec![value],
+                    }])
+                },
+                || Ok("planned"),
+            )
+            .unwrap();
+            assert_eq!(result, "planned");
+            assert_eq!(queries.len(), 2);
+        }
+        for rows in [
+            vec![],
+            vec![SqlRow {
+                result_set: 0,
+                values: vec![SqlValue::Int(17)],
+            }],
+            vec![
+                SqlRow {
+                    result_set: 0,
+                    values: vec![SqlValue::Text("17.0.1.2".into())]
+                };
+                2
+            ],
+            vec![SqlRow {
+                result_set: 0,
+                values: vec![SqlValue::Text("17.0.1.2".into()), SqlValue::Int(1)],
+            }],
+        ] {
+            assert!(
+                with_structural_sql_capability::<()>(
+                    "db",
+                    |_| Ok(rows.clone()),
+                    || panic!("ambiguous capability reached state/plan")
+                )
+                .is_err()
+            );
+        }
+        for rows in [
+            vec![],
+            vec![SqlRow {
+                result_set: 0,
+                values: vec![SqlValue::Text("110".into())],
+            }],
+            vec![
+                SqlRow {
+                    result_set: 0,
+                    values: vec![SqlValue::Int(110)]
+                };
+                2
+            ],
+        ] {
+            let mut reads = 0;
+            assert!(
+                with_structural_sql_capability::<()>(
+                    "db",
+                    |_| {
+                        reads += 1;
+                        if reads == 1 {
+                            Ok(vec![SqlRow {
+                                result_set: 0,
+                                values: vec![SqlValue::Text("17.0.1135.8".into())],
+                            }])
+                        } else {
+                            Ok(rows.clone())
+                        }
+                    },
+                    || panic!("missing/ambiguous/wrong-type compatibility reached state/plan")
+                )
+                .is_err()
+            );
+            assert_eq!(reads, 2);
+        }
+    }
+
+    #[test]
+    fn final_admission_sql_capability_refuses_before_catalog_or_plan_queries() {
+        use crate::sql::{SqlRow, SqlValue};
+        for (version, compatibility) in [
+            (Some("13.0.6300.2"), Some(130)),
+            (Some("10.50.6000.34"), Some(100)),
+            (None, Some(150)),
+            (Some("unknown"), Some(150)),
+            (Some("14.0.1000.169"), Some(100)),
+            (Some("17.0.1135.8"), None),
+        ] {
+            let entered = std::cell::Cell::new(false);
+            let mut queries = Vec::new();
+            let result = with_structural_sql_capability(
+                "target",
+                |query| {
+                    queries.push(query.to_owned());
+                    assert!(
+                        !query.contains("TRY_CONVERT")
+                            && !query.contains("STRING_AGG")
+                            && !query.contains("sys.columns")
+                    );
+                    let value = if query.contains("ProductVersion") {
+                        version
+                            .map(|v| SqlValue::Text(v.into()))
+                            .unwrap_or(SqlValue::Null)
+                    } else {
+                        compatibility.map(SqlValue::Int).unwrap_or(SqlValue::Null)
+                    };
+                    Ok(vec![SqlRow {
+                        result_set: 0,
+                        values: vec![value],
+                    }])
+                },
+                || {
+                    entered.set(true);
+                    Ok(())
+                },
+            );
+            assert!(
+                result.is_err(),
+                "unsupported/unknown capability must refuse: {version:?}/{compatibility:?}"
+            );
+            assert!(
+                !entered.get(),
+                "no state, catalog, DDL plan or publication may follow refusal"
+            );
+        }
+    }
+
     #[test]
     fn service_context_is_copied_and_guarded_without_nullable_default_guesses() {
         let fields = vec![

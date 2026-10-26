@@ -274,37 +274,38 @@ pub fn load_extensions(args: &MssqlLoadExtensionArgs) -> Result<MssqlExtensionLo
         .with_context(|| format!("failed to prepare extension {:?}", extension.name))?;
         // Compilation is only a proposal. Prove every structural transition
         // before the first ConfigCASSave write, including --all-extensions.
-        if crate::mssql_extension_tree_load::require_nonstructural_stage(
-            &sql,
-            &args.database,
-            args.source_version,
-            &active,
-            &plan,
-        )
-        .is_err()
-        {
-            let schema = crate::mssql_extension_restructure::prepare(
+        let schema = extension_transition_fallback(
+            crate::mssql_extension_tree_load::require_nonstructural_stage(
                 &sql,
                 &args.database,
-                args.platform_profile,
-                extension.physical_registry_id,
+                args.source_version,
                 &active,
                 &plan,
-            )
-            .with_context(|| {
-                format!(
-                    "unsupported schema transition of extension {:?}; nothing was staged",
-                    extension.name,
-                )
-            })?;
-            if schema.is_some() {
-                require_restructure_scope(extension.scope)?;
-                require_restructure_formats(
+            ),
+            || {
+                crate::mssql_extension_restructure::prepare(
+                    &sql,
+                    &args.database,
                     args.platform_profile,
-                    manifest.identity().storage_format,
-                    manifest.identity().storage_format,
-                )?;
-            }
+                    extension.physical_registry_id,
+                    &active,
+                    &plan,
+                )
+            },
+        )
+        .with_context(|| {
+            format!(
+                "unsupported schema transition of extension {:?}; nothing was staged",
+                extension.name
+            )
+        })?;
+        if schema.is_some() {
+            require_restructure_scope(extension.scope)?;
+            require_restructure_formats(
+                args.platform_profile,
+                manifest.identity().storage_format,
+                manifest.identity().storage_format,
+            )?;
         }
         prepared.push(PreparedLoad {
             extension: extension.clone(),
@@ -597,35 +598,34 @@ pub(crate) fn activate_staged_extension_verified(
             }
             _ => crate::cli::InfobaseConfigSourceVersion::V2_20,
         };
-        if crate::mssql_extension_tree_load::require_nonstructural_stage(
-            &sql,
-            &args.database,
-            source_version,
-            &active,
-            &stage,
-        )
-        .is_ok()
-        {
-            None
-        } else {
-            let schema = crate::mssql_extension_restructure::prepare(
+        let schema = extension_transition_fallback(
+            crate::mssql_extension_tree_load::require_nonstructural_stage(
                 &sql,
                 &args.database,
-                args.platform_profile,
-                extension.physical_registry_id,
+                source_version,
                 &active,
                 &stage,
-            )
-            .context("extension schema transition is not publishable; nothing was published")?;
-            if schema.is_some() {
-                require_restructure_formats(
+            ),
+            || {
+                crate::mssql_extension_restructure::prepare(
+                    &sql,
+                    &args.database,
                     args.platform_profile,
-                    active_manifest.identity().storage_format,
-                    plan.storage_format(),
-                )?;
-            }
-            schema
+                    extension.physical_registry_id,
+                    &active,
+                    &stage,
+                )
+            },
+        )
+        .context("extension schema transition is not publishable; nothing was published")?;
+        if schema.is_some() {
+            require_restructure_formats(
+                args.platform_profile,
+                active_manifest.identity().storage_format,
+                plan.storage_format(),
+            )?;
         }
+        schema
     } else {
         None
     };
@@ -718,6 +718,20 @@ fn require_restructure_formats(
 
 /// Base data separation is supported. The installation scope of the
 /// extension is a distinct protocol and is admitted only where measured.
+// A fallback is a second proof, never permission to discard the first refusal.
+fn extension_transition_fallback<T>(
+    nonstructural: Result<()>,
+    prepare: impl FnOnce() -> Result<Option<T>>,
+) -> Result<Option<T>> {
+    match nonstructural {
+        Ok(()) => Ok(None),
+        Err(refusal) => match prepare()? {
+            Some(plan) => Ok(Some(plan)),
+            None => Err(refusal),
+        },
+    }
+}
+
 fn require_restructure_scope(scope: crate::mssql_extensions::MssqlExtensionScope) -> Result<()> {
     if scope != crate::mssql_extensions::MssqlExtensionScope::Infobase {
         bail!(
@@ -1370,6 +1384,92 @@ fn resolve_password(args: &MssqlLoadExtensionArgs) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_admission_code_only_proof_never_queries_structural_capabilities() {
+        let allowed = extension_transition_fallback::<()>(Ok(()), || {
+            panic!("code-only route queried structural SQL capabilities")
+        })
+        .unwrap();
+        assert!(allowed.is_none());
+        let refused = extension_transition_fallback::<()>(
+            Err(anyhow::anyhow!("original source refusal")),
+            || Ok(None),
+        )
+        .unwrap_err();
+        assert_eq!(refused.to_string(), "original source refusal");
+        assert_eq!(
+            extension_transition_fallback(Err(anyhow::anyhow!("needs DDL")), || Ok(Some(7)))
+                .unwrap(),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn final_admission_preserves_real_body_removal_refusal_when_planner_has_no_ddl() {
+        use ibcmd_cf::{archive::decode_archive_uniform, payload::PayloadEncoding};
+        use ibcmd_core::{
+            artifact::StorageProfileId, limits::ResourceLimits, storage::StorageProvenance,
+        };
+        let set = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/1c-fixtures/coverage/8.5.1.1150/extensions/restructuring");
+        let baseline = set.join("native/CovRestructureBaseline");
+        let edited =
+            std::env::temp_dir().join(format!("ibcmd-admission-refusal-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&edited).unwrap();
+        for relative in crate::load::relative_files(&baseline).unwrap() {
+            let target = edited.join(&relative);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::copy(baseline.join(&relative), target).unwrap();
+        }
+        std::fs::remove_file(edited.join("Catalogs/Cov_Own/Ext/ObjectModule.bsl")).unwrap();
+        let refusal = crate::mssql_extension_tree_load::require_nonstructural_source_transition(
+            &baseline, &edited,
+        );
+        assert!(
+            refusal
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("ObjectModule.bsl")
+        );
+        let packed = crate::module_blob::decode_base64_mime(
+            &std::fs::read_to_string(set.join("variants/CovRestructureBaseline.cfe.b64")).unwrap(),
+        )
+        .unwrap();
+        let archive = decode_archive_uniform(
+            std::io::Cursor::new(&packed),
+            ResourceLimits::for_input_bytes(packed.len() as u64),
+            StorageProfileId::parse("mssql-extension-8.3.27").unwrap(),
+            StorageProvenance::new("public native Coverage regression").unwrap(),
+            PayloadEncoding::RawDeflate,
+        )
+        .unwrap();
+        let state = crate::mssql_extension_restructure::ExtensionRestructureState {
+            params: vec![],
+            schemas: vec![],
+            services: vec![],
+        };
+        let no_ddl = crate::mssql_extension_restructure::plan_from_source_trees(
+            &baseline,
+            &edited,
+            archive.image(),
+            archive.image(),
+            [0; 16],
+            &state,
+        )
+        .unwrap();
+        assert!(
+            no_ddl.is_none(),
+            "this regression must exercise the None fallback"
+        );
+        let result = extension_transition_fallback(refusal, || Ok(no_ddl));
+        std::fs::remove_dir_all(edited).unwrap();
+        assert!(
+            result.is_err(),
+            "a planner None must preserve the original publication/staging refusal"
+        );
+    }
 
     #[test]
     fn structural_formats_are_exact_without_narrowing_legacy_body_overlays() {

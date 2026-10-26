@@ -1524,6 +1524,12 @@ esac
         path
     }
 
+    #[test]
+    #[should_panic(expected = "isolated profile regression must execute exactly one passing test")]
+    fn final_admission_isolated_helper_rejects_nonexistent_exact_filter() {
+        run_isolated_profile_test("mssql_platform_profile::tests::this_test_does_not_exist_582");
+    }
+
     // rac_process deliberately owns one original child at a time. Run each
     // process regression in its own harness process so parallel tests cannot
     // create false failures or poison other readiness tests.
@@ -1542,6 +1548,13 @@ esac
             "isolated profile regression failed: {}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout
+                .lines()
+                .any(|line| line.starts_with("test result: ok. 1 passed; 0 failed; 0 ignored;")),
+            "isolated profile regression must execute exactly one passing test: {stdout}"
         );
         true
     }
