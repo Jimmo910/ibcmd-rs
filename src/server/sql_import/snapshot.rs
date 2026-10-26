@@ -984,6 +984,31 @@ mod staging_schema_contracts {
         assert!(o.profile.is_none() && !o.sealed);
     }
     #[test]
+    fn profile_version_predicate_is_byte_exact_across_database_collations() {
+        // A parameter and SERVERPROPERTY may carry different database/server
+        // collations. The measured version is an exact UTF-16 identity, just
+        // like the adjacent target identifiers, rather than linguistic text.
+        let predicate = "CONVERT(varbinary(max),CONVERT(nvarchar(128),SERVERPROPERTY('ProductVersion')))<>CONVERT(varbinary(max),@P9)";
+        for query in [
+            include_str!("snapshot.sql").to_owned(),
+            super::held_query().unwrap(),
+        ] {
+            assert!(
+                query.contains(predicate),
+                "version guard must compare binary values"
+            );
+            assert!(
+                !query.contains("CONVERT(nvarchar(128),SERVERPROPERTY('ProductVersion'))<>@P9")
+            );
+            assert!(query.contains("IF @SchemaHash<>@P1 OR "));
+            assert!(query.contains("THROW 57623, 'snapshot profile is not measured', 1;"));
+        }
+        // Observation precedes the measured-profile guard and must not acquire
+        // a caller-provided version expectation of its own.
+        assert!(!super::observation_query().unwrap().contains("@P9"));
+    }
+
+    #[test]
     fn observation_and_held_capture_share_locked_context_and_safety_producer() {
         let query = super::observation_query().unwrap();
         let canonical = include_str!("snapshot.sql");

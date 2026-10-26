@@ -121,7 +121,7 @@ BEGIN TRY
  IF DATALENGTH(@Schema)>@P8 OR @Schema IS NULL
    THROW 57622, 'snapshot schema budget exceeded', 1;
  DECLARE @SchemaHash varbinary(32)=HASHBYTES('SHA2_256',CONVERT(varbinary(max),@Schema));
- IF @SchemaHash<>@P1 OR CONVERT(nvarchar(128),SERVERPROPERTY('ProductVersion'))<>@P9
+ IF @SchemaHash<>@P1 OR CONVERT(varbinary(max),CONVERT(nvarchar(128),SERVERPROPERTY('ProductVersion')))<>CONVERT(varbinary(max),@P9)
    THROW 57623, 'snapshot profile is not measured', 1;
  -- Verify exact expected identity before any payload can be returned.
  IF NOT EXISTS (SELECT 1 FROM sys.databases d

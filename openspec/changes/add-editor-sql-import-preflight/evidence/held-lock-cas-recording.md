@@ -521,3 +521,54 @@ production library check passed with the existing 97 warnings, and fmt/diff
 checks passed. The expected failing log is retained as
 `logs/issue-382-rcsi-red.log`; corrected runs are `issue-382-rcsi-green.log`
 and `issue-382-rcsi-libcheck.log` in the external logs directory.
+
+## Mixed-collation measured-version guard
+
+Exact97cf was built on the lab Windows host from the verified tracked archive,
+using official Rust1.95.0/MSVC/SDK, serial locked/offline jobs1 and unchanged
+features/TLS/ASM policy. Both product and libtest builds exited naturally with
+zero; all4913 source files and Cargo.lock matched before/after, then workers0
+and leaseNone were confirmed. This is VM-local build evidence, not a GitHub
+artifact or embedded-Git attestation. Final build release SHA256:
+`a5f6649ed0e46ce656b01464b2956e9911bfc22f73dc729295a48c61169b6156`.
+
+The guarded CommonModule RPC then reached preparation and received SQL Server
+error468/state9/class16 at snapshot.sql line124: ProductVersion and its parameter
+carried SQL_Latin1_General_CP1_CI_AS/Cyrillic_General_CI_AS in the not-equal
+operation. No publication was dispatched. Natural product exit0/stderr0 and
+full Config8/3314/Save0 seals were unchanged. Result SHA256:
+`3dc528fe392ce8fbc12570f47a3c57c2aa9a86cb33efad88653680529cf94e5f`;
+FULL RELEASE `348da68a5a613c0910db0b63973780c0a7be0debaeea36ca60a2ce1fb1cb895a`.
+A retained-file-only diagnostic bound the exact server cause without a new SQL
+query: SHA256 `344a85a5f1866b7d0b89c456a449e6e11b4868b3ef2f9f4ec6a76b04feed53e9`.
+
+The shared canonical/held query now converts both Unicode version operands to
+varbinary before comparison, matching adjacent exact target-identity guards.
+The measured version, schema hash, locks, current-context checks and parameter
+bindings are retained; no collation, SQL option or security setting changes.
+Collation precedence applies to character types, not binary operands
+([SQL Server collation rules](https://learn.microsoft.com/en-us/sql/t-sql/statements/collation-precedence-transact-sql)).
+
+A focused canonical/held source-contract regression first failed, then passed;
+the observer still ends before the measured-version predicate. Covering SQL
+unit tests passed75/0fail with4 live tests ignored. Incremental
+`cargo xtask check --base HEAD` passed format, workspace-crate clippy and root
+all-target check. The initial zero-test filter run is retained separately and
+is not counted as RED or PASS; authoritative RED is
+`logs/issue-382-collation-red-exact.log`, GREEN is `issue-382-collation-green.log`,
+covering tests `issue-382-collation-sql-regressions.log`, and check
+`issue-382-collation-xtask-check.log`. Root test warnings remained40 before/after.
+Fresh source review found no equivalent unguarded parameter comparison in these
+snapshot paths.
+
+One separately bounded read-only ADO scalar probe on the same public target
+confirmed correct-version mismatch=false, wrong-version mismatch=true,
+trailing-space mismatch=true and cross-collation mismatch=false. One reader
+returned four System.Boolean values, drained fully and closed; no application
+rows, DDL/DML, transaction, product/native/Form invocation or setting change.
+Probe result SHA256 `c2ecb6fcddc2721e8a11c5e04d34b3242345eb7a4a9b315429d03d001100f1fe`;
+FULL RELEASE `1b8f5142f5f4232be64dc9d292dd760699ec49df5cda60e7c658c70ba18c98c5`.
+This proves the predicate through ADO, not the product/TDS path. Corrected-head
+Windows product/libtest and actual Common RPC/Form/native gates remain pending;
+97cf artifacts do not inherit the SQL correction. The unrelated full-branch
+policy refusal remains unchanged; no whitelist/baseline growth is included.
