@@ -115,43 +115,43 @@ fn observe_with_context(
         .map_err(|_| FormFieldMapObservationError::InvalidForm)?;
     let raw = form_body_attribute_records(&body.trailing)
         .ok_or(FormFieldMapObservationError::InvalidForm)?;
-    if raw.declared_count > MAX_ATTRIBUTES {
+    if raw.declared_count() > MAX_ATTRIBUTES {
         return Err(FormFieldMapObservationError::Limit);
     }
-    if raw.records.len() != raw.declared_count {
+    if raw.records().len() != raw.declared_count() {
         return Err(FormFieldMapObservationError::InvalidForm);
     }
     // Admit all bags and resource bounds before executing a map or query
     // resolver. Errors stop immediately; no production attribute decode runs.
     let mut admitted = Vec::new();
     let mut context_names = BTreeSet::new();
-    for record in raw.records {
+    for record in raw.into_records() {
         let attribute =
             form_attribute_raw_view(record).ok_or(FormFieldMapObservationError::InvalidForm)?;
         // Context correspondence concerns all raw attributes, including ones
         // later excluded as nonmanual or nondynamic. Do not hide duplicates.
         if context
             .as_ref()
-            .is_some_and(|context| context.selects_name(&attribute.name))
-            && !context_names.insert(attribute.name.clone())
+            .is_some_and(|context| context.selects_name(attribute.name()))
+            && !context_names.insert(attribute.name().to_owned())
         {
             return Err(FormFieldMapObservationError::InvalidContext);
         }
         let dynamic = attribute
-            .pattern
+            .pattern()
             .and_then(parse_form_exact_single_type_uuid)
             .is_some_and(|id| id.eq_ignore_ascii_case(FORM_DYNAMIC_LIST_TYPE_UUID));
         if !dynamic {
             continue;
         }
-        let Some(bag) = attribute.settings_bag else {
+        let Some(bag) = attribute.settings_bag() else {
             continue;
         };
         if let Some(prepared) = preflight_bag(bag)? {
             if admitted.len() >= MAX_GROUPS {
                 return Err(FormFieldMapObservationError::Limit);
             }
-            admitted.push((attribute.name, prepared));
+            admitted.push((attribute.into_name(), prepared));
         }
     }
     let context_bound_groups = context
@@ -465,7 +465,7 @@ fn observe_prepared_bag(
     };
     let query = query_text
         .as_deref()
-        .and_then(parse_form_dynamic_list_query_selection);
+        .and_then(|text| observe_query_selection(text, false));
     let duplicate = ids.iter().any(|id| {
         names
             .iter()

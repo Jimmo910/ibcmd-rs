@@ -1,4 +1,4 @@
-//! The root's side of the form body reader (`form_body.rs`): the entry
+//! The root's side of the form body reader (`ibcmd_form_body::form_body`): the entry
 //! points that decode a stored form through the root's managed-form codec
 //! (`compiler::bodies::form`) or build a `FormParseContext` from the root's
 //! half of its seams (`form_body_host`: the `module_blob` readers of the Form

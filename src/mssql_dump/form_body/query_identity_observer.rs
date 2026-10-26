@@ -1,6 +1,8 @@
 //! Finite lexical diagnostics of a parsed final SELECT. No source text is
 //! retained in the report, and no absence here proves semantic nonselection.
-use super::{FormDynamicListQuerySelection, form_data_path_name_eq_ignore_case};
+use super::{
+    ObserverQuerySelection as FormDynamicListQuerySelection, form_data_path_name_eq_ignore_case,
+};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
@@ -291,7 +293,7 @@ mod tests {
         let source =
             "SELECT X.Ref AS Ref, X.Ref AS Other, (1 + 2) AS Expression FROM Document.Owned AS X";
         let mut diagnostic = selected(source);
-        let ordinary = super::super::parse_form_dynamic_list_query_selection(source).unwrap();
+        let ordinary = super::super::observe_query_selection(source, false).unwrap();
         assert_eq!(diagnostic.plain_path_occurrences.len(), 2);
         assert_eq!(diagnostic.unclassified_selection_expression_count, 1);
         assert!(ordinary.plain_path_occurrences.is_empty());

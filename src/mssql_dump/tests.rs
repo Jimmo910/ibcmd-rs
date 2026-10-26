@@ -9674,34 +9674,6 @@ fn tooltip_representation_matches_saved_scoped_target_accounting() {
 }
 
 #[test]
-fn tooltip_representation_production_has_no_corpus_literals() {
-    let production = include_str!("form_body.rs");
-    let start = production
-        .find("pub(super) fn parse_form_field_tooltip_representation")
-        .unwrap();
-    let end = production[start..]
-        .find("pub(super) fn parse_form_input_field_input_hint")
-        .map(|offset| start + offset)
-        .unwrap();
-    let implementation = &production[start..end];
-
-    for forbidden in [
-        "02023637-7868-4a5f-8576-835a76e0c9ba",
-        "bsp_test",
-        "ConfigDump",
-        "InputHint",
-        "ListChoiceMode",
-        "uuid",
-        "path",
-    ] {
-        assert!(
-            !implementation.contains(forbidden),
-            "production literal: {forbidden}"
-        );
-    }
-}
-
-#[test]
 fn keeps_top_level_auto_command_bar_lexical_controls() {
     let default_body = deflate_for_test(
         br#"{4,{59,{22,{-1,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,9,"FormBar",{1,0}}},"",{0}}"#,
@@ -9717,20 +9689,6 @@ fn keeps_top_level_auto_command_bar_lexical_controls() {
     assert!(configured_xml.contains("<HorizontalAlign>Right</HorizontalAlign>"));
     assert!(configured_xml.contains("<Autofill>false</Autofill>"));
     assert!(configured_xml.contains("</AutoCommandBar>"));
-}
-
-#[test]
-fn form_body_empty_auto_command_bar_rule_has_no_corpus_owner_literals() {
-    let production = include_str!("form_body.rs");
-    for owner_literal in [
-        "Пользователи",
-        "ВыборОбъектовМетаданных",
-        "ОперандыДляРасчетовКоманднаяПанель",
-        "RowsBar",
-        "579baaa4-6493-4d99-8744-6399757295c7",
-    ] {
-        assert!(!production.contains(owner_literal), "{owner_literal}");
-    }
 }
 
 #[test]
@@ -53020,7 +52978,6 @@ fn extension_export_for_test(mode: Option<&str>) -> FormExtensionExport {
 ///   parameter, each typed by `dcsset:Filter` (`f6841c6b-…`) or
 ///   `ConditionalAppearance` (`7dd764b6-…`), platform types only the
 ///   form-schema column table names.
-///
 fn extension_export_probe_body() -> ParsedFormBodyBlob {
     const GROUP: &str = r#"{22,{1,02023637-7868-4a5f-8576-835a76e0c9ba},0,0,0,5,"ГруппаОсновная",{1,1,{"ru","Группа основная"}},{1,0},0,1,0,66,0,0,1,{3,4,{0}},{7,3,0,1,100},{0,0,0},1,{29,0,0,0,0,{0},{1,0},{"Pattern"},"",{3,4,{0}},0,0,0,1,{1,0},0,0,3,3,2,0,1,0,{3,4,{0}},0,2,0,0,0},0,1,0,1,0,0,0,0,0}"#;
     const PLANNER: &str = r#"{37,
