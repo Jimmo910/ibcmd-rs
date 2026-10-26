@@ -291,7 +291,6 @@ fn directory_witness_cancellation_remains_typed() {
             let output = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
                 .env(CHILD, "1")
-                .env("IBCMD_TEST_KEEP_FIXTURES", "1")
                 .output()
                 .unwrap();
             fixture.child_output(TEST, output);
@@ -336,7 +335,6 @@ fn repeated_directory_witnesses_release_transient_descriptors_under_low_fd_limit
                 .arg(std::env::current_exe().unwrap())
                 .arg(TEST)
                 .env(CHILD, "1")
-                .env("IBCMD_TEST_KEEP_FIXTURES", "1")
                 .output()
                 .unwrap();
             fixture.child_output(TEST, output);
