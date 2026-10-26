@@ -716,8 +716,6 @@ fn require_restructure_formats(
     Ok(())
 }
 
-/// Base data separation is supported. The installation scope of the
-/// extension is a distinct protocol and is admitted only where measured.
 // A fallback is a second proof, never permission to discard the first refusal.
 fn extension_transition_fallback<T>(
     nonstructural: Result<()>,
@@ -732,6 +730,8 @@ fn extension_transition_fallback<T>(
     }
 }
 
+/// Base data separation is supported. The installation scope of the
+/// extension is a distinct protocol and is admitted only where measured.
 fn require_restructure_scope(scope: crate::mssql_extensions::MssqlExtensionScope) -> Result<()> {
     if scope != crate::mssql_extensions::MssqlExtensionScope::Infobase {
         bail!(
