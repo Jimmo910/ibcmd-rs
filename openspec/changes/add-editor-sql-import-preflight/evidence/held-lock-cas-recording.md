@@ -961,8 +961,10 @@ identical-field crate reexports. Recording, codec and exact public-body gates
 validate that integration. No live database write, repeated publication or native
 activation was dispatched; the earlier87617 runtime receipts keep their exact
 revision attribution. A new-head hosted result is required and is not inferred
-from the prior07385992 green runs. PR640 remains Draft; no PR merge, release,
-auto-closing issue reference or new general writer admission is introduced.
+from the prior07385992 green runs. At this integration checkpoint PR640 was
+still Draft; the subsequently successful hosted checks satisfy its review
+readiness gate. No PR merge, release, auto-closing issue reference or new general
+writer admission is introduced.
 
 
 The final integrated staged `cargo xtask ci` completed naturally with

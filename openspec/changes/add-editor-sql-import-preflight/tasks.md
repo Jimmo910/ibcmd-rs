@@ -12,7 +12,13 @@
   stage -> native apply -> export and unchanged neighbour/staging.
 - [x] 3.3 Run required current-head quality/CI gates; publish honest evidence.
 
-## Delivered local foundations (not SQL acceptance)
+## Foundation checkpoints and remaining broader work
+
+F.4 and F.7 remain open for the broader profile/concurrency and owner cohorts.
+Their accepted singleton CommonModule/Document FormModule portions are covered
+by F.13–F.20 and criteria 2.3/3.2 above; these open broader items do not block
+review of this PR. Pending statements in earlier completed checkpoints below
+are historical and are superseded by F.19/F.20 within the published scope.
 
 - [x] F.1 Mechanically extract neutral compiler planner with FileDb API preserved;
   donor 59a4a8f4, independently reviewed; original 2+14+6 narrow tests passed.
@@ -128,5 +134,5 @@ above remain explicitly outside the two accepted singleton-module cohorts.
   and pass the updated full local CI27/27. Focused SQL/codec/custody/editor tests
   and the retained public-body offline check passed; no live SQL/native cycle
   was repeated. New-head hosted checks are tracked in PR640, not inherited from
-  the old07385992 runs. PR remains Draft, with no merge/release or broader writer
-  admission claim.
+  the old07385992 runs. The integration is ready for review after its hosted
+  checks passed; no merge/release or broader writer admission is claimed.
