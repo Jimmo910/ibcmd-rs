@@ -21,7 +21,12 @@ and `form_ref_index.rs`; and the form body record, the event block and
 adoption model, the 8.5 layout down-conversion with its group event table and
 the data-composition normalizer it reads, formerly in `src/module_blob.rs`,
 `src/mssql_dump/form_extension.rs`, `form/layout_8_5_1.rs`,
-`form/xml_2_21_writer.rs` and `dcs.rs`) and `crates/ibcmd-moxel/src/root_helpers/`.  Code that
+`form/xml_2_21_writer.rs` and `dcs.rs`; the record's reader with the physical
+layout of its Form Attributes tail and the braced-record text primitives both
+read, formerly in `src/module_blob.rs`; and the upgrade of an older platform's
+root-`42` form body the reader applies first, formerly
+`src/module_blob/form_root_42.rs`, which was outside the slice and joined it
+with its 22 record tags) and `crates/ibcmd-moxel/src/root_helpers/`.  Code that
 leaves the slice for a crate takes the slice with it: its directory is listed
 there and its baseline entries move to the new path in the same change, never
 dropped.  Every `*.rs` file below a listed directory is scanned, so a file added

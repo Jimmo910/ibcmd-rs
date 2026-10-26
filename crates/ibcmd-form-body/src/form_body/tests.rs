@@ -24110,7 +24110,7 @@ fn respells_an_embedded_spreadsheet_documents_qualified_names_and_indent() {
 }
 
 /// The extension-export state a form is read under, as
-/// `form_body_host::active_form_extension_export` takes it: the extended
+/// `form_body_entry::active_form_extension_export` takes it: the extended
 /// configuration's compatibility mode, or `None` when it cannot be read.
 fn extension_export_for_test(mode: Option<&str>) -> FormExtensionExport {
     FormExtensionExport {

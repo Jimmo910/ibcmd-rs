@@ -1,13 +1,21 @@
 //! The root's side of the form body reader (`ibcmd_form_body::form_body`): the entry
 //! points that decode a stored form through the root's managed-form codec
-//! (`compiler::bodies::form`) or build a `FormParseContext` from the root's
-//! half of its seams (`form_body_host`: the `module_blob` readers of the Form
-//! Attributes tail and the extension export running now), and the test that
-//! reads the root's metadata rows. `mssql_dump` reaches them by their old
-//! names.
+//! (`compiler::bodies::form`) or build a `FormParseContext` with the state of
+//! the extension export running now ([`active_form_extension_export`]), and
+//! the test that reads the root's metadata rows. `mssql_dump` reaches them by
+//! their old names.
 
-use super::form_body_host::{ROOT_FORM_BODY_HOST, active_form_extension_export};
 use super::*;
+
+/// The extension export running now, as a form reads it; `None` in an
+/// ordinary export. The extended configuration's compatibility mode is read
+/// once, right after the export activates its context
+/// (`extension::export_extension_records_to_source`), so this is a cached read.
+pub(super) fn active_form_extension_export() -> Option<FormExtensionExport> {
+    super::extension::active().map(|extension| FormExtensionExport {
+        extended_compatibility_mode: extension.extended_compatibility_mode().map(str::to_owned),
+    })
+}
 
 #[allow(dead_code)]
 pub(crate) fn extract_form_body_xml(
@@ -43,7 +51,6 @@ pub(super) fn extract_form_body_xml_from_body(
             &BTreeMap::new(),
             &Arc::new(InformationRegisterMasterDimensionIndex::new()),
             None,
-            ROOT_FORM_BODY_HOST,
             active_form_extension_export(),
         ),
         None,
@@ -72,7 +79,6 @@ pub(crate) fn trace_form_body_with_context(
         information_register_field_refs,
         information_register_master_dimensions,
         form_owner_reference,
-        ROOT_FORM_BODY_HOST,
         active_form_extension_export(),
     )
     .with_trace_sink(trace_sink);
@@ -107,7 +113,6 @@ pub(crate) fn render_form_body_xml_offline(
         &context.information_register_field_refs,
         &context.information_register_master_dimensions,
         owner,
-        ROOT_FORM_BODY_HOST,
         active_form_extension_export(),
     );
     extract_form_body_xml_from_body_timed(body, &parse_context, None)

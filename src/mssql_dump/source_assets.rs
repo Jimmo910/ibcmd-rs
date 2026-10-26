@@ -2504,8 +2504,7 @@ fn write_source_asset_inner(
                 context.information_register_field_refs,
                 context.information_register_master_dimensions,
                 owner_reference.as_deref(),
-                super::form_body_host::ROOT_FORM_BODY_HOST,
-                super::form_body_host::active_form_extension_export(),
+                super::form_body_entry::active_form_extension_export(),
             )
             .with_form_reference_index(context.role_rights_object_refs)
             .with_foreign_types(context.foreign_type_ids)

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
-description = "The managed-form body reader, which writes a stored form's Form.xml, with the per-export indexes and compatibility rules a form is parsed against, the dump timing report it adds to, and the form body record, event block, adoption model, 8.5 layout conversion and data-composition normalizer it reads"
+description = "The managed-form body reader, which writes a stored form's Form.xml, with the per-export indexes and compatibility rules a form is parsed against, the dump timing report it adds to, and the form body record (with its reader, the Form Attributes tail layout and the braced-record text primitives), event block, adoption model, 8.5 layout conversion and data-composition normalizer it reads"
 
 [dependencies]
 # `layout_8_5_1`'s errors, as in the root.
