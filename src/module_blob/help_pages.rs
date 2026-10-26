@@ -358,6 +358,7 @@ mod tests {
             "ibcmd-rs-help-pages-{}",
             Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(root.join("Catalogs")).unwrap();
         fs::create_dir_all(root.join("CommonPictures")).unwrap();
         fs::write(
@@ -406,6 +407,5 @@ mod tests {
                 html_page_storage_bytes(other_case, HtmlPageOwner::Help, Some(&source)).is_err()
             );
         }
-        let _ = fs::remove_dir_all(root);
     }
 }

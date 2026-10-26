@@ -197,6 +197,7 @@ fn direct_and_directory_use_same_exact_retained_owner_census() {
                 v,
                 k.internal_kind()
             ));
+            let _scratch = crate::common::Scratch::adopt(&dir);
             std::fs::create_dir(&dir).unwrap();
             for e in t.entries() {
                 let p = dir.join(e.path().as_str());
@@ -214,7 +215,6 @@ fn direct_and_directory_use_same_exact_retained_owner_census() {
                 .unwrap();
             equal(&a, &b);
             equal(&a, &read(t, v));
-            std::fs::remove_dir_all(&dir).unwrap();
         }
     }
 }
@@ -820,6 +820,7 @@ fn selected_alias_contract_stays_physical_and_memory_paths_remain_exact() {
                 std::process::id(),
                 kind.internal_kind()
             ));
+            let _scratch = crate::common::Scratch::adopt(&dir);
             std::fs::create_dir(&dir).unwrap();
             for e in t.entries() {
                 let p = dir.join(e.path().as_str());
@@ -850,7 +851,6 @@ fn selected_alias_contract_stays_physical_and_memory_paths_remain_exact() {
                 .is_err()
             );
             assert_eq!(good.tree(), &t);
-            std::fs::remove_dir_all(&dir).unwrap();
         }
     }
 }
@@ -861,6 +861,7 @@ fn physical_link_and_nonregular_named_sources_never_borrow_foreign_bytes() {
     let v = "2.20";
     let t = fixture(ExternalArtifactKind::Report, v);
     let base = std::env::temp_dir().join(format!("ibcmd-owned-link-{}", std::process::id()));
+    let _scratch = crate::common::Scratch::adopt(&base);
     std::fs::create_dir(&base).unwrap();
     let own = base.join("own");
     std::fs::create_dir(&own).unwrap();
@@ -883,5 +884,4 @@ fn physical_link_and_nonregular_named_sources_never_borrow_foreign_bytes() {
     std::fs::rename(&socket, own.join(TEMPLATE_BODY)).unwrap();
     assert!(ExternalOwnedSource::read(&own, profile(v), path(), ReaderLimits::default()).is_err());
     drop(listener);
-    std::fs::remove_dir_all(base).unwrap();
 }

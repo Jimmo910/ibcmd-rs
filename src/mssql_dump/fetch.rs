@@ -2385,6 +2385,7 @@ mod tests {
                 "ibcmd-certificate-tool-missing-{}",
                 uuid::Uuid::new_v4()
             ));
+            let _scratch = crate::test_scratch::TestScratch::adopt(&missing);
             let sql = SqlExec::with_tools(
                 SqlTarget {
                     server: "must-not-connect".into(),
@@ -2481,6 +2482,7 @@ mod tests {
             "ibcmd-rs-mssql-runtime-hostile-marker-{}.json",
             uuid::Uuid::new_v4().simple()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&journal_path);
         let guard = begin_subprocess_journal(
             "<password-source:environment>",
             "localhost",
@@ -2529,7 +2531,6 @@ mod tests {
         assert!(!serialized.contains(raw_password));
         assert!(serialized.contains(&exact_password_marker));
         assert!(serialized.contains(&exact_query_marker));
-        let _ = fs::remove_file(journal_path);
     }
 
     #[test]
@@ -2538,6 +2539,7 @@ mod tests {
             "ibcmd-rs-mssql-runtime-failure-{}.json",
             uuid::Uuid::new_v4().simple()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&journal_path);
         let guard = begin_subprocess_journal(
             "<password-source:environment>",
             "localhost",
@@ -2565,7 +2567,6 @@ mod tests {
         let serialized = journal.to_string();
         assert!(!serialized.contains("top-secret-password"));
         assert!(!serialized.contains("SELECT top-secret-query"));
-        let _ = fs::remove_file(journal_path);
     }
 
     #[test]
@@ -2574,6 +2575,7 @@ mod tests {
             "ibcmd-rs-mssql-runtime-retry-{}.json",
             uuid::Uuid::new_v4().simple()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&journal_path);
         let guard = begin_subprocess_journal(
             "<password-source:none>",
             "localhost",
@@ -2592,7 +2594,6 @@ mod tests {
             journal["exception"],
             "subprocess journal guard dropped before explicit completion"
         );
-        let _ = fs::remove_file(journal_path);
     }
 
     #[test]
@@ -2601,10 +2602,12 @@ mod tests {
             "ibcmd-rs-bcp-runtime-path-{}.json",
             uuid::Uuid::new_v4().simple()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&journal_path);
         let configured_bcp = std::env::temp_dir().join(format!(
             "ibcmd-rs-configured-bcp-that-does-not-exist-{}",
             uuid::Uuid::new_v4().simple()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&configured_bcp);
         let guard = begin_subprocess_journal(
             "<password-source:none>",
             "localhost",
@@ -2627,7 +2630,6 @@ mod tests {
             configured_bcp.to_string_lossy().as_ref()
         );
         assert_eq!(journal["calls"][0]["status"], "failed");
-        let _ = fs::remove_file(journal_path);
     }
 
     #[test]
@@ -2636,6 +2638,7 @@ mod tests {
             "ibcmd-rs-client-runtime-{}.json",
             uuid::Uuid::new_v4().simple()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&journal_path);
         let guard = begin_subprocess_journal(
             "<password-source:none>",
             "127.0.0.1,1",
@@ -2660,7 +2663,6 @@ mod tests {
         assert!(!serialized.contains("top-secret-query"));
         assert!(!serialized.contains("top-secret-value"));
         assert!(serialized.contains("<query-sha256:"));
-        let _ = fs::remove_file(journal_path);
     }
 
     #[test]

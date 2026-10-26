@@ -1416,6 +1416,7 @@ mod tests {
         let baseline = set.join("native/CovRestructureBaseline");
         let edited =
             std::env::temp_dir().join(format!("ibcmd-admission-refusal-{}", Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&edited);
         std::fs::create_dir_all(&edited).unwrap();
         for relative in crate::load::relative_files(&baseline).unwrap() {
             let target = edited.join(&relative);
@@ -1592,6 +1593,7 @@ mod tests {
             "ibcmd-rs-extension-artifacts-{}",
             Uuid::new_v4().simple()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(&root).unwrap();
         let script = root.join("activate.sql");
         let recovery = root.join("recovery.json");
@@ -1603,7 +1605,6 @@ mod tests {
             publish_activation_artifacts(&script, b"changed", &recovery, b"recovery").unwrap_err();
         assert!(error.to_string().contains("refusing to overwrite"));
         assert_eq!(fs::read(&script).unwrap(), b"sql");
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

@@ -1399,6 +1399,7 @@ mod tests {
         };
         let temp =
             std::env::temp_dir().join(format!("ibcmd-adopted-rights-{}", uuid::Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&temp);
         std::fs::create_dir_all(&temp).unwrap();
         std::fs::create_dir(temp.as_path().join("Catalogs")).unwrap();
         std::fs::write(
@@ -1438,7 +1439,6 @@ mod tests {
             "{text}"
         );
         assert!(temp.starts_with(std::env::temp_dir()));
-        std::fs::remove_dir_all(&temp).unwrap();
     }
 
     /// The order the stored row of БСП's `ЧтениеДанныхСервисаDSS` lists its

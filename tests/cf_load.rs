@@ -20,7 +20,7 @@ fn load(tree: &Path, output: &Path, base: &Path) -> Output {
         .expect("run ibcmd-rs")
 }
 
-fn exported(fixture: &str, input: &str, tag: &str) -> (PathBuf, PathBuf) {
+fn exported(fixture: &str, input: &str, tag: &str) -> (PathBuf, common::Scratch) {
     let base = common::fixture(fixture).join(input);
     let tree = common::temp_dir(tag);
     let run = common::export(&base, &tree);
@@ -32,10 +32,8 @@ fn exported(fixture: &str, input: &str, tag: &str) -> (PathBuf, PathBuf) {
     (base, tree)
 }
 
-fn fresh_output(tag: &str, ext: &str) -> PathBuf {
-    let path = common::temp_dir(tag).with_extension(ext);
-    let _ = fs::remove_file(&path);
-    path
+fn fresh_output(tag: &str, ext: &str) -> common::Scratch {
+    common::temp_file(tag, ext)
 }
 
 #[test]

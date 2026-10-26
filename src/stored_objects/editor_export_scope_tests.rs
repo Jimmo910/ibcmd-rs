@@ -1,9 +1,10 @@
-//! Retained tiny fixtures; work budgets are counts, never wall-clock assertions.
+//! Tiny fixtures, removed with their case; work budgets are counts, never
+//! wall-clock assertions.
 use super::*;
 use std::io::Read;
 
 struct Case {
-    root: PathBuf,
+    root: crate::test_scratch::TestScratch,
     db: PathBuf,
     source: PathBuf,
     stage: PathBuf,
@@ -36,7 +37,7 @@ fn case() -> Case {
     let stage = root.join("stage");
     fs::create_dir(&stage).unwrap();
     Case {
-        root,
+        root: crate::test_scratch::TestScratch::adopt(root),
         db,
         source,
         stage,

@@ -823,6 +823,7 @@ mod tests {
         for trust in [false, true] {
             let missing = std::env::temp_dir()
                 .join(format!("ibcmd-cas-tool-missing-{}", uuid::Uuid::new_v4()));
+            let _scratch = crate::test_scratch::TestScratch::adopt(&missing);
             let sql = SqlExec::with_tools(
                 SqlTarget {
                     server: "must-not-connect".into(),

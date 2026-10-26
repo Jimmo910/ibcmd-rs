@@ -34,12 +34,13 @@ fn template_owner_mut(obj: &mut MetadataObject, common: bool) -> &mut MetadataOb
 #[test]
 fn current_dcs_structural_framing_is_exact_and_canonical_across_targets() {
     for common in [false, true] {
-        // Retained on both success and failure. TMPDIR is set to the external lab.
+        // Removed with `root`, also after a failure, unless IBCMD_TEST_KEEP_FIXTURES=1.
         let root = tempfile::Builder::new()
             .prefix("ibcmd-dcs-structure-")
+            .disable_cleanup(keep_fixtures())
             .tempdir()
-            .unwrap()
-            .keep();
+            .unwrap();
+        let root = root.path().to_path_buf();
         let anchor = root.join("input/Case.mdo");
         let relative = if common {
             "Template.dcs"
@@ -120,9 +121,10 @@ fn current_dcs_structural_framing_is_exact_and_canonical_across_targets() {
 fn legacy_dcs_default_and_designer_lf_body_are_not_reframed() {
     let root = tempfile::Builder::new()
         .prefix("ibcmd-dcs-legacy-")
+        .disable_cleanup(keep_fixtures())
         .tempdir()
-        .unwrap()
-        .keep();
+        .unwrap();
+    let root = root.path().to_path_buf();
     let mut obj = owner(true);
     let path = root.join("in/Case.xml");
     let body = root.join("in/Case/Ext/Template.xml");
@@ -144,9 +146,10 @@ fn legacy_dcs_default_and_designer_lf_body_are_not_reframed() {
 fn mixed_content_and_space_preserve_are_exact_but_mixed_structural_eol_is_rejected() {
     let root = tempfile::Builder::new()
         .prefix("ibcmd-dcs-boundaries-")
+        .disable_cleanup(keep_fixtures())
         .tempdir()
-        .unwrap()
-        .keep();
+        .unwrap();
+    let root = root.path().to_path_buf();
     let anchor = root.join("input/Case.mdo");
     let input = root.join("input/Template.dcs");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
@@ -186,4 +189,9 @@ fn mixed_content_and_space_preserve_are_exact_but_mixed_structural_eol_is_reject
     let err = attach_dcs_bodies(Format::Edt, &anchor, &mut obj).unwrap_err();
     assert!(err.to_string().contains("mixed structural EOL"));
     assert!(obj.templates.is_empty());
+}
+
+/// Whether the fixtures are kept for debugging: `IBCMD_TEST_KEEP_FIXTURES=1`.
+fn keep_fixtures() -> bool {
+    std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1")
 }

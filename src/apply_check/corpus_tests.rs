@@ -127,6 +127,7 @@ fn a_reference_tree_against_a_rewritten_copy_shows_no_change() {
             std::process::id(),
             name.replace(' ', "_").replace('.', "")
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&scratch);
         let _ = fs::remove_dir_all(&scratch);
         let taken = write_sample_pair(&path, &scratch, 7);
         assert!(taken > 100, "{name}: only {taken} files sampled");

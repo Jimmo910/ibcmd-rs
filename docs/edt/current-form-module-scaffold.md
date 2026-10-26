@@ -38,7 +38,7 @@ remain unproved; no failed raw comparison is waived.
 Focused checks include the actual directory encoder's complete source accounting,
 publication without provenance, and a separate unchanged provenance return.
 Directory stages and intermediate cleanup honor explicit
-`IBCMD_TEST_KEEP_FIXTURES=1`; unit-test stages are also retained automatically.
-Normal production cleanup remains unchanged when neither condition applies.
-The existing form-module whitespace regression retains its fixture without
-changing assertions; no unguarded memory-API tests are selected for this run.
+`IBCMD_TEST_KEEP_FIXTURES=1`; otherwise they are removed, in unit tests as in
+production. The form-module whitespace regression removes its fixture after
+the test unless that variable is set (docs/testing.md, "Temporary
+directories"); no unguarded memory-API tests are selected for this run.

@@ -118,7 +118,7 @@ fn absent(path: &Path) -> Result<(), EdtError> {
     }
 }
 fn keep_fixtures() -> bool {
-    cfg!(test) || std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1")
+    std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1")
 }
 fn cleanup_stage(path: &Path) -> Result<(), EdtError> {
     if !keep_fixtures() {
@@ -574,9 +574,10 @@ mod module_scaffold_encoder_tests {
     fn module_scaffold_actual_encoder_keeps_accounting_and_provenance_guards() {
         let root = tempfile::Builder::new()
             .prefix("ibcmd-scaffold-encoder-")
+            .disable_cleanup(keep_fixtures())
             .tempdir()
-            .unwrap()
-            .keep();
+            .unwrap();
+        let root = root.path().to_path_buf();
         let text = include_str!("../tests/fixtures/form-module-scaffold/edt-lf.bsl");
         let native = include_bytes!("../tests/fixtures/form-module-scaffold/native-crlf.bsl");
         let (mut config, skipped) = morph1c_pipeline::read_config(

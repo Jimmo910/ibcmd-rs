@@ -2044,11 +2044,13 @@ mod tests {
         }
     }
 
-    fn temp_root(name: &str) -> PathBuf {
+    fn temp_root(name: &str) -> crate::test_scratch::TestScratch {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock before unix epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("{name}-{}-{suffix}", std::process::id()))
+        crate::test_scratch::TestScratch::adopt(
+            std::env::temp_dir().join(format!("{name}-{}-{suffix}", std::process::id())),
+        )
     }
 }

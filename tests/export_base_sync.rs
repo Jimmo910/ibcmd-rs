@@ -127,8 +127,8 @@ fn put(root: &Path, relative: &str, text: &str) {
 
 /// A fixture's rows and their full export.
 struct Exported {
-    rows: PathBuf,
-    full: PathBuf,
+    rows: common::Scratch,
+    full: common::Scratch,
 }
 
 /// A fixture by its path under `tests/fixtures`.
@@ -216,7 +216,7 @@ fn nothing_changed_writes_config_dump_info_alone() {
     for (index, fixture) in FIXTURES.iter().enumerate() {
         let tag = format!("base-sync-same-{index}");
         let exported = exported(fixture, &tag);
-        let base = common::temp_dir(&format!("{tag}-base")).with_extension("xml");
+        let base = common::temp_file(&format!("{tag}-base"), "xml");
         fs::copy(exported.full.join("ConfigDumpInfo.xml"), &base).unwrap();
 
         // into an empty folder: ConfigDumpInfo.xml alone, the full export's
@@ -273,7 +273,7 @@ fn a_changed_row_writes_its_own_files_and_no_other() {
         let mut owners = BTreeMap::<String, String>::new();
         let mut written_by = BTreeMap::<String, BTreeSet<String>>::new();
         for (name, id) in entries(&info) {
-            let base = common::temp_dir(&format!("{tag}-base")).with_extension("xml");
+            let base = common::temp_file(&format!("{tag}-base"), "xml");
             fs::write(&base, with_version_moved(&info, &id)).unwrap();
             let out = common::temp_dir(&format!("{tag}-out"));
             let report = dump(&exported.rows, &out, &base_arg(&base));
@@ -354,7 +354,7 @@ configVersion=\"0123456789abcdef0123456789abcdef00000000\"/>\r\n";
         1,
     );
     assert_ne!(base_text, info);
-    let base = common::temp_dir(&format!("{tag}-base")).with_extension("xml");
+    let base = common::temp_file(&format!("{tag}-base"), "xml");
     fs::write(&base, &base_text).unwrap();
     let make_folder = |name: &str| {
         let folder = common::temp_dir(&format!("{tag}-{name}"));
@@ -449,7 +449,7 @@ fn a_rename_rewrites_every_file_that_names_the_object() {
     let exported = exported(HOME_PAGE, tag);
     let info = config_dump_info(&exported.full);
     let base_text = info.replace("CommonForm.ФормаСлева", "CommonForm.ФормаСтарая");
-    let base = common::temp_dir(&format!("{tag}-base")).with_extension("xml");
+    let base = common::temp_file(&format!("{tag}-base"), "xml");
     fs::write(&base, &base_text).unwrap();
     let folder = common::temp_dir(&format!("{tag}-folder"));
     copy_tree(&exported.full, &folder);
@@ -513,7 +513,7 @@ fn a_base_of_another_xml_version_exports_every_row() {
     let tag = "base-sync-dialect";
     let exported = exported(HOME_PAGE, tag);
     let info = config_dump_info(&exported.full);
-    let base = common::temp_dir(&format!("{tag}-base")).with_extension("xml");
+    let base = common::temp_file(&format!("{tag}-base"), "xml");
     fs::write(&base, info.replace("version=\"2.20\"", "version=\"2.21\"")).unwrap();
     let out = common::temp_dir(&format!("{tag}-out"));
     let report = dump(&exported.rows, &out, &base_arg(&base));
@@ -526,7 +526,7 @@ fn a_base_that_is_no_config_dump_info_is_refused() {
     let tag = "base-sync-bad";
     let rows = common::temp_dir(&format!("{tag}-rows"));
     rows_of(&fixture("external/choice_list_dates/input.cf"), &rows);
-    let base = common::temp_dir(&format!("{tag}-base")).with_extension("xml");
+    let base = common::temp_file(&format!("{tag}-base"), "xml");
     fs::write(&base, "<MetaDataObject/>").unwrap();
     let out = common::temp_dir(&format!("{tag}-out"));
     let output = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
@@ -556,12 +556,11 @@ fn a_base_that_is_no_config_dump_info_is_refused() {
 
 /// A newer version of the `.cf` at `base`: `edit` applied to its export,
 /// loaded back with `cf load` (as `tests/cf_update.rs` builds one).
-fn newer(base: &Path, tag: &str, edit: impl FnOnce(&Path)) -> PathBuf {
+fn newer(base: &Path, tag: &str, edit: impl FnOnce(&Path)) -> common::Scratch {
     let tree = common::temp_dir(&format!("{tag}-edit"));
     assert!(common::export(base, &tree).status.success());
     edit(&tree);
-    let output = common::temp_dir(&format!("{tag}-newer")).with_extension("cf");
-    let _ = fs::remove_file(&output);
+    let output = common::temp_file(&format!("{tag}-newer"), "cf");
     let out = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"))
         .args(["cf", "load"])
         .arg(&tree)
@@ -603,7 +602,7 @@ fn an_edited_configuration_updates_the_export_by_its_versions() {
     // the export of the older configuration, brought up to the newer one
     let folder = common::temp_dir(&format!("{tag}-folder"));
     dump(&old_rows, &folder, &[]);
-    let base = common::temp_dir(&format!("{tag}-base")).with_extension("xml");
+    let base = common::temp_file(&format!("{tag}-base"), "xml");
     fs::copy(folder.join("ConfigDumpInfo.xml"), &base).unwrap();
     let report = dump(
         &new_rows,

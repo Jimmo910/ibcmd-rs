@@ -26,6 +26,8 @@ mod object;
 mod pager;
 mod read_limits;
 mod record;
+#[cfg(test)]
+mod test_scratch;
 #[cfg(windows)]
 mod windows_security;
 mod write_paths;
@@ -906,6 +908,7 @@ mod publication_tests {
                     .unwrap()
                     .as_nanos()
             ));
+            let _scratch = crate::test_scratch::TestScratch::adopt(&dir);
             fs::create_dir(&dir).unwrap();
             let data = dir.join("data");
             let backup = dir.join("backup");
@@ -949,9 +952,6 @@ mod publication_tests {
             assert_eq!(fs::read(&data).unwrap(), b"new database C");
             assert_eq!(fs::read(&backup).unwrap(), b"original database A");
             assert!(!pending.exists());
-            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
-                fs::remove_dir_all(dir).unwrap();
-            }
         }
     }
     #[test]
@@ -965,6 +965,7 @@ mod publication_tests {
                     .unwrap()
                     .as_nanos()
             ));
+            let _scratch = crate::test_scratch::TestScratch::adopt(&dir);
             fs::create_dir(&dir).unwrap();
             let data = dir.join("data");
             let work = dir.join("work");
@@ -998,9 +999,6 @@ mod publication_tests {
                 assert!(!work.exists());
                 // No rollback is attempted: even an unavailable filesystem
                 // cannot erase recovery A or the previous generation B.
-            }
-            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
-                fs::remove_dir_all(dir).unwrap();
             }
         }
     }

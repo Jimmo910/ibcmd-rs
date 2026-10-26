@@ -1023,6 +1023,7 @@ mod tests {
                 .map(|elapsed| elapsed.as_nanos())
                 .unwrap_or_default()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(root.join("Enums")).unwrap();
         let enum_xml = format!(
             r#"{HEAD}
@@ -1073,7 +1074,6 @@ mod tests {
         let row = compile("Version8_5_1");
         assert!(row.contains("{1,\r\n{3,\r\n{1,0,a03d3535-090a-46f5-a411-3567c8c12bc1}"));
         assert!(strip_layout(&row).contains(&format!("{nil},0}},{{4,4,{{2}},5}}}},0}}")));
-        fs::remove_dir_all(&root).ok();
     }
 
     /// Drops the CRLF the serializer puts before nested lists and closing

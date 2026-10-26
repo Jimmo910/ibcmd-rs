@@ -84,15 +84,18 @@ impl Settings {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
     use crate::restructure::size_guard::{DEFAULT_LIMIT_BYTES, DEFAULT_LIMIT_ROWS, resolve_limit};
     use crate::settings::SettingsSources;
 
-    fn load(env: &[(&str, &str)], toml: Option<&str>) -> (Settings, Option<PathBuf>) {
+    fn load(
+        env: &[(&str, &str)],
+        toml: Option<&str>,
+    ) -> (Settings, Option<crate::test_scratch::TestScratch>) {
         let dir = toml.map(|text| {
-            let dir = std::env::temp_dir().join(format!("ibcmd-rs-limit-{}", uuid::Uuid::new_v4()));
+            let dir = crate::test_scratch::TestScratch::adopt(
+                std::env::temp_dir().join(format!("ibcmd-rs-limit-{}", uuid::Uuid::new_v4())),
+            );
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("ibcmd-rs.toml"), text).unwrap();
             dir
@@ -109,7 +112,7 @@ mod tests {
         let loaded = Settings::from_sources(&SettingsSources {
             env: &lookup,
             executable: None,
-            current_dir: dir.clone(),
+            current_dir: dir.as_ref().map(|dir| dir.to_path_buf()),
             app_data: None,
             native_config: None,
         })
@@ -117,10 +120,9 @@ mod tests {
         (loaded, dir)
     }
 
-    fn cleanup(dir: Option<PathBuf>) {
-        if let Some(dir) = dir {
-            let _ = std::fs::remove_dir_all(dir);
-        }
+    /// Removes the settings folder of `load`, if any.
+    fn cleanup(dir: Option<crate::test_scratch::TestScratch>) {
+        drop(dir);
     }
 
     #[test]
