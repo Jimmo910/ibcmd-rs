@@ -24,6 +24,20 @@ The updater SHALL reject unsupported or destructive plans before writes and SHAL
 - **WHEN** the same update is applied again
 - **THEN** no duplicate objects, records or allocations are created
 
+#### Scenario: Structural refusal has no replacement plan
+- **GIVEN** a proposed stage that the nonstructural admission gate refuses
+- **WHEN** schema planning returns no modeled migration
+- **THEN** staging and publication retain the original refusal
+- **AND** no ConfigCASSave, data or registry mutation occurs
+
+#### Scenario: SQL engine cannot execute restructuring assertions
+- **GIVEN** a structural update using ordered aggregates and modern catalog facts
+- **WHEN** SQL Server is older than 2017, database compatibility is below 110,
+  or the server capability facts cannot be established
+- **THEN** a separate compatible preflight reports the unsupported capability
+  before submitting SQL that depends on it or writing any data
+- **AND** code-only updates do not acquire the structural SQL-version requirement
+
 ### Requirement: Accompanying data-owning objects are classified
 The updater SHALL classify accompanying metadata by its measured physical effects, including non-predefined scheduled-job tables and their service mapping, and SHALL apply measured base data-separation contributions to extension-owned objects.
 
@@ -78,6 +92,13 @@ source image and SHALL NOT treat a form-only edit as a physical table change.
 - **GIVEN** an unmodeled semantic change to a root property
 - **WHEN** it accompanies a nested-form addition
 - **THEN** the compiler refuses before staging and identifies the changed property
+#### Scenario: Root collection edits lack matching objects
+- **GIVEN** existing root ChildObjects entries and their compiled descriptors
+- **WHEN** an edit removes, renames, duplicates or reorders an existing entry,
+  or adds a root entry without a matching added object
+- **THEN** the tree compiler refuses before staging
+- **AND** full-tree and selected imports preserve existing root membership
+
 ### Requirement: Proven Designer XML defaults remain importable
 Designer XML source comparison SHALL treat only schema-owned, native-proven
 omissions as their platform defaults. It SHALL preserve meaningful scalar text,
