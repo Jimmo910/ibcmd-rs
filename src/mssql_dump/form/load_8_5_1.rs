@@ -513,6 +513,15 @@ fn load_root(edits: &mut XmlEdits<'_>, root: usize, facts: &mut FormLoadFactsV8_
         )?,
     );
     let bar = take(edits, root, "ShowCommandBar")?;
+    let location = peek(edits, root, "CommandBarLocation")?;
+    let bar = bar.or_else(|| {
+        location
+            .as_deref()
+            .and_then(|value| {
+                ibcmd_schema::form_source_defaults::derived_show_command_bar("2.21", value)
+            })
+            .map(str::to_owned)
+    });
     facts.root_tail.insert(
         6,
         code_of(TRI_STATE, bar.as_deref(), "<Form> ShowCommandBar")?,

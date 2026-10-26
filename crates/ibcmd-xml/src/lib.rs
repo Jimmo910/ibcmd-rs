@@ -9,11 +9,14 @@ pub mod dcs_schema;
 pub mod dcs_storage;
 pub mod dcs_template;
 mod dialect;
+pub mod extension_root;
 mod form_choice_parameters;
 pub mod metadata;
 mod node;
 pub mod palette;
 mod reader;
+mod source_comparison;
+pub mod source_defaults;
 pub mod source_tree;
 mod writer;
 
@@ -105,6 +108,7 @@ pub use node::{
     XmlRawNode, XmlText,
 };
 pub use reader::{XmlError, XmlErrorCause, XmlReader};
+pub use source_comparison::{equal_ignoring_source_formatting, source_elements_equal};
 pub use writer::{LexicalPolicy, WriteError, XmlWriter};
 
 /// Standalone EDT-derived schema registry consumed by XML family writers.
