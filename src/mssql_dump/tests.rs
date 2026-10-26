@@ -8973,11 +8973,7 @@ fn extracts_form_attributes_conditional_appearance_from_body_tail() {
         "{{4,0,0,1,\"Список.SortKey\",\"Список.SortKey\",{{2,{{26}},{{9}}}},{{1,{{26}}}},{{#base64:{}}}}}",
         encoded.trim()
     );
-    let section = extract_form_body_attributes_section(
-        &[tail],
-        &BTreeMap::new(),
-        super::form_body_host::ROOT_FORM_BODY_HOST,
-    );
+    let section = extract_form_body_attributes_section(&[tail], &BTreeMap::new());
     let Some(FormAttributesConditionalAppearance::Typed(value)) =
         section.conditional_appearance.as_ref()
     else {
@@ -9007,7 +9003,6 @@ fn form_attributes_conditional_appearance_outside_the_cohort_is_transliterated()
             "{{4,0,0,1,\"Список.SortKey\",\"Список.SortKey\",{{2,{{26}},{{9}}}},{{1,{{26}}}},{{#base64:{payload}}}}}"
         )],
         &BTreeMap::new(),
-        super::form_body_host::ROOT_FORM_BODY_HOST,
     );
     let Some(FormAttributesConditionalAppearance::Transliterated(fragment)) =
         section.conditional_appearance.as_ref()
@@ -9045,7 +9040,6 @@ fn form_attributes_malformed_conditional_appearance_fails_closed() {
             "{{4,0,0,1,\"Список.SortKey\",\"Список.SortKey\",{{2,{{26}},{{9}}}},{{1,{{26}}}},{{#base64:{payload}}}}}"
         )],
         &BTreeMap::new(),
-        super::form_body_host::ROOT_FORM_BODY_HOST,
     );
     assert!(matches!(
         section.conditional_appearance,
@@ -9080,7 +9074,6 @@ fn form_attributes_tail_counts_sub_tables_and_bindings_independently() {
             empty.trim()
         )],
         &BTreeMap::new(),
-        super::form_body_host::ROOT_FORM_BODY_HOST,
     );
     assert!(section.conditional_appearance.is_none());
 
@@ -9095,7 +9088,6 @@ fn form_attributes_tail_counts_sub_tables_and_bindings_independently() {
             filled.trim()
         )],
         &BTreeMap::new(),
-        super::form_body_host::ROOT_FORM_BODY_HOST,
     );
     assert!(matches!(
         section.conditional_appearance,
@@ -9125,7 +9117,6 @@ fn form_attributes_tail_binding_relations_fail_closed() {
                 filled.trim()
             )],
             &BTreeMap::new(),
-            super::form_body_host::ROOT_FORM_BODY_HOST,
         );
         assert!(
             matches!(
@@ -9150,7 +9141,6 @@ fn form_attributes_tail_with_unaccounted_fields_fails_closed() {
     let section = extract_form_body_attributes_section(
         &[format!("{{4,0,0,0,{{0}},{{#base64:{}}}}}", empty.trim())],
         &BTreeMap::new(),
-        super::form_body_host::ROOT_FORM_BODY_HOST,
     );
     assert!(matches!(
         section.conditional_appearance,
@@ -9170,11 +9160,7 @@ fn formats_form_attributes_section_conditional_appearance_inside_attributes() {
         "{{4,0,0,1,\"Список.SortKey\",\"Список.SortKey\",{{2,{{26}},{{9}}}},{{1,{{26}}}},{{#base64:{}}}}}",
         encoded.trim()
     );
-    let section = extract_form_body_attributes_section(
-        &[tail],
-        &BTreeMap::new(),
-        super::form_body_host::ROOT_FORM_BODY_HOST,
-    );
+    let section = extract_form_body_attributes_section(&[tail], &BTreeMap::new());
     let xml = format_form_attributes_section_xml(&[], &section).unwrap();
 
     assert!(xml.contains("\t<Attributes>\r\n"), "{xml}");
@@ -9405,8 +9391,7 @@ fn form_parse_context_matches_legacy_wrapper_byte_for_byte() {
         &information_register_field_refs,
         &information_register_master_dimensions,
         None,
-        super::form_body_host::ROOT_FORM_BODY_HOST,
-        super::form_body_host::active_form_extension_export(),
+        super::form_body_entry::active_form_extension_export(),
     )
     .with_trace_sink(&sink);
     let contextual = extract_form_body_xml_from_body_timed(&body, &context, None).unwrap();
@@ -10367,8 +10352,7 @@ fn detailed_form_extraction_preserves_malformed_link_rejection_diagnostics() {
         &information_register_field_refs,
         &information_register_master_dimensions,
         None,
-        super::form_body_host::ROOT_FORM_BODY_HOST,
-        super::form_body_host::active_form_extension_export(),
+        super::form_body_entry::active_form_extension_export(),
     );
 
     let extraction =
@@ -52956,7 +52940,7 @@ fn parses_bot_properties_with_short_header_wrapper() {
 }
 
 /// The extension-export state a form is read under, as
-/// `form_body_host::active_form_extension_export` takes it: the extended
+/// `form_body_entry::active_form_extension_export` takes it: the extended
 /// configuration's compatibility mode, or `None` when it cannot be read.
 fn extension_export_for_test(mode: Option<&str>) -> FormExtensionExport {
     FormExtensionExport {
@@ -53099,7 +53083,6 @@ fn extension_export_probe_xml(
         &information_register_field_refs,
         &information_register_master_dimensions,
         None,
-        super::form_body_host::ROOT_FORM_BODY_HOST,
         extension_export,
     )
     .with_form_compatibility(FormCompatibility::of(own_mode));
@@ -53190,10 +53173,10 @@ fn a_form_parse_context_takes_the_extension_export_running_when_it_is_built() {
         return;
     }
     use super::extension::{BaseIndexProvider, ExtensionContext, ResolvedIndexes, activate};
-    use super::form_body_host::active_form_extension_export;
+    use super::form_body_entry::active_form_extension_export;
 
     // The root's entry point builds the context it reads the form with from
-    // the extension export running now (`form_body_host`); its default
+    // the extension export running now (`form_body_entry`); its default
     // context writes the platform's own edition, the probe's own mode `None`.
     let read_now = || {
         extract_form_body_xml_from_body(
