@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -8,8 +8,9 @@ use std::sync::{Arc, Mutex};
 use crate::form_schema::form_text_document_context_menu_child_is_valid;
 use anyhow::{Context, Result, anyhow};
 use flate2::Compression;
-use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
+use ibcmd_1c_text::{crlf_line_breaks, format_1c_string, is_uuid_like_ascii};
+use ibcmd_1c_vocab::is_svg_content;
 use ibcmd_core::dcs::{DcsConditionalAppearance, DcsFilter, DcsOrder};
 use ibcmd_schema::{
     FormTextDocumentContextMenuMultiplicity, bundled_dcs_conditional_appearance_policy,
@@ -49,9 +50,15 @@ use crate::form_schema::{
     form_tooltip_representation_schema, form_tooltip_representation_supports_xml_tag,
     normalize_form_table_command_bar_location_xml,
 };
+use crate::mssql_dump::sanitize_source_path_segment;
 use crate::v8_container::{
     V8Element, build_v8_container, make_v8_element_header, parse_v8_container, read_v8_element_data,
 };
+
+// The rest of the root reaches these by their `module_blob` paths.
+pub(crate) use ibcmd_1c_text::decode_base64_mime_lenient as decode_base64_mime;
+pub(crate) use ibcmd_1c_text::{encode_base64, platform_base64_token};
+pub(crate) use ibcmd_1c_vocab::inflate_raw;
 
 const DEFAULT_INFO: &[u8] = b"\xEF\xBB\xBF{3,1,0,\"\",0}";
 // Platform-level 1C standard pictures and form type IDs, not database metadata UUIDs.
@@ -1671,7 +1678,7 @@ impl MetadataSourceContext {
     fn resolve_form_uuid(&self, reference: &str) -> Result<String> {
         let reference = reference.trim();
         // A form the configuration no longer has is spelled by its bare uuid.
-        if is_uuid_text(reference) {
+        if is_uuid_like_ascii(reference.as_bytes()) {
             return Ok(reference.to_ascii_lowercase());
         }
         let path = if let Some(name) = reference.strip_prefix("CommonForm.") {
@@ -5898,7 +5905,7 @@ fn native_button_command(
     if let Some((head, tail)) = path.split_once(':')
         && !head.is_empty()
         && head.bytes().all(|byte| byte.is_ascii_digit())
-        && is_uuid_reference(tail)
+        && is_uuid_like_ascii(tail.as_bytes())
     {
         return Ok(format!("{{{head},{tail}}}"));
     }
@@ -6417,8 +6424,8 @@ fn native_choice_list_reference(
     // `<type uuid>.<value uuid>` is the exporter's spelling of a value its
     // type does not name; the body holds the two uuids (2 of 2).
     if let Some((type_id, value_id)) = reference.split_once('.')
-        && is_uuid_text(type_id)
-        && is_uuid_text(value_id)
+        && is_uuid_like_ascii(type_id.as_bytes())
+        && is_uuid_like_ascii(value_id.as_bytes())
     {
         return Ok((type_id.to_string(), value_id.to_string()));
     }
@@ -7878,7 +7885,7 @@ fn native_picture_of(
     // uuid; the body holds the common-picture shape with that uuid (16 of 16).
     if let Some(uuid) = reference
         .strip_prefix("0:")
-        .filter(|tail| is_uuid_text(tail))
+        .filter(|tail| is_uuid_like_ascii(tail.as_bytes()))
     {
         let load_transparent = match picture.load_transparent.as_deref().map(str::trim) {
             Some("true") => true,
@@ -8106,7 +8113,7 @@ fn native_rights(
                 anyhow!("{owner} names Role.{role} and no configuration is on hand")
             })?;
             source.resolve_simple_metadata_uuid(name, "Role", "Roles", "Role.")?
-        } else if is_uuid_text(name) {
+        } else if is_uuid_like_ascii(name.as_bytes()) {
             name.clone()
         } else {
             return Err(anyhow!("{owner} names {name}, which is not a role"));
@@ -8454,7 +8461,7 @@ fn native_inline_data_path(
                         .trim_start_matches('-')
                         .bytes()
                         .all(|byte| byte.is_ascii_digit())
-                        || is_uuid_text(part))
+                        || is_uuid_like_ascii(part.as_bytes()))
             })
         });
     let full = if raw {
@@ -8877,7 +8884,7 @@ fn format_native_form_body(
             // stores that form's own uuid (3 of 3).
             Some(
                 // A storage the configuration no longer has is its bare uuid.
-                if is_uuid_text(reference.trim()) {
+                if is_uuid_like_ascii(reference.trim().as_bytes()) {
                     reference.trim().to_ascii_lowercase()
                 } else if reference.contains(".Form.")
                     || reference.trim().starts_with("CommonForm.")
@@ -9169,7 +9176,7 @@ fn format_native_form_body(
             let reference = reference.trim();
             let uuid = if reference.is_empty() {
                 "00000000-0000-0000-0000-000000000000".to_string()
-            } else if is_uuid_text(reference) {
+            } else if is_uuid_like_ascii(reference.as_bytes()) {
                 // The exporter spells an option it cannot name -- a deleted
                 // one -- by its uuid, which is what the body holds.
                 reference.to_string()
@@ -10214,14 +10221,6 @@ fn is_form_item_picture_asset_content(bytes: &[u8]) -> bool {
         || is_svg_content(bytes)
 }
 
-fn is_svg_content(bytes: &[u8]) -> bool {
-    let Ok(text) = std::str::from_utf8(bytes) else {
-        return false;
-    };
-    let text = text.trim_start_matches('\u{feff}').trim_start();
-    text.starts_with("<svg") || text.starts_with("<?xml") && text.contains("<svg")
-}
-
 fn form_item_asset_file_name(property_name: &str, content: &[u8]) -> String {
     format!("{property_name}.{}", form_item_asset_extension(content))
 }
@@ -10241,22 +10240,6 @@ fn form_item_asset_extension(content: &[u8]) -> &'static str {
         "svg"
     } else {
         "bin"
-    }
-}
-
-fn sanitize_source_path_segment(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
-            output.push('_');
-        } else {
-            output.push(ch);
-        }
-    }
-    if output.trim().is_empty() {
-        "Unnamed".to_string()
-    } else {
-        output
     }
 }
 
@@ -16461,7 +16444,7 @@ fn native_command_interface_item(
         None => "{0}".to_string(),
         Some(name) => {
             let uuid = common_command_group_uuid(name)
-                .or_else(|| is_uuid_reference(name).then(|| name.to_string()))
+                .or_else(|| is_uuid_like_ascii(name.as_bytes()).then(|| name.to_string()))
                 .or_else(|| {
                     let name = name.strip_prefix("CommandGroup.")?;
                     source?
@@ -16523,7 +16506,7 @@ fn native_command_interface_command(
     if let Some((head, tail)) = reference.split_once(':')
         && head.bytes().all(|byte| byte.is_ascii_digit())
         && !head.is_empty()
-        && is_uuid_reference(tail)
+        && is_uuid_like_ascii(tail.as_bytes())
     {
         return Ok(format!("{{{head},{tail}}}"));
     }
@@ -16649,19 +16632,6 @@ const OBJECT_STANDARD_COMMAND_ORDINALS: &[(&str, &str, u32)] = &[
     ("InformationRegister", "OpenList", 0),
     ("Report", "Open", 0),
 ];
-
-/// Whether a string is a bare uuid, which both a command and a command group
-/// can be spelled as when the export could not name the target.
-fn is_uuid_reference(value: &str) -> bool {
-    value.len() == 36
-        && value.bytes().enumerate().all(|(index, byte)| {
-            if matches!(index, 8 | 13 | 18 | 23) {
-                byte == b'-'
-            } else {
-                byte.is_ascii_hexdigit()
-            }
-        })
-}
 
 /// Whether a path sits under a command interface panel, either of the two.
 ///
@@ -18975,7 +18945,7 @@ fn collect_form_command_uuids(text: &str, uuids: &mut BTreeMap<String, String>) 
                     .get(1)
                     .map(|range| text[range.clone()].trim().to_string())
             })
-            .filter(|uuid| is_uuid_text(uuid))
+            .filter(|uuid| is_uuid_like_ascii(uuid.as_bytes()))
     {
         uuids.insert(name, uuid);
         return Ok(());
@@ -19215,7 +19185,7 @@ fn retain_form_layout_top_level_child_items(
         let uuid_range = fields[span.first_uuid_index + index * 2].clone();
         let item_range = fields[span.first_uuid_index + 1 + index * 2].clone();
         let uuid = text[uuid_range].trim().to_string();
-        if !is_uuid_text(&uuid) {
+        if !is_uuid_like_ascii(uuid.as_bytes()) {
             return Ok(());
         }
         let item_text = text[item_range].to_string();
@@ -22614,7 +22584,7 @@ fn form_layout_direct_child_items_span_at(
     }
     for index in 0..count {
         let uuid_range = fields.get(first_uuid_index + index * 2)?.clone();
-        if !is_uuid_text(text[uuid_range].trim()) {
+        if !is_uuid_like_ascii(text[uuid_range].trim().as_bytes()) {
             return None;
         }
         let item_range = fields.get(first_uuid_index + 1 + index * 2)?.clone();
@@ -22898,7 +22868,7 @@ fn retain_form_layout_direct_child_items(
             return Ok(());
         };
         let uuid = text[uuid_range].trim().to_string();
-        if !is_uuid_text(&uuid) {
+        if !is_uuid_like_ascii(uuid.as_bytes()) {
             return Ok(());
         }
         let item_text = text[item_range].to_string();
@@ -25008,7 +24978,7 @@ fn form_setting_base64_xml(existing: &str) -> Result<Option<String>> {
 }
 
 fn find_form_setting_value_range(text: &str, key: &str) -> Option<Range<usize>> {
-    let needle = format!("\"{}\"", key.replace('"', "\"\""));
+    let needle = format_1c_string(key);
     let mut offset = 0usize;
     while let Some(relative) = text[offset..].find(&needle) {
         let key_start = offset + relative;
@@ -26394,7 +26364,7 @@ fn validate_role_object_ref(plain: &str, object_ref_range: Range<usize>) -> Resu
         .get(1)
         .ok_or_else(|| anyhow!("object reference has no UUID field"))?;
     let uuid = plain[uuid_range.clone()].trim();
-    if !is_uuid_text(uuid) {
+    if !is_uuid_like_ascii(uuid.as_bytes()) {
         return Err(anyhow!("object reference has invalid UUID {uuid}"));
     }
     Ok(())
@@ -26406,7 +26376,7 @@ fn role_object_ref_key(plain: &str, object_ref_range: Range<usize>) -> Result<Ro
         .get(1)
         .ok_or_else(|| anyhow!("object reference has no UUID field"))?;
     let uuid = plain[uuid_range.clone()].trim();
-    if !is_uuid_text(uuid) {
+    if !is_uuid_like_ascii(uuid.as_bytes()) {
         return Err(anyhow!("object reference has invalid UUID {uuid}"));
     }
     Ok(RoleObjectRefKey {
@@ -26962,7 +26932,7 @@ fn role_restriction_condition_replacements(
     if nested.len() == count * 2
         && nested
             .first()
-            .is_some_and(|range| is_uuid_text(plain[range.clone()].trim()))
+            .is_some_and(|range| is_uuid_like_ascii(plain[range.clone()].trim().as_bytes()))
     {
         for pair in nested.chunks(2) {
             collect_role_restriction_pair_replacement(
@@ -28105,23 +28075,6 @@ fn collect_flowchart_item_replacements(
     Ok(())
 }
 
-/// A line break inside a stored string is CRLF, while the XML hands its text
-/// over with the bare LF the file spells (ERP УХ
-/// `СхемыСправки/ВалютныйКонтрольРасчетыСПоставщикомПостоплата`: `…валюты\n`
-/// in the XML, `…валюты\r\n` stored); the exporter turns it back into LF.
-fn crlf_line_breaks(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 8);
-    let mut previous = '\0';
-    for ch in text.chars() {
-        if ch == '\n' && previous != '\r' {
-            out.push('\r');
-        }
-        out.push(ch);
-        previous = ch;
-    }
-    out
-}
-
 fn flowchart_base_ranges(
     plain: &str,
     code: &str,
@@ -28492,29 +28445,6 @@ pub fn pack_ext_picture_blob_from_bytes_with_base(
         plain_bytes: plain.len(),
         output_sha256,
     })
-}
-
-/// A `{#base64:...}` payload laid out as the platform stores it: 64
-/// characters per line, each full line ended by `\r\r\n` -- so a payload whose
-/// length is a multiple of 64 ends with the break too (help and picture rows
-/// of both corpora).
-///
-/// That last break is the platform's current writer: of the payloads whose
-/// length is a multiple of 64, 32 of 32 БСП and 362 of 384 ERP УХ help
-/// payloads carry it, and 31 of 34 and 174 of 184 common pictures. The rest
-/// were written by an older writer the source does not tell apart.
-pub(crate) fn platform_base64_token(bytes: &[u8]) -> String {
-    let encoded = encode_base64(bytes);
-    let mut token = String::with_capacity(encoded.len() + encoded.len() / 64 * 3 + 10);
-    token.push_str("{#base64:");
-    for line in encoded.as_bytes().chunks(64) {
-        token.push_str(std::str::from_utf8(line).expect("base64 is ASCII"));
-        if line.len() == 64 {
-            token.push_str("\r\r\n");
-        }
-    }
-    token.push('}');
-    token
 }
 
 fn replace_first_base64_payload(text: &mut String, payload: &str) -> bool {
@@ -30224,7 +30154,7 @@ fn patch_configuration_metadata_text(
     let header_uuid = text
         .get(uuid_start..uuid_end)
         .ok_or_else(|| anyhow!("configuration metadata tuple UUID is truncated"))?;
-    if !is_uuid_text(header_uuid) {
+    if !is_uuid_like_ascii(header_uuid.as_bytes()) {
         return Err(anyhow!(
             "configuration metadata tuple UUID is invalid: {header_uuid}"
         ));
@@ -30929,7 +30859,7 @@ fn std_picture_value_uuid(reference: &str) -> Option<&'static str> {
     value
         .strip_prefix("{0,")
         .and_then(|rest| rest.strip_suffix('}'))
-        .filter(|uuid| is_uuid_text(uuid))
+        .filter(|uuid| is_uuid_like_ascii(uuid.as_bytes()))
 }
 
 fn parse_command_group_picture(
@@ -31754,11 +31684,6 @@ fn format_1c_synonyms(synonyms: &[LocalizedString]) -> String {
     output
 }
 
-fn format_1c_string(value: &str) -> String {
-    let escaped = value.replace('"', "\"\"");
-    format!("\"{escaped}\"")
-}
-
 fn is_defined_type_reference(reference: &str) -> bool {
     let reference = reference.trim();
     reference.starts_with("cfg:DefinedType.") || reference.starts_with("DefinedType.")
@@ -32473,86 +32398,10 @@ fn build_module_inner(elements: &[V8Element; 2]) -> Result<Vec<u8>> {
     build_v8_container(elements)
 }
 
-pub(crate) fn inflate_raw(input: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = DeflateDecoder::new(input);
-    let mut output = Vec::new();
-    decoder.read_to_end(&mut output)?;
-    Ok(output)
-}
-
 pub(crate) fn deflate_raw(input: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(input)?;
     encoder.finish().context("failed to finish deflate stream")
-}
-
-pub(crate) fn encode_base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let first = chunk[0];
-        let second = chunk.get(1).copied().unwrap_or(0);
-        let third = chunk.get(2).copied().unwrap_or(0);
-        output.push(ALPHABET[(first >> 2) as usize] as char);
-        output.push(ALPHABET[(((first & 0b0000_0011) << 4) | (second >> 4)) as usize] as char);
-        if chunk.len() > 1 {
-            output.push(ALPHABET[(((second & 0b0000_1111) << 2) | (third >> 6)) as usize] as char);
-        } else {
-            output.push('=');
-        }
-        if chunk.len() > 2 {
-            output.push(ALPHABET[(third & 0b0011_1111) as usize] as char);
-        } else {
-            output.push('=');
-        }
-    }
-    output
-}
-
-pub(crate) fn decode_base64_mime(input: &str) -> Option<Vec<u8>> {
-    let values = input
-        .bytes()
-        .filter(|byte| !byte.is_ascii_whitespace())
-        .collect::<Vec<_>>();
-    if values.len() % 4 != 0 {
-        return None;
-    }
-
-    let mut output = Vec::with_capacity(values.len() / 4 * 3);
-    for chunk in values.chunks(4) {
-        let mut decoded = [0u8; 4];
-        let mut padding = 0usize;
-        for (index, byte) in chunk.iter().copied().enumerate() {
-            if byte == b'=' {
-                padding += 1;
-                decoded[index] = 0;
-                continue;
-            }
-            if padding > 0 {
-                return None;
-            }
-            decoded[index] = base64_value(byte)?;
-        }
-        output.push((decoded[0] << 2) | (decoded[1] >> 4));
-        if padding < 2 {
-            output.push((decoded[1] << 4) | (decoded[2] >> 2));
-        }
-        if padding < 1 {
-            output.push((decoded[2] << 6) | decoded[3]);
-        }
-    }
-    Some(output)
-}
-
-fn base64_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'A'..=b'Z' => Some(byte - b'A'),
-        b'a'..=b'z' => Some(byte - b'a' + 26),
-        b'0'..=b'9' => Some(byte - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    }
 }
 
 fn replace_header_uuid(text: &mut String) -> Result<VersionReplacement> {
@@ -32630,7 +32479,7 @@ fn replace_uuid_at(text: &mut String, uuid_start: usize, name: &str) -> Result<V
         .get(uuid_start..uuid_end)
         .ok_or_else(|| anyhow!("UUID for {name} exceeds text length"))?
         .to_string();
-    if !is_uuid_text(&old_uuid) {
+    if !is_uuid_like_ascii(old_uuid.as_bytes()) {
         return Err(anyhow!("invalid UUID for {name}: {old_uuid}"));
     }
     let new_uuid = Uuid::new_v4().hyphenated().to_string();
@@ -32640,23 +32489,6 @@ fn replace_uuid_at(text: &mut String, uuid_start: usize, name: &str) -> Result<V
         old_uuid,
         new_uuid,
     })
-}
-
-fn is_uuid_text(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    if bytes.len() != 36 {
-        return false;
-    }
-    for (index, byte) in bytes.iter().enumerate() {
-        if matches!(index, 8 | 13 | 18 | 23) {
-            if *byte != b'-' {
-                return false;
-            }
-        } else if !byte.is_ascii_hexdigit() {
-            return false;
-        }
-    }
-    true
 }
 
 pub fn hex_sha256(bytes: &[u8]) -> String {
@@ -38884,8 +38716,8 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         let picture_fields = super::scan_braced_fields(&parsed.layout, layout_fields[3].start)?;
 
         assert_eq!(&parsed.layout[layout_fields[1].clone()], "1");
-        assert!(super::is_uuid_text(
-            &parsed.layout[layout_fields[2].clone()]
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[layout_fields[2].clone()].as_bytes()
         ));
         assert_eq!(&parsed.layout[picture_fields[0].clone()], "12");
         assert_eq!(&parsed.layout[picture_fields[5].clone()], "1");
@@ -39158,7 +38990,9 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
 
         assert_eq!(&parsed.layout[fields[0].clone()], "59");
         assert_eq!(&parsed.layout[fields[1].clone()], "1");
-        assert!(super::is_uuid_text(&parsed.layout[fields[2].clone()]));
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[fields[2].clone()].as_bytes()
+        ));
         assert!(parsed.layout.contains(r#"{34,{44,"#), "{}", parsed.layout);
         assert!(parsed.layout.contains(r#""HelpButton""#));
         assert!(parsed.layout.contains(r#"{1,"en","Help"}"#));
@@ -39248,7 +39082,7 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
 
         assert_eq!(&parsed.layout[layout_fields[1].clone()], "1");
         assert_eq!(&parsed.layout[button_command_fields[0].clone()], "2");
-        assert!(super::is_uuid_text(&command_uuid));
+        assert!(super::is_uuid_like_ascii(command_uuid.as_bytes()));
         assert_eq!(&parsed.trailing[2][commands_fields[1].clone()], "1");
         assert_eq!(&parsed.trailing[2][command_identity_fields[0].clone()], "2");
         assert_eq!(
@@ -39557,8 +39391,12 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
 
         assert_eq!(&parsed.layout[fields[0].clone()], "59");
         assert_eq!(&parsed.layout[fields[1].clone()], "2");
-        assert!(super::is_uuid_text(&parsed.layout[fields[2].clone()]));
-        assert!(super::is_uuid_text(&parsed.layout[fields[4].clone()]));
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[fields[2].clone()].as_bytes()
+        ));
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[fields[4].clone()].as_bytes()
+        ));
         assert!(parsed.layout.contains(r#"{22,{64,"#), "{}", parsed.layout);
         assert!(
             parsed
@@ -39718,8 +39556,8 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         assert_eq!(&parsed.layout[pages_fields[10].clone()], "0");
         assert_eq!(&parsed.layout[pages_fields[13].clone()], "14");
         assert_eq!(&parsed.layout[pages_fields[21].clone()], "1");
-        assert!(super::is_uuid_text(
-            &parsed.layout[pages_fields[22].clone()]
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[pages_fields[22].clone()].as_bytes()
         ));
         assert_eq!(&parsed.layout[page_fields[0].clone()], "22");
         assert_eq!(&parsed.layout[page_fields[5].clone()], "4");
@@ -39827,8 +39665,8 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         assert_eq!(&parsed.layout[group_fields[9].clone()], "3");
         assert_eq!(&parsed.layout[group_fields[10].clone()], "0");
         assert_eq!(&parsed.layout[group_fields[21].clone()], "1");
-        assert!(super::is_uuid_text(
-            &parsed.layout[group_fields[22].clone()]
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[group_fields[22].clone()].as_bytes()
         ));
         assert_eq!(&parsed.layout[button_fields[0].clone()], "34");
         assert_eq!(&parsed.layout[button_fields[5].clone()], r#""Run""#);
@@ -40088,8 +39926,8 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         assert_eq!(&parsed.layout[group_fields[5].clone()], "0");
         assert_eq!(&parsed.layout[group_fields[6].clone()], r#""Actions""#);
         assert_eq!(&parsed.layout[group_fields[10].clone()], "1");
-        assert!(super::is_uuid_text(
-            &parsed.layout[group_fields[11].clone()]
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[group_fields[11].clone()].as_bytes()
         ));
         assert_eq!(&parsed.layout[button_fields[0].clone()], "34");
         assert_eq!(&parsed.layout[button_fields[5].clone()], r#""HelpButton""#);
@@ -40287,8 +40125,8 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
             "{64,22222222-2222-4222-8222-222222222222}"
         );
         assert_eq!(&parsed.layout[group_fields[10].clone()], "1");
-        assert!(super::is_uuid_text(
-            &parsed.layout[group_fields[11].clone()]
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[group_fields[11].clone()].as_bytes()
         ));
         assert_eq!(&parsed.layout[button_fields[0].clone()], "34");
         assert_eq!(&parsed.layout[button_fields[5].clone()], r#""HelpButton""#);
@@ -42198,8 +42036,8 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
             "{25,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb}"
         );
         assert_eq!(&parsed.layout[table_fields[10].clone()], "1");
-        assert!(super::is_uuid_text(
-            &parsed.layout[table_fields[11].clone()]
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[table_fields[11].clone()].as_bytes()
         ));
         assert_eq!(&parsed.layout[input_fields[0].clone()], "48");
         assert_eq!(&parsed.layout[input_fields[6].clone()], r#""Description""#);
@@ -46462,9 +46300,9 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         assert_eq!(header.old_uuid, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa");
         assert_eq!(root.old_uuid, "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb");
         assert_eq!(file.old_uuid, "cccccccc-cccc-4ccc-cccc-cccccccccccc");
-        assert!(super::is_uuid_text(&header.new_uuid));
-        assert!(super::is_uuid_text(&root.new_uuid));
-        assert!(super::is_uuid_text(&file.new_uuid));
+        assert!(super::is_uuid_like_ascii(header.new_uuid.as_bytes()));
+        assert!(super::is_uuid_like_ascii(root.new_uuid.as_bytes()));
+        assert!(super::is_uuid_like_ascii(file.new_uuid.as_bytes()));
     }
 
     #[test]
@@ -46523,7 +46361,7 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
 
         assert!(output.starts_with("\u{feff}{1,2,"));
         assert_eq!(addition.old_uuid, "");
-        assert!(super::is_uuid_text(&addition.new_uuid));
+        assert!(super::is_uuid_like_ascii(addition.new_uuid.as_bytes()));
         assert!(output.contains(&format!("\"file.5\",{}", addition.new_uuid)));
 
         Ok(())

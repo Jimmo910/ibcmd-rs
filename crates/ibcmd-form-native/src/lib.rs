@@ -17,10 +17,13 @@
 //! packer in `module_blob`, `compiler::bodies::form_chart`, `metadata_model`
 //! and `load::seed` use it. The crate depends on nothing in the root, so a
 //! root rebuild reuses it, and a clean build compiles it beside the root's
-//! other dependencies.
+//! other dependencies. Its base64 and 1C string writers are the ones of
+//! `ibcmd-1c-text`, which the root's packer uses too.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+use ibcmd_1c_text::{encode_base64, format_1c_string as quoted};
 
 /// The namespace every form *item* id lives in.
 ///
@@ -47,11 +50,6 @@ pub const fn child_kind_uuid(wrapper: u8) -> Option<&'static str> {
         5 => "c5259a1d-518a-4afd-b98d-0176027e4feb",
         _ => return None,
     })
-}
-
-/// A 1C string literal: quoted, with `"` doubled.
-fn quoted(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
 }
 
 /// A colour a form item names, in the shape a body stores it.
@@ -6719,33 +6717,6 @@ pub fn format_native_inline_picture(
     )
 }
 
-/// Standard base64 (RFC 4648 alphabet, `=` padding, no line breaks).
-///
-/// The same encoder as the root crate's `module_blob::encode_base64`, kept
-/// here so this crate depends on nothing in the root.
-fn encode_base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let first = chunk[0];
-        let second = chunk.get(1).copied().unwrap_or(0);
-        let third = chunk.get(2).copied().unwrap_or(0);
-        output.push(ALPHABET[(first >> 2) as usize] as char);
-        output.push(ALPHABET[(((first & 0b0000_0011) << 4) | (second >> 4)) as usize] as char);
-        if chunk.len() > 1 {
-            output.push(ALPHABET[(((second & 0b0000_1111) << 2) | (third >> 6)) as usize] as char);
-        } else {
-            output.push('=');
-        }
-        if chunk.len() > 2 {
-            output.push(ALPHABET[(third & 0b0011_1111) as usize] as char);
-        } else {
-            output.push('=');
-        }
-    }
-    output
-}
-
 /// A picture reference to one of the platform's own pictures.
 ///
 /// `value` is what the name stores -- `{0,<uuid>}` for most of them, a bare
@@ -10156,32 +10127,6 @@ mod tests {
             );
         }
         assert!(format_native_color(Some("web:Tomato.Extra"), |_| None).is_none());
-    }
-
-    #[test]
-    fn encodes_base64_as_rfc_4648_does() {
-        // RFC 4648 section 10 test vectors, then every byte value once.
-        for (input, expected) in [
-            ("", ""),
-            ("f", "Zg=="),
-            ("fo", "Zm8="),
-            ("foo", "Zm9v"),
-            ("foob", "Zm9vYg=="),
-            ("fooba", "Zm9vYmE="),
-            ("foobar", "Zm9vYmFy"),
-        ] {
-            assert_eq!(encode_base64(input.as_bytes()), expected);
-        }
-        let every_byte: Vec<u8> = (0..=255).collect();
-        let expected = concat!(
-            "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4v",
-            "MDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5f",
-            "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6P",
-            "kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/",
-            "wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v",
-            "8PHy8/T19vf4+fr7/P3+/w==",
-        );
-        assert_eq!(encode_base64(&every_byte), expected);
     }
 
     #[test]

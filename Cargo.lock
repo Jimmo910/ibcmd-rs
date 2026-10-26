@@ -745,6 +745,9 @@ dependencies = [
 [[package]]
 name = "ibcmd-form-native"
 version = "0.1.0"
+dependencies = [
+ "ibcmd-1c-text",
+]
 
 [[package]]
 name = "ibcmd-form-schema"

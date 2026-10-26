@@ -24,6 +24,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
+use ibcmd_1c_text::{crlf_line_breaks, format_1c_string as quote_1c};
 
 use super::layout_8_5_1::Node;
 use super::xml_2_21_writer::{
@@ -182,10 +183,6 @@ fn unescape_xml(text: &str) -> String {
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
         .replace("&amp;", "&")
-}
-
-fn quote_1c(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
 }
 
 /// The text between an element's opening and closing tags.
@@ -1638,20 +1635,6 @@ fn up_convert_leaves(node: &mut Node) {
             }
         }
     }
-}
-
-/// Every line feed not preceded by a carriage return becomes CR LF.
-fn crlf_line_breaks(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + text.len() / 32);
-    let mut previous = '\0';
-    for character in text.chars() {
-        if character == '\n' && previous != '\r' {
-            out.push('\r');
-        }
-        out.push(character);
-        previous = character;
-    }
-    out
 }
 
 /// A base64 leaf as 8.5 stores it; see [`up_convert_leaves`]. A payload that

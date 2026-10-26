@@ -14,6 +14,7 @@
 use std::ops::Range;
 
 use anyhow::{Result, anyhow};
+use ibcmd_1c_text::decode_base64_mime_lenient;
 
 pub fn decode_base64_payload_field(field: &str) -> Result<Vec<u8>> {
     let Some(payload) = field
@@ -22,58 +23,9 @@ pub fn decode_base64_payload_field(field: &str) -> Result<Vec<u8>> {
     else {
         return Err(anyhow!("base64 payload wrapper is missing"));
     };
-    decode_base64_mime(payload).ok_or_else(|| anyhow!("base64 payload is invalid"))
-}
-
-/// `module_blob`'s Base64 decoder, copied as it is there (`decode_base64_mime`
-/// and `base64_value` in `src/module_blob.rs`, which keeps its own): unlike
-/// `ibcmd_1c_text::decode_base64_mime` it does not refuse a group of four
-/// padded by more than two `=`, so the payload fields read here decode exactly
-/// as they did in the root.
-fn decode_base64_mime(input: &str) -> Option<Vec<u8>> {
-    let values = input
-        .bytes()
-        .filter(|byte| !byte.is_ascii_whitespace())
-        .collect::<Vec<_>>();
-    if values.len() % 4 != 0 {
-        return None;
-    }
-
-    let mut output = Vec::with_capacity(values.len() / 4 * 3);
-    for chunk in values.chunks(4) {
-        let mut decoded = [0u8; 4];
-        let mut padding = 0usize;
-        for (index, byte) in chunk.iter().copied().enumerate() {
-            if byte == b'=' {
-                padding += 1;
-                decoded[index] = 0;
-                continue;
-            }
-            if padding > 0 {
-                return None;
-            }
-            decoded[index] = base64_value(byte)?;
-        }
-        output.push((decoded[0] << 2) | (decoded[1] >> 4));
-        if padding < 2 {
-            output.push((decoded[1] << 4) | (decoded[2] >> 2));
-        }
-        if padding < 1 {
-            output.push((decoded[2] << 6) | decoded[3]);
-        }
-    }
-    Some(output)
-}
-
-fn base64_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'A'..=b'Z' => Some(byte - b'A'),
-        b'a'..=b'z' => Some(byte - b'a' + 26),
-        b'0'..=b'9' => Some(byte - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    }
+    // `module_blob`'s decoder (`ibcmd_1c_text::decode_base64_mime_lenient`),
+    // so a payload field decodes exactly as it did in the root.
+    decode_base64_mime_lenient(payload).ok_or_else(|| anyhow!("base64 payload is invalid"))
 }
 
 pub fn scan_1c_quoted_string_end(text: &str, start: usize) -> Result<usize> {

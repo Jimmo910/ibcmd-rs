@@ -1,5 +1,6 @@
 //! 1C string literals: `"..."`, where `""` is a quote and `"\xxxx` escapes
-//! one UTF-16 code unit.
+//! one UTF-16 code unit, read and written; and the CR LF line breaks a stored
+//! string spells.
 
 /// One UTF-16 code unit escaped inside a 1C string literal.
 ///
@@ -123,4 +124,66 @@ pub fn parse_1c_string(text: &str) -> Option<String> {
     let text = text.trim();
     let inner = text.strip_prefix('"')?.strip_suffix('"')?;
     Some(inner.replace("\"\"", "\""))
+}
+
+/// A 1C string literal: quoted, with `"` doubled.
+pub fn format_1c_string(value: &str) -> String {
+    let escaped = value.replace('"', "\"\"");
+    format!("\"{escaped}\"")
+}
+
+/// Every line feed not preceded by a carriage return becomes CR LF.
+///
+/// A line break inside a stored string is CRLF, while the XML hands its text
+/// over with the bare LF the file spells (ERP УХ
+/// `СхемыСправки/ВалютныйКонтрольРасчетыСПоставщикомПостоплата`: `…валюты\n`
+/// in the XML, `…валюты\r\n` stored); the exporter turns it back into LF.
+pub fn crlf_line_breaks(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut previous = '\0';
+    for ch in text.chars() {
+        if ch == '\n' && previous != '\r' {
+            out.push('\r');
+        }
+        out.push(ch);
+        previous = ch;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_1c_string_doubles_its_quotes() {
+        for (value, expected) in [
+            ("", "\"\""),
+            ("a", "\"a\""),
+            ("\"", "\"\"\"\""),
+            ("\"\"", "\"\"\"\"\"\""),
+            ("say \"hi\"", "\"say \"\"hi\"\"\""),
+            ("Ёлка\r\n", "\"Ёлка\r\n\""),
+        ] {
+            assert_eq!(format_1c_string(value), expected);
+            assert_eq!(parse_1c_quoted_string(expected).as_deref(), Some(value));
+        }
+    }
+
+    #[test]
+    fn a_bare_line_feed_becomes_crlf_and_nothing_else_moves() {
+        for (text, expected) in [
+            ("", ""),
+            ("a", "a"),
+            ("\n", "\r\n"),
+            ("\r\n", "\r\n"),
+            ("\r", "\r"),
+            ("\n\n", "\r\n\r\n"),
+            ("\r\r\n", "\r\r\n"),
+            ("a\nb\r\nc\rd\n", "a\r\nb\r\nc\rd\r\n"),
+            ("валюты\n", "валюты\r\n"),
+        ] {
+            assert_eq!(crlf_line_breaks(text), expected, "{text:?}");
+        }
+    }
 }
