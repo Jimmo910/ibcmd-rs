@@ -25,7 +25,7 @@ usage: cargo xtask <task> [--keep-going] [--base <rev>]
   hook-rustfmt  format the .rs file named in an agent PostToolUse payload
   hook-stop     the lint steps of `check` for an agent Stop hook
   temp-left     the last step of `ci`: fail when its test steps left anything
-                in their temporary directory, target/xtask/tmp
+                in their temporary directory, <temp>/ibcmd-ci-<hash>
 
 --base defaults to the merge base of HEAD and origin/master.
 Logs of every step: target/xtask/<step>.log";
@@ -35,10 +35,6 @@ const ROOT_PACKAGE: &str = "ibcmd-rs";
 /// (`tests/integration.rs`); a suite outside it is a `[[test]]` of its own.
 const ROOT_INTEGRATION: &str = "integration";
 const MERGE_WORKFLOW: &str = ".github/workflows/offline-e2e.yml";
-/// The temporary directory (`TMPDIR`, `TEMP`, `TMP`) of the test steps of
-/// `ci`, emptied before them and checked after them, as the offline matrix
-/// checks its own (docs/testing.md, "Temporary directories").
-const TEST_TEMP: &str = "target/xtask/tmp";
 /// The names a test run leaves there on purpose: the editor-server corpora
 /// the VS Code tests read by name, and the parent the engine's scratch
 /// folders share, when it is empty.
@@ -82,7 +78,7 @@ fn main() -> ExitCode {
     match task.as_deref() {
         Some("check") => check(&root, base.as_deref(), keep_going),
         Some("ci") => {
-            let temp = root.join(TEST_TEMP);
+            let temp = test_temp(&root);
             let _ = fs::remove_dir_all(&temp);
             if let Err(error) = fs::create_dir_all(&temp) {
                 eprintln!("xtask: cannot create {}: {error}", temp.display());
@@ -97,7 +93,7 @@ fn main() -> ExitCode {
         Some("affected") => print_affected(&root, base.as_deref()),
         Some("hook-rustfmt") => hook_rustfmt(&root),
         Some("hook-stop") => hook_stop(&root),
-        Some("temp-left") => temp_left(&root.join(TEST_TEMP)),
+        Some("temp-left") => temp_left(&test_temp(&root)),
         Some(other) => usage_error(&format!("unknown task `{other}`")),
         None => usage_error("no task given"),
     }
@@ -305,7 +301,7 @@ fn ci_steps(root: &Path) -> Vec<Step> {
         )
         .needs_program(),
     );
-    let temp = root.join(TEST_TEMP);
+    let temp = test_temp(root);
     steps.push(
         Step::cargo(
             "test -p ibcmd-schema",
@@ -496,8 +492,20 @@ fn run_logged(root: &Path, step: &Step, log: &Path) -> io::Result<bool> {
     Ok(status.success())
 }
 
+/// The temporary directory (`TMPDIR`, `TEMP`, `TMP`) of the test steps of
+/// `ci`, emptied before them and checked after them, as the offline matrix
+/// checks its own (docs/testing.md, "Temporary directories"). It is one per
+/// worktree, and it sits in the system temporary directory rather than under
+/// `target/` because a Unix socket path the tests bind there must stay
+/// shorter than about 100 bytes.
+fn test_temp(root: &Path) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    root.hash(&mut hasher);
+    env::temp_dir().join(format!("ibcmd-ci-{:08x}", hasher.finish() as u32))
+}
+
 /// The `temp-left` task: fails when `dir` holds anything but the names kept
-/// on purpose.
+/// on purpose, and removes `dir` when it does not.
 fn temp_left(dir: &Path) -> ExitCode {
     let left = match left_in(dir) {
         Ok(left) => left,
@@ -511,6 +519,7 @@ fn temp_left(dir: &Path) -> ExitCode {
     }
     if left.is_empty() {
         println!("{} holds nothing unexpected", dir.display());
+        let _ = fs::remove_dir_all(dir);
         ExitCode::SUCCESS
     } else {
         println!("{} entries left by the test steps", left.len());
