@@ -94,10 +94,16 @@ source image and SHALL NOT treat a form-only edit as a physical table change.
 - **THEN** the compiler refuses before staging and identifies the changed property
 #### Scenario: Root collection edits lack matching objects
 - **GIVEN** existing root ChildObjects entries and their compiled descriptors
-- **WHEN** an edit removes, renames, duplicates or reorders an existing entry,
-  or adds a root entry without a matching added object
+- **WHEN** an edit changes root membership without matching admitted descriptor changes,
+  duplicates an entry or adds a root entry without a matching added object
 - **THEN** the tree compiler refuses before staging
-- **AND** full-tree and selected imports preserve existing root membership
+- **AND** full-tree and selected imports retain root/descriptor correspondence
+
+#### Scenario: Coordinated tableless metadata removal
+- **GIVEN** an already supported tableless object and its root entry
+- **WHEN** both its descriptor and root entry are removed in the selected edit
+- **THEN** the prior metadata-only admission remains supported
+- **AND** full-image verification preserves the requested values and ordering
 
 ### Requirement: Proven Designer XML defaults remain importable
 Designer XML source comparison SHALL treat only schema-owned, native-proven

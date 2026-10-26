@@ -46,9 +46,10 @@ VIEW SERVER PERFORMANCE STATE. A known supported major version and sufficient
 permission (or sysadmin) are required; NULL or unavailable proof is not success.
 No SQL permissions are granted automatically. See the Microsoft
 [dm_exec_sessions permission contract](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-objects/sys-dm-exec-sessions-transact-sql?view=sql-server-ver17#permissions).
-Final review admission: preserve the ordered identities of all existing root
-ChildObjects, and admit additions only when represented by actual added
-descriptors. A failed nonstructural proof requires a concrete replacement
+Final review admission: root ChildObjects membership changes must correspond
+to actual admitted descriptor changes. Reject unpaired root-only edits and
+duplicates, while retaining prior coordinated tableless removals/renames.
+The complete compiled image must preserve requested values and ordering. A failed nonstructural proof requires a concrete replacement
 schema plan; None does not authorize staging or publication. Structural SQL
 uses SQL Server 2017 ordered STRING_AGG and modern catalog columns, so a
 separate legacy-compatible capability read must establish engine major >=14
