@@ -767,3 +767,10 @@ Exclusive session admission verifies server-wide SQL DMV visibility:
 `VIEW SERVER PERFORMANCE STATE` (SQL2022+) permission. A missing/NULL
 permission or unknown/older SQL version refuses before using an empty session
 result. This requires no infobase application account.
+
+The structural writer requires SQL Server 2017+ and database compatibility
+level >=110. A separate legacy-compatible capability read precedes the modern
+catalog/ordered-aggregate queries, and unknown facts refuse without writes.
+Previously supported metadata/code-only updates retain their existing engine
+requirements. The utility does not change server or database compatibility.
+Source: [Microsoft STRING_AGG engine/compatibility requirements](https://learn.microsoft.com/en-us/sql/t-sql/functions/string-agg-transact-sql?view=sql-server-2017).
