@@ -212,274 +212,52 @@ fn metadata_recorder_subordinate(kind: &str, text: &str, header: &MetadataHeader
     Some(information_register_write_mode_xml(fields.logical.get(5)?)? == "RecorderSubordinate")
 }
 
-/// What a metadata table declares about the existence of its own standard
-/// attributes.
-///
-/// A dynamic list resolves a remembered field name against the fields its main
-/// table has, and a standard attribute the table does not declare is not one of
-/// them: a catalog has no `Code` when `<CodeLength>` is zero, no `Description`
-/// when `<DescriptionLength>` is, no `Owner` when `<Owners>` names nobody, no
-/// `Parent` when it is not hierarchical and no `IsFolder` unless its hierarchy
-/// holds folders; an information register has no `Period` when it is
-/// `Nonperiodical`.
-///
-/// Every property is `None` when this reader could not name it, and an unread
-/// property withholds nothing: the attribute stays in the list's universe
-/// exactly as before, so a family this index does not decode behaves as it did.
-///
-/// Refused rather than guessed: `Number` on a document, business process or
-/// task whose `<NumberLength>` is zero, and `Recorder`/`LineNumber` on an
-/// independent information register. Both are the same shape as the rules
-/// above, and neither has a single platform observation on the stand -- over
-/// the whole corpus the two would have withdrawn a name from 446 ERP УХ and 240
-/// Документооборот lists without changing one written marker.
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub(super) struct MetadataTableStandardAttributes {
-    code_length: Option<u32>,
-    description_length: Option<u32>,
-    /// Whether `<Owners>` declares at least one owner.
-    owned: Option<bool>,
-    hierarchical: Option<bool>,
-    /// Whether `<HierarchyType>` is `HierarchyFoldersAndItems`.
-    folder_hierarchy: Option<bool>,
-    /// Whether `<InformationRegisterPeriodicity>` is anything but
-    /// `Nonperiodical`.
-    periodical: Option<bool>,
-}
+// What a dynamic list's field universe and a constants set's `<UseAlways>`
+// are read against is the `ibcmd-form-body` crate's (`FormParseContext`
+// holds it); the builder below fills it. `written_as` reads the root's
+// `InfobaseConfigSourceVersion`, so it stays here, as a trait method callers
+// reach exactly as before; so do the test-only builders.
+pub(super) use ibcmd_form_body::{
+    MetadataCommonAttributeContent, MetadataConstantDeclaration, MetadataFieldDeclarationIndex,
+    MetadataTableStandardAttributes,
+};
 
-impl MetadataTableStandardAttributes {
-    /// Whether the table declares the standard attribute its family spells
-    /// `english`. A name this index knows no property for is declared.
-    pub(super) fn declares(&self, english: &str) -> bool {
-        match english {
-            "Code" => self.code_length != Some(0),
-            "Description" => self.description_length != Some(0),
-            "Owner" => self.owned != Some(false),
-            "Parent" => self.hierarchical != Some(false),
-            "IsFolder" => self.hierarchical != Some(false) && self.folder_hierarchy != Some(false),
-            "Period" => self.periodical != Some(false),
-            _ => true,
-        }
-    }
-}
-
-/// A common attribute's declared content: the tables it is a field of.
-///
-/// `<Content>` names the tables that opt in or out one by one and `<AutoUse>`
-/// settles the rest. A common attribute is a field of a dynamic list's main
-/// table only when the content puts it there -- ERP УХ 3.2.12.6 marks
-/// `~Список.КлассВНА` on `Catalog.ГруппыВНАМСФО`,
-/// `Document.ИзменениеПараметровВНАМСФО` and
-/// `Document.ВводНачальныхОстатковВНАМСФО`, none of which
-/// `CommonAttribute.КлассВНА` lists, and `~Список.НСИ_НеАктивный` on
-/// `Catalog.ПроизвольныйКлассификаторУХ` for the same reason.
-///
-/// An `<AutoUse>` this reader cannot name is a refusal: the declaration is left
-/// out of the index entirely and the attribute is admitted everywhere, as
-/// before.
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub(super) struct MetadataCommonAttributeContent {
-    auto_use: bool,
-    content: BTreeMap<String, bool>,
-}
-
-impl MetadataCommonAttributeContent {
-    pub(super) fn covers(&self, table: &str) -> bool {
-        self.content.get(table).copied().unwrap_or(self.auto_use)
-    }
-}
-
-/// What one constant declares about its own place in a form's constants set.
-///
-/// `always_used` is the constant record's own slot 11, the one flag of the
-/// owner record no exported property carries: `uh` `ВсегдаКонтролироватьБаланс`
-/// `РучныхОпераций` and `ПодставлятьЗначенияПоУмолчаниюВместоПустых` are both
-/// booleans whose `Constants/<name>.xml` agree in every element but the name,
-/// and the two disagree here.
-///
-/// A form's `<UseAlways>` record does not hold the set of always-used fields --
-/// it holds the fields whose flag *differs* from this declaration. Evidence:
-/// ERP УХ 3.2.12.6, every one of the 84 `cfg:ConstantsSet` attributes on the
-/// configuration joined against the platform's own `<UseAlways>`. 345 of the
-/// 353 constants those records name are written exactly where the record names
-/// them; the eight that are not are exactly the eight whose slot 11 is `1` or
-/// whose declared type is `v8:ValueStorage`, and both behave as the delta
-/// reading predicts on every one of the 84 forms:
-///
-///   * `ВсегдаКонтролироватьБалансРучныхОпераций` and `ПутьККаталогуИмпорта`
-///     (slot 11 `1`) are written in the 69 forms whose record leaves them out
-///     and in none of the 15 whose record names them;
-///   * `СрокОплатыПокупателей` and `СрокОплатыПоставщикам` (slot 11 `1`) the
-///     same way, 77 against 7;
-///   * `ДополнительныеЯзыкиВыводаОтчета`, `НастройкиКолонтитуловПоУмолчанию`,
-///     `ПараметрыАдминистрированияИБ` and `СтатусОбновленияКонфигурации` are
-///     never written at all, and those four are `v8:ValueStorage`.
-///
-/// `value_storage` is that second rule. Over the whole stand -- 3 378
-/// constants, 225 of them `v8:ValueStorage` -- the platform writes 768
-/// `ConstantsSet` use-always fields and not one names a `ValueStorage`
-/// constant.
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub(super) struct MetadataConstantDeclaration {
-    pub(super) always_used: bool,
-    pub(super) value_storage: bool,
-}
-
-/// The declarations a dynamic list's resolvable-field universe is built from.
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub(super) struct MetadataFieldDeclarationIndex {
-    /// Whether a manual-query dynamic list leaves the main register's
-    /// dimensions out of its automatic fields: under compatibility 8.3.17
-    /// (Документооборот 3.0, ERP WE 2.5) the platform marks an unselected
-    /// dimension `~`, under 8.3.24 (Документооборот 3.0 Холдинг) it does
-    /// not. The boundary between is unobserved; the 8.3.19 boundary the
-    /// default-picture marker moves at is taken for it.
-    register_dimensions_withheld: bool,
-    tables: BTreeMap<String, MetadataTableStandardAttributes>,
-    /// Top-level data fields declared by each metadata table, folded to lower
-    /// case. The object-reference index supplies these names independently of
-    /// any query text, so query validation never infers declarations from use.
-    data_fields: BTreeMap<String, BTreeSet<String>>,
-    /// The owner a top-level data field's *single declared reference type*
-    /// names, keyed by the owning table and the folded field name. A field
-    /// that declares no type, several, or a non-reference one is absent: a
-    /// value with more than one possible type has no single set of fields to
-    /// dereference into.
-    field_types: BTreeMap<String, BTreeMap<String, String>>,
-    /// Declared fields whose metadata property enables password mode, keyed by
-    /// their owning table and folded field name. Password fields are excluded
-    /// from a dynamic list's automatically available fields by the platform.
-    password_fields: BTreeMap<String, BTreeSet<String>>,
-    common_attributes: BTreeMap<String, MetadataCommonAttributeContent>,
-    /// Every constant the configuration declares, by its own uuid -- the id a
-    /// form's use-always record spells.
-    constants: BTreeMap<String, MetadataConstantDeclaration>,
-    /// Every `Kind.Name` the configuration declares, folded to lower case: the
-    /// query language names metadata case-insensitively, so a query naming
-    /// `Перечисление.СтатусызаданийТорговымПредставителям` names the declared
-    /// `Enum.СтатусыЗаданийТорговымПредставителям`.
-    declared_tables: BTreeSet<String>,
-    /// Documents whose references form a document journal's heterogeneous
-    /// `Ref` value. A member behind that value is available only when every
-    /// registered document declares it.
-    document_journal_documents: BTreeMap<String, BTreeSet<String>>,
-    /// Whether a constants set's `<UseAlways>` names its `v8:ValueStorage`
-    /// constants: 2.21 does (8.5.1.1150 ERP УХ, 75 forms), 2.20 never does.
-    writes_value_storage_constants: bool,
-    /// Whether the configuration's script variant is English (root field 3
-    /// `0`): its queries name standard attributes in English only, so a
-    /// Russian standard name is a field the list cannot resolve (ERP WE
-    /// English `Catalogs/ItemKinds/Forms/ListFormForPricingSettings` is
-    /// written `~List.Наименование`).
-    english_script: bool,
-}
-
-impl MetadataFieldDeclarationIndex {
+pub(super) trait MetadataFieldDeclarationIndexExt {
     /// The index as the writer of `source_version` reads it.
-    pub(super) fn withholding_register_dimensions(mut self, withheld: bool) -> Self {
-        self.register_dimensions_withheld = withheld;
-        self
-    }
+    fn written_as(self, source_version: InfobaseConfigSourceVersion) -> Self;
+}
 
-    pub(super) fn register_dimensions_withheld(&self) -> bool {
-        self.register_dimensions_withheld
-    }
-
-    pub(super) fn written_as(mut self, source_version: InfobaseConfigSourceVersion) -> Self {
+impl MetadataFieldDeclarationIndexExt for MetadataFieldDeclarationIndex {
+    fn written_as(mut self, source_version: InfobaseConfigSourceVersion) -> Self {
         self.writes_value_storage_constants = source_version == InfobaseConfigSourceVersion::V2_21;
         self
     }
+}
 
-    pub(super) fn writes_value_storage_constants(&self) -> bool {
-        self.writes_value_storage_constants
-    }
+#[cfg(test)]
+pub(super) trait MetadataFieldDeclarationIndexTestExt {
+    fn with_table(self, reference: &str, declared: MetadataTableStandardAttributes) -> Self;
+    fn with_constant(self, uuid: &str, declared: MetadataConstantDeclaration) -> Self;
+    fn with_common_attribute(self, name: &str, content: MetadataCommonAttributeContent) -> Self;
+    fn with_password_field(self, table: &str, field: &str) -> Self;
+    fn with_data_fields(self, table: &str, fields: &[&str]) -> Self;
+    fn with_field_reference_owner(self, table: &str, field: &str, owner: &str) -> Self;
+    fn with_document_journal_documents(self, journal: &str, documents: &[&str]) -> Self;
+}
 
-    pub(super) fn english_script(&self) -> bool {
-        self.english_script
-    }
-
-    pub(super) fn table(&self, reference: &str) -> Option<&MetadataTableStandardAttributes> {
-        self.tables.get(reference)
-    }
-
-    pub(super) fn common_attribute(&self, name: &str) -> Option<&MetadataCommonAttributeContent> {
-        self.common_attributes.get(name)
-    }
-
-    pub(super) fn field_uses_password_mode(&self, table: &str, field: &str) -> bool {
-        self.password_fields
-            .get(table)
-            .is_some_and(|fields| fields.contains(&field.to_lowercase()))
-    }
-
-    pub(super) fn declares_data_field(&self, table: &str, field: &str) -> Option<bool> {
-        self.data_fields
-            .get(table)
-            .map(|fields| fields.contains(&field.to_lowercase()))
-    }
-
-    /// The metadata object a field of `table` holds a reference to, when the
-    /// field declares exactly one reference type and nothing else.
-    pub(super) fn field_reference_owner(&self, table: &str, field: &str) -> Option<&str> {
-        self.field_types
-            .get(table)?
-            .get(&field.to_lowercase())
-            .map(String::as_str)
-    }
-
-    /// What the constant with this uuid declares, or `None` when this index
-    /// carries no constant declarations at all -- a refusal to answer, not a
-    /// denial, so a context built without them keeps writing exactly the
-    /// record.
-    pub(super) fn constant(&self, uuid: &str) -> Option<&MetadataConstantDeclaration> {
-        self.constants.get(uuid)
-    }
-
-    /// The constants this configuration declares always used, by uuid. Empty
-    /// when the index carries no constant declarations.
-    pub(super) fn always_used_constants(&self) -> impl Iterator<Item = &str> {
-        self.constants
-            .iter()
-            .filter(|(_, declared)| declared.always_used)
-            .map(|(uuid, _)| uuid.as_str())
-    }
-
-    /// Whether the configuration declares a metadata table by this
-    /// `Kind.Name`. `None` when this index carries no table names at all, which
-    /// is a refusal to answer rather than a denial.
-    pub(super) fn declares_table(&self, reference: &str) -> Option<bool> {
-        if self.declared_tables.is_empty() {
-            return None;
-        }
-        Some(self.declared_tables.contains(&reference.to_lowercase()))
-    }
-
-    pub(super) fn document_journal_documents(&self, reference: &str) -> Option<&BTreeSet<String>> {
-        self.document_journal_documents.get(reference)
-    }
-
-    #[cfg(test)]
-    pub(super) fn with_table(
-        mut self,
-        reference: &str,
-        declared: MetadataTableStandardAttributes,
-    ) -> Self {
+#[cfg(test)]
+impl MetadataFieldDeclarationIndexTestExt for MetadataFieldDeclarationIndex {
+    fn with_table(mut self, reference: &str, declared: MetadataTableStandardAttributes) -> Self {
         self.tables.insert(reference.to_string(), declared);
         self
     }
 
-    #[cfg(test)]
-    pub(super) fn with_constant(
-        mut self,
-        uuid: &str,
-        declared: MetadataConstantDeclaration,
-    ) -> Self {
+    fn with_constant(mut self, uuid: &str, declared: MetadataConstantDeclaration) -> Self {
         self.constants.insert(uuid.to_string(), declared);
         self
     }
 
-    #[cfg(test)]
-    pub(super) fn with_common_attribute(
+    fn with_common_attribute(
         mut self,
         name: &str,
         content: MetadataCommonAttributeContent,
@@ -488,8 +266,7 @@ impl MetadataFieldDeclarationIndex {
         self
     }
 
-    #[cfg(test)]
-    pub(super) fn with_password_field(mut self, table: &str, field: &str) -> Self {
+    fn with_password_field(mut self, table: &str, field: &str) -> Self {
         self.password_fields
             .entry(table.to_string())
             .or_default()
@@ -497,8 +274,7 @@ impl MetadataFieldDeclarationIndex {
         self
     }
 
-    #[cfg(test)]
-    pub(super) fn with_data_fields(mut self, table: &str, fields: &[&str]) -> Self {
+    fn with_data_fields(mut self, table: &str, fields: &[&str]) -> Self {
         self.data_fields.insert(
             table.to_string(),
             fields.iter().map(|field| field.to_lowercase()).collect(),
@@ -506,13 +282,7 @@ impl MetadataFieldDeclarationIndex {
         self
     }
 
-    #[cfg(test)]
-    pub(super) fn with_field_reference_owner(
-        mut self,
-        table: &str,
-        field: &str,
-        owner: &str,
-    ) -> Self {
+    fn with_field_reference_owner(mut self, table: &str, field: &str, owner: &str) -> Self {
         self.field_types
             .entry(table.to_string())
             .or_default()
@@ -520,12 +290,7 @@ impl MetadataFieldDeclarationIndex {
         self
     }
 
-    #[cfg(test)]
-    pub(super) fn with_document_journal_documents(
-        mut self,
-        journal: &str,
-        documents: &[&str],
-    ) -> Self {
+    fn with_document_journal_documents(mut self, journal: &str, documents: &[&str]) -> Self {
         self.document_journal_documents.insert(
             journal.to_string(),
             documents
@@ -538,21 +303,32 @@ impl MetadataFieldDeclarationIndex {
 }
 
 #[cfg(test)]
-impl MetadataTableStandardAttributes {
-    pub(super) fn with_code_length(mut self, code_length: u32) -> Self {
+pub(super) trait MetadataTableStandardAttributesTestExt {
+    fn with_code_length(self, code_length: u32) -> Self;
+    fn with_owners(self, owned: bool) -> Self;
+}
+
+#[cfg(test)]
+impl MetadataTableStandardAttributesTestExt for MetadataTableStandardAttributes {
+    fn with_code_length(mut self, code_length: u32) -> Self {
         self.code_length = Some(code_length);
         self
     }
 
-    pub(super) fn with_owners(mut self, owned: bool) -> Self {
+    fn with_owners(mut self, owned: bool) -> Self {
         self.owned = Some(owned);
         self
     }
 }
 
 #[cfg(test)]
-impl MetadataCommonAttributeContent {
-    pub(super) fn declared(auto_use: bool, content: &[(&str, bool)]) -> Self {
+pub(super) trait MetadataCommonAttributeContentTestExt {
+    fn declared(auto_use: bool, content: &[(&str, bool)]) -> Self;
+}
+
+#[cfg(test)]
+impl MetadataCommonAttributeContentTestExt for MetadataCommonAttributeContent {
+    fn declared(auto_use: bool, content: &[(&str, bool)]) -> Self {
         Self {
             auto_use,
             content: content
@@ -3487,45 +3263,6 @@ pub(super) fn resolve_subsystem_source_path(
     Some(relative_path)
 }
 
-pub(super) fn uuid_like_values(text: &str) -> BTreeSet<String> {
-    uuid_like_values_in_text_order(text).into_iter().collect()
-}
-
-pub(super) fn uuid_like_values_in_text_order(text: &str) -> Vec<String> {
-    let bytes = text.as_bytes();
-    let mut values = Vec::new();
-    let mut seen = BTreeSet::new();
-    if bytes.len() < 36 {
-        return values;
-    }
-    for start in 0..=bytes.len() - 36 {
-        let value = &bytes[start..start + 36];
-        if is_uuid_like_ascii(value) {
-            let value = String::from_utf8_lossy(value).to_ascii_lowercase();
-            if seen.insert(value.clone()) {
-                values.push(value);
-            }
-        }
-    }
-    values
-}
-
-pub(super) fn is_uuid_like_ascii(value: &[u8]) -> bool {
-    if value.len() != 36 {
-        return false;
-    }
-    for (index, byte) in value.iter().copied().enumerate() {
-        if matches!(index, 8 | 13 | 18 | 23) {
-            if byte != b'-' {
-                return false;
-            }
-        } else if !byte.is_ascii_hexdigit() {
-            return false;
-        }
-    }
-    true
-}
-
 pub(super) fn infer_template_type_from_body(bytes: &[u8]) -> Option<&'static str> {
     let inflated = inflate_raw_deflate(bytes).ok()?;
     if inflated.starts_with(b"MOXCEL") {
@@ -4048,11 +3785,10 @@ pub(super) fn extract_configuration_source_xml(
     }
     if let Some(root_layout) = &root_layout {
         insert_configuration_internal_info_xml(&mut xml, &root_layout.contained_objects).ok()?;
-        if let Some(child_objects) =
-            resolve_configuration_root_child_objects(root_layout, object_refs)
-        {
-            insert_configuration_root_child_objects_xml(&mut xml, &child_objects);
-        }
+        // An unresolved family is not an empty inventory: refuse the root
+        // instead of publishing Properties alone and dropping all children.
+        let child_objects = resolve_configuration_root_child_objects(root_layout, object_refs)?;
+        insert_configuration_root_child_objects_xml(&mut xml, &child_objects);
     } else if !child_objects.is_empty() {
         let mut child_xml = String::new();
         for child_object in &child_objects {
@@ -5523,101 +5259,13 @@ pub(super) fn forms_declare_dcs_schema_namespace(compatibility_mode: Option<&str
     (major, minor, patch) >= FORM_DCS_SCHEMA_NAMESPACE_FROM
 }
 
-/// The first compatibility mode that writes the AnyIBRef type set
-/// (`280f5f0e-…`) as `cfg:AnyIBRef`; below it 8.3.27.2214 writes `cfg:AnyRef`.
-/// Probed on an extension's form attribute: 8.3.10, 8.3.21, 8.3.22 AnyRef;
-/// 8.3.23, 8.3.24, 8.3.27 AnyIBRef (fixtures `form_events`,
-/// `form_events_8_3_22`); ИТК (8.3.10) and 1Cv8 (8.3.21) write AnyRef
-/// throughout, and an external object in a configuration of 8.3.21 too.
-const ANY_IB_REF_FROM: (u32, u32, u32) = (8, 3, 23);
-
-/// Whether a configuration of `compatibility_mode` writes the AnyIBRef type
-/// set as `cfg:AnyRef`. With nothing read, the platform's own edition: no.
-pub(super) fn compatibility_mode_spells_any_ref(compatibility_mode: Option<&str>) -> bool {
-    compatibility_mode
-        .and_then(compatibility_version)
-        .is_some_and(|version| version < ANY_IB_REF_FROM)
-}
-
-/// The first compatibility mode whose forms write a `UsualGroup`'s
-/// `<Behavior>Usual</Behavior>`. 8.3.27.2214 dumps one form holding a group
-/// loaded with an explicit `Usual` (stored as code `0`, not the default `3`)
-/// without the element under `CompatibilityMode` 8.3.17, 8.3.18 and 8.3.19,
-/// and with it under 8.3.20 and 8.3.21; `Collapsible` and `PopUp` are written
-/// under every one of them (fixture `group_behavior`). Real configurations
-/// agree: three under 8.3.14/8.3.17 never write `Usual`, two under 8.3.21 do.
-const USUAL_GROUP_BEHAVIOR_FROM: (u32, u32, u32) = (8, 3, 20);
-
-/// Whether forms written under `compatibility_mode` spell a group's explicit
-/// `Usual` behavior. With nothing read, the platform's own edition: yes.
-pub(super) fn forms_write_usual_group_behavior(compatibility_mode: Option<&str>) -> bool {
-    compatibility_mode
-        .and_then(compatibility_version)
-        .is_none_or(|version| version >= USUAL_GROUP_BEHAVIOR_FROM)
-}
-
-/// The first compatibility mode under which a dynamic list that declares no
-/// main table has no `DefaultPicture` field of its own, so the platform marks
-/// the path `~List.DefaultPicture`. 8.3.27.2214 loads a one-form configuration
-/// whose table names `Список.DefaultPicture` of such a list under
-/// `CompatibilityMode` 8.3.17 and 8.3.18 and dumps it unmarked, refuses the
-/// same path under 8.3.19, 8.3.20 and 8.3.21 ("wrong data path"), and dumps
-/// `~Список.DefaultPicture` there (fixture `dynamic_list_default_picture`).
-/// Real configurations agree: 23 such paths under 8.3.17 and one under 8.3.14
-/// are unmarked, 37 under 8.3.21 marked.
-const NO_MAIN_TABLE_DEFAULT_PICTURE_MARKED_FROM: (u32, u32, u32) = (8, 3, 19);
-
-/// Whether a no-main-table dynamic list's `DefaultPicture` path carries `~`
-/// under `compatibility_mode`. With nothing read, the platform's own edition:
-/// yes.
-pub(super) fn forms_mark_no_main_table_default_picture(compatibility_mode: Option<&str>) -> bool {
-    compatibility_mode
-        .and_then(compatibility_version)
-        .is_none_or(|version| version >= NO_MAIN_TABLE_DEFAULT_PICTURE_MARKED_FROM)
-}
-
-/// What a form's spelling depends on in the configuration's compatibility
-/// mode, read once per export.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct FormCompatibility {
-    pub(super) usual_group_behavior: bool,
-    pub(super) no_main_table_default_picture_marked: bool,
-}
-
-impl Default for FormCompatibility {
-    /// The platform's own edition.
-    fn default() -> Self {
-        Self::of(None)
-    }
-}
-
-impl FormCompatibility {
-    pub(super) fn of(compatibility_mode: Option<&str>) -> Self {
-        Self {
-            usual_group_behavior: forms_write_usual_group_behavior(compatibility_mode),
-            no_main_table_default_picture_marked: forms_mark_no_main_table_default_picture(
-                compatibility_mode,
-            ),
-        }
-    }
-}
-
-/// `Version8_3_21` -> (8, 3, 21).
-fn compatibility_version(mode: &str) -> Option<(u32, u32, u32)> {
-    let mut parts = mode
-        .strip_prefix("Version")?
-        .split('_')
-        .map(str::parse::<u32>);
-    let (Some(Ok(major)), Some(Ok(minor))) = (parts.next(), parts.next()) else {
-        return None;
-    };
-    let patch = match parts.next() {
-        None => 0,
-        Some(Ok(patch)) => patch,
-        Some(Err(_)) => return None,
-    };
-    Some((major, minor, patch))
-}
+// The compatibility-mode rules of the form writer are the `ibcmd-form-body`
+// crate's (`FormParseContext` holds a `FormCompatibility`); the readers of
+// the mode off the rows follow.
+pub(super) use ibcmd_form_body::{
+    FormCompatibility, compatibility_mode_spells_any_ref, forms_mark_no_main_table_default_picture,
+    forms_write_usual_group_behavior,
+};
 
 /// The compatibility mode the configuration (or extension) among `rows` runs
 /// in: its `CompatibilityMode`, or the extension compatibility where that is

@@ -870,25 +870,8 @@ pub(super) fn command_interface_command_name(
     format!("{code}:{uuid}")
 }
 
-pub(super) fn command_interface_standard_command(kind: &str) -> Option<&'static str> {
-    match kind {
-        "DataProcessor" | "Report" | "CommonForm" => Some("Open"),
-        "AccountingRegister"
-        | "AccumulationRegister"
-        | "BusinessProcess"
-        | "Catalog"
-        | "ChartOfAccounts"
-        | "ChartOfCalculationTypes"
-        | "ChartOfCharacteristicTypes"
-        | "Document"
-        | "DocumentJournal"
-        | "Enum"
-        | "ExchangePlan"
-        | "InformationRegister"
-        | "Task" => Some("OpenList"),
-        _ => None,
-    }
-}
+// The standard command of a metadata kind is the `ibcmd-1c-vocab` crate's.
+pub(super) use ibcmd_1c_vocab::command_interface_standard_command;
 
 pub(crate) fn command_interface_standard_command_for_code(
     kind: &str,

@@ -1,13 +1,66 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail};
-use flate2::read::DeflateDecoder;
+// The 1C braced-value and string primitives, and the small field and XML
+// helpers built on them, are the `ibcmd-1c-text` crate's; `mssql_dump`'s
+// modules reach them by their old names through these imports.
+#[cfg(test)]
+use ibcmd_1c_text::BRACE_JUMPS_MIN_TEXT;
+pub(crate) use ibcmd_1c_text::parse_1c_quoted_string;
+use ibcmd_1c_text::{
+    decode_base64_mime, escape_xml_character_data, escape_xml_element_text, escape_xml_text,
+    expect_comma_at, extract_base64_payload, format_1c_date_time, is_uuid_like_ascii, is_uuid_text,
+    parse_1c_bool_field, parse_1c_bool_field_or_default, parse_1c_bool_flag,
+    parse_1c_quoted_string_with_len, parse_1c_string, parse_1c_synonyms, parse_1c_u32_field,
+    parse_non_zero_uuid, parse_uuid_field, register_brace_jumps, registered_header_marker,
+    scan_1c_braced_value, skip_ascii_ws_at, split_1c_braced_fields, split_1c_braced_fields_bounded,
+    split_1c_braced_sequence, uuid_like_values, uuid_like_values_in_text_order, xml_bool,
+};
+// The vocabularies of the native records (platform types and type patterns,
+// standard attributes, style codes, command shortcuts) are the
+// `ibcmd-1c-vocab` crate's, and so are a few payload helpers; `mssql_dump`'s
+// modules reach them by their old names through these imports, at their old
+// visibility. The two pattern readers that need the extension-export state
+// are wrappers further down (`parse_metadata_type_pattern_element_with_builtin`,
+// and `parse_form_metadata_type_pattern`, kept for tests: the form reader
+// passes the state it was built with).
+use ibcmd_1c_vocab::{
+    ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES,
+    ACCUMULATION_REGISTER_TURNOVERS_STANDARD_ATTRIBUTES,
+    CHART_OF_ACCOUNTS_STANDARD_ATTRIBUTE_DEFINITIONS,
+    CHART_OF_ACCOUNTS_STANDARD_TABULAR_SECTION_DEFINITIONS, CONSTANTS_SET_TYPE_UUID,
+    ChartStandardTabularSectionDefinition, DCS_BUILTIN_REFERENCE_TYPE_SETS,
+    DOCUMENT_STANDARD_ATTRIBUTES, TYPE_DESCRIPTION_TYPE_UUID,
+    data_processor_builtin_type_reference, elapsed_ms, ext_picture_file_name,
+    form_metadata_type_xml_tag, format_form_metadata_types_xml,
+    format_form_metadata_types_xml_with_indent, format_type_description_value_types_xml,
+    inflate_raw_deflate, information_register_decimal_is_valid, is_svg_content,
+    metadata_choice_folders_and_items_xml, metadata_reference_is_type_set,
+    metadata_type_pattern_field_type_id, metadata_type_xml_name, metadata_type_xml_namespace_attr,
+    number_allowed_sign_xml, parse_common_command_picture_value,
+    parse_common_command_shortcut_value, parse_design_time_reference,
+    platform_reference_family_type_reference, push_binary_data_qualifiers_xml, scoped_value_type,
+    standard_style_item_for_code, string_allowed_length_xml, style_system_color_name,
+    unique_metadata_type_reference,
+};
+pub(super) use ibcmd_1c_vocab::{
+    ConstantValueType, DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME,
+    DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID, GANTT_CHART_TYPE_REFERENCE, GANTT_CHART_TYPE_UUID,
+    accumulation_register_record_set_standard_attribute_name, builtin_type_reference,
+    chart_of_accounts_sole_standard_tabular_section_name,
+    chart_of_accounts_standard_attribute_definitions, chart_of_accounts_standard_tabular_section,
+};
+#[cfg(test)]
+use ibcmd_1c_vocab::{
+    DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE, ShortcutModifierStyle,
+    parse_common_command_shortcut_value_with_style,
+};
+pub(crate) use ibcmd_1c_vocab::{standard_style_item_code_for_name, style_web_color_name};
 use ibcmd_cf::archive::PackedCfArchive;
 use ibcmd_cf::export::{StorageExportEntryReport, StorageExportPlan, StorageExportReport};
 use ibcmd_core::artifact::ProfileId;
@@ -15,6 +68,15 @@ use ibcmd_core::characteristics::Characteristics;
 use ibcmd_core::diagnostic::{MetadataSourceFailureClass, ObjectPath};
 use ibcmd_core::family::FamilyId;
 use ibcmd_core::storage::StorageImage;
+// The indexes a form is parsed against (`FormParseContext`'s fields) are the
+// `ibcmd-form-body` crate's; `mssql_dump`'s modules reach them by their old
+// names through these imports, at their old visibility. Their builders stay
+// here and in `refs.rs`.
+use ibcmd_form_body::{FormObjectRefIndex, MetadataCommandReference};
+pub(crate) use ibcmd_form_body::{
+    InformationRegisterFieldReference, InformationRegisterFieldReferenceIndex,
+    InformationRegisterMasterDimensionIndex,
+};
 use ibcmd_schema::metadata_storage_facts::DataProcessorRevision16Layout;
 use ibcmd_schema::{
     GeneratedMetadataReferenceOwnerKind, parse_generated_metadata_reference_owner,
@@ -30,7 +92,6 @@ use ibcmd_xml::{
 };
 use quick_xml::NsReader;
 use quick_xml::events::Event;
-use quick_xml::name::ResolveResult;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
@@ -44,8 +105,6 @@ use crate::metadata_owner_graph::{
     self as owner_graph, CATALOG_ATTRIBUTE_GROUP_UUID, DOCUMENT_ATTRIBUTE_GROUP_UUID,
     METADATA_TEMPLATE_COLLECTION_UUID,
 };
-#[cfg(all(test, feature = "mssql-live-tests"))]
-use crate::module_blob::{LocalizedString, SpreadsheetNumberFormatHint};
 use crate::module_blob::{
     ParsedFormBodyBlob, parse_form_body_blob, unpack_module_blob_text,
     unpack_plain_text_module_body,
@@ -993,8 +1052,8 @@ pub(crate) use file_infobase::{
 pub use postgres_infobase::PostgresExportSnapshot;
 mod form;
 mod form_body;
+mod form_body_host;
 mod form_extension;
-mod form_ref_index;
 #[cfg(test)]
 mod revision_mix_tests;
 pub(crate) use form::load_8_5_1::{
@@ -1014,8 +1073,7 @@ mod metadata;
 #[cfg(test)]
 mod metadata_order_tests;
 pub mod model_export;
-mod moxel;
-mod mxl_ir;
+mod moxel_entry;
 pub mod offline_context;
 mod offline_rows;
 mod output_writer;
@@ -1086,12 +1144,11 @@ use config_rows::*;
 pub(crate) use dcs::*;
 use fetch::*;
 use form_body::*;
-use form_ref_index::FormObjectRefIndex;
 use forms::*;
 use metadata::*;
-use moxel::*;
-use output_writer::OutputWriter;
+use moxel_entry::*;
 pub(crate) use output_writer::{FileSink, native_module_file_bytes};
+use output_writer::{MssqlDumpTimingReportOutputExt, OutputWriter};
 use refs::*;
 use role_rights::*;
 use selected::*;
@@ -1099,8 +1156,8 @@ use source_asset_diagnostics::cluster_source_asset_diagnostics;
 use source_assets::*;
 
 pub(crate) use config_dump_info::{validate_sql_versions_change, validate_sql_versions_inventory};
+pub use ibcmd_moxel::{MxlDiagnostic, MxlDiagnosticStage};
 pub use metadata::MetadataExtractionMissReason;
-pub use mxl_ir::{MxlDiagnostic, MxlDiagnosticStage};
 pub use source_asset_diagnostics::{
     SourceAssetDiagnosticCluster, SourceAssetDiagnosticClusterReport, SourceAssetDiagnosticSample,
 };
@@ -1174,27 +1231,26 @@ pub(crate) fn extract_standalone_metadata_source_xml(
     )
     .map(|extracted| (extracted.relative_path, extracted.xml))
 }
-pub use moxel::try_extract_moxel_spreadsheet_xml;
-pub(crate) use moxel::{
+pub use moxel_entry::try_extract_moxel_spreadsheet_xml;
+pub(crate) use moxel_entry::{
     MoxelLineTraceEvent, MoxelLineTraceSink,
     extract_inflated_moxel_spreadsheet_xml_with_line_trace, extract_moxel_spreadsheet_xml,
     extract_moxel_spreadsheet_xml_with_line_trace, render_moxel_chart_object_xml,
     try_extract_moxel_spreadsheet_xml_with_generated_types,
 };
 #[cfg(all(test, feature = "mssql-live-tests"))]
-pub(crate) use moxel::{
+pub(crate) use moxel_entry::{
     debug_moxel_number_format_usage, debug_moxel_spreadsheet_summary_from_blob,
 };
 pub(crate) use source_assets::write_source_xml_file;
 
+use timing::MssqlDumpTimingReportExt;
 pub use timing::{
     MssqlDumpTableTimingSummary, MssqlDumpTimingReport, MssqlDumpTimingSummary,
     parse_dump_timing_summary, read_dump_timing_summaries, read_dump_timing_summary,
 };
 
 // Platform-level 1C standard pictures, not metadata UUIDs from one database.
-const STD_PICTURE_INFORMATION_UUID: &str = "4b54770b-d069-4c0e-9b17-5cc2a01134d9";
-const STD_PICTURE_SAVE_FILE_UUID: &str = "818ab7d0-4654-4542-bd5e-fd9d1352b5a1";
 const STD_PICTURE_USER_UUID: &str = "6ff3ddbd-56e3-4ddf-a5bf-048c1e2dfb2f";
 const STD_PICTURE_LOAD_REPORT_SETTINGS_UUID: &str = "283ecabd-aaed-41d1-ad46-6cca91c29120";
 const STD_PICTURE_INFORMATION_REGISTER_UUID: &str = "5b87ad1b-d8cc-43c1-b5c4-dc43613c518c";
@@ -1204,163 +1260,6 @@ const STD_PICTURE_CUSTOMIZE_LIST_UUID: &str = "f04794cb-c198-4172-86c3-649386013
 const DESIGN_TIME_REF_TYPE_UUID: &str = "5c14e26f-099b-4d37-84a6-b433d87400da";
 const FIXED_ARRAY_TYPE_UUID: &str = "4500381b-db30-4a10-9db4-990038032acf";
 const METADATA_OBJECT_REF_TYPE_UUID: &str = "157fa490-4ce9-11d4-9415-008048da11f9";
-const CONSTANTS_SET_TYPE_UUID: &str = "dcfc3784-a14f-4786-ac7b-c82db5ba275f";
-const CHART_TYPE_UUID: &str = "3543ef08-3316-4f7e-9447-0cd0a1cbf1d5";
-/// The Gantt chart. Named by every Gantt-chart-typed form attribute the eight
-/// stand corpora carry -- 19 of them, one in Documentooborot KORP 3.0.21.3 and
-/// 18 in ERP UH 3.2.12.6: each stores this type id and the platform writes this
-/// QName both in the attribute's `<v8:Type>` and in the `xsi:type` of its
-/// `<Settings>` block. The id had no entry at all, so neither element was
-/// written on any of them.
-pub(super) const GANTT_CHART_TYPE_UUID: &str = "3a6e63bf-16aa-42eb-b48c-2fff9670ad2f";
-/// Русское имя — `ДиаграммаГанта`.
-pub(super) const GANTT_CHART_TYPE_REFERENCE: &str = "d5p1:GanttChart";
-/// The data-analysis time-interval unit. Named by every form attribute of the
-/// eight stand corpora that declares it -- 7 of them, all in ERP UH 3.2.12.6
-/// and all in forms that also carry a Gantt chart: each stores this type id
-/// with an empty settings slot, and the platform writes this QName in the
-/// attribute's `<v8:Type>` and no `<Settings>` block. The id had no entry at
-/// all, so the element was written on none of them. The QName occurs nowhere
-/// else in the eight native trees.
-const DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_UUID: &str = "77a01c71-e9b2-4617-af07-c95a4b74548a";
-/// Русское имя — `ТипЕдиницыИнтервалаВремениАнализаДанных`.
-const DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_REFERENCE: &str =
-    "d5p1:DataAnalysisTimeIntervalUnitType";
-const REPORT_BUILDER_TYPE_UUID: &str = "0dda99d9-ae9f-43d2-b7ac-44f3fb0d4059";
-pub(super) const DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID: &str =
-    "cab0d12b-3c88-4993-8edc-8c3827cadc7d";
-pub(super) const DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME: &str = "dcsset:SettingsComposer";
-const DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE: &str =
-    r#" xmlns:dcsset="http://v8.1c.ru/8.1/data-composition-system/settings""#;
-/// Platform types the writer spells with a prefix **bound at the document
-/// root**, so their QName is one fact and not a per-document one.
-///
-/// The split of platform type names into per-owner tables was never a platform
-/// fact. A `<v8:Type>` names a platform type by *namespace and local name*; the
-/// prefix is chosen by the document being written. When the namespace is
-/// already bound at the root element, the writer uses the root prefix and
-/// declares nothing; when it is not, it declares the namespace inline on the
-/// `<v8:Type>` element itself, either with the canonical prefix it holds for
-/// that namespace (`mxl`, `fd`, `dcsset`, `pdfdoc`, `pl`) or with a generated
-/// `d<N>p1` where **N is the 1-based element depth** of that very element.
-///
-/// The depth rule is measured, not assumed: across all eight stand corpora
-/// there are 17 495 inline `xmlns:d<N>p1` declarations and in every one of them
-/// N equals the depth of the element carrying it -- 0 counterexamples. It is
-/// what makes `d5p1:Chart` and `d7p1:Chart` the same name: type id
-/// `3543ef08-…` sits at depth 5 in a form body
-/// (`<Form><Attributes><Attribute><Type><v8:Type>`, 30 occurrences) and at
-/// depth 7 in a metadata root
-/// (`<MetaDataObject><DataProcessor><ChildObjects><Attribute><Properties>
-/// <Type><v8:Type>`, 5 occurrences).
-///
-/// The names below carry `cfg:`, `v8:` and `v8ui:`, and every document that can
-/// carry a `<v8:Type>` for them binds those three at its own root -- both the
-/// `MDClasses` root and the `logform` root do. Census of the eight corpora:
-/// `v8:TypeDescription` 695, `v8ui:Picture` 558, `cfg:ConstantsSet` 227,
-/// `cfg:ReportObject` 24, `v8ui:VerticalAlign` 11, `cfg:ReportBuilder` 5 --
-/// 1 520 occurrences, and **not one of them carries an inline `xmlns`**. So one
-/// table answers every reader for them, and the per-shape tables below keep
-/// only the names whose spelling really does depend on the document.
-const ROOT_BOUND_PLATFORM_TYPE_REFERENCES: &[(&str, &str)] = &[
-    // КонстантыНабор
-    (CONSTANTS_SET_TYPE_UUID, "cfg:ConstantsSet"),
-    // ОписаниеТипов
-    (TYPE_DESCRIPTION_TYPE_UUID, "v8:TypeDescription"),
-    // Картинка
-    ("e6f51714-91cb-4dce-94fe-90ae3e3e1ad1", "v8ui:Picture"),
-    // ОтчетОбъект
-    ("1dd6fdb9-553d-40d4-b2d1-c7fc31f497bb", "cfg:ReportObject"),
-    // ВертикальноеПоложение
-    ("52616226-8ccf-4d1d-a3da-827eeb4f9cf9", "v8ui:VerticalAlign"),
-    // Named by `DataProcessors/УниверсальныйОбменДаннымиXML` in ух, ут, до and
-    // БСП демо and by `Reports/ПланПоказателей` in ух -- five records of one
-    // type id, one spelling, in two different owner families.
-    (REPORT_BUILDER_TYPE_UUID, "cfg:ReportBuilder"),
-    // The `ent:` and `v8ui:` namespaces are bound at the same roots as `cfg:`,
-    // so these names carry no inline declaration either.
-    // ДинамическийСписок
-    ("65abad24-838b-4987-8b35-ed9e2bd4d9c8", "cfg:DynamicList"),
-    // ВидДвиженияНакопления
-    (
-        "5a49abd5-936d-4f46-8499-9cb204efe378",
-        "ent:AccumulationRecordType",
-    ),
-    // ВидСчета
-    ("872f7198-7083-4e3e-b57e-a2a9802c769e", "ent:AccountType"),
-    // ВидДвиженияБухгалтерии
-    (
-        "741ae838-6e42-4ac0-b6a4-17e5604b0669",
-        "ent:AccountingRecordType",
-    ),
-    // ГоризонтальноеПоложение
-    (
-        "43f9c095-40e8-441a-8fad-20a45798c71b",
-        "v8ui:HorizontalAlign",
-    ),
-    // РежимИзмененияРазмера
-    (
-        "7a0135c7-5b77-4de2-839e-25c5e63a2142",
-        "v8ui:SizeChangeMode",
-    ),
-];
-// Platform type IDs used by serialized Form type patterns. Only the names whose
-// prefix the form document itself fixes stay here: the `d5p1:` names by the
-// depth rule above, and the four inline-declared canonical prefixes the form
-// writer knows how to spell (`form_metadata_type_xml_namespace_attr`). Names
-// bound at the root live in `ROOT_BOUND_PLATFORM_TYPE_REFERENCES`.
-const FORM_BUILTIN_TYPE_REFERENCES: &[(&str, &str)] = &[
-    // КомпоновщикНастроекКомпоновкиДанных
-    (
-        DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_UUID,
-        DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME,
-    ),
-    // ФорматированныйДокумент
-    (
-        "151f8778-e2d0-496a-9f02-d9ffd93b57ec",
-        "fd:FormattedDocument",
-    ),
-    // ТекстовыйДокумент
-    ("ebf766b1-f32c-11d3-9851-008048da1252", "d5p1:TextDocument"),
-    // Диаграмма
-    (CHART_TYPE_UUID, "d5p1:Chart"),
-    // ДиаграммаГанта
-    (GANTT_CHART_TYPE_UUID, GANTT_CHART_TYPE_REFERENCE),
-    // ТипЕдиницыИнтервалаВремениАнализаДанных
-    (
-        DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_UUID,
-        DATA_ANALYSIS_TIME_INTERVAL_UNIT_TYPE_REFERENCE,
-    ),
-    // ГрафическаяСхема
-    (
-        "4af83795-fc2a-48cd-9bea-ce665789a62c",
-        "d5p1:FlowchartContextType",
-    ),
-    // ДокументPDF
-    (
-        "48510817-200c-48c2-9973-06cf90840514",
-        PDF_DOCUMENT_TYPE_REFERENCE,
-    ),
-    // ГеографическаяСхема
-    (
-        "95de81b0-81c3-4936-9dbb-6400e5c90378",
-        GEOGRAPHICAL_SCHEMA_TYPE_REFERENCE,
-    ),
-    // Планировщик
-    (PLANNER_TYPE_UUID, PLANNER_TYPE_REFERENCE),
-];
-// Both carry their namespace inline on the emitted `<v8:Type>` element; see
-// `form_metadata_type_xml_namespace_attr`.
-/// Русские имена — `ДокументPDF` и `ГеографическаяСхема`.
-const PDF_DOCUMENT_TYPE_REFERENCE: &str = "pdfdoc:PDFDocument";
-const GEOGRAPHICAL_SCHEMA_TYPE_REFERENCE: &str = "d5p1:GeographicalSchema";
-/// The planner. Named by the five graphical-planner attributes of
-/// Документооборот КОРП 3.0.21.3, the only ones the eight stand corpora carry:
-/// each stores this type id and the platform writes this QName both in the
-/// attribute's `<v8:Type>` and in the `xsi:type` of its `<Settings>` block.
-const PLANNER_TYPE_UUID: &str = "43dc7f37-5b1d-42a7-8f28-f545080d0255";
-/// Русское имя — `Планировщик`.
-const PLANNER_TYPE_REFERENCE: &str = "pl:Planner";
 // Platform types serialized in DataProcessor Attribute patterns. Only the one
 // name whose prefix the metadata-root document fixes stays here: `Chart` at
 // depth 7. SettingsComposer stays on its stricter owner-wide admission path
@@ -1379,35 +1278,6 @@ const CHART_OF_ACCOUNTS_ACCOUNTING_FLAG_COLLECTION_UUID: &str =
     "78bd1243-c4df-46c3-8138-e147465cb9a4";
 const CHART_OF_ACCOUNTS_EXT_DIMENSION_FLAG_COLLECTION_UUID: &str =
     "c70ca527-5042-4cad-a315-dcb4007e32a3";
-const CHART_OF_ACCOUNTS_STANDARD_ATTRIBUTE_DEFINITIONS: &[(&str, &str)] = &[
-    ("-28", "PredefinedDataName"),
-    ("-17", "Order"),
-    ("-11", "OffBalance"),
-    ("-10", "Type"),
-    ("-8", "Description"),
-    ("-7", "Code"),
-    ("-6", "Parent"),
-    ("-5", "Predefined"),
-    ("-4", "DeletionMark"),
-    ("-2", "Ref"),
-];
-/// The standard tabular sections a `ChartOfAccounts` carries, each with the
-/// standard attributes it declares, keyed by the marker the native record
-/// names them by.  The metadata compiler reads this table to write
-/// `<xr:StandardTabularSection name="ExtDimensionTypes">` and its four
-/// `<xr:StandardAttribute>` children, and a form's bound slot names the very
-/// same members by the very same markers.
-const CHART_OF_ACCOUNTS_STANDARD_TABULAR_SECTION_DEFINITIONS:
-    &[ChartStandardTabularSectionDefinition] = &[(
-    "-12",
-    "ExtDimensionTypes",
-    &[
-        ("-15", "TurnoversOnly"),
-        ("-14", "Predefined"),
-        ("-13", "ExtDimensionType"),
-        ("-12", "LineNumber"),
-    ],
-)];
 /// The standard attributes a `ChartOfCalculationTypes` declares, keyed by the
 /// marker its own root and any `Characteristics` reference name them by.
 ///
@@ -1440,7 +1310,6 @@ const REPORT_FORM_COLLECTION_UUID: &str = "a3b368c0-29e2-11d6-a3c7-0050bae0a776"
 const REPORT_TABULAR_SECTION_COLLECTION_UUID: &str = "b077d780-29e2-11d6-a3c7-0050bae0a776";
 const REPORT_TABULAR_ATTRIBUTE_GROUP_UUID: &str = "c339c860-29e2-11d6-a3c7-0050bae0a776";
 const REPORT_COMMAND_COLLECTION_UUID: &str = "e7ff38c0-ec3c-47a0-ae90-20c73ca72246";
-const TYPE_DESCRIPTION_TYPE_UUID: &str = "f5c65050-3bbb-11d5-b988-0050bae0a95d";
 const WEB_SERVICE_OPERATION_COLLECTION_UUID: &str = "36186084-c23a-43bd-876c-a3a8ba1a9622";
 const WEB_SERVICE_PARAMETER_COLLECTION_UUID: &str = "b78a00b2-2260-4ef5-a70c-17889cfee695";
 const DOCUMENT_JOURNAL_COLUMN_COLLECTION_UUID: &str = "5aee69df-0513-4c6c-9815-103102471712";
@@ -1451,9 +1320,6 @@ const XDTO_XML_SCHEMA_NAMESPACE: &str = "http://www.w3.org/2001/XMLSchema";
 const XDTO_CORE_NAMESPACE: &str = "http://v8.1c.ru/8.1/data/core";
 const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
 const XMLNS_NAMESPACE: &str = "http://www.w3.org/2000/xmlns/";
-
-// Platform `Null` type, serialized in type patterns as the bare element `{"L"}`.
-const NULL_TYPE_REFERENCE: &str = "v8:Null";
 
 const FORM_APPLICATION_USE_PURPOSE_TYPE_UUID: &str = "1708fdaa-cbce-4289-b373-07a5a74bee91";
 // Platform picture descriptor code for StdPicture.Print.
@@ -4057,6 +3923,9 @@ fn dump_table_rows_with_options_mode(
         MetadataTextRowsAudit::default()
     };
     let metadata_texts = &metadata_audit.rows;
+    if extract_metadata_xml && inventory_scope == RootMetadataInventoryScope::Full {
+        validate_interface_descriptors(metadata_texts)?;
+    }
     let metadata_texts_by_file_name = metadata_texts
         .iter()
         .map(|row| (row.file_name.as_str(), row))
@@ -5392,6 +5261,9 @@ fn dump_table_rows_streamed(
         Vec::new()
     };
     timings.prepare_metadata_texts_ms += elapsed_ms(metadata_texts_started);
+    if extract_metadata_xml && inventory_scope == RootMetadataInventoryScope::Full {
+        validate_interface_descriptors(&index_metadata_texts)?;
+    }
     // `--model-export`: what each row is, from the rows alone and before the
     // legacy indexes, so the ones only the legacy descriptor converters of
     // modelled kinds read are left out. The index needs the whole row set;
@@ -6621,10 +6493,6 @@ fn form_body_override(file_name: &str) -> Option<String> {
         .get_or_init(|| std::env::var_os("IBCMD_RS_FORM_BODY_OVERRIDE_DIR").map(PathBuf::from))
         .as_ref()?;
     fs::read_to_string(dir.join(format!("{file_name}.txt"))).ok()
-}
-
-fn elapsed_ms(started: Instant) -> u64 {
-    started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 /// CPU time the whole process has used so far (all threads), in ms.
@@ -7953,68 +7821,6 @@ struct FlowchartBase {
     tab_order: String,
 }
 
-#[derive(Clone)]
-struct MetadataCommandReference {
-    kind: String,
-    name: String,
-    /// How many members the target's own `<BasedOn>` list declares, or `None`
-    /// when this reader cannot name the slot for the target's kind. A target
-    /// that declares none has no `CreateBasedOn` standard command at all, and
-    /// the platform keeps the raw `code:uuid` sentinel for it exactly as it
-    /// does for `use_standard_commands == false`. Evidence: over the eight
-    /// stand corpora every one of the 5 123 `<Command>`/`<CommandName>` values
-    /// naming a `.StandardCommand.CreateBasedOn` names a target whose
-    /// `<BasedOn>` is non-empty, and the five ERP УХ 3.2.12.6 documents whose
-    /// `<BasedOn/>` is empty -- `УдалитьЗаявкаНаКорректировкуЛимитов`,
-    /// `УдалитьКорректировкаЛимитов`, `СтрокаПланаЗакупок`,
-    /// `ОбоснованиеТребованийКЗакупочнойПроцедуре` and `ЗаявкаНаРасход` -- are
-    /// carried by 22 buttons the platform writes as `2:<uuid>`.
-    based_on_declared: Option<usize>,
-    /// How many owners the target's own `<Owners>` list declares, or `None`
-    /// when this reader cannot name the slot for the target's kind. A catalog
-    /// that declares none has nothing to be opened by, so it has no
-    /// `OpenByValue` standard command and the platform keeps the raw
-    /// `code:uuid` sentinel -- the same shape as `based_on_declared`.
-    ///
-    /// Evidence: over the eight stand corpora every one of the 112
-    /// `<Command>`/`<CommandName>` values naming a
-    /// `Catalog.X.StandardCommand.OpenByValue` names a catalog whose
-    /// `<Owners>` declares at least one owner, and ERP УХ 3.2.12.6 keeps
-    /// `Catalog.СхемаДоступностиРеквизитов` -- whose `<Owners/>` is empty --
-    /// as `4:bdd23491-0b0b-49b7-bda4-8a0b0870f4fd` in
-    /// `Catalogs/ЭтапыУниверсальныхПроцессов/Forms/ФормаЭлемента`.
-    owners_declared: Option<usize>,
-    /// Whether the target information register declares
-    /// `<WriteMode>RecorderSubordinate</WriteMode>`, or `None` for every other
-    /// kind. A register written independently has no recorder, so it has no
-    /// `OpenByRecorder` standard command.
-    ///
-    /// Evidence: over the eight stand corpora all ten
-    /// `<Command>`/`<CommandName>` values naming an
-    /// `InformationRegister.X.StandardCommand.OpenByRecorder` name a register
-    /// that declares `RecorderSubordinate`, and none names an `Independent`
-    /// one; ERP УХ 3.2.12.6 keeps
-    /// `InformationRegister.НастройкаРаспределенияПоНаправлениямДеятельности`
-    /// (`Independent`) as `2:7f22e01e-6dbf-4a58-a96b-b455c935ab6b` in
-    /// `Catalogs/Организации/Forms/ФормаЭлемента`.
-    recorder_subordinate: Option<bool>,
-    /// Whether the target metadata object itself declares
-    /// `<UseStandardCommands>true</UseStandardCommands>`. Both command-interface
-    /// readers (this object's own `Ext/CommandInterface.xml` and a form's
-    /// embedded `<CommandInterface>`) must decline to synthesize a
-    /// `.StandardCommand.X` name when this is `false`: the platform keeps the
-    /// raw `code:uuid` sentinel instead, because the standard command does not
-    /// exist on that target. Evidence: ERP UH `MDM_Management`,
-    /// `Catalog.ТабличныеЧастиБД` (`UseStandardCommands=false`) is kept as
-    /// `0:04c1ab92-f4fc-40e9-b0d6-a1c57a5a8b47` in
-    /// `Subsystems/.../Ext/CommandInterface.xml`, and `Catalog.СправочникиБД`
-    /// (also `false`) is kept as `4:67b8886f-f30d-480c-abb8-e3712f3c169c` in
-    /// `Catalogs/ТипыБазДанных/Forms/ФормаЭлемента/Ext/Form.xml`. Defaults to
-    /// `true` (today's behaviour) for every kind the index cannot yet prove a
-    /// value for -- only `Catalog` is evidenced so far.
-    use_standard_commands: bool,
-}
-
 fn parse_exchange_plan_content_blob(
     bytes: &[u8],
     object_refs: &BTreeMap<String, String>,
@@ -9243,12 +9049,6 @@ fn parse_flowchart_title(text: &str) -> Vec<(String, String)> {
             ))
         })
         .collect()
-}
-
-fn parse_1c_string(text: &str) -> Option<String> {
-    let text = text.trim();
-    let inner = text.strip_prefix('"')?.strip_suffix('"')?;
-    Some(inner.replace("\"\"", "\""))
 }
 
 fn exchange_plan_auto_record_xml(value: &str) -> &'static str {
@@ -10704,18 +10504,6 @@ struct FormSourceReference {
     relative_path: PathBuf,
     kind: &'static str,
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct InformationRegisterFieldReference {
-    pub(crate) field_reference: String,
-    pub(crate) value_owner_references: BTreeSet<String>,
-}
-
-pub(crate) type InformationRegisterFieldReferenceIndex =
-    BTreeMap<String, Vec<InformationRegisterFieldReference>>;
-
-/// Register uuid -> its master dimension names in declaration order.
-pub(crate) type InformationRegisterMasterDimensionIndex = BTreeMap<String, Vec<String>>;
 
 /// The leaves a named type set declares, keyed by the name the set is written
 /// under (`cfg:DefinedType.X`, `cfg:Characteristic.X`).
@@ -12269,42 +12057,6 @@ struct IntegrationServiceChannelProperties {
     transactioned: bool,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub(super) enum ConstantValueType {
-    Boolean,
-    String {
-        length: Option<u32>,
-        allowed_length_flag: u8,
-    },
-    Number {
-        digits: u32,
-        fraction_digits: u32,
-        allowed_sign_flag: u8,
-    },
-    DateTime {
-        date_fractions: &'static str,
-    },
-    /// `{"R"}` / `{"R",<length>,<allowed length>}`: `xs:base64Binary`, the 8.5
-    /// binary data type (БСП 8.5 extension ServiceDesk, `{"R"}` = length 0,
-    /// variable).
-    BinaryData {
-        length: u32,
-        allowed_length_flag: u8,
-    },
-    Reference {
-        reference: String,
-    },
-    ReferenceTypeSet {
-        reference: String,
-    },
-    /// A form pattern can legally name a platform type that neither the
-    /// configuration index nor the platform-QName table knows. The platform
-    /// preserves that identifier instead of discarding the whole type block.
-    TypeId {
-        type_id: String,
-    },
-}
-
 #[allow(dead_code)]
 fn build_metadata_type_index(rows: &[ConfigRow]) -> BTreeMap<String, String> {
     let metadata_texts = build_metadata_text_rows(rows);
@@ -12382,45 +12134,6 @@ impl MetadataObjectReferenceIndexes {
         indexes
     }
 }
-
-// Platform reference-family TypeIds are protocol identifiers, not metadata UUIDs.
-const DCS_BUILTIN_REFERENCE_TYPE_SETS: &[(&str, &str)] = &[
-    (
-        "0a52f9de-73ea-4507-81e8-66217bead73a",
-        "cfg:ExchangePlanRef",
-    ),
-    (
-        "11e5f865-1501-40c6-b4d4-022095a296a5",
-        "cfg:BusinessProcessRoutePointRef",
-    ),
-    (
-        "214fa4d8-6ba4-4748-a5e1-6332b5887780",
-        "cfg:BusinessProcessRef",
-    ),
-    ("38bfd075-3e63-4aaa-a93e-94521380d579", "cfg:DocumentRef"),
-    (
-        "474c3bf6-08b5-4ddc-a2ad-989cedf11583",
-        // `builtin_type_reference` below has carried this protocol identifier
-        // all along; this table did not, so a DCS `valueType` naming the
-        // enumeration family failed closed on a name the storage side already
-        // knew. The two tables now agree on it.
-        "cfg:EnumRef",
-    ),
-    (
-        "593cd424-0877-470d-91f9-b90a982059b4",
-        "cfg:ChartOfCalculationTypesRef",
-    ),
-    ("6291e9b3-8df5-44e1-b6b2-d9fe008016c0", "cfg:TaskRef"),
-    (
-        "99892482-ed55-4fb5-a7f7-20888820a758",
-        "cfg:ChartOfCharacteristicTypesRef",
-    ),
-    (
-        "ac606d60-0209-4159-8e4c-794bc091ce38",
-        "cfg:ChartOfAccountsRef",
-    ),
-    ("e61ef7b8-f3e1-4f4b-8ac7-676e90524997", "cfg:CatalogRef"),
-];
 
 /// Generated-type id -> the reference a spreadsheet's value type publishes for
 /// it.
@@ -12518,22 +12231,6 @@ fn build_metadata_type_indexes_from_texts(rows: &[MetadataTextRow]) -> MetadataT
         }
     }
     indexes
-}
-
-fn unique_metadata_type_reference<'a>(
-    type_index: &'a BTreeMap<String, String>,
-    reference_collisions: &BTreeSet<String>,
-    type_id: &str,
-) -> Option<&'a str> {
-    let normalized = type_id.to_ascii_lowercase();
-    if reference_collisions.contains(&normalized) {
-        return None;
-    }
-    let mut matches = type_index
-        .iter()
-        .filter(|(candidate, _)| candidate.eq_ignore_ascii_case(type_id));
-    let (_, reference) = matches.next()?;
-    matches.next().is_none().then_some(reference.as_str())
 }
 
 #[allow(dead_code)]
@@ -13513,28 +13210,6 @@ fn push_indexed_accounting_register_generated_type_entries(
     }
 }
 
-fn parse_uuid_field(value: &str) -> Option<String> {
-    let value = value.trim();
-    if is_uuid_text(value) {
-        Some(value.to_string())
-    } else {
-        None
-    }
-}
-
-fn parse_non_zero_uuid(value: &str) -> Option<String> {
-    let uuid = parse_uuid_field(value)?;
-    if uuid == "00000000-0000-0000-0000-000000000000" {
-        None
-    } else {
-        Some(uuid)
-    }
-}
-
-fn is_uuid_text(value: &str) -> bool {
-    value.len() == 36 && value.chars().all(|ch| ch.is_ascii_hexdigit() || ch == '-')
-}
-
 #[cfg(test)]
 fn extract_metadata_source_xml(
     blob: &[u8],
@@ -14324,6 +13999,14 @@ fn extract_metadata_source_xml_from_text_row_with_owner_graph_diagnostic(
         let document_numerator = parse_document_numerator_properties_from_text(text, uuid)?;
         format_document_numerator_source_xml(&header, &document_numerator, source_version)
             .into_bytes()
+    } else if kind == ibcmd_schema::interface::InterfaceLayout::KIND {
+        let row = crate::metadata_model::brace::parse_row(text.as_bytes()).ok()?;
+        let interface = crate::metadata_model::interface::Interface::from_brace(&row).ok()?;
+        crate::metadata_model::export::write_document(
+            &interface.to_xml().ok()?,
+            source_version.as_str(),
+        )
+        .into_bytes()
     } else if kind == ibcmd_schema::websocket_client::WebSocketClientLayout::KIND {
         let row = crate::metadata_model::brace::parse_row(text.as_bytes()).ok()?;
         let client =
@@ -19133,40 +18816,6 @@ fn validate_exact_accumulation_code28_layout(
     validate_exact_wrapped_register_owner_layout(fields, expected_header, "28", 26, 13)
 }
 
-const ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES: [(&str, &str); 5] = [
-    ("-9", "RecordType"),
-    ("-5", "Active"),
-    ("-4", "LineNumber"),
-    ("-3", "Recorder"),
-    ("-2", "Period"),
-];
-const ACCUMULATION_REGISTER_TURNOVERS_STANDARD_ATTRIBUTES: [(&str, &str); 4] = [
-    ("-5", "Active"),
-    ("-4", "LineNumber"),
-    ("-3", "Recorder"),
-    ("-2", "Period"),
-];
-
-/// The standard attribute an accumulation register's record set spells for a
-/// marker a form binding names it by.
-///
-/// The turnovers table is a proper subset of the balance one and the two agree
-/// on every marker they share, so one lookup answers both kinds: a turnovers
-/// register simply never carries `-9`, the only marker the balance kind adds.
-/// That is what lets this read the marker without first proving which kind the
-/// register is.
-pub(super) fn accumulation_register_record_set_standard_attribute_name(
-    marker: &str,
-) -> Option<&'static str> {
-    debug_assert!(
-        ACCUMULATION_REGISTER_TURNOVERS_STANDARD_ATTRIBUTES
-            .iter()
-            .all(|entry| ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES.contains(entry))
-    );
-    ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES
-        .iter()
-        .find_map(|(candidate, name)| (*candidate == marker).then_some(*name))
-}
 const CALCULATION_REGISTER_STANDARD_ATTRIBUTES: [(&str, &str); 11] = [
     ("-13", "RegistrationPeriod"),
     ("-11", "ReversingEntry"),
@@ -22455,13 +22104,6 @@ fn information_register_builtin_reference(type_id: &str) -> Option<&'static str>
         .find_map(|(candidate, reference)| (*candidate == type_id).then_some(*reference))
 }
 
-fn metadata_reference_is_type_set(reference: &str) -> bool {
-    reference.starts_with("cfg:DefinedType.")
-        || reference.starts_with("cfg:Characteristic.")
-        || reference == "cfg:AnyIBRef"
-        || (reference.starts_with("cfg:") && reference.ends_with("Ref") && !reference.contains('.'))
-}
-
 fn classify_metadata_reference_type_sets(
     value_types: Vec<ConstantValueType>,
 ) -> Vec<ConstantValueType> {
@@ -22717,24 +22359,6 @@ fn design_time_ref_value_is_zero(fields: &[&str]) -> bool {
         && inner[0].trim() == "0"
         && information_register_uuid_is_zero(inner[1].trim())
         && information_register_uuid_is_zero(inner[2].trim())
-}
-
-fn information_register_decimal_is_valid(value: &str) -> bool {
-    let value = value.strip_prefix('-').unwrap_or(value);
-    let mut parts = value.split('.');
-    let Some(integer) = parts.next() else {
-        return false;
-    };
-    if integer.is_empty() || !integer.chars().all(|ch| ch.is_ascii_digit()) {
-        return false;
-    }
-    match (parts.next(), parts.next()) {
-        (None, None) => true,
-        (Some(fraction), None) => {
-            !fraction.is_empty() && fraction.chars().all(|ch| ch.is_ascii_digit())
-        }
-        _ => false,
-    }
 }
 
 fn parse_information_register_choice_form(
@@ -25290,15 +24914,6 @@ fn parse_metadata_child_choice_form(
     parse_design_time_reference(field, object_refs).map(MetadataChoiceForm::Reference)
 }
 
-fn metadata_choice_folders_and_items_xml(value: &str) -> Option<&'static str> {
-    match value {
-        "0" => Some("Items"),
-        "1" => Some("Folders"),
-        "2" => Some("FoldersAndItems"),
-        _ => None,
-    }
-}
-
 fn metadata_quick_choice_xml(value: &str) -> Option<&'static str> {
     match value {
         "0" => Some("Auto"),
@@ -26762,41 +26377,6 @@ fn parse_chart_standard_attribute_fill_value(
         _ => None,
     }
 }
-
-/// The `ChartOfAccounts` standard-attribute table, as one slice, so a caller
-/// that needs the whole family reads the same rows the name lookup does.
-pub(super) const fn chart_of_accounts_standard_attribute_definitions()
--> &'static [(&'static str, &'static str)] {
-    CHART_OF_ACCOUNTS_STANDARD_ATTRIBUTE_DEFINITIONS
-}
-
-/// The `ChartOfAccounts` standard tabular section a bound slot names by
-/// `marker`, with the standard attributes that section declares.
-pub(super) fn chart_of_accounts_standard_tabular_section(
-    marker: &str,
-) -> Option<&'static ChartStandardTabularSectionDefinition> {
-    CHART_OF_ACCOUNTS_STANDARD_TABULAR_SECTION_DEFINITIONS
-        .iter()
-        .find(|(candidate, _, _)| *candidate == marker)
-}
-
-/// The sole standard tabular section a `ChartOfAccounts` declares — the one an
-/// `ExtDimensionAccountingFlag` is a column of.  Reading it from the same table
-/// the metadata compiler reads keeps the two spellings one fact; were the
-/// family ever to declare a second section, the flag's owning section would no
-/// longer follow from the family alone and this refuses rather than guesses.
-pub(super) fn chart_of_accounts_sole_standard_tabular_section_name() -> Option<&'static str> {
-    match CHART_OF_ACCOUNTS_STANDARD_TABULAR_SECTION_DEFINITIONS {
-        [(_, name, _)] => Some(name),
-        _ => None,
-    }
-}
-
-type ChartStandardTabularSectionDefinition = (
-    &'static str,
-    &'static str,
-    &'static [(&'static str, &'static str)],
-);
 
 fn parse_chart_standard_tabular_sections(
     value: &str,
@@ -30740,13 +30320,6 @@ fn parse_metadata_object_reference_collection_members(
         .collect()
 }
 
-const DOCUMENT_STANDARD_ATTRIBUTES: [(&str, &str); 5] = [
-    ("-7", "Posted"),
-    ("-5", "Ref"),
-    ("-4", "DeletionMark"),
-    ("-3", "Date"),
-    ("-2", "Number"),
-];
 const DOCUMENT_INPUT_BY_STRING_STANDARD_ATTRIBUTES: [(&str, &str); 1] = [("-2", "Number")];
 
 /// Families the platform writes into a `BasedOn` (Ввод на основании) list.
@@ -34081,24 +33654,10 @@ fn owned_metadata_template_names_in_text_order(
     names
 }
 
-fn parse_1c_bool_field(value: Option<&str>) -> Option<bool> {
-    parse_1c_bool_flag(value?.trim())
-}
-
-// An absent legacy field can have a documented default. A present value
-// outside the Boolean domain is a conversion refusal, never that default.
-fn parse_1c_bool_field_or_default(value: Option<&str>, default: bool) -> Option<bool> {
-    value.map_or(Some(default), |value| parse_1c_bool_field(Some(value)))
-}
-
 fn braced_field_has_entries(field: Option<&str>) -> bool {
     split_1c_braced_fields(field.unwrap_or("{0}"), 0)
         .and_then(|fields| fields.first().map(|value| value.trim() != "0"))
         .unwrap_or(false)
-}
-
-fn parse_1c_u32_field(value: Option<&str>) -> Option<u32> {
-    value?.trim().parse().ok()
 }
 
 fn catalog_code_type_xml(value: u32) -> Option<&'static str> {
@@ -34168,14 +33727,6 @@ fn enum_choice_mode_xml(value: u32) -> &'static str {
         1 => "QuickChoice",
         2 => "BothWays",
         _ => "BothWays",
-    }
-}
-
-fn parse_1c_bool_flag(value: &str) -> Option<bool> {
-    match value {
-        "0" => Some(false),
-        "1" => Some(true),
-        _ => None,
     }
 }
 
@@ -34599,17 +34150,6 @@ fn metadata_choice_link_value_change_xml(value: &str) -> &'static str {
         "1" => "DontChange",
         _ => "Clear",
     }
-}
-
-fn parse_design_time_reference(
-    text: &str,
-    object_refs: &BTreeMap<String, String>,
-) -> Option<String> {
-    uuid_like_values(text)
-        .into_iter()
-        .rev()
-        .filter_map(|uuid| object_refs.get(&uuid).cloned())
-        .next()
 }
 
 /// The reference a design-time value names when its own bytes spell the owner.
@@ -36243,33 +35783,6 @@ fn integration_service_message_direction_xml(value: u32) -> &'static str {
     }
 }
 
-fn split_1c_braced_sequence(text: &str) -> Option<Vec<&str>> {
-    let text = text.trim();
-    if !text.starts_with('{') || !text.ends_with('}') {
-        return None;
-    }
-    let mut fields = Vec::new();
-    let mut offset = 1usize;
-    let end = text.len().checked_sub(1)?;
-    while offset < end {
-        offset = skip_ascii_ws_at(text, offset);
-        while text[offset..].starts_with(',') {
-            offset += 1;
-            offset = skip_ascii_ws_at(text, offset);
-        }
-        if offset >= end {
-            break;
-        }
-        if !text[offset..].starts_with('{') {
-            return None;
-        }
-        let item_end = scan_1c_braced_value(text, offset)?;
-        fields.push(text[offset..item_end].trim());
-        offset = item_end;
-    }
-    Some(fields)
-}
-
 fn parse_typed_metadata_value_types_before(
     text: &str,
     marker_start: usize,
@@ -36585,297 +36098,6 @@ fn parse_command_group_picture_value(
         }
     }
     Some((None, load_transparent))
-}
-
-fn parse_common_command_picture_value(
-    value: &str,
-    object_refs: &BTreeMap<String, String>,
-) -> Option<(Option<String>, bool)> {
-    let fields = split_1c_braced_fields(value, 0)?;
-    if fields.first()?.trim() != "4" {
-        return None;
-    }
-    let picture_kind = fields.get(1)?.trim().parse::<i32>().ok()?;
-    let load_transparent = fields
-        .get(6)
-        .and_then(|field| parse_1c_bool_flag(field.trim()))
-        .unwrap_or(false);
-    if picture_kind == 0 {
-        return Some((None, load_transparent));
-    }
-    if picture_kind == 1 {
-        let ref_fields = split_1c_braced_fields(fields.get(2)?, 0)?;
-        if ref_fields.first()?.trim() == "-1" {
-            return Some((
-                Some("StdPicture.InputFieldSelect".to_string()),
-                load_transparent,
-            ));
-        }
-        if ref_fields.first()?.trim() == "-2" {
-            return Some((
-                Some("StdPicture.InputFieldClear".to_string()),
-                load_transparent,
-            ));
-        }
-        if ref_fields.first()?.trim() == "-3" {
-            return Some((Some("StdPicture.MoveUp".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-4" {
-            return Some((Some("StdPicture.MoveDown".to_string()), load_transparent));
-        }
-        // `-5` was the one negative code this table lacked while its sibling
-        // table for help-topic picture tokens already carried it, so the two
-        // disagreed about the same platform identity. The native tree writes
-        // `StdPicture.InputFieldCalendar` for all 12 of its occurrences.
-        if ref_fields.first()?.trim() == "-5" {
-            return Some((
-                Some("StdPicture.InputFieldCalendar".to_string()),
-                load_transparent,
-            ));
-        }
-        if ref_fields.first()?.trim() == "-9" {
-            return Some((Some("StdPicture.MoveRight".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-8" {
-            return Some((Some("StdPicture.MoveLeft".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-7" {
-            return Some((
-                Some("StdPicture.InputFieldOpen".to_string()),
-                load_transparent,
-            ));
-        }
-        if ref_fields.first()?.trim() == "-10" {
-            return Some((Some("StdPicture.CheckAll".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-11" {
-            return Some((Some("StdPicture.UncheckAll".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-13" {
-            return Some((Some("StdPicture.Print".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-14" {
-            return Some((
-                Some("StdPicture.InputFieldChooseType".to_string()),
-                load_transparent,
-            ));
-        }
-        // `-15` and `-16` continue the same ordinal run as the codes above and
-        // were the only two negative codes the reference tree observes that this
-        // table did not carry: over all 5 200 forms `-15` reads
-        // `StdPicture.ZoomOut` on all 8 of its occurrences and `-16`
-        // `StdPicture.ZoomIn` on all 7, with no counter-example and no other
-        // table in the crate mapping either code in a picture context.
-        if ref_fields.first()?.trim() == "-15" {
-            return Some((Some("StdPicture.ZoomOut".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "-16" {
-            return Some((Some("StdPicture.ZoomIn".to_string()), load_transparent));
-        }
-        // The corpus-wide source difference leaves one further published
-        // negative picture code: `-100` is paired with `StdPicture.Select`.
-        // It occurs once; no other negative descriptor or native picture name
-        // remains unmatched after the already enumerated codes are removed.
-        if ref_fields.first()?.trim() == "-100" {
-            return Some((Some("StdPicture.Select".to_string()), load_transparent));
-        }
-        // The last two codes the reference trees observe and this table did not
-        // carry.  Census over all 12 895 ERP УХ 3.2.12.6 form layouts and all
-        // 1 738 Документооборот КОРП 3.0.21.3 ones, pairing each layout's
-        // one-member negative reference descriptors against the
-        // `StdPicture.*` names the native body of the same form writes and
-        // subtracting the codes this table already spells: exactly two codes
-        // are left unspelled anywhere, `-6` in 3 records and `-200` in 6, and
-        // exactly two names are left unexplained, `StdPicture.
-        // InputFieldCalculator` and `StdPicture.Clear`, each alone with its
-        // code in every form that carries it and never seen beside the other.
-        // `-6` also has a second, independent authority inside this crate:
-        // `spreadsheet_standard_picture_ref` already writes it for
-        // `StdPicture.InputFieldCalculator` on the packing side.
-        //
-        // `-200` is off the ordinal run the codes above form, which is why it
-        // is spelled out rather than interpolated: nothing between `-17` and
-        // `-199` occurs in any reference tree, so the run says nothing about
-        // what those codes would mean.
-        if ref_fields.first()?.trim() == "-6" {
-            return Some((
-                Some("StdPicture.InputFieldCalculator".to_string()),
-                load_transparent,
-            ));
-        }
-        if ref_fields.first()?.trim() == "-200" {
-            return Some((Some("StdPicture.Clear".to_string()), load_transparent));
-        }
-        if ref_fields.first()?.trim() == "0" {
-            // Same bare-index reference the register table admits; reading past
-            // the end of a one-element reference used to abort the whole
-            // descriptor here, which is a third answer neither table means.
-            let Some(uuid) = ref_fields.get(1).map(|field| field.trim()) else {
-                return Some((Some("0".to_string()), load_transparent));
-            };
-            if let Some(reference) = standard_picture_name(uuid) {
-                return Some((Some(reference.to_string()), load_transparent));
-            }
-            if let Some(reference) = object_refs.get(uuid)
-                && reference.starts_with("CommonPicture.")
-            {
-                return Some((Some(reference.clone()), load_transparent));
-            }
-            // A uuid that names nothing in the configuration is still a
-            // reference the platform writes: it spells it `<code>:<uuid>` --
-            // the descriptor's own two members, joined -- rather than dropping
-            // the picture.  Answering `None` here dropped the whole `<Picture>`
-            // element, not just the name.
-            //
-            // Census over ERP УХ 3.2.12.6, Документооборот КОРП 3.0.21.3,
-            // УТ 11.5.27.75, БСП демо и БСП базовая: of the 63 449 `<xr:Ref>`
-            // values those five trees write, exactly three spellings occur --
-            // 39 566 `CommonPicture.<name>`, 23 873 `StdPicture.<name>` and 16
-            // of this shape, all of them `0:<uuid>`, all in ERP УХ, over 10
-            // distinct uuids.  Every one of those uuids occurs *only* inside
-            // form bodies and names no object anywhere in the configuration,
-            // which is why the lookups above cannot answer them; the one that
-            // also occurs outside a form body is an equally dangling
-            // `<xr:Item xsi:type="xr:MDObjectRef">` of a subsystem's content
-            // list, written there as the bare uuid.
-            //
-            // Restricted to a uuid the object index does not carry at all: a
-            // uuid that does resolve, to something that is not a common
-            // picture, is a different question this corpus does not observe.
-            if !object_refs.contains_key(uuid) {
-                return Some((Some(format!("0:{uuid}")), load_transparent));
-            }
-        }
-    }
-    Some((None, load_transparent))
-}
-
-/// Names the platform writes for the shortcut bitmask's CTRL and ALT bits.
-///
-/// The bits themselves are host-neutral -- the same `.cf` carries the same
-/// `{0, virtual-key, modifier-mask}` tuple everywhere -- but `ibcmd` spells
-/// them for the host it runs on, and that is the only thing that changes:
-/// bit 8 is `Ctrl` on Windows and `Cmd` on macOS, bit 16 is `Alt` on Windows
-/// and `Option` on macOS. Bit 4 stays `Shift`, the key name never moves, and
-/// the modifier order is the same on both.
-///
-/// Measured on БСП базовая: of the 81 forms carrying `<Shortcut>`, 50 are
-/// already byte-identical to the macOS reference tree and the other 31 become
-/// byte-identical under exactly this substitution, with no residual
-/// difference anywhere. The stand's reference trees are macOS captures
-/// throughout -- 2 900 `Cmd` and 140 `Option` across uh/ut/ssl/sslbase, and
-/// not one `Ctrl` or `Alt` -- so on this host the macOS spelling is what the
-/// platform bytes say.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum ShortcutModifierStyle {
-    Windows,
-    Macos,
-}
-
-impl ShortcutModifierStyle {
-    /// The spelling `ibcmd` uses on the host this export is running on.
-    pub(crate) const fn host() -> Self {
-        if cfg!(target_os = "macos") {
-            Self::Macos
-        } else {
-            Self::Windows
-        }
-    }
-
-    const fn ctrl(self) -> &'static str {
-        match self {
-            Self::Windows => "Ctrl",
-            Self::Macos => "Cmd",
-        }
-    }
-
-    const fn alt(self) -> &'static str {
-        match self {
-            Self::Windows => "Alt",
-            Self::Macos => "Option",
-        }
-    }
-}
-
-fn parse_common_command_shortcut_value(value: &str) -> Option<String> {
-    parse_common_command_shortcut_value_with_style(value, ShortcutModifierStyle::host())
-}
-
-fn parse_common_command_shortcut_value_with_style(
-    value: &str,
-    style: ShortcutModifierStyle,
-) -> Option<String> {
-    let fields = split_1c_braced_fields(value, 0)?;
-    if fields.len() != 3 || fields.first()?.trim() != "0" {
-        return None;
-    }
-    let key_code = fields.get(1)?.trim().parse::<u16>().ok()?;
-    let modifier_code = fields.get(2)?.trim().parse::<u16>().ok()?;
-    const SHIFT: u16 = 4;
-    const CTRL: u16 = 8;
-    const ALT: u16 = 16;
-    if key_code == 0 || modifier_code & !(SHIFT | CTRL | ALT) != 0 {
-        return None;
-    }
-    let key = match key_code {
-        8 => "BackSpace".to_string(),
-        13 => "Enter".to_string(),
-        48..=57 => char::from_u32(u32::from(key_code))?.to_string(),
-        65..=90 => char::from_u32(u32::from(key_code))?.to_string(),
-        96..=105 => format!("Num {}", key_code - 96),
-        // 106..=111 continue the VK_NUMPAD0..VK_DIVIDE numpad run 96..=105
-        // already maps (VK_MULTIPLY=106, VK_ADD=107, VK_SEPARATOR=108,
-        // VK_SUBTRACT=109, VK_DECIMAL=110 already spelled `Num .`,
-        // VK_DIVIDE=111). Evidenced: `ssl`-demo's `DataProcessors/
-        // КонсольЗапросов/Forms/Форма` carries key_code 111 twice (modifier 8
-        // and 12), native `Cmd+Num /` and `Cmd+Shift+Num /`.
-        // VK_ADD=107 and VK_SUBTRACT=109, the two of the 106..=109 run the
-        // stand spells. ERP УХ 3.2.12.6 `Reports/ДеревоСебестоимостиПродукции/
-        // Forms/ФормаОтчета` and
-        // `Reports/СтруктураЗаказаНаПроизводствоДинамическая/Forms/ФормаОтчета`
-        // each carry `{0,107,12}` and `{0,109,12}` on their expand-all and
-        // collapse-all commands, and the platform writes `Cmd+Shift+Num +` and
-        // `Cmd+Shift+Num -` for them. VK_MULTIPLY=106 and VK_SEPARATOR=108
-        // occur nowhere in the eight trees and stay unread rather than guessed
-        // from the run.
-        //
-        // VK_MULTIPLY=106 does occur: the eight native stand trees spell
-        // `<Shortcut>Num *</Shortcut>` twice, on the `КнопкаУмножить` command
-        // of ERP УХ 3.2.12.6
-        // `DataProcessors/НастройкаСтруктурыОтчета/Forms/ФормаКонструктора`
-        // and of `Catalogs/БланкиОтчетов/Forms/ФормаМакета`, so the census
-        // that declared the code absent had not seen them. Seed `hg7-a`
-        // against 8.3.27.2214 measures the code itself: a form command written
-        // `<Shortcut>Num *</Shortcut>` stores `{0,106,0}` and its sibling
-        // written `<Shortcut>Num /</Shortcut>` stores `{0,111,0}`, the code
-        // this run already spells. VK_SEPARATOR=108 is spelled by no tree and
-        // no seed and stays unread.
-        106 => "Num *".to_string(),
-        107 => "Num +".to_string(),
-        109 => "Num -".to_string(),
-        110 => "Num .".to_string(),
-        111 => "Num /".to_string(),
-        112..=123 => format!("F{}", key_code - 111),
-        // VK_ESCAPE. The one unmapped key code any of the three probed
-        // configurations spells: Документооборот КОРП 3.0.21.3 carries it once
-        // with no modifier, on the very command the platform writes
-        // `<Shortcut>Esc</Shortcut>` for -- the only `Esc` in the eight native
-        // stand trees -- and УТ 11.5.27.75 spells no unmapped code at all.
-        27 => "Esc".to_string(),
-        _ => return None,
-    };
-    let mut parts = Vec::with_capacity(4);
-    if modifier_code & CTRL != 0 {
-        parts.push(style.ctrl().to_string());
-    }
-    if modifier_code & ALT != 0 {
-        parts.push(style.alt().to_string());
-    }
-    if modifier_code & SHIFT != 0 {
-        parts.push("Shift".to_string());
-    }
-    parts.push(key);
-    Some(parts.join("+"))
 }
 
 /// The platform's standard pictures, named and stored through the one table
@@ -37353,74 +36575,6 @@ fn style_body_ref_name(ref_value: &str, object_refs: &BTreeMap<String, String>) 
     None
 }
 
-fn standard_style_item_for_code(code: i32) -> Option<(usize, &'static str)> {
-    let name = match code {
-        -1 => "FormBackColor",
-        -11 => "FormTextColor",
-        -3 => "ButtonBackColor",
-        -15 => "ButtonTextColor",
-        -7 => "FieldBackColor",
-        -13 => "FieldTextColor",
-        -21 => "FieldSelectionBackColor",
-        -10 => "FieldSelectedTextColor",
-        -14 => "FieldAlternativeBackColor",
-        -23 => "ToolTipBackColor",
-        -24 => "ToolTipTextColor",
-        -16 => "SpecialTextColor",
-        -17 => "NegativeTextColor",
-        -22 => "BorderColor",
-        -25 => "ReportHeaderBackColor",
-        -26 => "ReportGroup1BackColor",
-        -27 => "ReportGroup2BackColor",
-        -28 => "ReportLineColor",
-        -18 => "ControlBorder",
-        -20 => "TextFont",
-        -30 => "SmallTextFont",
-        -31 => "NormalTextFont",
-        -32 => "LargeTextFont",
-        -33 => "ExtraLargeTextFont",
-        -34 => "ButtonBorderColor",
-        -35 => "TableHeaderBackColor",
-        -36 => "TableHeaderTextColor",
-        -37 => "TableFooterBackColor",
-        -38 => "TableFooterTextColor",
-        -42 => "NavigationColor",
-        -43 => "AuxiliaryNavigationColor",
-        -44 => "ActivityColor",
-        -47 => "ImportantColor",
-        // Platform 8.5 standard style fonts. 8.5.1.1150 BSP: every form item
-        // and style item that carries exactly one style font pairs the code
-        // with the native `ref` without exception (`fontcodes.py`).
-        -50 => "TitleLevel3",
-        -52 => "TitleLevel5",
-        -53 => "TextLevel1",
-        -54 => "TextLevel2",
-        -55 => "TextLevel3",
-        -56 => "SubtitleLevel1",
-        -59 => "TitleLevel2",
-        _ => return None,
-    };
-    let order = STANDARD_STYLE_ITEM_CODES
-        .iter()
-        .position(|item_code| *item_code == code)?;
-    Some((order, name))
-}
-
-/// The inverse of the style reader's single standard-item table. Keeping the
-/// source writer on this table covers the 8.5 colour/font additions too.
-pub(crate) fn standard_style_item_code_for_name(name: &str) -> Option<i32> {
-    STANDARD_STYLE_ITEM_CODES
-        .iter()
-        .copied()
-        .find(|code| standard_style_item_for_code(*code).is_some_and(|(_, found)| found == name))
-}
-
-const STANDARD_STYLE_ITEM_CODES: &[i32] = &[
-    -1, -11, -3, -15, -7, -13, -21, -10, -14, -23, -24, -16, -17, -22, -25, -26, -27, -28, -18,
-    -20, -30, -31, -32, -33, -34, -35, -36, -37, -38, -44, -42, -43, -47, -50, -52, -53, -54, -55,
-    -56, -59,
-];
-
 fn parse_style_body_color_value(
     value: &str,
     object_refs: &BTreeMap<String, String>,
@@ -37626,146 +36780,6 @@ fn parse_style_border_value_xml(value: &str) -> Option<String> {
     ))
 }
 
-/// Codes 49/61/78/110/115/117/123/127/129/131 (GhostWhite/Lavender/
-/// LightSteelBlue/PaleTurquoise/Pink/PowderBlue/Salmon/Sienna/SkyBlue/
-/// SlateGray) are evidenced on all 10 `StyleItems` real ERP УХ 3.2.12.6
-/// bytes leave `missing` at 2ccd98f for exactly this reason: `parse_style_
-/// item_properties_from_text` -> `parse_style_color_value` -> here returns
-/// `None` for any code this function does not recognize, which refuses the
-/// *entire* StyleItem (not a partial result) -- one unmapped color code is
-/// indistinguishable from "no legacy family decoder recognized this
-/// storage entry" in the export report. Each value here was read directly
-/// off the platform's own native `<Value xsi:type="v8ui:Color">web:
-/// <Name></Value>` for that exact object (not inferred from .NET's
-/// KnownColor numbering, which this table's existing gaps/duplicates --
-/// e.g. `27`/`31` both `DarkGreen`, `94`/`105` both `Orange` -- already show
-/// does not hold platform-wide).
-pub(crate) fn style_web_color_name(code: i32) -> Option<&'static str> {
-    match code {
-        6 => Some("web:Beige"),
-        8 => Some("web:Black"),
-        10 => Some("web:Blue"),
-        20 => Some("web:Cream"),
-        21 => Some("web:Crimson"),
-        26 => Some("web:DarkGray"),
-        27 => Some("web:DarkGreen"),
-        31 => Some("web:DarkGreen"),
-        23 => Some("web:DarkBlue"),
-        33 => Some("web:DarkRed"),
-        37 => Some("web:DarkSlateGray"),
-        // Four indexes the style items of the stand attest and this table did
-        // not carry. Each is read off the platform's own `<Value>` for the
-        // same object: `43` on `do` `StyleItems/ИзбранныйЭлемент` and two more,
-        // `62` on `СерияДиаграммыВиджетаРозовый`, `77` on
-        // `ПользовательБезУчетнойЗаписи`, `143` on `МК_ЦветТекстаАкцентнойКнопки`
-        // and two more. `43` and `143` are the same values the form palette
-        // already carried in front of this table.
-        43 => Some("web:DodgerBlue"),
-        44 => Some("web:FireBrick"),
-        45 => Some("web:FloralWhite"),
-        46 => Some("web:ForestGreen"),
-        50 => Some("web:Gold"),
-        51 => Some("web:Goldenrod"),
-        48 => Some("web:Gainsboro"),
-        49 => Some("web:GhostWhite"),
-        52 => Some("web:Gray"),
-        53 => Some("web:Green"),
-        55 => Some("web:HoneyDew"),
-        61 => Some("web:Lavender"),
-        62 => Some("web:LavenderBlush"),
-        // `uh` `StyleItems/ИзмененнаяНастройка` writes `web:LemonChiffon`
-        // for index 64; the table read it as `LightCoral`, a name it already
-        // gives 66.
-        64 => Some("web:LemonChiffon"),
-        65 => Some("web:LightBlue"),
-        66 => Some("web:LightCoral"),
-        67 => Some("web:LightCyan"),
-        68 => Some("web:LightGoldenRod"),
-        69 => Some("web:LightGoldenRodYellow"),
-        71 => Some("web:LightGray"),
-        72 => Some("web:LightPink"),
-        // `uh` `StyleItems/ЦветКритичногоНедостаткаСредств` stores code 73 and
-        // the platform writes `web:LightSalmon` for it; one unmapped code
-        // refuses the whole StyleItem, which is why that object was missing.
-        73 => Some("web:LightSalmon"),
-        77 => Some("web:LightSlateGray"),
-        78 => Some("web:LightSteelBlue"),
-        79 => Some("web:LightYellow"),
-        84 => Some("web:Maroon"),
-        86 => Some("web:MediumBlue"),
-        87 => Some("web:MediumGray"),
-        94 => Some("web:Orange"),
-        105 => Some("web:Orange"),
-        97 => Some("web:MintCream"),
-        98 => Some("web:MistyRose"),
-        96 => Some("web:Moccasin"),
-        99 => Some("web:Moccasin"),
-        110 => Some("web:PaleTurquoise"),
-        115 => Some("web:Pink"),
-        117 => Some("web:PowderBlue"),
-        119 => Some("web:Red"),
-        120 => Some("web:RosyBrown"),
-        121 => Some("web:RoyalBlue"),
-        123 => Some("web:Salmon"),
-        127 => Some("web:Sienna"),
-        128 => Some("web:Silver"),
-        129 => Some("web:SkyBlue"),
-        130 => Some("web:SlateBlue"),
-        131 => Some("web:SlateGray"),
-        134 => Some("web:SteelBlue"),
-        140 => Some("web:Violet"),
-        141 => Some("web:VioletRed"),
-        143 => Some("web:White"),
-        144 => Some("web:WhiteSmoke"),
-        145 => Some("web:Yellow"),
-        _ => None,
-    }
-}
-
-fn style_system_color_name(code: i32) -> Option<&'static str> {
-    match code {
-        -1 => Some("style:FormBackColor"),
-        -3 => Some("style:FormTextColor"),
-        -11 => Some("style:FieldTextColor"),
-        -15 => Some("style:ButtonTextColor"),
-        // `uh` `StyleItems/ЦветФонаТолькоПросмотр` writes
-        // `style:ButtonBackColor` for index `-7`; the form palette reads it the
-        // same way on 68 occurrences.
-        -7 => Some("style:ButtonBackColor"),
-        -13 => Some("style:FieldTextColor"),
-        // `-21` is `ButtonTextColor`, read off the platform's own `<Value>`
-        // for `do` `StyleItems/ЦветКалендаряПодпись` and
-        // `ЗаголовокКалендаряБроньЦветТекста`. The form palette
-        // (`form_control_system_color_name`) reads the same code the same way
-        // on 951 occurrences of the native form dumps of УТ 11.5.27.75, so the
-        // two palettes agree here rather than differ. Every style-palette code
-        // the style items of the stand exercise -- `-3`, `-16`, `-21`, `-23`,
-        // `-42` -- agrees with the form palette; the codes where the two
-        // tables still differ are exercised by neither.
-        -21 => Some("style:ButtonTextColor"),
-        -10 => Some("style:FieldSelectedTextColor"),
-        -14 => Some("style:FieldAlternativeBackColor"),
-        -23 => Some("style:ToolTipBackColor"),
-        -24 => Some("style:ToolTipTextColor"),
-        -16 => Some("style:SpecialTextColor"),
-        -17 => Some("style:NegativeTextColor"),
-        -22 => Some("style:BorderColor"),
-        -25 => Some("style:ReportHeaderBackColor"),
-        -26 => Some("style:ReportGroup1BackColor"),
-        -27 => Some("style:ReportGroup2BackColor"),
-        -28 => Some("style:ReportLineColor"),
-        -34 => Some("style:ButtonBorderColor"),
-        -35 => Some("style:TableHeaderBackColor"),
-        -36 => Some("style:TableHeaderTextColor"),
-        -37 => Some("style:TableFooterBackColor"),
-        -38 => Some("style:TableFooterTextColor"),
-        -42 => Some("style:NavigationColor"),
-        -43 => Some("style:AuxiliaryNavigationColor"),
-        -44 => Some("style:ActivityColor"),
-        _ => None,
-    }
-}
-
 /// Member-presence bits of a referenced-font style descriptor.
 ///
 /// A `kind != 0` style font is serialized as
@@ -37951,40 +36965,19 @@ fn parse_metadata_type_pattern(
     parse_metadata_type_pattern_with_builtin(value, type_index, builtin_type_reference)
 }
 
+/// [`ibcmd_1c_vocab::parse_form_metadata_type_pattern`] with the
+/// extension-export state as its `keeps_unresolved_type_id`. The form reader
+/// passes the state it was built with instead (`form_body::parse_form_type_pattern`).
+#[cfg(test)]
 fn parse_form_metadata_type_pattern(
     value: &str,
     type_index: &BTreeMap<String, String>,
 ) -> Option<Vec<ConstantValueType>> {
-    let fields = split_1c_braced_fields(value, 0)?;
-    if fields.first()?.trim() != r#""Pattern""# {
-        return None;
-    }
-    fields
-        .iter()
-        .skip(1)
-        .map(|field| {
-            parse_metadata_type_pattern_element_with_builtin(
-                field,
-                type_index,
-                form_builtin_type_reference,
-            )
-            .or_else(|| {
-                let element = split_1c_braced_fields(field, 0)?;
-                let type_id = (element.first()?.trim() == r##""#""## && element.len() >= 2)
-                    .then(|| parse_uuid_field(element.get(1)?.trim()))
-                    .flatten()?;
-                crate::form_schema::form_attribute_column_builtin_type_reference(&type_id).map(
-                    |reference| ConstantValueType::Reference {
-                        reference: reference.to_owned(),
-                    },
-                )
-            })
-            .or_else(|| {
-                let type_id = metadata_type_pattern_field_type_id(field)?;
-                (!type_id.is_empty()).then_some(ConstantValueType::TypeId { type_id })
-            })
-        })
-        .collect()
+    ibcmd_1c_vocab::parse_form_metadata_type_pattern(
+        value,
+        type_index,
+        extension_export_keeps_unresolved_type_id,
+    )
 }
 
 fn parse_metadata_type_pattern_with_builtin(
@@ -38023,887 +37016,26 @@ fn parse_metadata_type_pattern_element(
     parse_metadata_type_pattern_element_with_builtin(value, type_index, builtin_type_reference)
 }
 
+/// [`ibcmd_1c_vocab::parse_metadata_type_pattern_element_with_builtin`] with
+/// the extension-export state as its `keeps_unresolved_type_id`.
 fn parse_metadata_type_pattern_element_with_builtin(
     value: &str,
     type_index: &BTreeMap<String, String>,
     builtin_reference: fn(&str) -> Option<&'static str>,
 ) -> Option<ConstantValueType> {
-    let element = split_1c_braced_fields(value, 0)?;
-    match element.first()?.trim() {
-        r#""B""# => Some(ConstantValueType::Boolean),
-        r#""S""# if element.len() == 1 => Some(ConstantValueType::String {
-            length: None,
-            // Same reasoning as `parse_information_register_type_pattern_element`
-            // (mod.rs:~16260): the serializer already forces "Variable" when
-            // `length` is `None`, so `1` is the value that matches actual
-            // emitted output.
-            allowed_length_flag: 1,
-        }),
-        r#""S""# if element.len() == 3 => Some(ConstantValueType::String {
-            length: Some(element.get(1)?.trim().parse().ok()?),
-            allowed_length_flag: element.get(2)?.trim().parse().ok()?,
-        }),
-        r#""N""# if element.len() == 1 => Some(ConstantValueType::Number {
-            digits: 0,
-            fraction_digits: 0,
-            allowed_sign_flag: 0,
-        }),
-        r#""N""# if element.len() == 4 => Some(ConstantValueType::Number {
-            digits: element.get(1)?.trim().parse().ok()?,
-            fraction_digits: element.get(2)?.trim().parse().ok()?,
-            allowed_sign_flag: element.get(3)?.trim().parse().ok()?,
-        }),
-        r#""R""# if element.len() == 1 => Some(ConstantValueType::BinaryData {
-            length: 0,
-            allowed_length_flag: 1,
-        }),
-        r#""R""# if element.len() == 3 => Some(ConstantValueType::BinaryData {
-            length: element.get(1)?.trim().parse().ok()?,
-            allowed_length_flag: element
-                .get(2)?
-                .trim()
-                .parse()
-                .ok()
-                .filter(|flag| *flag <= 1)?,
-        }),
-        r#""D""# => Some(ConstantValueType::DateTime {
-            date_fractions: match element.get(1).map(|field| field.trim()) {
-                Some(r#""D""#) => "Date",
-                Some(r#""T""#) => "Time",
-                _ => "DateTime",
-            },
-        }),
-        // `{"L"}` is the serialized form of the platform `Null` type. Every one
-        // of the 15 `v8:Null` type entries the platform writes across the 12
-        // carrying files of 1C:Trade Management 11.5.27.75 is a bare
-        // `<v8:Type>v8:Null</v8:Type>` with no qualifier of its own and with
-        // its pattern position preserved, so it parses as an ordinary
-        // reference-shaped leaf.
-        r#""L""# if element.len() == 1 => Some(ConstantValueType::Reference {
-            reference: NULL_TYPE_REFERENCE.to_string(),
-        }),
-        r##""#""## if element.len() >= 2 => {
-            let type_id = parse_uuid_field(element.get(1)?.trim())?;
-            let Some(reference) = type_index
-                .get(&type_id)
-                .cloned()
-                .or_else(|| builtin_reference(&type_id).map(ToOwned::to_owned))
-            else {
-                // A type the configuration index and the builtin table both
-                // miss: the platform prints its identifier. The substitution
-                // belongs to the pattern reader, not to this leaf, so a
-                // column- or form-scoped table still gets its turn first.
-                return extension::active()
-                    .is_some()
-                    .then_some(ConstantValueType::TypeId { type_id });
-            };
-            Some(ConstantValueType::Reference { reference })
-        }
-        _ => None,
-    }
+    ibcmd_1c_vocab::parse_metadata_type_pattern_element_with_builtin(
+        value,
+        type_index,
+        builtin_reference,
+        extension_export_keeps_unresolved_type_id,
+    )
 }
 
-fn metadata_type_pattern_field_type_id(value: &str) -> Option<String> {
-    let element = split_1c_braced_fields(value, 0)?;
-    if element.first()?.trim() == r##""#""## && element.len() >= 2 {
-        parse_uuid_field(element.get(1)?.trim())
-    } else {
-        Some(String::new())
-    }
-}
-
-pub(super) fn builtin_type_reference(type_id: &str) -> Option<&'static str> {
-    match type_id {
-        "acf6192e-81ca-46ef-93a6-5a6968b78663" => Some("v8:ValueTable"),
-        "140b5ff4-37b1-4df5-b5ec-a0bfd2b94f8f" => Some("v8ui:FormattedString"),
-        "9cd510c7-abfc-11d4-9434-004095e12fc7" => Some("v8ui:Color"),
-        "9cd510c8-abfc-11d4-9434-004095e12fc7" => Some("v8ui:Font"),
-        "e199ca70-93cf-46ce-a54b-6edc88c3a296" => Some("v8:ValueStorage"),
-        "e603c0f2-92fb-4d47-8f38-a44a381cf235" => Some("v8:ValueTree"),
-        "fc01b5df-97fe-449b-83d4-218a090e681e" => Some("v8:UUID"),
-        "3ee983d7-ace7-40f9-bb7e-2e916fcddd56" => Some("v8:FixedStructure"),
-        "4500381b-db30-4a10-9db4-990038032acf" => Some("v8:FixedArray"),
-        "220455ea-6c85-4513-996f-bbe79ed07774" => Some("v8:FixedMap"),
-        "2fdc88ec-7c9b-43cd-8ba5-873f043bdd88" => Some("v8:StandardPeriod"),
-        "0387f3a2-7df5-4804-948b-4580a51e4a15" => Some("v8:StandardBeginningDate"),
-        "4772b3b4-f4a3-49c0-a1a5-8cb5961511a3" => Some("v8:ValueListType"),
-        "e603103e-a318-4edc-a014-b1c6cf94d49f" => Some("mxl:SpreadsheetDocument"),
-        "0a52f9de-73ea-4507-81e8-66217bead73a" => Some("cfg:ExchangePlanRef"),
-        "280f5f0e-9c8a-49cc-bf6d-4d296cc17a63" => Some("cfg:AnyIBRef"),
-        "0195e80c-b157-11d4-9435-004095e12fc7" => Some("cfg:ConstantValueManager"),
-        "061d872a-5787-460e-95ac-ed74ea3a3e84" => Some("cfg:DocumentObject"),
-        // Three object-family identifiers were rotated among themselves.
-        // Event subscriptions decide them: an `<Event>` whose `Source` names a
-        // single family pins that family's identifier outright. Census of the
-        // subscriptions of `do`, `ssl`, `sslbase`, `mdm`, `ws` and `wms`,
-        // pattern against the XML the platform writes for the same object:
-        // `fcd3404e` is alone in the pattern of twelve subscriptions and every
-        // one of them is written `cfg:BusinessProcessObject`; `do`
-        // `ОбменДаннымиДО20ДО21ПередЗаписью` carries exactly
-        // `{3e63355c, cf4abea6, fcd3404e}` against
-        // `{BusinessProcessObject, CatalogObject, TaskObject}`, which leaves
-        // `3e63355c` = `cfg:TaskObject`; and `do`
-        // `ОбработкаПредопределенныхЭлементовПередЗаписью` carries
-        // `{238e7e88, 30b100d6, 82a1b659, cf4abea6}` against
-        // `{CatalogObject, ChartOfAccountsObject, ChartOfCalculationTypesObject,
-        // ChartOfCharacteristicTypesObject}`, which leaves `238e7e88` =
-        // `cfg:ChartOfAccountsObject`.
-        //
-        // The rotation was invisible for a long time because the platform
-        // writes a subscription's type sets in one canonical order, so a
-        // permutation of the same three names still produced the same bytes.
-        // It shows only where the pattern carries some of the three and not
-        // all: nine subscriptions of `do` and four of `uh`.
-        "238e7e88-3c5f-48b2-8a3b-81ebbecb20ed" => Some("cfg:ChartOfAccountsObject"),
-        "30b100d6-b29f-47ac-aec7-cb8ca8a54767" => Some("cfg:ChartOfCalculationTypesObject"),
-        "3e63355c-1378-4953-be9b-1deb5fb6bec5" => Some("cfg:TaskObject"),
-        "82a1b659-b220-4d94-a9bd-14d757b95a48" => Some("cfg:ChartOfCharacteristicTypesObject"),
-        "857c4a91-e5f4-4fac-86ec-787626f1c108" => Some("cfg:ExchangePlanObject"),
-        "cf4abea6-37b2-11d4-940f-008048da11f9" => Some("cfg:CatalogObject"),
-        "fcd3404e-1523-48ce-9bc0-ecdb822684a1" => Some("cfg:BusinessProcessObject"),
-        "13134201-f60b-11d5-a3c7-0050bae0a776" => Some("cfg:InformationRegisterRecordSet"),
-        "2deed9b8-0056-4ffe-a473-c20a6c32a0bc" => Some("cfg:AccountingRegisterRecordSet"),
-        "b64d9a40-1642-11d6-a3c7-0050bae0a776" => Some("cfg:AccumulationRegisterRecordSet"),
-        "f2de87a8-64e5-45eb-a22d-b3aedab050e7" => Some("cfg:CalculationRegisterRecordSet"),
-        "274bf899-db0e-4df6-8ab5-67bf6371ec0b" => Some("cfg:SequenceRecordSet"),
-        "bc587f20-35d9-11d6-a3c7-0050bae0a776" => Some("cfg:RecalculationRecordSet"),
-        "0dee6ca3-50a1-4f94-8c34-e70eeb802d81" => Some("cfg:AccumulationRegisterManager"),
-        "1aa09f48-f6d5-4999-a7f5-02a15794c795" => Some("cfg:InformationRegisterManager"),
-        "2066866d-9d38-47fe-a272-3cd416eb9c85" => Some("cfg:ChartOfAccountsManager"),
-        "26dd1dee-252a-4942-b4b5-62ea44ed8030" => Some("cfg:DocumentManager"),
-        "2d0abc8e-dede-4184-afd7-7ae8da588d47" => Some("cfg:CalculationRegisterManager"),
-        "38f1038d-8b0b-438b-bfbe-830a60a1153a" => Some("cfg:BusinessProcessManager"),
-        "38bfd075-3e63-4aaa-a93e-94521380d579" => Some("cfg:DocumentRef"),
-        "3ab47eda-6a5c-4590-9b08-0e633aa2f376" => Some("cfg:AccountingRegisterManager"),
-        "3eab4ff4-f2d1-4c96-831c-04711b093999" => Some("cfg:ChartOfCalculationTypesManager"),
-        "5e268c17-8035-458f-8041-daf9b15d05c9" => Some("cfg:TaskManager"),
-        "7612de75-8b10-466a-b235-68572c605d92" => Some("cfg:ChartOfCharacteristicTypesManager"),
-        "82faabf3-7f9b-4b2e-b499-98876415f270" => Some("cfg:CatalogManager"),
-        "92e7f73f-bd66-4d9e-bc43-bae2acfadfd5" => Some("cfg:DocumentJournalManager"),
-        "e61ef7b8-f3e1-4f4b-8ac7-676e90524997" => Some("cfg:CatalogRef"),
-        // Same reference family as `cfg:CatalogRef` above.
-        // `information_register_builtin_reference` (mod.rs:~16452) already
-        // resolved this identifier for register children only; keeping the
-        // mapping here instead makes the one table serve every pattern reader,
-        // which is what the register reader itself falls back to.
-        "474c3bf6-08b5-4ddc-a2ad-989cedf11583" => Some("cfg:EnumRef"),
-        // The reference-family protocol identifiers live in one table. This
-        // reader carried five of them and the DCS reader ten, and the two
-        // overlapping copies were already reconciled once, for `cfg:EnumRef`
-        // just above. `do` `BusinessProcess.КомплексныйПроцесс` writes
-        // `{"Pattern",{"#",11e5f865-…}}` for its `ТочкаМаршрута` attribute --
-        // `cfg:BusinessProcessRoutePointRef`, a name only the other copy knew,
-        // so the object failed closed on an identifier the project already
-        // resolves elsewhere. One table now answers both readers.
-        _ => ROOT_BOUND_PLATFORM_TYPE_REFERENCES
-            .iter()
-            .find_map(|(candidate, reference)| {
-                candidate
-                    .eq_ignore_ascii_case(type_id)
-                    .then_some(*reference)
-            })
-            .or_else(|| {
-                DCS_BUILTIN_REFERENCE_TYPE_SETS
-                    .iter()
-                    .find_map(|(candidate, reference)| {
-                        (*candidate == type_id).then_some(*reference)
-                    })
-            })
-            .or_else(|| {
-                ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_reference(type_id)
-            }),
-    }
-}
-
-fn form_builtin_type_reference(type_id: &str) -> Option<&'static str> {
-    FORM_BUILTIN_TYPE_REFERENCES
-        .iter()
-        .find_map(|(candidate, reference)| {
-            candidate
-                .eq_ignore_ascii_case(type_id)
-                .then_some(*reference)
-        })
-        .or_else(|| platform_reference_family_type_reference(type_id))
-}
-
-fn data_processor_builtin_type_reference(type_id: &str) -> Option<&'static str> {
-    ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_reference(type_id)
-        .or_else(|| platform_reference_family_type_reference(type_id))
-}
-
-fn platform_reference_family_type_reference(type_id: &str) -> Option<&'static str> {
-    DCS_BUILTIN_REFERENCE_TYPE_SETS
-        .iter()
-        .find_map(|(candidate, reference)| {
-            candidate
-                .eq_ignore_ascii_case(type_id)
-                .then_some(*reference)
-        })
-        .or_else(|| builtin_type_reference(type_id))
-}
-
-fn split_1c_braced_fields(text: &str, start: usize) -> Option<Vec<&str>> {
-    split_1c_braced_fields_bounded(text, start, usize::MAX)
-}
-
-/// Top-level 1C fields with byte offsets into the original source text.
-/// Offsets delimit the trimmed field value, so provenance points at the exact
-/// raw token rather than a reconstructed/value-matched occurrence.
-#[cfg(test)]
-fn split_1c_braced_fields_with_spans(
-    text: &str,
-    start: usize,
-) -> Option<Vec<(&str, usize, usize)>> {
-    let mut fields = Vec::new();
-    for_each_1c_braced_field(text, start, |value, value_start| {
-        let trimmed = value.trim();
-        let offset = value.find(trimmed).unwrap_or(0);
-        fields.push((
-            trimmed,
-            start + value_start + offset,
-            start + value_start + offset + trimmed.len(),
-        ));
-        true
-    })?;
-    Some(fields)
-}
-
-fn split_1c_braced_fields_bounded(
-    text: &str,
-    start: usize,
-    max_fields: usize,
-) -> Option<Vec<&str>> {
-    if let Some(fields) = split_1c_braced_fields_jumped(&text[start..], max_fields) {
-        return fields;
-    }
-    let mut fields = Vec::new();
-    walk_1c_braced_fields(&text[start..], |value, _| {
-        if fields.len() >= max_fields {
-            return false;
-        }
-        fields.push(value.trim());
-        true
-    })?;
-    Some(fields)
-}
-
-/// Walks the braced value at `start` once, handing every top-level field --
-/// untrimmed, with its offset from `start` -- to `field`, which may stop the
-/// walk by answering `false`. `None` when there is no complete braced value at
-/// `start` or the walk was stopped.
-///
-/// Every delimiter is ASCII (`{`, `}`, `,`, `"`), and no byte of a multi-byte
-/// UTF-8 sequence is, so the bytes are read directly: the answer is the one a
-/// walk over the characters gives, in one pass instead of one to find the end
-/// and another to split.
-fn for_each_1c_braced_field<'t>(
-    text: &'t str,
-    start: usize,
-    mut field: impl FnMut(&'t str, usize) -> bool,
-) -> Option<()> {
-    let rest = &text[start..];
-    if let Some(walked) = for_each_1c_braced_field_jumped(rest, &mut field) {
-        return walked;
-    }
-    walk_1c_braced_fields(rest, field)
-}
-
-/// [`for_each_1c_braced_field`] without the registered tables: the byte walk
-/// over the value at `rest[0]`.
-fn walk_1c_braced_fields<'t>(
-    rest: &'t str,
-    mut field: impl FnMut(&'t str, usize) -> bool,
-) -> Option<()> {
-    let bytes = rest.as_bytes();
-    if bytes.first() != Some(&b'{') {
-        return None;
-    }
-    let mut depth = 0usize;
-    let mut field_start = 1usize;
-    let mut index = 0usize;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'"' => {
-                index = skip_1c_string_body(bytes, index + 1)?;
-                continue;
-            }
-            b'{' => depth += 1,
-            b'}' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return field(&rest[field_start..index], field_start).then_some(());
-                }
-            }
-            b',' if depth == 1 => {
-                if !field(&rest[field_start..index], field_start) {
-                    return None;
-                }
-                field_start = index + 1;
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    None
-}
-
-/// The offset just past the quote that closes a 1C string whose body starts
-/// at `from`; `""` inside the body is an escaped quote. `None` when the
-/// string never closes.
-fn skip_1c_string_body(bytes: &[u8], mut from: usize) -> Option<usize> {
-    loop {
-        let quote = from + bytes.get(from..)?.iter().position(|&byte| byte == b'"')?;
-        if bytes.get(quote + 1) == Some(&b'"') {
-            from = quote + 2;
-            continue;
-        }
-        return Some(quote + 1);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Brace jumps: a form body's nesting, read once.
-//
-// The form readers split every braced value they meet, and a value's split
-// walks all of it -- so each byte of a body was read once per enclosing value,
-// by every pass over the item tree. A registered text records, in one walk,
-// where each of its values and strings ends; splitting a value inside it then
-// reads only the value's own top level and jumps over what is nested.
-//
-// A value read from a registered text starts outside any string, exactly as a
-// walk that starts at that value does, so the two walks agree on every string
-// and every value inside it: the answer is the one the plain walk gives. What
-// the table does not know -- an offset that is no value start of the text, a
-// value that runs past the slice handed in, a text not registered -- is walked
-// as before.
-
-struct BraceJumps {
-    base: usize,
-    len: usize,
-    /// For each offset that opens a value (`{`) or a string (`"`) outside
-    /// any string, the offset just past its end; 0 elsewhere.
-    ends: Vec<u32>,
-    /// Where each uuid's header marker first stands in the text, built on
-    /// first use (see [`registered_header_marker`]).
-    header_markers: std::cell::OnceCell<HeaderMarkers>,
-}
-
-/// The first offset of `{1,0,<uuid>},` and of `{0,0,<uuid>},` in a text, by
-/// the 36 characters between (whatever they are).
-#[derive(Default)]
-struct HeaderMarkers {
-    modern: HashMap<String, usize>,
-    legacy: HashMap<String, usize>,
-}
-
-fn header_markers(text: &str) -> HeaderMarkers {
-    let mut markers = HeaderMarkers::default();
-    for (prefix, map) in [
-        ("{1,0,", &mut markers.modern),
-        ("{0,0,", &mut markers.legacy),
-    ] {
-        // The prefix cannot overlap itself, so every occurrence is found.
-        for (start, _) in text.match_indices(prefix) {
-            let uuid_start = start + prefix.len();
-            let Some(uuid) = text.get(uuid_start..uuid_start + 36) else {
-                continue;
-            };
-            if text.get(uuid_start + 36..uuid_start + 38) == Some("},") {
-                map.entry(uuid.to_string()).or_insert(start);
-            }
-        }
-    }
-    markers
-}
-
-/// For a registered text (the whole text, not a part of it): the offset just
-/// past `{1,0,<uuid>},`'s first occurrence, else past `{0,0,<uuid>},`'s --
-/// what searching the text for each marker in turn finds. `None` when no
-/// table knows the text; `Some(None)` when it holds neither marker.
-fn registered_header_marker(text: &str, uuid: &str) -> Option<Option<usize>> {
-    if uuid.len() != 36 {
-        return None;
-    }
-    let base = text.as_ptr() as usize;
-    BRACE_JUMPS.with(|tables| {
-        let tables = tables.borrow();
-        let table = tables
-            .iter()
-            .find(|table| table.base == base && table.len == text.len())?;
-        let markers = table.header_markers.get_or_init(|| header_markers(text));
-        let marker_len = "{1,0,".len() + 36 + "},".len();
-        Some(
-            markers
-                .modern
-                .get(uuid)
-                .or_else(|| markers.legacy.get(uuid))
-                .map(|start| start + marker_len),
-        )
-    })
-}
-
-thread_local! {
-    static BRACE_JUMPS: std::cell::RefCell<Vec<BraceJumps>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Registers texts for the jump table while the guard lives. Registering
-/// holds a shared borrow of each text, so none of them can change or go away
-/// while its table is in use.
-struct BraceJumpsGuard<'t> {
-    registered: usize,
-    _texts: std::marker::PhantomData<&'t str>,
-}
-
-fn register_brace_jumps<'t>(texts: impl IntoIterator<Item = &'t str>) -> BraceJumpsGuard<'t> {
-    let mut registered = 0;
-    BRACE_JUMPS.with(|tables| {
-        let mut tables = tables.borrow_mut();
-        for text in texts {
-            if text.len() < BRACE_JUMPS_MIN_TEXT || text.len() >= u32::MAX as usize {
-                continue;
-            }
-            tables.push(build_brace_jumps(text));
-            registered += 1;
-        }
-    });
-    BraceJumpsGuard {
-        registered,
-        _texts: std::marker::PhantomData,
-    }
-}
-
-impl Drop for BraceJumpsGuard<'_> {
-    fn drop(&mut self) {
-        BRACE_JUMPS.with(|tables| {
-            let mut tables = tables.borrow_mut();
-            let keep = tables.len().saturating_sub(self.registered);
-            tables.truncate(keep);
-        });
-    }
-}
-
-/// Texts shorter than this are walked directly: their table would cost more
-/// than it saves.
-const BRACE_JUMPS_MIN_TEXT: usize = 4096;
-
-fn build_brace_jumps(text: &str) -> BraceJumps {
-    let bytes = text.as_bytes();
-    let mut ends = vec![0u32; bytes.len()];
-    let mut open = Vec::<u32>::new();
-    let mut index = 0usize;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'"' => match skip_1c_string_body(bytes, index + 1) {
-                Some(end) => {
-                    ends[index] = end as u32;
-                    index = end;
-                    continue;
-                }
-                // A string that never closes: nothing after it is outside one.
-                None => break,
-            },
-            b'{' => open.push(index as u32),
-            b'}' => {
-                if let Some(start) = open.pop() {
-                    ends[start as usize] = (index + 1) as u32;
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    BraceJumps {
-        base: text.as_ptr() as usize,
-        len: bytes.len(),
-        ends,
-        header_markers: std::cell::OnceCell::new(),
-    }
-}
-
-/// The registered table and the value it knows at `rest[0]`: (table, the
-/// value's offset in it, the value's length), when the value lies within
-/// `rest`.
-fn brace_jump_value<'a>(
-    tables: &'a [BraceJumps],
-    rest: &str,
-) -> Option<(&'a BraceJumps, usize, usize)> {
-    if rest.as_bytes().first() != Some(&b'{') {
-        return None;
-    }
-    let at = rest.as_ptr() as usize;
-    let table = tables
-        .iter()
-        .find(|table| at >= table.base && at < table.base + table.len)?;
-    let offset = at - table.base;
-    let end = table.ends[offset] as usize;
-    // `then`, not `then_some`: with `end == 0` the subtraction must not run.
-    (end != 0 && end - offset <= rest.len()).then(|| (table, offset, end - offset))
-}
-
-/// [`split_1c_braced_fields_bounded`] through the registered table: the
-/// value's top level is walked once to count its fields, and once more to
-/// collect them into a vector of that size. `None` when no table knows the
-/// value; `Some(None)` is the split's own `None` (more than `max_fields`).
-fn split_1c_braced_fields_jumped(rest: &str, max_fields: usize) -> Option<Option<Vec<&str>>> {
-    BRACE_JUMPS.with(|tables| {
-        let tables = tables.borrow();
-        let (table, offset, len) = brace_jump_value(&tables, rest)?;
-        let value = &rest[..len];
-        let bytes = value.as_bytes();
-        let last = len - 1;
-        // Every value and string inside a closed value is closed too, so each
-        // has its end; checked while counting, before anything is collected.
-        let mut count = 1usize;
-        let mut index = 1usize;
-        while index < last {
-            match bytes[index] {
-                b'"' | b'{' => {
-                    let jump = table.ends[offset + index] as usize;
-                    if jump <= offset + index || jump > offset + len {
-                        return None;
-                    }
-                    index = jump - offset;
-                    continue;
-                }
-                b',' => count += 1,
-                _ => {}
-            }
-            index += 1;
-        }
-        if count > max_fields {
-            return Some(None);
-        }
-        let mut fields = Vec::with_capacity(count);
-        let mut field_start = 1usize;
-        let mut index = 1usize;
-        while index < last {
-            match bytes[index] {
-                b'"' | b'{' => {
-                    index = table.ends[offset + index] as usize - offset;
-                    continue;
-                }
-                b',' => {
-                    fields.push(value[field_start..index].trim());
-                    field_start = index + 1;
-                }
-                _ => {}
-            }
-            index += 1;
-        }
-        fields.push(value[field_start..last].trim());
-        Some(Some(fields))
-    })
-}
-
-/// The fields of the value at `rest[0]` through the registered table, or
-/// `None` when no table knows that value within `rest` (walk it instead).
-/// `Some(None)` is the walk's own `None`: `field` stopped it.
-fn for_each_1c_braced_field_jumped<'t>(
-    rest: &'t str,
-    field: &mut impl FnMut(&'t str, usize) -> bool,
-) -> Option<Option<()>> {
-    let at = rest.as_ptr() as usize;
-    BRACE_JUMPS.with(|tables| {
-        let tables = tables.borrow();
-        let table = tables
-            .iter()
-            .find(|table| at >= table.base && at < table.base + table.len)?;
-        let offset = at - table.base;
-        let end = table.ends[offset] as usize;
-        if end == 0 || end - offset > rest.len() {
-            return None;
-        }
-        let value = &rest[..end - offset];
-        let bytes = value.as_bytes();
-        if bytes.first() != Some(&b'{') {
-            return None;
-        }
-        let last = bytes.len() - 1;
-        // Every value and string inside a closed value is closed too, so each
-        // has its end; the walk below relies on it, and it is checked before
-        // any field is handed out.
-        let mut index = 1usize;
-        while index < last {
-            match bytes[index] {
-                b'"' | b'{' => {
-                    let jump = table.ends[offset + index] as usize;
-                    if jump <= offset + index || jump > end {
-                        return None;
-                    }
-                    index = jump - offset;
-                }
-                _ => index += 1,
-            }
-        }
-        let mut field_start = 1usize;
-        let mut index = 1usize;
-        while index < last {
-            match bytes[index] {
-                b'"' | b'{' => {
-                    index = table.ends[offset + index] as usize - offset;
-                    continue;
-                }
-                b',' => {
-                    if !field(&value[field_start..index], field_start) {
-                        return Some(None);
-                    }
-                    field_start = index + 1;
-                }
-                _ => {}
-            }
-            index += 1;
-        }
-        Some(field(&value[field_start..last], field_start).then_some(()))
-    })
-}
-
-/// The end of the value at `rest[0]` through the registered table, relative
-/// to `rest`; `None` when no table knows that value within `rest`.
-fn brace_jump_end(rest: &str) -> Option<usize> {
-    if rest.as_bytes().first() != Some(&b'{') {
-        return None;
-    }
-    let at = rest.as_ptr() as usize;
-    BRACE_JUMPS.with(|tables| {
-        let tables = tables.borrow();
-        let table = tables
-            .iter()
-            .find(|table| at >= table.base && at < table.base + table.len)?;
-        let offset = at - table.base;
-        let end = table.ends[offset] as usize;
-        // `then`, not `then_some`: with `end == 0` the subtraction must not run.
-        (end != 0 && end - offset <= rest.len()).then(|| end - offset)
-    })
-}
-
-#[cfg(test)]
-mod brace_walk_tests {
-    use super::*;
-
-    /// The character walk the byte walk and the jump table replaced.
-    fn reference_scan(text: &str, start: usize) -> Option<usize> {
-        if text[start..].chars().next()? != '{' {
-            return None;
-        }
-        let mut depth = 0usize;
-        let mut in_string = false;
-        let mut chars = text[start..].char_indices().peekable();
-        while let Some((relative, ch)) = chars.next() {
-            if in_string {
-                if ch == '"' {
-                    if let Some((_, next)) = chars.peek()
-                        && *next == '"'
-                    {
-                        let _ = chars.next();
-                        continue;
-                    }
-                    in_string = false;
-                }
-                continue;
-            }
-            match ch {
-                '"' => in_string = true,
-                '{' => depth += 1,
-                '}' => {
-                    depth = depth.checked_sub(1)?;
-                    if depth == 0 {
-                        return Some(start + relative + ch.len_utf8());
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
-    /// The character walk's fields: (trimmed value, start, end).
-    fn reference_split(
-        text: &str,
-        start: usize,
-        max_fields: usize,
-    ) -> Option<Vec<(&str, usize, usize)>> {
-        let end = reference_scan(text, start)?;
-        let inner_start = start + text[start..].chars().next()?.len_utf8();
-        let inner_end = end.checked_sub(1)?;
-        let inner = &text[inner_start..inner_end];
-        let mut fields = Vec::new();
-        let mut field_start = 0usize;
-        let mut depth = 0usize;
-        let mut in_string = false;
-        let mut chars = inner.char_indices().peekable();
-        let field = |value: &'_ str, at: usize| {
-            let trimmed = value.trim();
-            let offset = value.find(trimmed).unwrap_or(0);
-            (at + offset, at + offset + trimmed.len())
-        };
-        while let Some((index, ch)) = chars.next() {
-            if in_string {
-                if ch == '"' {
-                    if let Some((_, next)) = chars.peek()
-                        && *next == '"'
-                    {
-                        let _ = chars.next();
-                        continue;
-                    }
-                    in_string = false;
-                }
-                continue;
-            }
-            match ch {
-                '"' => in_string = true,
-                '{' => depth += 1,
-                '}' => depth = depth.checked_sub(1)?,
-                ',' if depth == 0 => {
-                    if fields.len() >= max_fields {
-                        return None;
-                    }
-                    let value = &inner[field_start..index];
-                    let (from, to) = field(value, inner_start + field_start);
-                    fields.push((value.trim(), from, to));
-                    field_start = index + ch.len_utf8();
-                }
-                _ => {}
-            }
-        }
-        if fields.len() >= max_fields {
-            return None;
-        }
-        let value = &inner[field_start..];
-        let (from, to) = field(value, inner_start + field_start);
-        fields.push((value.trim(), from, to));
-        Some(fields)
-    }
-
-    fn values<'t>(fields: Option<Vec<(&'t str, usize, usize)>>) -> Option<Vec<&'t str>> {
-        fields.map(|fields| fields.into_iter().map(|(value, _, _)| value).collect())
-    }
-
-    struct Random(u64);
-
-    impl Random {
-        fn next(&mut self) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0
-        }
-
-        fn below(&mut self, n: u64) -> u64 {
-            self.next() % n
-        }
-    }
-
-    const PIECES: &[&str] = &[
-        "{", "}", ",", "\"", " ", "a", "1", "я", "Ж", "\r\n", "{\"", "\",", "\"\"",
-    ];
-
-    fn random_text(random: &mut Random, len: usize) -> String {
-        (0..len)
-            .map(|_| PIECES[random.below(PIECES.len() as u64) as usize])
-            .collect()
-    }
-
-    /// A well-formed value: nested lists, strings holding braces, commas and
-    /// doubled quotes, Cyrillic scalars.
-    fn random_value(random: &mut Random, depth: usize, out: &mut String) {
-        match random.below(if depth > 5 { 3 } else { 5 }) {
-            0 => out.push_str(["0", "1", "-1", "12345", "Ж", "abc"][random.below(6) as usize]),
-            1 => {
-                out.push('"');
-                for _ in 0..random.below(6) {
-                    out.push_str(["{", "}", ",", "\"\"", "я", " ", "x"][random.below(7) as usize]);
-                }
-                out.push('"');
-            }
-            2 => out.push_str(" \r\n"),
-            _ => {
-                out.push('{');
-                let count = random.below(5);
-                for index in 0..=count {
-                    if index > 0 {
-                        out.push(',');
-                        if random.below(3) == 0 {
-                            out.push_str("\r\n");
-                        }
-                    }
-                    random_value(random, depth + 1, out);
-                }
-                out.push('}');
-            }
-        }
-    }
-
-    fn check_starts(text: &str, step: usize) {
-        for start in (0..=text.len())
-            .step_by(step)
-            .filter(|start| text.is_char_boundary(*start))
-        {
-            assert_eq!(
-                scan_1c_braced_value(text, start),
-                reference_scan(text, start),
-                "scan at {start} of {text:?}"
-            );
-            assert_eq!(
-                split_1c_braced_fields_with_spans(text, start),
-                reference_split(text, start, usize::MAX),
-                "spans at {start} of {text:?}"
-            );
-            for max_fields in [0, 1, 2, 3, usize::MAX] {
-                assert_eq!(
-                    split_1c_braced_fields_bounded(text, start, max_fields),
-                    values(reference_split(text, start, max_fields)),
-                    "split at {start} ({max_fields}) of {text:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn the_byte_walk_answers_as_the_character_walk() {
-        let mut random = Random(0x9e37_79b9_7f4a_7c15);
-        for _ in 0..3000 {
-            let len = random.below(40) as usize;
-            check_starts(&random_text(&mut random, len), 1);
-        }
-        for _ in 0..300 {
-            let mut text = String::new();
-            random_value(&mut random, 0, &mut text);
-            check_starts(&text, 1);
-        }
-    }
-
-    #[test]
-    fn a_registered_text_answers_as_the_walk() {
-        let mut random = Random(0x0123_4567_89ab_cdef);
-        for round in 0..9 {
-            let mut text = String::new();
-            while text.len() < BRACE_JUMPS_MIN_TEXT + 500 {
-                if round % 3 == 2 {
-                    // Not well formed: stray braces, open strings.
-                    text.push_str(&random_text(&mut random, 50));
-                } else {
-                    random_value(&mut random, 0, &mut text);
-                    text.push(',');
-                }
-            }
-            let text = if round % 3 == 0 {
-                format!("{{{text}0}}")
-            } else {
-                text
-            };
-            let jumps = register_brace_jumps([text.as_str()]);
-            assert_eq!(jumps.registered, 1);
-            check_starts(&text, 1);
-            // A slice cut inside a value is not answered from the table.
-            let mut half = text.len() / 2;
-            while !text.is_char_boundary(half) {
-                half -= 1;
-            }
-            check_starts(&text[..half], 3);
-            check_starts(&text[half..], 3);
-        }
-    }
+/// Whether a pattern element keeps a type id the configuration index and the
+/// platform tables both miss: only while an extension export runs, where such
+/// an id names a type of the extended configuration.
+fn extension_export_keeps_unresolved_type_id() -> bool {
+    extension::active().is_some()
 }
 
 fn template_type_code_from_metadata_text(text: &str, uuid: &str) -> Option<u32> {
@@ -38925,172 +37057,6 @@ fn template_type_code_from_metadata_text(text: &str, uuid: &str) -> Option<u32> 
             fields.get(2)?.trim().parse().ok()
         }
         _ => None,
-    }
-}
-
-/// One UTF-16 code unit escaped inside a 1C string literal.
-///
-/// The literal escapes a code unit by interrupting itself: a quote, a
-/// backslash, and exactly four lowercase hexadecimal digits, after which the
-/// literal continues where it left off. `""` -- quote followed by quote -- is
-/// the other, already-known interruption, the escaped quote itself.
-///
-/// Evidence, byte for byte. ERP УХ 3.2.12.6
-/// `DataProcessors/ИнтеграцияС1СДокументооборот/Forms/БизнесПроцессРассмотрение`
-/// spells the English title of attribute `ВариантУстановкиСрокаОбработкиРезультатов`
-/// as `{"en","Specification option"\db40"\dc32"\db40"\dc21"…"\db40"\dc30 of
-/// result processing deadline"}`, and the platform writes
-/// `Specification option` followed by the twelve characters `U+E0032`,
-/// `U+E0021`, `U+E0028`, `U+E0027`, `U+E0028`, `U+E0020`, `U+E0022`, `U+E0025`,
-/// `U+E0023`, `U+E0024`, `U+E0028`, `U+E0033`, `U+E0030` and ` of result
-/// processing deadline`. Each of those is a surrogate pair -- `db40` then the
-/// matching low unit -- so the escapes come two at a time and combine into one
-/// scalar. Every backslash of that whole form body, without exception,
-/// conforms to the shape: 39 `db40` high units and their 39 low partners, and
-/// no other backslash anywhere in it.
-///
-/// A high surrogate that is not immediately followed by its low partner, or a
-/// low one with no partner, is a refusal rather than a replacement character:
-/// an unpaired unit is not a scalar this reader is entitled to invent.
-fn parse_1c_string_escape_unit(input: &str) -> Option<u16> {
-    let rest = input.strip_prefix('\\')?;
-    let hex = rest.get(..4)?;
-    if !hex
-        .bytes()
-        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return None;
-    }
-    u16::from_str_radix(hex, 16).ok()
-}
-
-fn parse_1c_quoted_string_with_len(input: &str) -> Option<(String, usize)> {
-    if !input.starts_with('"') {
-        return None;
-    }
-    let mut output = String::new();
-    let mut pending_high: Option<u16> = None;
-    let mut index = 1usize;
-    while index < input.len() {
-        let ch = input[index..].chars().next()?;
-        if ch != '"' {
-            if pending_high.is_some() {
-                return None;
-            }
-            output.push(ch);
-            index += ch.len_utf8();
-            continue;
-        }
-        let rest = &input[index + 1..];
-        if rest.starts_with('"') {
-            if pending_high.is_some() {
-                return None;
-            }
-            output.push('"');
-            index += 2;
-            continue;
-        }
-        if let Some(unit) = parse_1c_string_escape_unit(rest) {
-            match unit {
-                0xD800..=0xDBFF => {
-                    if pending_high.is_some() {
-                        return None;
-                    }
-                    pending_high = Some(unit);
-                }
-                0xDC00..=0xDFFF => {
-                    let high = u32::from(pending_high.take()?);
-                    let scalar = 0x10000 + ((high - 0xD800) << 10) + (u32::from(unit) - 0xDC00);
-                    output.push(char::from_u32(scalar)?);
-                }
-                _ => {
-                    if pending_high.is_some() {
-                        return None;
-                    }
-                    output.push(char::from_u32(u32::from(unit))?);
-                }
-            }
-            index += 6;
-            continue;
-        }
-        if pending_high.is_some() {
-            return None;
-        }
-        return Some((output, index + 1));
-    }
-    None
-}
-
-fn parse_1c_quoted_string(input: &str) -> Option<String> {
-    parse_1c_quoted_string_with_len(input).map(|(value, _)| value)
-}
-
-fn parse_1c_synonyms(input: &str) -> Vec<(String, String)> {
-    let mut values = Vec::new();
-    let mut offset = 0;
-    while let Some(relative) = input[offset..].find('"') {
-        offset += relative;
-        let Some((value, consumed)) = parse_1c_quoted_string_with_len(&input[offset..]) else {
-            break;
-        };
-        values.push(value);
-        offset += consumed;
-    }
-
-    values
-        .chunks(2)
-        .filter_map(|chunk| match chunk {
-            [lang, content] => Some((lang.clone(), content.clone())),
-            _ => None,
-        })
-        .collect()
-}
-
-fn scan_1c_braced_value(text: &str, start: usize) -> Option<usize> {
-    if let Some(end) = brace_jump_end(&text[start..]) {
-        return Some(start + end);
-    }
-    let bytes = text[start..].as_bytes();
-    if bytes.first() != Some(&b'{') {
-        return None;
-    }
-    let mut depth = 0usize;
-    let mut index = 0usize;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'"' => {
-                index = skip_1c_string_body(bytes, index + 1)?;
-                continue;
-            }
-            b'{' => depth += 1,
-            b'}' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(start + index + 1);
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    None
-}
-
-fn skip_ascii_ws_at(text: &str, mut offset: usize) -> usize {
-    while let Some(byte) = text.as_bytes().get(offset)
-        && byte.is_ascii_whitespace()
-    {
-        offset += 1;
-    }
-    offset
-}
-
-fn expect_comma_at(text: &str, offset: usize) -> Option<usize> {
-    let offset = skip_ascii_ws_at(text, offset);
-    if text.as_bytes().get(offset) == Some(&b',') {
-        Some(offset + 1)
-    } else {
-        None
     }
 }
 
@@ -46421,161 +44387,6 @@ fn format_metadata_types_xml(value_types: &[ConstantValueType]) -> String {
     format_metadata_types_xml_with_indent(value_types, "\t\t\t")
 }
 
-fn format_form_metadata_types_xml(value_types: &[ConstantValueType]) -> String {
-    format_form_metadata_types_xml_with_indent(value_types, "\t\t\t")
-}
-
-fn format_form_metadata_types_xml_with_indent(
-    value_types: &[ConstantValueType],
-    indent: &str,
-) -> String {
-    let nested = format!("{indent}\t");
-    let nested2 = format!("{nested}\t");
-    let mut xml = format!("{indent}<Type>\r\n");
-    for value_type in value_types {
-        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 2);
-        let tag_name = form_metadata_type_xml_tag(&value_type);
-        let namespace_attr = form_metadata_type_xml_namespace_attr(&value_type);
-        xml.push_str(&format!(
-            "{nested}<v8:{tag_name}{namespace_attr}>{}</v8:{tag_name}>\r\n",
-            metadata_type_xml_name(&value_type)
-        ));
-    }
-
-    if let Some(number) = value_types.iter().find_map(|value_type| match value_type {
-        ConstantValueType::Number {
-            digits,
-            fraction_digits,
-            allowed_sign_flag,
-        } => Some((*digits, *fraction_digits, *allowed_sign_flag)),
-        _ => None,
-    }) {
-        xml.push_str(&format!("{nested}<v8:NumberQualifiers>\r\n"));
-        xml.push_str(&format!("{nested2}<v8:Digits>{}</v8:Digits>\r\n", number.0));
-        xml.push_str(&format!(
-            "{nested2}<v8:FractionDigits>{}</v8:FractionDigits>\r\n",
-            number.1
-        ));
-        xml.push_str(&format!(
-            "{nested2}<v8:AllowedSign>{}</v8:AllowedSign>\r\n",
-            number_allowed_sign_xml(number.2)
-        ));
-        xml.push_str(&format!("{nested}</v8:NumberQualifiers>\r\n"));
-    }
-
-    if let Some(string) = value_types.iter().find_map(|value_type| match value_type {
-        ConstantValueType::String {
-            length,
-            allowed_length_flag,
-        } => Some((
-            length.unwrap_or(0),
-            length.map(|_| *allowed_length_flag).unwrap_or(1),
-        )),
-        _ => None,
-    }) {
-        xml.push_str(&format!("{nested}<v8:StringQualifiers>\r\n"));
-        xml.push_str(&format!("{nested2}<v8:Length>{}</v8:Length>\r\n", string.0));
-        xml.push_str(&format!(
-            "{nested2}<v8:AllowedLength>{}</v8:AllowedLength>\r\n",
-            string_allowed_length_xml(string.1)
-        ));
-        xml.push_str(&format!("{nested}</v8:StringQualifiers>\r\n"));
-    }
-
-    if let Some(date_fractions) = value_types.iter().find_map(|value_type| {
-        if let ConstantValueType::DateTime { date_fractions } = value_type {
-            Some(*date_fractions)
-        } else {
-            None
-        }
-    }) {
-        xml.push_str(&format!(
-            "{nested}<v8:DateQualifiers>\r\n\
-{nested2}<v8:DateFractions>{date_fractions}</v8:DateFractions>\r\n\
-{nested}</v8:DateQualifiers>\r\n"
-        ));
-    }
-    push_binary_data_qualifiers_xml(&mut xml, value_types, &nested);
-
-    xml.push_str(&format!("{indent}</Type>\r\n"));
-    xml
-}
-
-fn format_type_description_value_types_xml(
-    value_types: &[ConstantValueType],
-    indent: &str,
-) -> String {
-    let nested = format!("{indent}\t");
-    let mut xml = String::new();
-    for value_type in value_types {
-        // This formatter is used only by a managed form's
-        // `Settings xsi:type="v8:TypeDescription"`; use the form QName table
-        // and its namespace declarations just like the attribute's own Type.
-        // The generic table omits the txtedt declaration, which would leave a
-        // `d5p1:TextDocument` value with an unbound prefix.
-        let value_type = scoped_value_type(value_type, indent.matches('\t').count() + 1);
-        let tag_name = form_metadata_type_xml_tag(&value_type);
-        let namespace_attr = form_metadata_type_xml_namespace_attr(&value_type);
-        xml.push_str(&format!(
-            "{indent}<v8:{tag_name}{namespace_attr}>{}</v8:{tag_name}>\r\n",
-            metadata_type_xml_name(&value_type)
-        ));
-    }
-    if let Some(number) = value_types.iter().find_map(|value_type| match value_type {
-        ConstantValueType::Number {
-            digits,
-            fraction_digits,
-            allowed_sign_flag,
-        } => Some((*digits, *fraction_digits, *allowed_sign_flag)),
-        _ => None,
-    }) {
-        xml.push_str(&format!("{indent}<v8:NumberQualifiers>\r\n"));
-        xml.push_str(&format!("{nested}<v8:Digits>{}</v8:Digits>\r\n", number.0));
-        xml.push_str(&format!(
-            "{nested}<v8:FractionDigits>{}</v8:FractionDigits>\r\n",
-            number.1
-        ));
-        xml.push_str(&format!(
-            "{nested}<v8:AllowedSign>{}</v8:AllowedSign>\r\n",
-            number_allowed_sign_xml(number.2)
-        ));
-        xml.push_str(&format!("{indent}</v8:NumberQualifiers>\r\n"));
-    }
-    if let Some(string) = value_types.iter().find_map(|value_type| match value_type {
-        ConstantValueType::String {
-            length,
-            allowed_length_flag,
-        } => Some((
-            length.unwrap_or(0),
-            length.map(|_| *allowed_length_flag).unwrap_or(1),
-        )),
-        _ => None,
-    }) {
-        xml.push_str(&format!("{indent}<v8:StringQualifiers>\r\n"));
-        xml.push_str(&format!("{nested}<v8:Length>{}</v8:Length>\r\n", string.0));
-        xml.push_str(&format!(
-            "{nested}<v8:AllowedLength>{}</v8:AllowedLength>\r\n",
-            string_allowed_length_xml(string.1)
-        ));
-        xml.push_str(&format!("{indent}</v8:StringQualifiers>\r\n"));
-    }
-    if let Some(date_fractions) = value_types.iter().find_map(|value_type| {
-        if let ConstantValueType::DateTime { date_fractions } = value_type {
-            Some(*date_fractions)
-        } else {
-            None
-        }
-    }) {
-        xml.push_str(&format!(
-            "{indent}<v8:DateQualifiers>\r\n\
-{nested}<v8:DateFractions>{date_fractions}</v8:DateFractions>\r\n\
-{indent}</v8:DateQualifiers>\r\n"
-        ));
-    }
-    push_binary_data_qualifiers_xml(&mut xml, value_types, indent);
-    xml
-}
-
 fn format_metadata_types_xml_with_indent(
     value_types: &[ConstantValueType],
     indent: &str,
@@ -46652,130 +44463,12 @@ fn format_metadata_types_xml_with_indent(
     xml
 }
 
-/// `<v8:BinaryDataQualifiers>` of a type block that names `xs:base64Binary`, at
-/// the indent of the qualifiers that precede it.
-fn push_binary_data_qualifiers_xml(
-    xml: &mut String,
-    value_types: &[ConstantValueType],
-    outer: &str,
-) {
-    if let Some((length, allowed_length_flag)) =
-        value_types.iter().find_map(|value_type| match value_type {
-            ConstantValueType::BinaryData {
-                length,
-                allowed_length_flag,
-            } => Some((*length, *allowed_length_flag)),
-            _ => None,
-        })
-    {
-        xml.push_str(&format!(
-            "{outer}<v8:BinaryDataQualifiers>\r\n{outer}\t<v8:Length>{length}</v8:Length>\r\n{outer}\t<v8:AllowedLength>{}</v8:AllowedLength>\r\n{outer}</v8:BinaryDataQualifiers>\r\n",
-            string_allowed_length_xml(allowed_length_flag)
-        ));
-    }
-}
-
 fn metadata_type_xml_tag(value_type: &ConstantValueType) -> &'static str {
     match value_type {
         ConstantValueType::Reference { reference } => constant_reference_type_tag(reference),
         ConstantValueType::ReferenceTypeSet { .. } => "TypeSet",
         ConstantValueType::TypeId { .. } => "TypeId",
         _ => "Type",
-    }
-}
-
-/// A generated prefix records the declaration element's 1-based depth.
-/// Rebase schema-known generated names to that depth; canonical names keep
-/// their own prefix and namespace.
-fn scoped_type_reference(reference: &str, depth: usize) -> std::borrow::Cow<'_, str> {
-    let Some((prefix, local)) = reference.split_once(':') else {
-        return std::borrow::Cow::Borrowed(reference);
-    };
-    let generated = ibcmd_schema::metadata_storage_facts::generated_type_prefix(prefix)
-        && ibcmd_schema::metadata_storage_facts::data_processor_builtin_type_namespace_uri_ignoring_prefix(reference).is_some();
-    let target_prefix = format!("d{depth}p1");
-    if generated && prefix != target_prefix {
-        std::borrow::Cow::Owned(format!("{target_prefix}:{local}"))
-    } else {
-        std::borrow::Cow::Borrowed(reference)
-    }
-}
-
-fn scoped_value_type(value_type: &ConstantValueType, depth: usize) -> ConstantValueType {
-    match value_type {
-        ConstantValueType::Reference { reference } => ConstantValueType::Reference {
-            reference: scoped_type_reference(reference, depth).into_owned(),
-        },
-        ConstantValueType::ReferenceTypeSet { reference } => ConstantValueType::ReferenceTypeSet {
-            reference: scoped_type_reference(reference, depth).into_owned(),
-        },
-        other => other.clone(),
-    }
-}
-
-fn form_metadata_type_xml_tag(value_type: &ConstantValueType) -> &'static str {
-    match value_type {
-        ConstantValueType::Reference { reference } => form_reference_type_tag(reference),
-        ConstantValueType::ReferenceTypeSet { .. } => "TypeSet",
-        ConstantValueType::TypeId { .. } => "TypeId",
-        _ => "Type",
-    }
-}
-
-fn metadata_type_xml_name(value_type: &ConstantValueType) -> String {
-    match value_type {
-        ConstantValueType::Boolean => "xs:boolean".to_string(),
-        ConstantValueType::String { .. } => "xs:string".to_string(),
-        ConstantValueType::Number { .. } => "xs:decimal".to_string(),
-        ConstantValueType::DateTime { .. } => "xs:dateTime".to_string(),
-        ConstantValueType::BinaryData { .. } => "xs:base64Binary".to_string(),
-        ConstantValueType::Reference { reference, .. }
-        | ConstantValueType::ReferenceTypeSet { reference, .. } => reference.clone(),
-        ConstantValueType::TypeId { type_id } => type_id.clone(),
-    }
-}
-
-fn metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> String {
-    match value_type {
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference == DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME =>
-        {
-            DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE.to_owned()
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference }
-            if reference.starts_with("mxl:") =>
-        {
-            r#" xmlns:mxl="http://v8.1c.ru/8.2/data/spreadsheet""#.to_owned()
-        }
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference } => {
-            ibcmd_xml::metadata::data_processor_builtin_type_namespace_attribute_for_qname(
-                reference,
-            )
-            .unwrap_or_default()
-        }
-        _ => String::new(),
-    }
-}
-
-/// The inline binding a form body needs. SettingsComposer is root-bound;
-/// ConditionalAppearance retains its measured spelling. Other bindings use
-/// the shared XML renderer after the QName has been set from its depth.
-
-fn form_metadata_type_xml_namespace_attr(value_type: &ConstantValueType) -> String {
-    let reference = match value_type {
-        ConstantValueType::Reference { reference }
-        | ConstantValueType::ReferenceTypeSet { reference } => reference.as_str(),
-        _ => "",
-    };
-    match reference {
-        DATA_PROCESSOR_SETTINGS_COMPOSER_TYPE_NAME => String::new(),
-        "d7p1:ConditionalAppearance" => {
-            r#" xmlns:d7p1="http://v8.1c.ru/8.3/data/entext""#.to_owned()
-        }
-        _ => metadata_type_xml_namespace_attr(value_type),
     }
 }
 
@@ -46886,98 +44579,12 @@ fn constant_reference_type_tag(reference: &str) -> &'static str {
     }
 }
 
-fn form_reference_type_tag(reference: &str) -> &'static str {
-    if reference.starts_with("cfg:DefinedType.")
-        || reference == "cfg:AnyIBRef"
-        || reference == "cfg:ExchangePlanRef"
-        || (reference.starts_with("cfg:") && reference.ends_with("Ref") && !reference.contains('.'))
-    {
-        "TypeSet"
-    } else {
-        "Type"
-    }
-}
-
-fn string_allowed_length_xml(value: u8) -> &'static str {
-    match value {
-        0 => "Fixed",
-        _ => "Variable",
-    }
-}
-
-fn number_allowed_sign_xml(value: u8) -> &'static str {
-    match value {
-        1 => "Nonnegative",
-        _ => "Any",
-    }
-}
-
-fn xml_bool(value: bool) -> &'static str {
-    if value { "true" } else { "false" }
-}
-
 fn return_values_reuse_xml(value: ReturnValuesReuseValue) -> &'static str {
     match value {
         ReturnValuesReuseValue::DontUse => "DontUse",
         ReturnValuesReuseValue::DuringRequest => "DuringRequest",
         ReturnValuesReuseValue::DuringSession => "DuringSession",
     }
-}
-
-fn escape_xml_text(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '&' => output.push_str("&amp;"),
-            '<' => output.push_str("&lt;"),
-            '>' => output.push_str("&gt;"),
-            '"' => output.push_str("&quot;"),
-            _ => output.push(ch),
-        }
-    }
-    output
-}
-
-/// Escapes a value that stands in *element text* position, where the quote
-/// character is not markup and the platform leaves it alone.
-///
-/// The two escaping positions are told apart by measurement, not by taste. Over
-/// the eight stand corpora the platform's XML writer emits `&amp;`, `&lt;` and
-/// `&gt;` (598 030 / 302 770 / 219 735 on ERP УХ 3.2.12.6 alone) and never once
-/// emits `&quot;` or `&apos;` — 0 occurrences in every one of the eight trees,
-/// in element text and attribute values alike — while element text carries
-/// 106 631 raw `"` on ERP УХ, 4 510 on UT 11.5.27.75 and 1 473 on
-/// Документооборот КОРП 3.0.21.3. A raw `>` in element text is never written
-/// either, so the escape set is exactly these three characters.
-///
-/// This says nothing about an attribute value that *contains* a quote: the
-/// corpus holds no such value, so [`escape_xml_text`] keeps its `&quot;` and
-/// only positions provably outside a tag are routed here.
-fn escape_xml_character_data(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '&' => output.push_str("&amp;"),
-            '<' => output.push_str("&lt;"),
-            '>' => output.push_str("&gt;"),
-            _ => output.push(ch),
-        }
-    }
-    output
-}
-
-fn escape_xml_element_text(value: &str) -> String {
-    let value = value.replace("\r\n", "\n");
-    let mut output = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '&' => output.push_str("&amp;"),
-            '<' => output.push_str("&lt;"),
-            '>' => output.push_str("&gt;"),
-            _ => output.push(ch),
-        }
-    }
-    output
 }
 
 fn sanitize_source_path_segment(value: &str) -> String {
@@ -47114,15 +44721,6 @@ fn clear_directory(path: &Path) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn inflate_raw_deflate(input: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = DeflateDecoder::new(input);
-    let mut output = Vec::new();
-    decoder
-        .read_to_end(&mut output)
-        .context("failed to inflate raw deflate blob")?;
-    Ok(output)
 }
 
 #[cfg(test)]
@@ -47648,9 +45246,27 @@ mod catalog_tabular_section_wrapper_tests {
 
 #[cfg(test)]
 mod configuration_interface_pair_tests;
+#[cfg(test)]
+mod interface_root_tests;
 
 #[cfg(test)]
 mod tests;
 
 #[cfg(test)]
 mod external_data_source_tests;
+
+#[cfg(test)]
+#[test]
+fn extension_activation_web_colors_share_the_native_dictionary() {
+    for (code, name) in [(82, "Linen"), (88, "MediumGreen"), (138, "Tomato")] {
+        assert_eq!(
+            style_web_color_name(code),
+            Some(format!("web:{name}").as_str())
+        );
+        assert!(
+            crate::compiler::bodies::form_native::WEB_COLOR_CODES
+                .iter()
+                .any(|(n, c)| *n == name && c.parse::<i32>().ok() == Some(code))
+        );
+    }
+}

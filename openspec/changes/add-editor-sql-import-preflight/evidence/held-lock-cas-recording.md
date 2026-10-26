@@ -903,3 +903,76 @@ complete. Generic metadata/object/changed imports, other owner cohorts, dynamic
 storage, arbitrary repartitioning and build-wide writer admission remain refused
 or unsupported as stated above. No successful runtime cycle was repeated and
 no merge or release was performed.
+
+
+## PR640: integration with current upstream master
+
+The same PR branch integrated upstream
+`4ad2c8a3c0ffa214c0a92dbd90d101a5e6c603f2` without rewriting its history.
+The four textual conflicts were the CI workflow, `src/lib.rs`,
+`src/mssql_dump/mod.rs` and the physical-adapter policy baseline. Resolution
+retains the upstream form-schema crate alias, form-body/MOXCEL extractions and
+required timing exports, alongside the private import planner, SQL versions
+validators and native module-file projection export.
+
+The CI workflow is byte-identical to that upstream revision. Its retired
+portable job was not resurrected. The existing Windows library-test packaging
+and upload steps moved after the root library tests in the upstream Offline E2E
+workflow, gated by the same library scope and the Windows runner; packaging
+Cargo is explicitly offline and performs no SQL operation. The upstream
+`autotests=false` conversion required an explicit `editor_sql_import` Cargo test
+target. Static enumeration and the resulting test run preserve every suite
+exactly once, including the new SQL admission contracts.
+
+The baseline is the exact upstream75-record catalog plus only the previously
+approved62-byte empty `import_evidence.rs` record. Removing that insertion
+reproduces upstream bytes exactly, including all27 guarded-crate records and
+all occurrence arrays/counts/order. Its resulting SHA256 is
+`03a9fa52b46bd33869767211f77a161d670b5172cfa79af0f1341d690513a48d`.
+The source-custody integration retains the full directory-census, witness and
+Windows custody production code; its incoming change is only a timestamp-tick
+test helper. Independent source reviews cleared all these resolutions.
+
+Before the full gate, pinned Rust1.95 all-target workspace checking passed.
+Focused results were105 server/SQL tests passed with four live cases ignored;
+10 Form-codec tests passed with one opt-in case ignored;71 source-custody tests
+passed with three opt-in cases ignored;14 editor-server tests passed;30 SQL
+admission/readset tests passed with one opt-in case ignored. The explicit
+read-only offline test of the retained1153-byte public native Form body also
+passed, with its existing exact hash check. The new pinned fixture submodule
+was checked out at `9832bb8b5cce18fb36d65dd398880f4588053b0d`; fixture integrity
+and the extended physical-adapter policy guard passed. Workflow YAML syntax
+was validated independently.
+
+The first integrated full `cargo xtask ci` passed26 steps, including all workspace
+and root integration suites, then its full root library run passed4259 tests
+and failed one cleanup oracle, with20 cases ignored. The existing
+`ImportScratch::Drop` deliberately retains scratch for exact
+`IBCMD_TEST_KEEP_FIXTURES=1`, whereas the old unit oracle unconditionally expected
+removal. Only that unit's three existence assertions now match the existing
+retention policy. Success, error and unwind cases remain, and the same exact
+unit passed in separate processes both with retention enabled and with the
+variable removed. Production cleanup/identity/symlink guards and process-global
+environment were not changed. The original failing full-run log is retained.
+
+SQL/RPC production files and Form-codec production behavior were not changed by
+these resolutions; the parsed Form record/revision now use the upstream
+identical-field crate reexports. Recording, codec and exact public-body gates
+validate that integration. No live database write, repeated publication or native
+activation was dispatched; the earlier87617 runtime receipts keep their exact
+revision attribution. A new-head hosted result is required and is not inferred
+from the prior07385992 green runs. PR640 remains Draft; no PR merge, release,
+auto-closing issue reference or new general writer admission is introduced.
+
+
+The final integrated staged `cargo xtask ci` completed naturally with
+**27 steps passed**, including the extended upstream governance/coverage gates,
+all workspace crates, all root integrations and the entire root library.
+The final library result was4260 passed,0 failed,20 ignored. Workspace tests
+completed in194seconds, root integrations147seconds and root library19seconds.
+The final log SHA256 is
+`498c3f44b18fda9fd6cc4aab9620ae2df526cb5e62b386b3790a0d5f30e070d3`.
+The additional all-target workspace check, explicit public-body offline gate,
+focused suites and both cleanup modes above also passed on this integration.
+New-head hosted checks and PR mergeability are tracked on PR640 after publishing
+this local integration; prior07385992 hosted success is historical evidence only.

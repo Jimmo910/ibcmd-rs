@@ -16,11 +16,15 @@ cargo xtask affected   # the test commands your diff needs, and what else to run
 cargo xtask ci         # local mirror of the required merge checks; before a PR leaves draft
 cargo fmt --all
 cargo test --locked -p ibcmd-filedb <name>                               # one crate, one test
-cargo test --locked -p ibcmd-rs --test cf_export --no-default-features   # one root suite
+cargo test --locked -p ibcmd-rs --test integration cf_export:: --no-default-features   # one root suite
 cargo test --locked -p ibcmd-rs --lib <module> --no-default-features     # root unit tests, filtered
 cargo build --locked --profile iter                                      # binary for corpus runs
 ```
 
+- Root suites are modules of `tests/integration.rs` (one test binary, tests
+  named `<suite>::<test>`). A suite that changes process-global engine state
+  in the test process gets its own `[[test]]` in Cargo.toml and runs with
+  `--test <suite>`.
 - xtask prints one line per step and only the tail of a failing step; full
   logs are in `target/xtask/<step>.log`. Read the log before guessing.
 - `clippy -D warnings` covers `crates/*`. The root package (`src/`, `tests/`)
@@ -36,14 +40,27 @@ cargo build --locked --profile iter                                      # binar
 - Debug builds for tests, `--profile iter` for corpus runs, `--release` only
   for release checks. One cargo command at a time per target directory;
   parallel agents work in separate worktrees.
+- Clean up after your tests and builds. A debug `target/` grows by tens of
+  GB per worktree (a shared one reached 140 GB), and a full disk breaks every
+  build on the machine with linker crashes. When the work in a worktree is
+  done, run `cargo clean` there or remove the worktree; delete the infobases,
+  native exports and corpus outputs your runs created. A target directory
+  another cargo process uses (`pgrep -a cargo`; PowerShell:
+  `Get-Process cargo, rustc`) is not yours to clean. Check free space
+  (`df -h`; PowerShell: `Get-PSDrive -PSProvider FileSystem`) before a long
+  build or corpus run.
 
 ## The loop
 
-1. Take one issue. Set its board status first (see Tracking). Work on a branch
-   `agent/issue-<N>-<slug>` in your own worktree.
+1. Take one Backlog or Ready issue with `/claim` and wait for the bot confirmation (see
+   Tracking). Work on `feature/issue-<N>-<slug>` in your own worktree.
 2. New capability (command, format, route, gate): write the OpenSpec change
    first (skill `openspec-change`). Bug: write the failing test first and see
-   it fail for the right reason.
+   it fail for the right reason. A mismatch found on a typical configuration
+   (ERP, Бухгалтерия, БСП…) is first reproduced as a coverage variant and seen
+   red in `tests/coverage_corpus.rs` (skill `coverage-case`); only then fixed.
+   The variant also enters the platform's combined configuration: rebuild it
+   with `tests/fixtures/1c-fixtures/tools/coverage/combine.py` (the coverage test fails until you do).
 3. Change in small steps; after each, run the narrowest test that covers it.
 4. `cargo xtask check` until green. A failure is pre-existing only after you
    reproduce it on the merge base and say so, with the command.
@@ -62,7 +79,8 @@ cargo build --locked --profile iter                                      # binar
   new numeric slot indices in production parsers and no special cases for
   named objects (a form called `ФормаСписка`): find the rule shared by all.
   `tools/validate-physical-adapter-policy.ps1` fails new literals in
-  `src/module_blob.rs` and `src/mssql_dump/`. Refresh its baseline only for a
+  `src/module_blob.rs`, `src/mssql_dump/` and the crate directories listed in its
+  `$GuardedCrateDirectories` (code moved out of those two). Refresh its baseline only for a
   reviewed policy, never to hide literals (`tools/physical-adapter-policy-guard.md`).
 - A new heuristic needs an EDT writer rule or a full corpus of
   counterexamples, plus a measured win on the full gate.
@@ -82,7 +100,10 @@ cargo build --locked --profile iter                                      # binar
   Approved scopes are recorded in `docs/morph1c-local-adaptations.md`.
 - Never commit private `.cf`/`.1CD` files, native export trees, raw blobs,
   application XML/BSL, credentials, or reports with application paths.
-  Fixtures are clean-room or minimized sanitized fragments.
+  Fixtures are clean-room or minimized sanitized fragments. A typical
+  configuration's object never becomes a fixture: its mismatch becomes a
+  generated coverage variant; only a legacy layout the current platform cannot
+  write gets a minimized raw fragment, marked as such.
 - Commands that write to an infobase run only against disposable copies.
 - No full parity run until the exact raw fixture, extraction on a saved BCP,
   the policy gate and the targeted tests pass locally. Check the binary's
@@ -96,14 +117,46 @@ cargo build --locked --profile iter                                      # binar
 
 ## Tracking
 
-The working board is https://github.com/users/Untru/projects/9 (editing it
-needs `gh auth refresh -s project`). Before taking an issue or dispatching an
-implementer, set its Status to In progress and record the owner and current
-scope in Agent. Update the board at every state transition and read the
-values back. Local plans and status labels do not replace project fields.
-Reviewable PRs go to In review; Done only after the acceptance criteria hold.
-A draft PR does not complete its issues. Do not mark future work started
-because it has a proposed owner.
+The working board is https://github.com/users/Untru/projects/9. Anyone who
+can comment on a public issue may claim it without repository Collaboration
+or Project write access:
+
+- Comment `/claim` on an unassigned Backlog or Ready issue. Wait for the bot's final
+  success reply and verify Assignees / In progress before starting work or
+  dispatching an implementer. A pending receipt is not approval to start.
+- The assigned contributor comments `/review #PR` for their open non-Draft
+  PR targeting master and explicitly referencing the issue. The bot records
+  the PR in Agent and moves the card to In review; this does not run Codex
+  Review. Request that separately with `@codex review` on the PR.
+- Only the assigned contributor can `/unclaim`; it removes their assignment
+  and returns the card to Ready. Never take over another contributor's issue.
+- Work through a fork and pull request when repository write access is absent.
+  Keep a concrete human operator responsible for agent work.
+
+While command processing is enabled, route tracking changes through the bot.
+Before direct owner maintenance of Assignees, Status or Agent, disable this
+workflow and verify every running/queued command is terminal; then edit,
+read back and re-enable. The API has no conditional field write: a manual
+edit inside the read/write interval can be overwritten without detection.
+Owner acknowledgement (`ISSUE_BOT_SINGLE_WRITER_CONFIRMED=true`) is required
+before commands can mutate tracking. See the maintenance runbook below.
+
+The bot updates and reads back Assignees, Status and its own `Claim bot:`
+Agent line; under this protocol it preserves other owners' Agent lines. A failed or unfinished
+command may have partially applied: inspect the current assignment and send
+one new command to reconcile your own work. Never rerun an old command to
+restore state. A sole existing owner may retry `/claim` in Backlog, Ready or
+In progress. If the bot is unavailable, ask the maintainer for help. An
+unassigned issue outside Backlog/Ready needs maintainer triage; do not grant
+yourself access or start silently.
+Setup, refusals and recovery: [issue self-service](docs/issue-self-service.md).
+
+Contributors may claim Backlog directly; maintainers may triage into Ready, reconcile unexpected interference,
+and mark Done only after acceptance evidence. A draft PR does not complete
+its issues. Local plans and labels do not replace Project fields. Read back
+manual board transitions and do not mark future work started because it has
+a proposed owner. Direct Project editing requires Project write access; it
+is not required for the public comment commands.
 
 ## Releases
 

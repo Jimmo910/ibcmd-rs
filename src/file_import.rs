@@ -296,11 +296,13 @@ mod tests {
     }
     #[test]
     fn owned_scratch_is_removed_on_success_error_and_unwind() {
+        let retained = std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").as_deref()
+            == Some(std::ffi::OsStr::new("1"));
         let success = ImportScratch::create().unwrap();
         let path = success.path.clone();
         fs::write(success.join("config.cf"), b"owned").unwrap();
         drop(success);
-        assert!(!path.exists());
+        assert_eq!(path.exists(), retained);
         let error_path = std::sync::Mutex::new(None);
         let fail = || -> Result<()> {
             let scratch = ImportScratch::create()?;
@@ -309,14 +311,20 @@ mod tests {
             bail!("preflight cancelled");
         };
         assert!(fail().is_err());
-        assert!(!error_path.lock().unwrap().as_ref().unwrap().exists());
+        assert_eq!(
+            error_path.lock().unwrap().as_ref().unwrap().exists(),
+            retained
+        );
         let unwind_path = std::sync::Mutex::new(None);
         let _ = std::panic::catch_unwind(|| {
             let scratch = ImportScratch::create().unwrap();
             *unwind_path.lock().unwrap() = Some(scratch.path.clone());
             panic!("injected interruption");
         });
-        assert!(!unwind_path.lock().unwrap().as_ref().unwrap().exists());
+        assert_eq!(
+            unwind_path.lock().unwrap().as_ref().unwrap().exists(),
+            retained
+        );
     }
     #[test]
     fn reference_looking_plain_text_is_not_a_dependency() {

@@ -3334,7 +3334,7 @@ fn write_source_asset_inner(
                 &asset.primary_path,
             )?;
             let xml = if context.source_version == InfobaseConfigSourceVersion::V2_20 {
-                super::moxel::with_v85_style_fonts_by_code(xml, context.object_refs)
+                super::moxel_entry::with_v85_style_fonts_by_code(xml, context.object_refs)
             } else {
                 xml
             };
@@ -3457,11 +3457,7 @@ pub(super) struct HelpContent {
     pub(super) files: Vec<HelpFile>,
 }
 
-pub(super) struct FormItemAsset {
-    pub(super) item_name: String,
-    pub(super) file_name: String,
-    pub(super) content: Vec<u8>,
-}
+pub(super) use ibcmd_form_body::FormItemAsset;
 
 #[derive(Clone)]
 pub(super) struct PredefinedItem {
@@ -5045,96 +5041,6 @@ pub(super) fn format_ext_picture_xml(
     xml
 }
 
-pub(super) fn extract_base64_payload(text: &str) -> Option<&str> {
-    let prefix = "{#base64:";
-    let start = text.find(prefix)? + prefix.len();
-    let end = text[start..].find('}')? + start;
-    Some(&text[start..end])
-}
-
-pub(super) fn ext_picture_file_name(bytes: &[u8]) -> &'static str {
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        "Picture.png"
-    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        "Picture.gif"
-    } else if bytes.starts_with(b"\xff\xd8\xff") {
-        "Picture.jpg"
-    } else if bytes.starts_with(b"BM") {
-        "Picture.bmp"
-    } else if bytes.starts_with(b"\x00\x00\x01\x00") {
-        "Picture.ico"
-    } else if bytes.starts_with(b"PK\x03\x04") {
-        "Picture.zip"
-    } else if let Ok(text) = std::str::from_utf8(bytes) {
-        let trimmed = text.trim_start_matches('\u{feff}').trim_start();
-        if is_svg_text(text) {
-            "Picture.svg"
-        } else if trimmed.starts_with('<') {
-            // A markup payload the platform does not recognise as an image is
-            // written with no extension at all: ERP WE English
-            // `CommonPictures/PictureBack` (an EDT metadata document stored as
-            // the picture) is published `<xr:Abs>Picture</xr:Abs>`, and no
-            // corpus publishes `Picture.xml`.
-            "Picture"
-        } else {
-            "Picture.txt"
-        }
-    } else {
-        "Picture.bin"
-    }
-}
-
-pub(super) fn is_svg_content(bytes: &[u8]) -> bool {
-    let Ok(text) = std::str::from_utf8(bytes) else {
-        return false;
-    };
-    is_svg_text(text)
-}
-
-pub(super) fn is_svg_text(text: &str) -> bool {
-    let text = text.trim_start_matches('\u{feff}').trim_start();
-    text.starts_with("<svg") || text.starts_with("<?xml") && text.contains("<svg")
-}
-
-pub(super) fn decode_base64_mime(input: &str) -> Option<Vec<u8>> {
-    let values = input
-        .bytes()
-        .filter(|byte| !byte.is_ascii_whitespace())
-        .collect::<Vec<_>>();
-    if values.len() % 4 != 0 {
-        return None;
-    }
-
-    let mut output = Vec::with_capacity(values.len() / 4 * 3);
-    for chunk in values.chunks(4) {
-        let mut decoded = [0u8; 4];
-        let mut padding = 0usize;
-        for (index, byte) in chunk.iter().copied().enumerate() {
-            if byte == b'=' {
-                padding += 1;
-                decoded[index] = 0;
-                continue;
-            }
-            if padding > 0 {
-                return None;
-            }
-            decoded[index] = base64_value(byte)?;
-        }
-        if padding > 2 {
-            return None;
-        }
-        output.push((decoded[0] << 2) | (decoded[1] >> 4));
-        if padding < 2 {
-            output.push((decoded[1] << 4) | (decoded[2] >> 2));
-        }
-        if padding < 1 {
-            output.push((decoded[2] << 6) | decoded[3]);
-        }
-    }
-
-    Some(output)
-}
-
 #[cfg(test)]
 pub(super) fn encode_base64_for_test(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -5157,17 +5063,6 @@ pub(super) fn encode_base64_for_test(bytes: &[u8]) -> String {
         }
     }
     output
-}
-
-pub(super) fn base64_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'A'..=b'Z' => Some(byte - b'A'),
-        b'a'..=b'z' => Some(byte - b'a' + 26),
-        b'0'..=b'9' => Some(byte - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    }
 }
 
 pub(super) fn format_help_xml(pages: &[HelpPage]) -> String {
@@ -6161,21 +6056,6 @@ pub(super) fn format_1c_date(value: &str) -> Option<String> {
         &value[0..4],
         &value[4..6],
         &value[6..8]
-    ))
-}
-
-pub(super) fn format_1c_date_time(value: &str) -> Option<String> {
-    if value.len() != 14 || !value.chars().all(|ch| ch.is_ascii_digit()) {
-        return None;
-    }
-    Some(format!(
-        "{}-{}-{}T{}:{}:{}",
-        &value[0..4],
-        &value[4..6],
-        &value[6..8],
-        &value[8..10],
-        &value[10..12],
-        &value[12..14]
     ))
 }
 

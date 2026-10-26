@@ -21,6 +21,7 @@ pub mod types;
 
 // Kind families, one track each.
 pub mod common;
+pub(crate) mod interface;
 pub mod websocket_client;
 // Base-free body rows of track D: predefined data, flowcharts, aggregates.
 pub mod bodies_aggregates;
@@ -34,7 +35,11 @@ pub mod objects;
 pub mod registers;
 pub mod root;
 pub mod simple;
-pub mod standard_pictures;
+/// The platform's standard pictures, the `ibcmd-1c-vocab` crate's table,
+/// under the path the crate's readers and writers name them by.
+pub mod standard_pictures {
+    pub(crate) use ibcmd_1c_vocab::{standard_picture_name, standard_picture_uuid};
+}
 
 #[cfg(test)]
 mod collection_tests;
@@ -228,6 +233,9 @@ pub fn compile_descriptor(
     } else {
         None
     };
+    if kind == "Interface" {
+        interface::validate_source(xml, &context.version)?;
+    }
     let doc = MetadataXml::parse(xml)?;
     let element = doc.object()?;
     if kind == "Configuration" {

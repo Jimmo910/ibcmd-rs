@@ -10,10 +10,22 @@ $ErrorActionPreference = 'Stop'
 
 $BaselineRelativePath = 'tools/physical-adapter-policy-baseline.json'
 $AllowedCategories = @('uuid-literal', 'name-special-case', 'xml-policy')
-# Production modules that stay out of the guarded slice by decision.  Modules the
-# compiler reads only for tests are not listed: they are found from their
-# `#[cfg(test)] mod name;` declaration (see Get-TestOnlyModulePaths).
-$ExcludedMssqlModules = @('mxl_ir.rs', 'moxel.rs')
+# Directories under crates/ that hold code moved out of src/module_blob.rs or
+# src/mssql_dump/: the slice follows the code, and the baseline keeps its
+# literals under the new path.  Every *.rs file below a listed directory is in
+# the slice, so a file added there is scanned without being listed (and fails
+# until its record is in the baseline).  A crate made only of such code is
+# listed by its src/.  The MOXCEL decoder was outside the slice before it left
+# src/mssql_dump/, so ibcmd-moxel keeps what it took from the slice in its
+# root_helpers/ module directory and only that directory is listed.  Modules
+# the compiler reads only for tests are not part of the slice: they are found
+# from their `#[cfg(test)] mod name;` declaration (see Get-TestOnlyModulePaths).
+$GuardedCrateDirectories = @(
+    'crates/ibcmd-1c-text/src',
+    'crates/ibcmd-1c-vocab/src',
+    'crates/ibcmd-form-body/src',
+    'crates/ibcmd-moxel/src/root_helpers'
+)
 
 $scannerSource = @'
 using System;
@@ -797,15 +809,22 @@ function Get-ScopedFiles {
         throw 'Scoped source file is missing.'
     }
     $files.Add((Get-Item -LiteralPath $moduleBlob))
+    foreach ($relative in $GuardedCrateDirectories) {
+        $crateDirectory = Join-Path $Root $relative
+        if (-not (Test-Path -LiteralPath $crateDirectory -PathType Container)) {
+            throw 'Scoped source directory is missing.'
+        }
+        foreach ($file in Get-ChildItem -LiteralPath $crateDirectory -Filter '*.rs' -File -Recurse) {
+            $files.Add($file)
+        }
+    }
 
     $mssqlRoot = Join-Path $Root 'src/mssql_dump'
     if (-not (Test-Path -LiteralPath $mssqlRoot -PathType Container)) {
         throw 'Scoped source directory is missing.'
     }
     foreach ($file in Get-ChildItem -LiteralPath $mssqlRoot -Filter '*.rs' -File -Recurse) {
-        if ($ExcludedMssqlModules -notcontains $file.Name) {
-            $files.Add($file)
-        }
+        $files.Add($file)
     }
     $testOnly = Get-TestOnlyModulePaths -Candidates $files.ToArray()
     $scoped = @($files | Where-Object { -not (Test-InsideTestOnlyModule -FullPath $_.FullName -TestOnly $testOnly) })
@@ -1044,6 +1063,14 @@ mod host;
         'src/mssql_dump/host/host_tests.rs'         = $uuid
         'src/mssql_dump/host_tests.rs'              = $uuid
     }
+    # Each guarded crate directory: a production file, a nested one, and a
+    # test-only module (with a file below its directory) that stays outside.
+    foreach ($relative in $GuardedCrateDirectories) {
+        $files["$relative/lib.rs"] = "$uuid`n#[cfg(test)]`nmod crate_tests;"
+        $files["$relative/nested/deeper.rs"] = $uuid
+        $files["$relative/crate_tests.rs"] = $uuid
+        $files["$relative/crate_tests/helper.rs"] = $uuid
+    }
     try {
         foreach ($relative in $files.Keys) {
             $path = Join-Path $root $relative
@@ -1051,9 +1078,10 @@ mod host;
             [System.IO.File]::WriteAllText($path, ([string]$files[$relative]).Replace("`r`n", "`n"), $utf8)
         }
         [System.IO.Directory]::CreateDirectory((Join-Path $root 'tools')) | Out-Null
-        $expected = @(
-            'src/module_blob.rs', 'src/mssql_dump/host.rs', 'src/mssql_dump/host_tests.rs', 'src/mssql_dump/mod.rs',
-            'src/mssql_dump/partly_tests.rs', 'src/mssql_dump/pathed.rs', 'src/mssql_dump/plain_tests.rs'
+        $expected = @($GuardedCrateDirectories | ForEach-Object { "$_/lib.rs"; "$_/nested/deeper.rs" }) + @(
+            'src/module_blob.rs', 'src/mssql_dump/host.rs', 'src/mssql_dump/host_tests.rs',
+            'src/mssql_dump/mod.rs', 'src/mssql_dump/partly_tests.rs', 'src/mssql_dump/pathed.rs',
+            'src/mssql_dump/plain_tests.rs'
         )
         $actual = @(Get-ScopedFiles $root | ForEach-Object { Get-LogicalPath -Root $root -Path $_.FullName } | Sort-Object)
         if (($actual -join '|') -ne (($expected | Sort-Object) -join '|')) {
@@ -1065,6 +1093,46 @@ mod host;
         Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root)
         Add-Content -LiteralPath (Join-Path $mssql 'plain_tests.rs') 'const EXTRA: &str = "33333333-3333-4333-8333-333333333333";'
         Assert-Rejected { Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root) } 'category=uuid-literal'
+        foreach ($relative in $GuardedCrateDirectories) {
+            $crateDirectory = Join-Path $root $relative
+            Write-BaselineDocument -Root $root -Document (New-InventoryDocument $root)
+            # A literal in a test-only module of the directory passes.
+            Add-Content -LiteralPath (Join-Path $crateDirectory 'crate_tests.rs') 'const EXTRA: &str = "33333333-3333-4333-8333-333333333335";'
+            Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root)
+            # A literal added to a guarded file below the directory is rejected.
+            $crateFile = Join-Path $crateDirectory 'nested/deeper.rs'
+            $saved = [System.IO.File]::ReadAllText($crateFile)
+            Add-Content -LiteralPath $crateFile 'const EXTRA: &str = "33333333-3333-4333-8333-333333333335";'
+            Assert-Rejected { Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root) } 'category=uuid-literal'
+            # A guarded file deleted from the directory (its code could have
+            # gone somewhere unguarded) is rejected: its record has no file.
+            Remove-Item -LiteralPath $crateFile -Force
+            Assert-Rejected { Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root) } 'baseline references a missing scoped file'
+            [System.IO.File]::WriteAllText($crateFile, $saved, $utf8)
+            # A new file of the directory is in the slice without being listed:
+            # with a literal it is rejected as an unbaselined file, and once its
+            # record is in the baseline a literal added to it is rejected too.
+            $addedDirectory = Join-Path $crateDirectory 'added'
+            $added = Join-Path $addedDirectory 'new_module.rs'
+            [System.IO.Directory]::CreateDirectory($addedDirectory) | Out-Null
+            [System.IO.File]::WriteAllText($added, 'const EXTRA: &str = "33333333-3333-4333-8333-333333333336";', $utf8)
+            $addedLogical = @(Get-ScopedFiles $root | ForEach-Object { Get-LogicalPath -Root $root -Path $_.FullName })
+            if ($addedLogical -notcontains "$relative/added/new_module.rs") {
+                throw "Guarded crate directory scope self-test failed: $relative/added/new_module.rs is not scoped."
+            }
+            Assert-Rejected { Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root) } 'unbaselined file_sha256='
+            [System.IO.File]::WriteAllText($added, 'fn added() {}', $utf8)
+            Write-BaselineDocument -Root $root -Document (New-InventoryDocument $root)
+            Add-Content -LiteralPath $added 'const EXTRA: &str = "33333333-3333-4333-8333-333333333336";'
+            Assert-Rejected { Assert-InventoryAllowed -Baseline (Read-Baseline $root) -Current (New-InventoryDocument $root) } 'category=uuid-literal'
+            Remove-Item -LiteralPath $addedDirectory -Recurse -Force
+            Write-BaselineDocument -Root $root -Document (New-InventoryDocument $root)
+            # The directory itself missing fails.
+            $moved = "$crateDirectory.moved"
+            [System.IO.Directory]::Move($crateDirectory, $moved)
+            Assert-Rejected { Get-ScopedFiles $root } 'Scoped source directory is missing.'
+            [System.IO.Directory]::Move($moved, $crateDirectory)
+        }
     }
     finally {
         if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
@@ -1075,6 +1143,11 @@ function Invoke-SelfTest {
     $root = Join-Path ([System.IO.Path]::GetTempPath()) ("ibcmd-physical-policy-" + [guid]::NewGuid())
     [System.IO.Directory]::CreateDirectory((Join-Path $root 'src/mssql_dump')) | Out-Null
     [System.IO.Directory]::CreateDirectory((Join-Path $root 'tools')) | Out-Null
+    foreach ($relative in $GuardedCrateDirectories) {
+        $crateDirectory = Join-Path $root $relative
+        [System.IO.Directory]::CreateDirectory($crateDirectory) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $crateDirectory 'lib.rs'), '', [System.Text.UTF8Encoding]::new($false))
+    }
     try {
         $moduleBlob = Join-Path $root 'src/module_blob.rs'
         $formBody = Join-Path $root 'src/mssql_dump/form_body.rs'

@@ -1,7 +1,7 @@
 //! Shared native Configuration XML child order. Binary section/class order is
 //! independent. The existing vocabulary retains its relative order; empty
 //! ExternalDataSource is witnessed immediately before IntegrationService on
-//! native 8.3.27.2214 and 8.5.1.1529. Interface remains unmeasured.
+//! native 8.3.27.2214 and 8.5.1.1529. Interface follows CommonPicture; native 8.5.1 puts Bot before PaletteColor.
 
 const CHILD_XML_ORDER: &[&str] = &[
     "Language",
@@ -9,6 +9,7 @@ const CHILD_XML_ORDER: &[&str] = &[
     "StyleItem",
     "Style",
     "CommonPicture",
+    crate::interface::InterfaceLayout::KIND,
     "SessionParameter",
     "Role",
     "CommonTemplate",
@@ -27,8 +28,8 @@ const CHILD_XML_ORDER: &[&str] = &[
     "FunctionalOption",
     "FunctionalOptionsParameter",
     "DefinedType",
-    "PaletteColor",
     "Bot",
+    "PaletteColor",
     "CommonCommand",
     "CommandGroup",
     "Constant",
@@ -120,6 +121,40 @@ impl V76InterfaceCompatibility {
     }
 }
 
+/// Measured extension root envelope and properties layouts. These coordinates
+/// belong to the native schema, independently of XML 2.20/2.21 selection.
+pub struct ExtensionRootVersionLayout;
+
+impl ExtensionRootVersionLayout {
+    pub const ROOT_FIELDS: usize = 11;
+    pub const ROOT_TAG: usize = 0;
+    pub const ROOT_IDENTITY: usize = 1;
+    pub const ROOT_SECTIONS: usize = 2;
+    pub const ROOT_PROPERTIES_SECTION: usize = 3;
+    pub const SECTION_FIELDS: usize = 2;
+    pub const SECTION_CLASS: usize = 0;
+    pub const SECTION_PAYLOAD: usize = 1;
+    pub const PAYLOAD_TAG: usize = 0;
+    pub const PAYLOAD_PROPERTIES: usize = 1;
+    pub const PAYLOAD_MEMBERS: usize = 2;
+    pub const PROPERTIES_TAG: usize = 0;
+    pub const VERSION: usize = 15;
+
+    /// The complete V68 legacy tuple and the native V76 8.5 tuple are
+    /// independently witnessed. The discriminator is not a member count.
+    pub fn accepts(
+        payload_fields: usize,
+        members: &str,
+        properties_fields: usize,
+        tag: &str,
+    ) -> bool {
+        matches!(
+            (payload_fields, members, properties_fields, tag),
+            (28, "25", 61, "68") | (29, "26", 77, "76")
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn prior_vocabulary_order_is_preserved_with_one_measured_insertion() {
+    fn measured_root_order_preserves_the_remaining_vocabulary() {
         // Literal predecessor XML vocabulary is a regression oracle only.
         let prior = [
             "Language",
@@ -204,14 +239,19 @@ mod tests {
             "IntegrationService",
         ];
         let current = child_xml_order();
-        assert_eq!(current.len(), prior.len() + 1);
+        assert_eq!(current.len(), prior.len() + 2);
         assert_eq!(
             current
                 .iter()
                 .copied()
-                .filter(|kind| *kind != crate::external_data_source::KIND)
+                .filter(|kind| *kind != crate::external_data_source::KIND
+                    && *kind != crate::interface::InterfaceLayout::KIND
+                    && *kind != "PaletteColor")
                 .collect::<Vec<_>>(),
             prior
+                .into_iter()
+                .filter(|kind| *kind != "PaletteColor")
+                .collect::<Vec<_>>()
         );
         assert_eq!(
             current
@@ -226,7 +266,11 @@ mod tests {
         let (ws, _) = child_xml_kind(crate::websocket_client::WebSocketClientLayout::KIND).unwrap();
         assert_eq!(current[ws - 1], "WSReference");
         assert_eq!(current[ws + 1], "EventSubscription");
-        assert_eq!(child_xml_kind("Interface"), None);
+        let (interface, _) = child_xml_kind("Interface").unwrap();
+        assert_eq!(current[interface - 1], "CommonPicture");
+        assert_eq!(current[interface + 1], "SessionParameter");
+        let (bot, _) = child_xml_kind("Bot").unwrap();
+        assert_eq!(current[bot + 1], "PaletteColor");
         assert_eq!(child_xml_kind("Unproved435"), None);
         assert_eq!(child_xml_kind("externaldatasource"), None);
     }

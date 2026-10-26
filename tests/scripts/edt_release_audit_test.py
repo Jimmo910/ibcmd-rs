@@ -7,12 +7,59 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 import zipfile
 
 source = Path(__file__).resolve().parents[2] / "scripts" / "audit_release.py"
 spec = importlib.util.spec_from_file_location("audit_release", source)
 audit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(audit)
+
+
+class ExtensionCommandBoundary(unittest.TestCase):
+    def exercise(self, changed=None):
+        failed = 0xFFFFFFFF if audit.os.name == "nt" else 255
+        calls = []
+        environment = {"PATH": ""}
+
+        def run(args, **kwargs):
+            self.assertIs(kwargs["env"], environment)
+            self.assertEqual(kwargs["timeout"], 60)
+            command = tuple(args[2:])
+            calls.append(command)
+            if command == ("--help",):
+                result = (0, "export import", "")
+            elif command[0] == "create":
+                result = (1, "", "не поддерживается в этой версии ibcmd-rs")
+            elif command[:2] in [("config", "roundtrip"), ("config", "sweep")]:
+                result = (2, "Указана неполная команда", "")
+            elif command[:2] in [("config", "import"), ("config", "apply")]:
+                self.assertIn("--extension=E", command)
+                result = (failed, "", "extension writes require --cluster-id")
+                if changed and command[1] == changed[0]:
+                    result = changed[1:]
+            else:
+                self.fail(f"unexpected audit command: {command}")
+            return subprocess.CompletedProcess(args, *result)
+
+        with mock.patch.object(audit.subprocess, "run", side_effect=run):
+            audit.audit_infobase_mode(Path("binary"), environment)
+        return calls
+
+    def test_extension_commands_require_target_binding_in_an_empty_path(self):
+        calls = self.exercise()
+        for command in ["import", "apply"]:
+            self.assertTrue(any(args[:2] == ("config", command) for args in calls))
+
+    def test_extension_audit_rejects_success_old_refusal_and_wrong_failure(self):
+        failed = 0xFFFFFFFF if audit.os.name == "nt" else 255
+        for command in ["import", "apply"]:
+            for result in [(0, "", ""), (1, "", "не поддерживается в этой версии ibcmd-rs"),
+                           (-9, "", "extension writes require --cluster-id"),
+                           (failed, "", "cannot launch external program")]:
+                with self.subTest(command=command, result=result):
+                    with self.assertRaises(SystemExit):
+                        self.exercise((command, *result))
 
 
 class MarkerBoundary(unittest.TestCase):

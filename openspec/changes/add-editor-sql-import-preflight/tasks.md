@@ -121,3 +121,12 @@ VSCode/product40301490504 both jobs. The final checklist/evidence publication
 changes documentation only; runtime receipts keep their exact87617 attribution.
 No merge or release was performed. Broader foundation/profile measurements
 above remain explicitly outside the two accepted singleton-module cohorts.
+
+
+- [x] F.21 Integrate upstream4ad2c8a3 in the existing PR640 branch, preserve
+  source-custody/policy and module-only contracts, register every test target,
+  and pass the updated full local CI27/27. Focused SQL/codec/custody/editor tests
+  and the retained public-body offline check passed; no live SQL/native cycle
+  was repeated. New-head hosted checks are tracked in PR640, not inherited from
+  the old07385992 runs. PR remains Draft, with no merge/release or broader writer
+  admission claim.

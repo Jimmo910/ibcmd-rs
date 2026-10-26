@@ -3,6 +3,9 @@ name = "ibcmd-rs"
 version = "0.4.1"
 edition = "2024"
 license = "MIT"
+# tests/integration.rs builds the integration suites as one binary; the
+# `[[test]]` targets below are the ones that need a process of their own.
+autotests = false
 
 [workspace]
 members = [
@@ -15,6 +18,12 @@ members = [
     "crates/ibcmd-number-format",
     "crates/ibcmd-filedb",
     "crates/ibcmd-postgres",
+    "crates/ibcmd-form-schema",
+    "crates/ibcmd-form-native",
+    "crates/ibcmd-moxel",
+    "crates/ibcmd-1c-text",
+    "crates/ibcmd-1c-vocab",
+    "crates/ibcmd-form-body",
 ]
 resolver = "3"
 exclude = ["crates/ibcmd-edt/vendor/morph1c"]
@@ -47,6 +56,12 @@ ibcmd-xml = { path = "crates/ibcmd-xml" }
 ibcmd-edt = { path = "crates/ibcmd-edt" }
 ibcmd-filedb = { path = "crates/ibcmd-filedb" }
 ibcmd-postgres = { path = "crates/ibcmd-postgres" }
+ibcmd-form-schema = { path = "crates/ibcmd-form-schema" }
+ibcmd-form-native = { path = "crates/ibcmd-form-native" }
+ibcmd-moxel = { path = "crates/ibcmd-moxel" }
+ibcmd-1c-text = { path = "crates/ibcmd-1c-text" }
+ibcmd-1c-vocab = { path = "crates/ibcmd-1c-vocab" }
+ibcmd-form-body = { path = "crates/ibcmd-form-body" }
 # The process allocator, installed in main.rs.
 mimalloc = "0.1.52"
 quick-xml = "0.38"
@@ -64,6 +79,9 @@ walkdir = "2.5"
 yaml_serde = "0.10"
 
 [dev-dependencies]
+# Substring search in tests/platform_oracle_boundary.rs; already in the
+# runtime graph (tiberius, futures-util).
+memchr = "2.8"
 rmcp = { version = "=3.6.0", default-features = false, features = ["client", "transport-child-process"] }
 
 [target.'cfg(unix)'.dependencies]
@@ -90,6 +108,48 @@ morph1c-pipeline = { path = "crates/ibcmd-edt/vendor/morph1c/crates/pipeline" }
 formats-edt = { path = "crates/ibcmd-edt/vendor/morph1c/crates/formats/edt" }
 formats-designer = { path = "crates/ibcmd-edt/vendor/morph1c/crates/formats/designer" }
 
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+# Suites that run engine operations in the test process itself, which keep
+# process-wide state for the one operation a process runs: cancellation
+# scopes (editor_partial_import), the once-per-process offline compile
+# (cf_load), offline rows read outside the stored-object lock
+# (native_export_status) and the stored-object views of the editor and
+# descriptor suites. Each keeps its own process, as before the merge.
+[[test]]
+name = "cf_load"
+path = "tests/cf_load.rs"
+
+[[test]]
+name = "descriptor_read"
+path = "tests/descriptor_read.rs"
+
+[[test]]
+name = "editor_export_plan"
+path = "tests/editor_export_plan.rs"
+
+[[test]]
+name = "editor_file_db"
+path = "tests/editor_file_db.rs"
+
+[[test]]
+name = "editor_partial_import"
+path = "tests/editor_partial_import.rs"
+
+[[test]]
+name = "editor_server"
+path = "tests/editor_server.rs"
+
+[[test]]
+name = "editor_sql_import"
+path = "tests/editor_sql_import.rs"
+
+[[test]]
+name = "native_export_status"
+path = "tests/native_export_status.rs"
+
 # Real original-process/BOTH boundary tests, each scenario in its own process.
 [[test]]
 name = "rac_process_deadline"
@@ -105,3 +165,8 @@ harness = false
 name = "managed_command_deadline"
 path = "tests/managed_command_deadline.rs"
 harness = false
+
+# tests/platform_oracle_boundary.rs searches the whole debug executable
+# (hundreds of MB) with memchr; unoptimized, that search takes about a minute.
+[profile.dev.package.memchr]
+opt-level = 3

@@ -12,12 +12,17 @@ permissions:
 
 concurrency:
   group: offline-e2e-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push supersedes a pull request's run; a run of master finishes,
+  # so every merged commit gets a complete result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
   OPENSPEC_TELEMETRY: "0"
   RUST_VERSION: "1.95.0"
+  # Test builds keep line tables only: full debug info made the debug
+  # executable ~700 MB and linking dominated the test steps.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   spec:
@@ -26,6 +31,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -38,10 +45,14 @@ jobs:
           NPM_CONFIG_AUDIT: "false"
           NPM_CONFIG_FUND: "false"
         run: |
+          npx --yes @fission-ai/openspec@1.6.0 validate extract-coverage-corpus --strict --no-interactive
+          npx --yes @fission-ai/openspec@1.6.0 validate add-coverage-configuration --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate build-offline-converter --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate add-fast-parity-evidence --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate add-selected-cf-extract --strict --no-interactive
           npx --yes @fission-ai/openspec@1.6.0 validate implement-edt-project-conversion --strict --no-interactive
+          npx --yes @fission-ai/openspec@1.6.0 validate add-issue-self-service --strict --no-interactive
+          npx --yes @fission-ai/openspec@1.6.0 validate enable-extension-apply-851150 --strict --no-interactive
 
   quality:
     name: Quality
@@ -49,6 +60,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Enforce EDT-derived corpus governance
         shell: pwsh
@@ -76,6 +89,11 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --all --check
+
+      - name: Test the lane selection of the offline matrix
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 tests/scripts/test_ci_scope.py
 
       - name: Lint standalone workspace crates offline
         env:
@@ -106,13 +124,13 @@ jobs:
             os: macos-15
             target: aarch64-apple-darwin
             binary: target/release/ibcmd-rs
-          - name: macOS Intel
-            os: macos-15-intel
-            target: x86_64-apple-darwin
-            binary: target/release/ibcmd-rs
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
+          # The base of a pull request, for the lane selection below.
+          fetch-depth: 0
 
       - name: Select a physical temporary directory
         shell: pwsh
@@ -165,6 +183,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      # A pull request runs only the lanes its changed files can affect
+      # (scripts/ci_scope.py); pushes and manual runs run every lane. The
+      # job itself always runs, so the required checks always report.
+      - name: Select the lanes this change needs
+        id: scope
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            python scripts/ci_scope.py --base "origin/${{ github.base_ref }}" | tee -a "$GITHUB_OUTPUT"
+          else
+            python scripts/ci_scope.py --all | tee -a "$GITHUB_OUTPUT"
+          fi
+
       - name: Test installed-EDT oracle guards without the platform
         shell: pwsh
         run: |
@@ -178,88 +209,107 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'edt_release_audit_test failed' }
           python tests/scripts/linux_abi_test.py
           if ($LASTEXITCODE -ne 0) { throw 'linux_abi_test failed' }
+          python tools/coverage/fixture_paths.py
+          if ($LASTEXITCODE -ne 0) { throw 'pinned fixtures validation failed' }
+          python -m unittest discover -s tests/fixtures/1c-fixtures/tools/coverage -p 'test_*.py'
+          if ($LASTEXITCODE -ne 0) { throw 'native generator tests failed' }
+          python -m unittest discover -s tools/coverage -p 'test_*.py'
+          if ($LASTEXITCODE -ne 0) { throw 'coverage generator tests failed' }
 
       - name: Cache Cargo artifacts
+        if: steps.scope.outputs.rust == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           # Native dependency objects must not cross runner ABI boundaries.
           key: abi-v1-${{ matrix.os }}-${{ matrix.target }}
 
       - name: Fetch locked dependencies
+        if: steps.scope.outputs.rust == 'true'
         run: cargo fetch --locked
 
       - name: Validate bundled schema corpus
+        if: steps.scope.outputs.crates == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo test --locked -p ibcmd-schema
 
-      - name: Compile every standalone target offline
+      - name: Lint standalone workspace crates on Windows
+        if: steps.scope.outputs.rust == 'true' && runner.os == 'Windows'
         env:
           CARGO_NET_OFFLINE: "true"
-        run: cargo check --locked --workspace --all-targets --no-default-features
+        run: cargo clippy --locked --workspace --exclude ibcmd-rs --all-targets -- -D warnings
 
       - name: Test standalone workspace crates offline
+        if: steps.scope.outputs.crates == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo test --locked --workspace --exclude ibcmd-rs
 
       - name: Test root integration suites offline
+        if: steps.scope.outputs.rust == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo test --locked -p ibcmd-rs --test '*' --no-default-features
 
-      - name: Test Configuration root contracts offline
+      # Every unit test of the root library (the converters and the load and
+      # export engines). Their paths are built portably, so all five targets
+      # run them.
+      - name: Test the root library offline
+        if: steps.scope.outputs.lib == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
-        run: cargo test --locked -p ibcmd-rs --lib configuration_ --no-default-features
+        run: cargo test --locked -p ibcmd-rs --lib --no-default-features
 
-      - name: Test editor export read scope offline
+      # Reuse the Windows lib-test build for sole-operator disposable SQL gates.
+      # Ignored tests are packaged here, never executed against a database in CI.
+      - name: Package Windows root lib test
+        if: steps.scope.outputs.lib == 'true' && runner.os == 'Windows'
+        shell: pwsh
         env:
           CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib read_scope_tests --no-default-features
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $messages = & cargo test --locked -p ibcmd-rs --lib --no-default-features --no-run --message-format=json
+          if ($LASTEXITCODE -ne 0) { throw 'lib test compilation failed' }
+          $executables = @(@($messages) | ForEach-Object {
+            $item = $_ | ConvertFrom-Json -ErrorAction Stop
+            if ($item.reason -eq 'compiler-artifact' -and $item.profile.test -eq $true -and
+                $item.target.name -eq 'ibcmd_rs' -and ($item.target.kind -contains 'lib') -and $item.executable) {
+              $item.executable
+            }
+          })
+          if ($executables.Count -ne 1) { throw 'expected exactly one root lib test executable' }
+          $commit = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'source commit lookup failed' }
+          $tree = (& git rev-parse 'HEAD^{tree}').Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'source tree lookup failed' }
+          $rust = (& rustc --version).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'compiler version lookup failed' }
+          $directory = Join-Path $env:RUNNER_TEMP 'windows-root-lib-test'
+          New-Item -ItemType Directory -Path $directory -ErrorAction Stop | Out-Null
+          $executable = Join-Path $directory 'ibcmd_rs-lib-test.exe'
+          Copy-Item -LiteralPath $executables[0] -Destination $executable -ErrorAction Stop
+          $sha = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()
+          [ordered]@{
+            source_commit = $commit
+            source_tree = $tree
+            rustc = $rust
+            executable = 'ibcmd_rs-lib-test.exe'
+            executable_sha256 = $sha
+            no_default_features = $true
+            profile = 'test'
+            test_filter = 'server::sql_import::transaction::tests::public_sql_held_capture_rolls_back_and_closes_dedicated_session'
+            sql_executed_in_ci = $false
+          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $directory 'build-receipt.json') -Encoding utf8
 
-      - name: Test scoped active-generation rows offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib snapshot_uses_active_generation_and_preserves_no_marker_semantics --no-default-features
-
-      - name: Test export SQL certificate policy offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib export_sql_constructor_validates_certificates --no-default-features
-
-      - name: Test editor SQL certificate policy offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib editor_sql_sessions_validate_server_certificates --no-default-features
-
-      - name: Test objects SQL certificate policy offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib object_sql_constructor_validates_certificates --no-default-features
-
-      - name: Test explicit certificate trust policy offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib explicit_certificate_trust_policy --no-default-features
-
-      - name: Test empty CommonCommand help routing offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib common_command_empty_help --no-default-features
-
-      - name: Test registered Help compilation route offline
-        env:
-          CARGO_NET_OFFLINE: "true"
-          IBCMD_TEST_KEEP_FIXTURES: "1"
-        run: cargo test --locked -p ibcmd-rs --lib help_compilation_uses_the_exact_registered_graph_route --no-default-features
+      - name: Upload Windows root lib test
+        if: steps.scope.outputs.lib == 'true' && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-root-lib-test-${{ github.sha }}
+          path: ${{ runner.temp }}/windows-root-lib-test/
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Retain binary for failed release boundary investigation
         if: failure()
@@ -273,27 +323,32 @@ jobs:
           retention-days: 3
 
       - name: Build the release-shaped binary offline
+        if: steps.scope.outputs.rust == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
         run: cargo build --locked --release --no-default-features
 
       - name: Verify Ubuntu 22.04 GLIBC compatibility
-        if: runner.os == 'Linux'
+        if: steps.scope.outputs.rust == 'true' && runner.os == 'Linux'
         run: python scripts/audit_linux_abi.py --binary ${{ matrix.binary }} --target ${{ matrix.target }} --output target/offline-evidence/${{ matrix.target }}.abi.json
 
       - name: Verify native micro-corpus parity offline
+        if: steps.scope.outputs.rust == 'true'
         shell: pwsh
         run: ./tools/verify-native-evidence.ps1 -RepositoryRoot . -BinaryPath ${{ matrix.binary }}
 
       - name: Generate deterministic runtime SBOM
+        if: steps.scope.outputs.rust == 'true'
         env:
           CARGO_NET_OFFLINE: "true"
         run: python scripts/generate_sbom.py --manifest-path Cargo.toml --output target/offline-evidence/${{ matrix.target }}.sbom.cdx.json --target ${{ matrix.target }}
 
       - name: Audit clean-environment release boundary
+        if: steps.scope.outputs.rust == 'true'
         run: python scripts/audit_release.py --binary ${{ matrix.binary }} --sbom target/offline-evidence/${{ matrix.target }}.sbom.cdx.json
 
       - name: Package and audit the exact tested binary
+        if: steps.scope.outputs.rust == 'true'
         shell: pwsh
         env:
           CARGO_NET_OFFLINE: "true"
@@ -308,6 +363,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Packaged release audit failed' }
 
       - name: Upload evidence
+        if: steps.scope.outputs.rust == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: offline-evidence-${{ matrix.target }}

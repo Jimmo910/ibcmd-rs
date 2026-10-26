@@ -3079,7 +3079,7 @@ struct RewriteState {
     /// own decompiled source XML never carries an empty `<appearance/>` or
     /// `<inputParameters/>` -- the element is missing altogether, matching
     /// the same pattern `dcsset:outputParameters` has in the settings
-    /// document (see `DcsEmptyElementAction` in `src/mssql_dump/dcs.rs`).
+    /// document (see `DcsEmptyElementAction` in `crates/ibcmd-form-body/src/dcs.rs`).
     omit_if_empty: bool,
     /// Whether this is a `dcscor:value` typed as `DesignTimeValue`. If an
     /// open/close spelling proves empty at the closing tag, the source form is
@@ -4702,7 +4702,7 @@ fn rewrite_tokens(
                 // A `nestedSchema` carries its own `settingsVariant` inside
                 // the primary document, so the settings writer's own
                 // `outputParameters` rule (`DcsEmptyElementAction::OmitIfEmpty`
-                // in `src/mssql_dump/dcs.rs`) has to hold here as well: it is
+                // in `crates/ibcmd-form-body/src/dcs.rs`) has to hold here as well: it is
                 // the same element in the same namespace, kept as an empty
                 // placeholder by storage and written by no platform source.
                 let omittable_empty = (element_prefix.is_empty()

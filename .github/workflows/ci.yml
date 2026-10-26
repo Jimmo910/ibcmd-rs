@@ -5,39 +5,23 @@ on:
     branches:
       - master
   pull_request:
+    # Documents and the editor client change no compiled target here.
+    paths-ignore:
+      - 'editors/**'
+      - '**/*.md'
   workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push supersedes a pull request's run; a run of master finishes,
+  # so every merged commit gets a complete result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
-  sql-ut11-collector:
-    name: SQL UT11 offline collector (Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ['3.12', '3.14']
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-
-      - name: Test full-tree evidence collector (synthetic only)
-        env:
-          PYTHONDONTWRITEBYTECODE: '1'
-          IBCMD_TEST_KEEP_FIXTURES: '1'
-          IBCMD_SQL_UT11_TEST_ROOT: ${{ runner.temp }}/issue359-collector-tests
-        run: python3 tests/scripts/test_compare_sql_ut11.py
-
   platform-evidence-harness:
     name: Platform evidence harness
     runs-on: ubuntu-latest
@@ -47,6 +31,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Test exact-build evidence audit
         env:
           TMPDIR: ${{ runner.temp }}
@@ -58,6 +44,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -70,118 +58,14 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
-  portable:
-    name: Portable (${{ matrix.name }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Linux
-            os: ubuntu-latest
-          - name: Windows
-            os: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Check standalone workspace layers
-        run: cargo check --locked --workspace --exclude ibcmd-rs --all-targets
-
-      - name: Check release-shaped root without platform oracle
-        run: cargo check --locked -p ibcmd-rs --all-targets --no-default-features
-
-      - name: Clippy standalone workspace layers
-        run: cargo clippy --locked --workspace --exclude ibcmd-rs --all-targets -- -D warnings
-
-      - name: Test standalone workspace layers
-        run: cargo test --locked --workspace --exclude ibcmd-rs
-
-      - name: Test portable root smoke
-        run: cargo test --locked -p ibcmd-rs --test portable_root_smoke
-
-      - name: Audit release-shaped platform boundary
-        run: cargo test --locked -p ibcmd-rs --test platform_oracle_boundary --no-default-features
-
-      - name: Test CF corruption and property corpus
-        run: cargo test --locked -p ibcmd-rs --test cf_corruption
-
-      - name: Test XML dialect corpus
-        run: cargo test --locked -p ibcmd-rs --test xml_profiles
-
-      # The root library's unit tests (the converters and the load/export
-      # engines) build their paths portably, so they run on every OS.
-      - name: Test the root library
-        run: cargo test --locked -p ibcmd-rs --lib --no-default-features
-
-      # Reuse the Windows lib-test build for sole-operator disposable SQL gates.
-      # Ignored tests are packaged here, never executed against a database in CI.
-      - name: Package Windows root lib test
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $messages = & cargo test --locked -p ibcmd-rs --lib --no-default-features --no-run --message-format=json
-          if ($LASTEXITCODE -ne 0) { throw 'lib test compilation failed' }
-          $executables = @(@($messages) | ForEach-Object {
-            $item = $_ | ConvertFrom-Json -ErrorAction Stop
-            if ($item.reason -eq 'compiler-artifact' -and $item.profile.test -eq $true -and
-                $item.target.name -eq 'ibcmd_rs' -and ($item.target.kind -contains 'lib') -and $item.executable) {
-              $item.executable
-            }
-          })
-          if ($executables.Count -ne 1) { throw 'expected exactly one root lib test executable' }
-          $commit = (& git rev-parse HEAD).Trim()
-          if ($LASTEXITCODE -ne 0) { throw 'source commit lookup failed' }
-          $tree = (& git rev-parse 'HEAD^{tree}').Trim()
-          if ($LASTEXITCODE -ne 0) { throw 'source tree lookup failed' }
-          $rust = (& rustc --version).Trim()
-          if ($LASTEXITCODE -ne 0) { throw 'compiler version lookup failed' }
-          $directory = Join-Path $env:RUNNER_TEMP 'windows-root-lib-test'
-          New-Item -ItemType Directory -Path $directory -ErrorAction Stop | Out-Null
-          $executable = Join-Path $directory 'ibcmd_rs-lib-test.exe'
-          Copy-Item -LiteralPath $executables[0] -Destination $executable -ErrorAction Stop
-          $sha = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()
-          [ordered]@{
-            source_commit = $commit
-            source_tree = $tree
-            rustc = $rust
-            executable = 'ibcmd_rs-lib-test.exe'
-            executable_sha256 = $sha
-            no_default_features = $true
-            profile = 'test'
-            test_filter = 'server::sql_import::transaction::tests::public_sql_held_capture_rolls_back_and_closes_dedicated_session'
-            sql_executed_in_ci = $false
-          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $directory 'build-receipt.json') -Encoding utf8
-
-      - name: Upload Windows root lib test
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-root-lib-test-${{ github.sha }}
-          path: ${{ runner.temp }}/windows-root-lib-test/
-          if-no-files-found: error
-          retention-days: 3
-
-      # Native XML tree -> `cf bootstrap --base-free` -> CF -> XML tree over
-      # the three retained 8.3.27.2214 corpora (Untru/ibcmd-rs#351).
-      - name: Test the XML to CF round trip
-        run: cargo test --locked -p ibcmd-rs --test cf_native_roundtrip --no-default-features
-
   legacy-windows:
     name: Legacy Root (Windows)
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

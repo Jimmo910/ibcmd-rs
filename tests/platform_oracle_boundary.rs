@@ -1,5 +1,3 @@
-#![cfg(not(feature = "platform-oracle"))]
-
 use std::{fs, path::PathBuf, process::Command};
 
 #[path = "support/elf_debug.rs"]
@@ -32,17 +30,15 @@ const EDT_SOURCE_IDS: &[&[u8]] = &[
 
 fn exclude_declarative_edt_ids(bytes: &mut [u8]) {
     for identifier in EDT_SOURCE_IDS {
-        let positions: Vec<_> = bytes
-            .windows(identifier.len())
-            .enumerate()
-            .filter_map(|(index, window)| {
-                (window == *identifier
-                    && (identifier.starts_with(b".settings/")
-                        || !matches!(
-                            bytes.get(index + identifier.len()),
-                            Some(b'.' | b'/' | b'$')
-                        )))
-                .then_some(index)
+        // `memmem` rather than a window scan: the debug test binary scans
+        // the whole debug executable, which a window scan takes minutes on.
+        let positions: Vec<_> = memchr::memmem::find_iter(bytes, identifier)
+            .filter(|&index| {
+                identifier.starts_with(b".settings/")
+                    || !matches!(
+                        bytes.get(index + identifier.len()),
+                        Some(b'.' | b'/' | b'$')
+                    )
             })
             .collect();
         for index in positions {
@@ -100,25 +96,15 @@ fn released_infobase_mode_refuses_rather_than_runs_the_platform() {
     // What only the platform does is refused by name, with no PATH to find
     // it on and nothing launched. `config apply` itself is served by
     // ibcmd-rs (without the platform) since 0.4, and its dynamic update since 0.5 (#347); its
-    // extensions are not.
-    for args in [
-        &[
-            "infobase",
-            "create",
-            "--dbms=MSSQLServer",
-            "--db-server=localhost",
-            "--db-name=ibcmd_rs_boundary",
-        ][..],
-        &[
-            "infobase",
-            "config",
-            "apply",
-            "--dbms=MSSQLServer",
-            "--db-server=localhost",
-            "--db-name=ibcmd_rs_boundary",
-            "--extension=E",
-        ][..],
-    ] {
+    // extension writes require an explicit verified target.
+    for args in [&[
+        "infobase",
+        "create",
+        "--dbms=MSSQLServer",
+        "--db-server=localhost",
+        "--db-name=ibcmd_rs_boundary",
+    ][..]]
+    {
         let output = run(args);
         assert_eq!(output.status.code(), Some(1), "{args:?}");
         let stderr = String::from_utf8(output.stderr).unwrap();
@@ -127,6 +113,18 @@ fn released_infobase_mode_refuses_rather_than_runs_the_platform() {
             "{args:?}: {stderr}"
         );
     }
+    // With no PATH, the extension route fails its binding guard before any
+    // SQL connection or external program, rather than invoking the platform.
+    let output = run(&["infobase", "config", "apply", "--extension=E"]);
+    assert_eq!(
+        output.status.code(),
+        Some(if cfg!(windows) { -1 } else { 255 })
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("extension writes require --cluster-id")
+    );
 }
 
 #[test]
@@ -141,10 +139,7 @@ fn default_binary_has_no_known_platform_or_edt_payload_markers() {
     exclude_declarative_edt_ids(&mut bytes);
 
     for marker in FORBIDDEN_BINARY_MARKERS {
-        if let Some(offset) = bytes
-            .windows(marker.len())
-            .position(|window| window == *marker)
-        {
+        if let Some(offset) = memchr::memmem::find(&bytes, marker) {
             let start = offset.saturating_sub(32);
             let end = (offset + marker.len() + 32).min(bytes.len());
             panic!(
