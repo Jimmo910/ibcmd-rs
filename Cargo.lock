@@ -726,7 +726,15 @@ dependencies = [
 name = "ibcmd-form-body"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "ibcmd-1c-text",
+ "ibcmd-1c-vocab",
+ "ibcmd-core",
+ "ibcmd-schema",
+ "ibcmd-xml",
+ "quick-xml 0.38.4",
  "serde",
+ "uuid",
 ]
 
 [[package]]
