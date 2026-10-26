@@ -26,7 +26,9 @@ use ibcmd_1c_text::{
 // `ibcmd-1c-vocab` crate's, and so are a few payload helpers; `mssql_dump`'s
 // modules reach them by their old names through these imports, at their old
 // visibility. The two pattern readers that need the extension-export state
-// are wrappers further down (`parse_form_metadata_type_pattern`).
+// are wrappers further down (`parse_metadata_type_pattern_element_with_builtin`,
+// and `parse_form_metadata_type_pattern`, kept for tests: the form reader
+// passes the state it was built with).
 use ibcmd_1c_vocab::{
     ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES,
     ACCUMULATION_REGISTER_TURNOVERS_STANDARD_ATTRIBUTES,
@@ -1050,6 +1052,7 @@ pub(crate) use file_infobase::{
 pub use postgres_infobase::PostgresExportSnapshot;
 mod form;
 mod form_body;
+mod form_body_host;
 mod form_extension;
 #[cfg(test)]
 mod revision_mix_tests;
@@ -36961,7 +36964,9 @@ fn parse_metadata_type_pattern(
 }
 
 /// [`ibcmd_1c_vocab::parse_form_metadata_type_pattern`] with the
-/// extension-export state as its `keeps_unresolved_type_id`.
+/// extension-export state as its `keeps_unresolved_type_id`. The form reader
+/// passes the state it was built with instead (`form_body::parse_form_type_pattern`).
+#[cfg(test)]
 fn parse_form_metadata_type_pattern(
     value: &str,
     type_index: &BTreeMap<String, String>,
