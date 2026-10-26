@@ -585,8 +585,7 @@ pub fn verify_common_module_storage_schema(json: &str) -> Result<()> {
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit())
             && schema.collation_name == "Cyrillic_General_CI_AS"
-            && schema.compatibility_level == 160
-            && !schema.is_read_committed_snapshot_on,
+            && schema.compatibility_level == 160,
         "SQL staging database profile is unsupported"
     );
     ensure!(
@@ -699,7 +698,11 @@ struct StagingSchema {
     principal_sid_sha256: String,
     collation_name: String,
     compatibility_level: u16,
-    is_read_committed_snapshot_on: bool,
+    // Both database defaults are supported: every storage read is protected by
+    // retained HOLDLOCK table locks (TABLOCKX during publication). Keep this
+    // required typed field in the exact canonical JSON/schema hash nevertheless.
+    #[serde(rename = "is_read_committed_snapshot_on")]
+    _is_read_committed_snapshot_on: bool,
     tables: Vec<StagingTable>,
 }
 #[derive(serde::Deserialize)]
@@ -829,6 +832,38 @@ mod staging_schema_contracts {
         refused(|v| v["principal_sid_sha256"] = json!("x".repeat(64)));
         refused(|v| v["principal_sid_sha256"] = json!("a".repeat(63)));
     }
+    #[test]
+    fn rcsi_modes_are_admitted_but_remain_typed_and_byte_hash_bound() {
+        for enabled in [false, true] {
+            let mut value = fixture();
+            value["is_read_committed_snapshot_on"] = json!(enabled);
+            assert!(verify_common_module_storage_schema(&value.to_string()).is_ok());
+        }
+        for invalid in [Value::Null, json!(0), json!("true")] {
+            refused(|v| v["is_read_committed_snapshot_on"] = invalid);
+        }
+        refused(|v| {
+            v.as_object_mut()
+                .unwrap()
+                .remove("is_read_committed_snapshot_on");
+        });
+        // The setting is still part of the exact observed UTF-16 JSON seal.
+        // Changing it without changing that seal cannot mint a profile.
+        let mut row = observation_metadata();
+        let crate::sql::SqlValue::Text(json) = &mut row.values[7] else {
+            panic!("metadata JSON is text");
+        };
+        let changed = json.replace(
+            "\"is_read_committed_snapshot_on\":false",
+            "\"is_read_committed_snapshot_on\":true",
+        );
+        assert_ne!(*json, changed);
+        *json = changed;
+        let mut observer = observer();
+        assert!(observer.accept(row).is_err());
+        assert!(observer.profile.is_none() && !observer.sealed);
+    }
+
     #[test]
     fn duplicate_unknown_and_missing_required_nullable_fields_refuse() {
         let value = fixture().to_string();
@@ -977,12 +1012,20 @@ mod staging_schema_contracts {
         let seal = query.find(" SELECT @P7;").unwrap();
         assert!(rollback < seal);
         let held = super::held_query().unwrap();
+        // RCSI affects default READ COMMITTED reads, not these explicit
+        // serializable locks. Later payload/catalog reads stay under them.
+        assert_eq!(query.matches("WITH (TABLOCK,HOLDLOCK)").count(), 3);
+        assert_eq!(held.matches("WITH (TABLOCKX,HOLDLOCK)").count(), 3);
+        assert!(!held.contains("WITH (TABLOCK,HOLDLOCK)"));
+        assert!(!held.contains("NOLOCK") && !held.contains("READPAST"));
+        assert!(held.contains("IF @SchemaHash<>@P1 OR "));
         for marker in [
             "staging_safety_version",
             "unsafe_storage_features",
             "metadata_sysadmin",
             "principal_sid_sha256",
             "params_marker_absent",
+            "d.is_read_committed_snapshot_on",
         ] {
             assert!(query.contains(marker) && held.contains(marker));
         }

@@ -490,3 +490,34 @@ receipts retain their exact attribution. FormModule remains outside this editor
 route and its native fixture acceptance is tracked separately. The unrelated
 full-branch diagnostic-file registration policy refusal remains unresolved; no
 baseline growth or whitelist was introduced.
+
+
+## Native RCSI database default
+
+The first production RPC attempt on the fresh public CommonModule baseline
+completed initialization, connection and pending-state checks, then refused
+preparation with the unsupported database-profile error. Publication was never
+dispatched; full Config/ConfigSave seals were unchanged and the product exited
+naturally. Retained metadata identified RCSI=true after native apply, while the
+pure verifier unnecessarily required false. No database option was changed.
+
+Both boolean defaults are now admitted. This does not remove a locking guard:
+initial observation/capture acquires Config, ConfigSave and Params in that order
+with TABLOCK,HOLDLOCK; held publication uses TABLOCKX,HOLDLOCK on all three for
+the full same-session compare/write/recheck/commit boundary. SQL Server defines
+HOLDLOCK as SERIALIZABLE and retains the table locks until transaction completion
+([table hints](https://learn.microsoft.com/en-us/sql/t-sql/queries/hints-transact-sql-table)).
+The required typed RCSI field remains in the exact canonical UTF-16 JSON hash;
+changing it between observation and capture still invalidates the profile seal.
+This supports database READ COMMITTED defaults, not arbitrary explicit SNAPSHOT
+transactions or a change to the dedicated-session protocol.
+
+The new regression first failed on the true default. It covers both booleans,
+missing/null/nonboolean refusal and an altered RCSI bit with the old byte hash.
+Source controls retain all three shared/exclusive lock hints and the held schema
+comparison. Corrected-head Windows RPC and Form runtime remain separate gates;
+older artifacts do not inherit this fix. Nine focused snapshot tests passed,
+production library check passed with the existing 97 warnings, and fmt/diff
+checks passed. The expected failing log is retained as
+`logs/issue-382-rcsi-red.log`; corrected runs are `issue-382-rcsi-green.log`
+and `issue-382-rcsi-libcheck.log` in the external logs directory.
