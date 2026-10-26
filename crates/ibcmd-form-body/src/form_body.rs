@@ -11411,8 +11411,13 @@ struct FormAttributePlatformColumn {
 }
 
 // Platform-owned columns of built-in value types, independent of infobase metadata.
+const FORM_DYNAMIC_LIST_TYPE_UUID: &str = "65abad24-838b-4987-8b35-ed9e2bd4d9c8";
+
+/// Read-only type identity used by bounded root diagnostics.
 #[doc(hidden)]
-pub const FORM_DYNAMIC_LIST_TYPE_UUID: &str = "65abad24-838b-4987-8b35-ed9e2bd4d9c8";
+pub fn form_dynamic_list_type_uuid() -> &'static str {
+    FORM_DYNAMIC_LIST_TYPE_UUID
+}
 const FORM_VALUE_LIST_TYPE_UUID: &str = "4772b3b4-f4a3-49c0-a1a5-8cb5961511a3";
 /// `ValueListItem.Value` is addressed by column id `0`, unlike every other
 /// platform column of the built-in value types. Evidence: UT 11.5.27.75

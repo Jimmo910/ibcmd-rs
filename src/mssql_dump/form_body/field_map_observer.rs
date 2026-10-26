@@ -140,7 +140,7 @@ fn observe_with_context(
         let dynamic = attribute
             .pattern()
             .and_then(parse_form_exact_single_type_uuid)
-            .is_some_and(|id| id.eq_ignore_ascii_case(FORM_DYNAMIC_LIST_TYPE_UUID));
+            .is_some_and(|id| id.eq_ignore_ascii_case(form_dynamic_list_type_uuid()));
         if !dynamic {
             continue;
         }
@@ -650,7 +650,7 @@ mod tests {
     }
     pub(super) fn record(settings: &str) -> String {
         r##"{9,{1},0,"PRIVATE_ATTRIBUTE",{1,0},{"Pattern",{"#",TYPE}},{0,{0,{"B",1},0}},{0,{0,{"B",1},0}},{0,0},{0,0},0,0,0,0,BAG,{0,0}}"##
-            .replace("TYPE", FORM_DYNAMIC_LIST_TYPE_UUID).replace("BAG", settings)
+            .replace("TYPE", form_dynamic_list_type_uuid()).replace("BAG", settings)
     }
     fn compressed(plain: &str) -> Vec<u8> {
         let mut encoder = DeflateEncoder::new(Vec::new(), Compression::fast());
@@ -683,7 +683,7 @@ mod tests {
             .iter()
             .map(|r| {
                 r.replace(
-                    FORM_DYNAMIC_LIST_TYPE_UUID,
+                    form_dynamic_list_type_uuid(),
                     "00000000-0000-0000-0000-000000000000",
                 )
             })

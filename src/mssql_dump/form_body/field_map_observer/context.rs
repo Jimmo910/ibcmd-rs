@@ -276,7 +276,7 @@ mod tests {
         let manual = record(&bag("SELECT T.Ref FROM Catalog.PRIVATE_TABLE AS T"));
         let nonmanual = manual.replace(r#""ManualQuery",{"B",1}"#, r#""ManualQuery",{"B",0}"#);
         let nondynamic = manual.replace(
-            FORM_DYNAMIC_LIST_TYPE_UUID,
+            form_dynamic_list_type_uuid(),
             "00000000-0000-0000-0000-000000000000",
         );
         for other in [nonmanual, nondynamic] {
