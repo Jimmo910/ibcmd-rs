@@ -1610,7 +1610,7 @@ mod tests {
             1,
         );
         assert_ne!(changed, xml);
-        std::fs::write(form, changed).unwrap();
+        std::fs::write(&form, changed).unwrap();
         let refusal = plan_from_source_trees(
             &base,
             &next,
@@ -1624,6 +1624,41 @@ mod tests {
             format!("{refusal:#}").contains("changes descriptor uuid"),
             "a valid schema addition must not override retained tableless identity refusal: {refusal:#}"
         );
+        std::fs::write(&form, &xml).unwrap();
+        let module = "Catalogs/Cov_Own/Ext/ObjectModule.bsl";
+        assert!(base.join(module).is_file() && next.join(module).is_file());
+        std::fs::remove_file(next.join(module)).unwrap();
+        let refusal = plan_from_source_trees(
+            &base, &next, active.image(), proposed.image(), [0; 16], &state,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{refusal:#}").contains("source-transition refusal")
+                && format!("{refusal:#}").contains(module),
+            "a valid schema addition must not override an unmodeled retained-body refusal: {refusal:#}"
+        );
+    }
+    #[test]
+    fn final_admission_moved_data_assets_preserve_source_rules_and_form_module_exception() {
+        for (path, admitted) in [
+            ("Catalogs/Existing/Ext/ObjectModule.bsl", false),
+            ("Catalogs/Existing/Forms/Flow.xml", false),
+            ("Catalogs/Existing/Templates/Print.xml", false),
+            ("Catalogs/Existing/Forms/Flow/Ext/Form/Module.bsl", true),
+        ] {
+            for added in [false, true] {
+                let base = Scratch::new().unwrap();
+                let next = Scratch::new().unwrap();
+                let target = if added { &next.0 } else { &base.0 }.join(path);
+                std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+                std::fs::write(target, b"source asset").unwrap();
+                assert_eq!(
+                    classify(&base.0, &next.0, &[], &[]).is_ok(),
+                    admitted,
+                    "{path}, added={added}"
+                );
+            }
+        }
     }
     #[test]
     fn service_context_is_copied_and_guarded_without_nullable_default_guesses() {
