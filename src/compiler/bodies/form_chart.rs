@@ -1605,9 +1605,7 @@ pub(super) fn string(node: &XmlNode) -> Result<String> {
     Ok(quote(leaf(node)?))
 }
 
-pub(super) fn quote(text: &str) -> String {
-    format!("\"{}\"", text.replace('"', "\"\""))
-}
+pub(super) use ibcmd_1c_text::format_1c_string as quote;
 
 /// A colour: `auto` is the chart's unset colour, `<kind>:<uuid>` a style item
 /// the configuration no longer has (published verbatim by the decoder), and

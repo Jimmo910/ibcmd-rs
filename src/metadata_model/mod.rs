@@ -173,19 +173,7 @@ pub fn localized(element: Option<&Element>) -> Brace {
 /// is CRLF-only). Idempotent: some paths apply it twice. A CR LF the string
 /// itself holds arrives already spelled `\r\r\n` (`MetadataXml::parse`).
 pub fn native_text(text: &str) -> String {
-    if !text.contains('\n') {
-        return text.to_string();
-    }
-    let mut out = String::with_capacity(text.len() + 8);
-    let mut previous = ' ';
-    for ch in text.chars() {
-        if ch == '\n' && previous != '\r' {
-            out.push('\r');
-        }
-        out.push(ch);
-        previous = ch;
-    }
-    out
+    ibcmd_1c_text::crlf_line_breaks(text)
 }
 
 /// The block every metadata object and child object starts with:

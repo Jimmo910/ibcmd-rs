@@ -1,6 +1,6 @@
 //! Helpers the readers use beside the vocabularies: the elapsed time of a
-//! timing report, raw-deflate payloads and the file name of a picture
-//! payload.
+//! timing report, raw-deflate payloads, the file name of a picture payload and
+//! whether a payload is SVG.
 
 use std::io::Read;
 use std::time::Instant;
@@ -12,13 +12,20 @@ pub fn elapsed_ms(started: Instant) -> u64 {
     started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
-pub fn inflate_raw_deflate(input: &[u8]) -> Result<Vec<u8>> {
+/// A raw deflate stream inflated; a stream that does not inflate is the
+/// decoder's I/O error alone, which callers name in their own context
+/// (`module_blob`'s readers).
+pub fn inflate_raw(input: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = DeflateDecoder::new(input);
     let mut output = Vec::new();
-    decoder
-        .read_to_end(&mut output)
-        .context("failed to inflate raw deflate blob")?;
+    decoder.read_to_end(&mut output)?;
     Ok(output)
+}
+
+/// [`inflate_raw`], its error named `failed to inflate raw deflate blob` (the
+/// `mssql_dump` readers).
+pub fn inflate_raw_deflate(input: &[u8]) -> Result<Vec<u8>> {
+    inflate_raw(input).context("failed to inflate raw deflate blob")
 }
 
 pub fn ext_picture_file_name(bytes: &[u8]) -> &'static str {
@@ -63,4 +70,48 @@ pub fn is_svg_content(bytes: &[u8]) -> bool {
 fn is_svg_text(text: &str) -> bool {
     let text = text.trim_start_matches('\u{feff}').trim_start();
     text.starts_with("<svg") || text.starts_with("<?xml") && text.contains("<svg")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The chain an error prints (`Error: …` and its `Caused by:` lines),
+    /// and that the decoder's I/O error stays reachable under the context.
+    #[test]
+    fn a_stream_that_does_not_inflate_keeps_its_error_chain() {
+        // A final block of the reserved type 3, which no stream holds.
+        let corrupt = [0xff, 0xff];
+        let raw = inflate_raw(&corrupt).unwrap_err();
+        let named = inflate_raw_deflate(&corrupt).unwrap_err();
+        let chain = |error: &anyhow::Error| -> Vec<String> {
+            error.chain().map(ToString::to_string).collect()
+        };
+        assert_eq!(chain(&raw), ["corrupt deflate stream"]);
+        assert_eq!(
+            chain(&named),
+            [
+                "failed to inflate raw deflate blob",
+                "corrupt deflate stream"
+            ]
+        );
+        assert_eq!(format!("{named}"), "failed to inflate raw deflate blob");
+        assert_eq!(
+            format!("{named:#}"),
+            "failed to inflate raw deflate blob: corrupt deflate stream"
+        );
+        assert!(raw.downcast_ref::<std::io::Error>().is_some());
+        assert!(named.downcast_ref::<std::io::Error>().is_some());
+    }
+
+    #[test]
+    fn a_raw_stream_inflates() {
+        use flate2::{Compression, write::DeflateEncoder};
+        use std::io::Write;
+        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"{1,\"\xd0\x81\"}").unwrap();
+        let blob = encoder.finish().unwrap();
+        assert_eq!(inflate_raw(&blob).unwrap(), b"{1,\"\xd0\x81\"}");
+        assert_eq!(inflate_raw_deflate(&blob).unwrap(), b"{1,\"\xd0\x81\"}");
+    }
 }

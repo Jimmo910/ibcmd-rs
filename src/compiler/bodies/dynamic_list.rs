@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow};
+use ibcmd_1c_text::format_1c_string as quoted;
 
 const CORE: &str = "http://v8.1c.ru/8.1/data/core";
 const SCHEMA: &str = "http://v8.1c.ru/8.1/data-composition-system/schema";
@@ -316,10 +317,6 @@ impl FieldMap {
         let variant = path.marker.then(|| path.twin.clone());
         self.id_of(&path.rest, &variant)
     }
-}
-
-fn quoted(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
 }
 
 // ----------------------------------------------------------------- XML text
