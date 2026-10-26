@@ -12,7 +12,7 @@ an unused palette namespace declaration. Private source bytes are not fixtures.
 Pinned public corpus: Untru/1c-fixtures@3b9a77c87b7f8a7bd025a9dceb5114e998c64b2a,
 PR Untru/1c-fixtures#2. Generated versions 1.2.0.4 -> 1.2.0.5 / 1.2.0.6 cover
 both 8.5.1.1150 (XML2.21) and 8.3.27.2214 (XML2.20). The native two-round
-proofs, source/CFE versions and combined1.2.0.6 were independently verified.
+proofs, source/CFE versions and combined 1.2.0.6 were independently verified.
 Earlier inputs, CFE, native trees and SQL facts remain unchanged.
 
 The root regression runs the production whole-tree compiler in four isolated
@@ -62,8 +62,8 @@ https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-manage
 - Measured native-plan report now includes Params, SchemaStorage and scheduled
   service writes. Its real-plan regression first failed on the missing table.
 - Server-visibility regression first failed; 140 affected root tests then passed. A read-only SQL Server SELECT evaluated the exact production CASE on 405 literal version/role/permission combinations with 0 mismatches; independent review recomputed every expected row. No application tables, principals or permissions were changed.
-- Full project gates: cargo xtask check:7 PASS; final cargo xtask ci:28 PASS on f69ed90ea215d305a3b66fd5d140d35e7ff53f1e; root library4125 PASS,0 failures,16 existing ignored tests.
-- Independent fresh-context review: APPROVE; independent final native-dialog/profile20/20 and XML comparison3/3 PASS, plus independent405-row SQL matrix verification.
+- Full project gates: cargo xtask check: 7 PASS on c26a562d9beb582a116eafbc3560a77ee2503a3a; final cargo xtask ci: 28 PASS on f69ed90ea215d305a3b66fd5d140d35e7ff53f1e; root library 4,125 PASS, 0 failures, 16 existing ignored tests.
+- Independent fresh-context review: APPROVE; independent final native-dialog/profile 20/20 and XML comparison 3/3 PASS, plus independent 405-row SQL matrix verification.
 
 A full-suite run exposed shared offline test state in an SQL-client probe.
 The probe now runs in its own process with every prior assertion retained.
@@ -71,3 +71,11 @@ Another test-only correction scopes palette omission to XML2.21, whose native
 envelope declares it. Neither correction ignores a test or changes production
 acceptance. CI logs and historical red/green evidence are retained locally;
 hosted build/release checks remain visible in PR #584.
+The subsequent integration with master #586 was tested at
+5f22ff89a1e97f3c9cd5e056850f283d50823ebe: local CI 28 PASS, root library
+4,124 passed / 0 failed / 16 ignored; the remaining root test moved into
+ibcmd-1c-vocab and passes there. The dev debug=0 executable from that source
+has SHA-256 3aa7a9e575131eeac252e725f51bdbdb7fc240b81ee1cd540b57d2de7efc32e5.
+These are historical source-labelled results, separate from the earlier SQL
+execution identities in native-restructure-20261025.md. Test/check gates run
+their own compiled harnesses, rather than the SQL execution binary.
