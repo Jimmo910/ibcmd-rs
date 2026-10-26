@@ -1541,6 +1541,79 @@ mod tests {
     }
 
     #[test]
+    fn final_admission_structural_plan_preserves_retained_tableless_identity() {
+        use ibcmd_cf::{archive::decode_archive_uniform, payload::PayloadEncoding};
+        use ibcmd_core::{
+            artifact::StorageProfileId, limits::ResourceLimits, storage::StorageProvenance,
+        };
+        let set = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/1c-fixtures/coverage/8.5.1.1150/extensions/restructuring");
+        let base = set.join("native/CovRestructureBaseline");
+        let native_update = set.join("native/CovRestructureUpdate");
+        let scratch = Scratch::new().unwrap();
+        let next = scratch.0.join("after");
+        for relative in crate::load::relative_files(&native_update).unwrap() {
+            let target = next.join(&relative);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::copy(native_update.join(&relative), target).unwrap();
+        }
+        let decode = |name: &str| {
+            let packed = crate::module_blob::decode_base64_mime(
+                &std::fs::read_to_string(set.join(format!("variants/{name}.cfe.b64"))).unwrap(),
+            )
+            .unwrap();
+            decode_archive_uniform(
+                std::io::Cursor::new(&packed),
+                ResourceLimits::for_input_bytes(packed.len() as u64),
+                StorageProfileId::parse("mssql-extension-8.3.27").unwrap(),
+                StorageProvenance::new("public native Coverage combined admission regression")
+                    .unwrap(),
+                PayloadEncoding::RawDeflate,
+            )
+            .unwrap()
+        };
+        let active = decode("CovRestructureBaseline");
+        let proposed = decode("CovRestructureUpdate");
+        let old = objects(&base, active.image()).unwrap();
+        let new = objects(&next, proposed.image()).unwrap();
+        let changed = classify(&base, &next, &old, &new).unwrap();
+        assert!(new.iter().any(|o| o.kind == "Catalog"
+            && !old.iter().any(|before| before.uuid == o.uuid)
+            && changed.contains(&o.uuid)));
+        let state = ExtensionRestructureState {
+            params: vec![],
+            schemas: vec![],
+            services: vec![],
+        };
+        let control = plan_from_source_trees(
+            &base, &next, active.image(), proposed.image(), [0; 16], &state,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{control:#}").contains("extension schema row 1 is absent"),
+            "valid native catalog additions must reach schema-state validation: {control:#}"
+        );
+        let form = next.join("CommonForms/Cov_ActivationForm.xml");
+        let xml = std::fs::read_to_string(&form).unwrap();
+        let model = MetadataXml::parse(xml.as_bytes()).unwrap();
+        let old_id = model.object().unwrap().attr("uuid").unwrap();
+        let changed = xml.replacen(
+            &format!("uuid=\"{old_id}\""),
+            "uuid=\"aaaaaaaa-0000-4000-8000-000000000099\"",
+            1,
+        );
+        assert_ne!(changed, xml);
+        std::fs::write(form, changed).unwrap();
+        let refusal = plan_from_source_trees(
+            &base, &next, active.image(), proposed.image(), [0; 16], &state,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{refusal:#}").contains("changes descriptor uuid"),
+            "a valid schema addition must not override retained tableless identity refusal: {refusal:#}"
+        );
+    }
+    #[test]
     fn service_context_is_copied_and_guarded_without_nullable_default_guesses() {
         let fields = vec![
             FieldEntry::new(
