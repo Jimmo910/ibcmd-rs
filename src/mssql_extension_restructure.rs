@@ -988,6 +988,7 @@ pub(crate) fn prepare(
             bail!("extension schema update cannot classify an incomplete source export");
         }
     }
+    crate::mssql_extension_tree_load::require_structural_root_correspondence(&base, &next)?;
     let old = objects(&base, active)?;
     let new = objects(&next, &proposed)?;
     let changed: BTreeSet<_> = classify(&base, &next, &old, &new)?.into_iter().collect();
@@ -1018,6 +1019,7 @@ pub fn plan_from_source_trees(
     extension_id: [u8; 16],
     s: &ExtensionRestructureState,
 ) -> Result<Option<ExtensionRestructurePlan>> {
+    crate::mssql_extension_tree_load::require_structural_root_correspondence(base, next)?;
     let old = objects(base, active)?;
     let new = objects(next, proposed)?;
     let changed: BTreeSet<_> = classify(base, next, &old, &new)?.into_iter().collect();
@@ -1586,7 +1588,12 @@ mod tests {
             services: vec![],
         };
         let control = plan_from_source_trees(
-            &base, &next, active.image(), proposed.image(), [0; 16], &state,
+            &base,
+            &next,
+            active.image(),
+            proposed.image(),
+            [0; 16],
+            &state,
         )
         .unwrap_err();
         assert!(
@@ -1605,7 +1612,12 @@ mod tests {
         assert_ne!(changed, xml);
         std::fs::write(form, changed).unwrap();
         let refusal = plan_from_source_trees(
-            &base, &next, active.image(), proposed.image(), [0; 16], &state,
+            &base,
+            &next,
+            active.image(),
+            proposed.image(),
+            [0; 16],
+            &state,
         )
         .unwrap_err();
         assert!(

@@ -493,6 +493,13 @@ fn validate_root_membership(
     }
     Ok(())
 }
+/// A structural schema plan replaces a source refusal only after proving the
+/// same root/descriptor identities as the whole-tree compiler. DATA additions
+/// are admitted here; their physical effects are classified by the planner.
+pub(crate) fn require_structural_root_correspondence(base: &Path, next: &Path) -> Result<()> {
+    let diff = diff_trees_normalized(base, next)?;
+    compilation_root_edit(base, next, &diff, &[]).map(|_| ())
+}
 fn compilation_root_edit(
     base: &Path,
     input: &Path,
