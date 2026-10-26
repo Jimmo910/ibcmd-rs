@@ -40449,6 +40449,182 @@
           ]
         ]
       ]
+    },
+    {
+      "id": "8.3.27.2214-legacy-dynamic-table42-ChoiceFoldersAndItems",
+      "set": "8.3.27.2214/corpus-legacy-dynamic-table42",
+      "variant": "CovDynamicTableFolders",
+      "file": "CommonForms/CovDynamicTableFolders/Ext/Form.xml",
+      "source": "minimized root42/table49 dynamic-list profile with the four observed values; independently authored current XML counterpart preserves all four values",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}Table",
+        "name": "Probe",
+        "attributes": {
+          "id": "1"
+        }
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}ChoiceFoldersAndItems",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}ChoiceFoldersAndItems",
+        [],
+        "Folders",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.3.27.2214-legacy-dynamic-table42-RestoreCurrentRow",
+      "set": "8.3.27.2214/corpus-legacy-dynamic-table42",
+      "variant": "CovDynamicTableFolders",
+      "file": "CommonForms/CovDynamicTableFolders/Ext/Form.xml",
+      "source": "minimized root42/table49 dynamic-list profile with the four observed values; independently authored current XML counterpart preserves all four values",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}Table",
+        "name": "Probe",
+        "attributes": {
+          "id": "1"
+        }
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}RestoreCurrentRow",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}RestoreCurrentRow",
+        [],
+        "false",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.3.27.2214-legacy-dynamic-table42-ShowRoot",
+      "set": "8.3.27.2214/corpus-legacy-dynamic-table42",
+      "variant": "CovDynamicTableFolders",
+      "file": "CommonForms/CovDynamicTableFolders/Ext/Form.xml",
+      "source": "minimized root42/table49 dynamic-list profile with the four observed values; independently authored current XML counterpart preserves all four values",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}Table",
+        "name": "Probe",
+        "attributes": {
+          "id": "1"
+        }
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}ShowRoot",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}ShowRoot",
+        [],
+        "true",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.3.27.2214-legacy-dynamic-table42-AllowRootChoice",
+      "set": "8.3.27.2214/corpus-legacy-dynamic-table42",
+      "variant": "CovDynamicTableFolders",
+      "file": "CommonForms/CovDynamicTableFolders/Ext/Form.xml",
+      "source": "minimized root42/table49 dynamic-list profile with the four observed values; independently authored current XML counterpart preserves all four values",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}Table",
+        "name": "Probe",
+        "attributes": {
+          "id": "1"
+        }
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}AllowRootChoice",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}AllowRootChoice",
+        [],
+        "true",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.5.1.1150-legacy-dynamic-table42-ChoiceFoldersAndItems",
+      "set": "8.5.1.1150/corpus-legacy-dynamic-table42",
+      "variant": "CovDynamicTableFolders",
+      "file": "CommonForms/CovDynamicTableFolders/Ext/Form.xml",
+      "source": "minimized root42/table49 dynamic-list profile with the four observed values; independently authored current XML counterpart preserves all four values",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}Table",
+        "name": "Probe",
+        "attributes": {
+          "id": "1"
+        }
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}ChoiceFoldersAndItems",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}ChoiceFoldersAndItems",
+        [],
+        "Folders",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.5.1.1150-legacy-dynamic-table42-RestoreCurrentRow",
+      "set": "8.5.1.1150/corpus-legacy-dynamic-table42",
+      "variant": "CovDynamicTableFolders",
+      "file": "CommonForms/CovDynamicTableFolders/Ext/Form.xml",
+      "source": "minimized root42/table49 dynamic-list profile with the four observed values; independently authored current XML counterpart preserves all four values",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}Table",
+        "name": "Probe",
+        "attributes": {
+          "id": "1"
+        }
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}RestoreCurrentRow",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}RestoreCurrentRow",
+        [],
+        "false",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.5.1.1150-legacy-dynamic-table42-ShowRoot",
+      "set": "8.5.1.1150/corpus-legacy-dynamic-table42",
+      "variant": "CovDynamicTableFolders",
+      "file": "CommonForms/CovDynamicTableFolders/Ext/Form.xml",
+      "source": "minimized root42/table49 dynamic-list profile with the four observed values; independently authored current XML counterpart preserves all four values",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}Table",
+        "name": "Probe",
+        "attributes": {
+          "id": "1"
+        }
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}ShowRoot",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}ShowRoot",
+        [],
+        "true",
+        []
+      ],
+      "known_symptom": null
+    },
+    {
+      "id": "8.5.1.1150-legacy-dynamic-table42-AllowRootChoice",
+      "set": "8.5.1.1150/corpus-legacy-dynamic-table42",
+      "variant": "CovDynamicTableFolders",
+      "file": "CommonForms/CovDynamicTableFolders/Ext/Form.xml",
+      "source": "minimized root42/table49 dynamic-list profile with the four observed values; independently authored current XML counterpart preserves all four values",
+      "anchor": {
+        "tag": "{http://v8.1c.ru/8.3/xcf/logform}Table",
+        "name": "Probe",
+        "attributes": {
+          "id": "1"
+        }
+      },
+      "property": "{http://v8.1c.ru/8.3/xcf/logform}AllowRootChoice",
+      "native": [
+        "{http://v8.1c.ru/8.3/xcf/logform}AllowRootChoice",
+        [],
+        "true",
+        []
+      ],
+      "known_symptom": null
     }
   ]
 }
