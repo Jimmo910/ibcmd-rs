@@ -13,13 +13,15 @@ formerly in `src/mssql_dump/mod.rs`, `source_assets.rs` and `refs.rs`),
 command vocabularies, formerly in `src/mssql_dump/mod.rs`, `source_assets.rs`
 and `command_interface.rs`, and the standard-picture table, formerly
 `src/metadata_model/standard_pictures.rs`, which was outside the slice and
-joined it with its 221 identifiers), `crates/ibcmd-form-body/src/` (the indexes,
-compatibility rules and timing report the form reader is given, formerly in
+joined it with its 221 identifiers), `crates/ibcmd-form-body/src/` (the form
+body reader `form_body.rs`, formerly `src/mssql_dump/form_body.rs`; the
+indexes, compatibility rules and timing report it is given, formerly in
 `src/mssql_dump/mod.rs`, `refs.rs`, `dcs.rs`, `source_assets.rs`, `timing.rs`
-and `form_ref_index.rs`, and the form body record, the event block, the 8.5
-layout down-conversion and the data-composition normalizer it reads, formerly
-in `src/module_blob.rs`, `src/mssql_dump/form_extension.rs`,
-`form/layout_8_5_1.rs` and `dcs.rs`) and `crates/ibcmd-moxel/src/root_helpers/`.  Code that
+and `form_ref_index.rs`; and the form body record, the event block and
+adoption model, the 8.5 layout down-conversion with its group event table and
+the data-composition normalizer it reads, formerly in `src/module_blob.rs`,
+`src/mssql_dump/form_extension.rs`, `form/layout_8_5_1.rs`,
+`form/xml_2_21_writer.rs` and `dcs.rs`) and `crates/ibcmd-moxel/src/root_helpers/`.  Code that
 leaves the slice for a crate takes the slice with it: its directory is listed
 there and its baseline entries move to the new path in the same change, never
 dropped.  Every `*.rs` file below a listed directory is scanned, so a file added

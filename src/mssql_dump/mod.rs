@@ -1047,7 +1047,9 @@ pub(crate) use file_infobase::{
 };
 pub use postgres_infobase::PostgresExportSnapshot;
 mod form;
-mod form_body;
+// The form body reader is the `ibcmd-form-body` crate's; `mssql_dump` reaches
+// its items by their old names and paths through this import.
+use ibcmd_form_body::form_body;
 mod form_body_entry;
 mod form_body_host;
 mod form_extension;

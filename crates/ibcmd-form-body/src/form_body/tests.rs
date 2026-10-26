@@ -3,15 +3,15 @@
 
 use std::io::Write;
 
+use crate::{
+    DcsTypeResolution, InformationRegisterFieldReference, MetadataCommonAttributeContent,
+    MetadataConstantDeclaration, MetadataTableStandardAttributes,
+};
 use flate2::Compression;
 use flate2::write::DeflateEncoder;
 use ibcmd_1c_vocab::{ShortcutModifierStyle, metadata_type_xml_name};
 use ibcmd_core::dcs::{DcsOrderField, DcsOrderItem, DcsOrderType};
 use ibcmd_core::value::CanonicalText;
-use ibcmd_form_body::{
-    DcsTypeResolution, InformationRegisterFieldReference, MetadataCommonAttributeContent,
-    MetadataConstantDeclaration, MetadataTableStandardAttributes,
-};
 
 use super::*;
 
@@ -1182,10 +1182,10 @@ fn assert_dcs_form_server_state_corpus_round_trips(
 #[test]
 fn dcs_form_dynamic_list_server_state_corpus_round_trips_against_retained_evidence() {
     const FORM_BODY_UNPACKED_B64: &str = include_str!(
-        "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-dynamic-list-server-state/form-body-unpacked.bin.b64"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-dynamic-list-server-state/form-body-unpacked.bin.b64"
     );
     const SERVER_STATE_DECODED_B64: &str = include_str!(
-        "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-dynamic-list-server-state/server-state-decoded.xml.b64"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-dynamic-list-server-state/server-state-decoded.xml.b64"
     );
     assert_dcs_form_server_state_corpus_round_trips(
         FORM_BODY_UNPACKED_B64,
@@ -1196,10 +1196,10 @@ fn dcs_form_dynamic_list_server_state_corpus_round_trips_against_retained_eviden
 #[test]
 fn dcs_form_list_settings_server_state_corpus_round_trips_against_retained_evidence() {
     const FORM_BODY_UNPACKED_B64: &str = include_str!(
-        "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-list-settings-server-state/form-body-unpacked.bin.b64"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-list-settings-server-state/form-body-unpacked.bin.b64"
     );
     const SERVER_STATE_DECODED_B64: &str = include_str!(
-        "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-list-settings-server-state/server-state-decoded.xml.b64"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-list-settings-server-state/server-state-decoded.xml.b64"
     );
     assert_dcs_form_server_state_corpus_round_trips(
         FORM_BODY_UNPACKED_B64,
@@ -1253,7 +1253,7 @@ fn parse_form_server_state_envelope_is_source_owned_for_non_empty_content() {
 #[test]
 fn parse_form_server_state_envelope_recognizes_the_evidenced_empty_wrapper() {
     const F1_SERVER_STATE_DECODED_B64: &str = include_str!(
-        "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-dynamic-list-server-state/server-state-decoded.xml.b64"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-dynamic-list-server-state/server-state-decoded.xml.b64"
     );
     let decoded = decode_base64_mime(F1_SERVER_STATE_DECODED_B64).unwrap();
     let encoded = encode_form_server_state_chunks_for_test(&[&decoded[..2], &decoded[2..]]);
@@ -5896,7 +5896,7 @@ fn extracts_table_layout_properties() {
 
     let item = parse_form_child_item_with_attrs(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-table-layout-record/records/32d4a42d-6e4d-49db-b5bc-1ea6dbe9fe4d.item-12.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-table-layout-record/records/32d4a42d-6e4d-49db-b5bc-1ea6dbe9fe4d.item-12.txt"
         ),
         None,
         None,
@@ -6602,7 +6602,8 @@ fn extracts_business_network_table_flags_from_ordinary_wrapper55() {
 #[test]
 fn table_auto_add_incomplete_tail_rule_beats_slot_40_end_to_end() {
     // Saved production wrapper-55 layout; cases change only scalar values.
-    const TABLE: &str = include_str!("../../../tests/fixtures/form_table_spisokdokumentov_raw.txt");
+    const TABLE: &str =
+        include_str!("../../../../tests/fixtures/form_table_spisokdokumentov_raw.txt");
     struct Sink;
     impl FormItemTraceSink for Sink {
         fn record(&self, _event: FormItemTraceEvent) {}
@@ -6690,7 +6691,8 @@ fn table_auto_max_width_tail_rule_is_end_to_end_and_traced() {
 
     // A saved real wrapper-55 layout with a nonempty counted property bag.
     // Cases below mutate only the independently validated scalars under test.
-    const TABLE: &str = include_str!("../../../tests/fixtures/form_table_spisokdokumentov_raw.txt");
+    const TABLE: &str =
+        include_str!("../../../../tests/fixtures/form_table_spisokdokumentov_raw.txt");
 
     fn run(table: String) -> (FormChildItem, FormItemSchemaTraceEvent) {
         let layout = format!("{{1,aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa,{table}}}");
@@ -9808,7 +9810,7 @@ fn minimal_radio_button_literal_ref_choice_is_typed_and_near_misses_are_opaque()
     }
 
     let fixture: Fixture = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/form_radio_choice_list_literal_ref_minimal.json"
+        "../../../../tests/fixtures/form_radio_choice_list_literal_ref_minimal.json"
     ))
     .unwrap();
     assert_eq!(fixture.profile, "radio_button_options");
@@ -10042,7 +10044,7 @@ fn minimal_radio_button_empty_ref_choice_is_typed_and_near_misses_are_opaque() {
     }
 
     let fixture: Fixture = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/form_radio_choice_list_empty_ref_minimal.json"
+        "../../../../tests/fixtures/form_radio_choice_list_empty_ref_minimal.json"
     ))
     .unwrap();
     assert_eq!(fixture.profile, "radio_button_options");
@@ -10196,7 +10198,7 @@ fn minimal_radio_button_nil_choice_list_is_typed_and_matches_native_xml() {
     }
 
     let fixture: Fixture = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/form_radio_choice_list_nil_minimal.json"
+        "../../../../tests/fixtures/form_radio_choice_list_nil_minimal.json"
     ))
     .unwrap();
     assert_eq!(fixture.profile, "radio_button_options");
@@ -13218,7 +13220,7 @@ fn formats_table_search_additions_as_direct_sections() {
 #[test]
 fn parses_extended_usual_group_properties() {
     let field = include_str!(
-        "../../../tests/fixtures/native-evidence/8.3.27.2214/form-usual-group-record/records/c988cf4e-7b05-4bb9-b141-6a2b4dbe3b8e.item-1898.txt"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-usual-group-record/records/c988cf4e-7b05-4bb9-b141-6a2b4dbe3b8e.item-1898.txt"
     );
     let item = parse_form_child_item(
         field,
@@ -16642,7 +16644,7 @@ fn live_slot27_choice_parameters_slice_matches_native_xml_exactly() {
     }
 
     let fixture: Fixture = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/form_choice_parameters_slot27_live.json"
+        "../../../../tests/fixtures/form_choice_parameters_slot27_live.json"
     ))
     .unwrap();
     assert_eq!(fixture.source.raw_slot, 27);
@@ -16767,7 +16769,7 @@ fn native_choice_parameter_cluster_matches_exact_boundaries_and_absent_available
     }
 
     let fixture: Fixture = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/form_choice_parameter_cluster_native.json"
+        "../../../../tests/fixtures/form_choice_parameter_cluster_native.json"
     ))
     .unwrap();
     assert!(
@@ -23814,21 +23816,21 @@ fn renders_the_two_uh_chart_edge_records_byte_for_byte() {
     for (raw, native) in [
         (
             include_str!(concat!(
-                "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+                "../../../../tests/fixtures/native-evidence/8.3.27.2214/",
                 "form-chart-uh-edge/raw/mobile-point.txt"
             )),
             include_str!(concat!(
-                "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+                "../../../../tests/fixtures/native-evidence/8.3.27.2214/",
                 "form-chart-uh-edge/native/mobile-point-settings.xml"
             )),
         ),
         (
             include_str!(concat!(
-                "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+                "../../../../tests/fixtures/native-evidence/8.3.27.2214/",
                 "form-chart-uh-edge/raw/bubble.txt"
             )),
             include_str!(concat!(
-                "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+                "../../../../tests/fixtures/native-evidence/8.3.27.2214/",
                 "form-chart-uh-edge/native/bubble-settings.xml"
             )),
         ),
@@ -24484,10 +24486,10 @@ fn assert_platform_proven_form_planner_settings(raw_field: &str, native_settings
 fn renders_form_planner_settings_native_do_vremya_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/native-do-vremya.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/native-do-vremya.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/native-do-vremya-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/native-do-vremya-settings.xml"
         ),
     );
 }
@@ -24496,10 +24498,10 @@ fn renders_form_planner_settings_native_do_vremya_to_platform_proven_xml() {
 fn renders_form_planner_settings_native_do_bron_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/native-do-bron.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/native-do-bron.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/native-do-bron-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/native-do-bron-settings.xml"
         ),
     );
 }
@@ -24508,10 +24510,10 @@ fn renders_form_planner_settings_native_do_bron_to_platform_proven_xml() {
 fn renders_form_planner_settings_native_do_meropriyatiya_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/native-do-meropriyatiya.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/native-do-meropriyatiya.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/native-do-meropriyatiya-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/native-do-meropriyatiya-settings.xml"
         ),
     );
 }
@@ -24520,10 +24522,10 @@ fn renders_form_planner_settings_native_do_meropriyatiya_to_platform_proven_xml(
 fn renders_form_planner_settings_control_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/control.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/control.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/control-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/control-settings.xml"
         ),
     );
 }
@@ -24532,10 +24534,10 @@ fn renders_form_planner_settings_control_to_platform_proven_xml() {
 fn renders_form_planner_settings_distinct_values_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/distinct-values.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/distinct-values.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/distinct-values-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/distinct-values-settings.xml"
         ),
     );
 }
@@ -24544,10 +24546,10 @@ fn renders_form_planner_settings_distinct_values_to_platform_proven_xml() {
 fn renders_form_planner_settings_bits_a_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/bits-a.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/bits-a.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/bits-a-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/bits-a-settings.xml"
         ),
     );
 }
@@ -24556,10 +24558,10 @@ fn renders_form_planner_settings_bits_a_to_platform_proven_xml() {
 fn renders_form_planner_settings_bits_b_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/bits-b.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/bits-b.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/bits-b-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/bits-b-settings.xml"
         ),
     );
 }
@@ -24568,10 +24570,10 @@ fn renders_form_planner_settings_bits_b_to_platform_proven_xml() {
 fn renders_form_planner_settings_bits_c_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/bits-c.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/bits-c.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/bits-c-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/bits-c-settings.xml"
         ),
     );
 }
@@ -24580,10 +24582,10 @@ fn renders_form_planner_settings_bits_c_to_platform_proven_xml() {
 fn renders_form_planner_settings_bits_d_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/bits-d.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/bits-d.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/bits-d-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/bits-d-settings.xml"
         ),
     );
 }
@@ -24592,10 +24594,10 @@ fn renders_form_planner_settings_bits_d_to_platform_proven_xml() {
 fn renders_form_planner_settings_font_planner_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/font-planner.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/font-planner.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/font-planner-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/font-planner-settings.xml"
         ),
     );
 }
@@ -24604,10 +24606,10 @@ fn renders_form_planner_settings_font_planner_to_platform_proven_xml() {
 fn renders_form_planner_settings_font_item_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/font-item.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/font-item.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/font-item-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/font-item-settings.xml"
         ),
     );
 }
@@ -24616,10 +24618,10 @@ fn renders_form_planner_settings_font_item_to_platform_proven_xml() {
 fn renders_form_planner_settings_items_two_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/items-two.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/items-two.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/items-two-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/items-two-settings.xml"
         ),
     );
 }
@@ -24628,10 +24630,10 @@ fn renders_form_planner_settings_items_two_to_platform_proven_xml() {
 fn renders_form_planner_settings_items_zero_to_platform_proven_xml() {
     assert_platform_proven_form_planner_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/items-zero.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/items-zero.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/items-zero-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/items-zero-settings.xml"
         ),
     );
 }
@@ -24651,10 +24653,10 @@ fn renders_form_planner_settings_items_zero_to_platform_proven_xml() {
 #[test]
 fn reads_the_replacement_period_an_older_platform_stores_behind_the_flag() {
     let raw = include_str!(
-        "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/control.txt"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/control.txt"
     );
     let native = include_str!(
-        "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/control-settings.xml"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/native/control-settings.xml"
     );
     let replaced = raw.replace(
         "{1,20150217000000,20150217235959,0}",
@@ -24674,7 +24676,7 @@ fn reads_the_replacement_period_an_older_platform_stores_behind_the_flag() {
 #[test]
 fn refuses_a_five_member_period_that_is_not_the_older_platform_record() {
     let raw = include_str!(
-        "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/control.txt"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/control.txt"
     );
     for replacement in [
         "{1,20150217000000,20150217235959,0,{1,00010101000000,00010101000000}}",
@@ -24717,10 +24719,10 @@ fn assert_platform_proven_form_flowchart_settings(raw_field: &str, native_settin
 fn renders_form_graphical_scheme_settings_native_do_lines_to_platform_proven_xml() {
     assert_platform_proven_form_flowchart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/native-do-lines.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/native-do-lines.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/native-do-lines-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/native-do-lines-settings.xml"
         ),
     );
 }
@@ -24729,10 +24731,10 @@ fn renders_form_graphical_scheme_settings_native_do_lines_to_platform_proven_xml
 fn renders_form_graphical_scheme_settings_native_do_none_to_platform_proven_xml() {
     assert_platform_proven_form_flowchart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/native-do-none.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/native-do-none.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/native-do-none-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/native-do-none-settings.xml"
         ),
     );
 }
@@ -24741,10 +24743,10 @@ fn renders_form_graphical_scheme_settings_native_do_none_to_platform_proven_xml(
 fn renders_form_graphical_scheme_settings_lines_six_print_props_to_platform_proven_xml() {
     assert_platform_proven_form_flowchart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/lines-six-print-props.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/lines-six-print-props.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/lines-six-print-props-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/lines-six-print-props-settings.xml"
         ),
     );
 }
@@ -24753,10 +24755,10 @@ fn renders_form_graphical_scheme_settings_lines_six_print_props_to_platform_prov
 fn renders_form_graphical_scheme_settings_grid_mode_none_to_platform_proven_xml() {
     assert_platform_proven_form_flowchart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/grid-mode-none.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/grid-mode-none.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/grid-mode-none-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/grid-mode-none-settings.xml"
         ),
     );
 }
@@ -24765,10 +24767,10 @@ fn renders_form_graphical_scheme_settings_grid_mode_none_to_platform_proven_xml(
 fn renders_form_graphical_scheme_settings_grid_mode_dots_to_platform_proven_xml() {
     assert_platform_proven_form_flowchart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/grid-mode-dots.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/grid-mode-dots.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/grid-mode-dots-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/grid-mode-dots-settings.xml"
         ),
     );
 }
@@ -24777,10 +24779,10 @@ fn renders_form_graphical_scheme_settings_grid_mode_dots_to_platform_proven_xml(
 fn renders_form_graphical_scheme_settings_grid_off_to_platform_proven_xml() {
     assert_platform_proven_form_flowchart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/grid-off.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/grid-off.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/grid-off-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/grid-off-settings.xml"
         ),
     );
 }
@@ -24789,10 +24791,10 @@ fn renders_form_graphical_scheme_settings_grid_off_to_platform_proven_xml() {
 fn renders_form_graphical_scheme_settings_back_color_web_to_platform_proven_xml() {
     assert_platform_proven_form_flowchart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/back-color-web.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/back-color-web.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/back-color-web-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/back-color-web-settings.xml"
         ),
     );
 }
@@ -24801,10 +24803,10 @@ fn renders_form_graphical_scheme_settings_back_color_web_to_platform_proven_xml(
 fn renders_form_graphical_scheme_settings_grid_steps_to_platform_proven_xml() {
     assert_platform_proven_form_flowchart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/grid-steps.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/grid-steps.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/grid-steps-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/grid-steps-settings.xml"
         ),
     );
 }
@@ -24813,10 +24815,10 @@ fn renders_form_graphical_scheme_settings_grid_steps_to_platform_proven_xml() {
 fn renders_form_graphical_scheme_settings_print_props_two_to_platform_proven_xml() {
     assert_platform_proven_form_flowchart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/print-props-two.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/print-props-two.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/print-props-two-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/print-props-two-settings.xml"
         ),
     );
 }
@@ -24825,10 +24827,10 @@ fn renders_form_graphical_scheme_settings_print_props_two_to_platform_proven_xml
 fn renders_form_graphical_scheme_settings_print_props_values_to_platform_proven_xml() {
     assert_platform_proven_form_flowchart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/print-props-values.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/raw/print-props-values.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/print-props-values-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-graphical-scheme-settings/native/print-props-values-settings.xml"
         ),
     );
 }
@@ -25276,10 +25278,10 @@ fn assert_platform_proven_form_chart_settings(raw_field: &str, native_settings_x
 fn renders_form_chart_settings_with_zero_series_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/raw/zero-series.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/raw/zero-series.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/native/zero-series-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/native/zero-series-settings.xml"
         ),
     );
 }
@@ -25288,10 +25290,10 @@ fn renders_form_chart_settings_with_zero_series_to_platform_proven_xml() {
 fn renders_form_chart_settings_with_one_series_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/raw/one-series.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/raw/one-series.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/native/one-series-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/native/one-series-settings.xml"
         ),
     );
 }
@@ -25300,10 +25302,10 @@ fn renders_form_chart_settings_with_one_series_to_platform_proven_xml() {
 fn renders_form_chart_settings_with_four_series_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/raw/four-series.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/raw/four-series.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/native/four-series-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/native/four-series-settings.xml"
         ),
     );
 }
@@ -25314,10 +25316,10 @@ fn renders_form_chart_settings_with_four_series_to_platform_proven_xml() {
 fn renders_form_chart_settings_with_line_chart_type_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-linetype-splinemode/raw/line-type.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-linetype-splinemode/raw/line-type.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-linetype-splinemode/native/line-type-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-linetype-splinemode/native/line-type-settings.xml"
         ),
     );
 }
@@ -25326,10 +25328,10 @@ fn renders_form_chart_settings_with_line_chart_type_to_platform_proven_xml() {
 fn renders_form_chart_settings_with_spline_mode_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-linetype-splinemode/raw/spline-mode.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-linetype-splinemode/raw/spline-mode.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-linetype-splinemode/native/spline-mode-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-linetype-splinemode/native/spline-mode-settings.xml"
         ),
     );
 }
@@ -25338,10 +25340,10 @@ fn renders_form_chart_settings_with_spline_mode_to_platform_proven_xml() {
 fn renders_form_chart_settings_with_gauge_chart_type_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-linetype-splinemode/raw/gauge-type.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-linetype-splinemode/raw/gauge-type.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-linetype-splinemode/native/gauge-type-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-linetype-splinemode/native/gauge-type-settings.xml"
         ),
     );
 }
@@ -25357,10 +25359,10 @@ fn renders_form_chart_settings_with_gauge_chart_type_to_platform_proven_xml() {
 fn renders_form_chart_settings_for_native_ut_provkontr_gauge_1_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-provkontr-gauge/raw/gauge-1.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-provkontr-gauge/raw/gauge-1.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-provkontr-gauge/native/gauge-1-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-provkontr-gauge/native/gauge-1-settings.xml"
         ),
     );
 }
@@ -25369,10 +25371,10 @@ fn renders_form_chart_settings_for_native_ut_provkontr_gauge_1_to_platform_prove
 fn renders_form_chart_settings_for_native_ut_provkontr_gauge_2_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-provkontr-gauge/raw/gauge-2.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-provkontr-gauge/raw/gauge-2.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-provkontr-gauge/native/gauge-2-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-provkontr-gauge/native/gauge-2-settings.xml"
         ),
     );
 }
@@ -25383,10 +25385,10 @@ fn renders_form_chart_settings_for_native_ut_provkontr_gauge_2_to_platform_prove
 fn renders_form_chart_settings_with_legend_placement_bottom_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/raw/legend-bottom.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/raw/legend-bottom.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/native/legend-bottom-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/native/legend-bottom-settings.xml"
         ),
     );
 }
@@ -25395,10 +25397,10 @@ fn renders_form_chart_settings_with_legend_placement_bottom_to_platform_proven_x
 fn renders_form_chart_settings_with_title_area_placement_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/raw/title-area-placement.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/raw/title-area-placement.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/native/title-area-placement-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/native/title-area-placement-settings.xml"
         ),
     );
 }
@@ -25407,10 +25409,10 @@ fn renders_form_chart_settings_with_title_area_placement_to_platform_proven_xml(
 fn renders_form_chart_settings_with_values_tooltip_show_mode_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/raw/values-tooltip-show-mode.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/raw/values-tooltip-show-mode.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/native/values-tooltip-show-mode-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/native/values-tooltip-show-mode-settings.xml"
         ),
     );
 }
@@ -25419,10 +25421,10 @@ fn renders_form_chart_settings_with_values_tooltip_show_mode_to_platform_proven_
 fn renders_form_chart_settings_with_points_drop_lines_show_mode_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/raw/points-drop-lines-show-mode.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/raw/points-drop-lines-show-mode.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/native/points-drop-lines-show-mode-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/native/points-drop-lines-show-mode-settings.xml"
         ),
     );
 }
@@ -25431,10 +25433,10 @@ fn renders_form_chart_settings_with_points_drop_lines_show_mode_to_platform_prov
 fn renders_form_chart_settings_with_values_drop_lines_show_mode_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/raw/values-drop-lines-show-mode.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/raw/values-drop-lines-show-mode.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/native/values-drop-lines-show-mode-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-placement-and-showmodes/native/values-drop-lines-show-mode-settings.xml"
         ),
     );
 }
@@ -25445,10 +25447,10 @@ fn renders_form_chart_settings_with_values_drop_lines_show_mode_to_platform_prov
 fn renders_form_chart_settings_with_points_scale_full_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-points-scale/raw/full.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-points-scale/raw/full.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-points-scale/native/full-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-points-scale/native/full-settings.xml"
         ),
     );
 }
@@ -25457,10 +25459,10 @@ fn renders_form_chart_settings_with_points_scale_full_to_platform_proven_xml() {
 fn renders_form_chart_settings_with_points_scale_minimal_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-points-scale/raw/minimal.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-points-scale/raw/minimal.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-points-scale/native/minimal-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-points-scale/native/minimal-settings.xml"
         ),
     );
 }
@@ -25469,10 +25471,10 @@ fn renders_form_chart_settings_with_points_scale_minimal_to_platform_proven_xml(
 fn renders_form_chart_settings_with_points_scale_label_color_only_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-points-scale/raw/label-color-only.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-points-scale/raw/label-color-only.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-points-scale/native/label-color-only-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-points-scale/native/label-color-only-settings.xml"
         ),
     );
 }
@@ -25495,10 +25497,10 @@ fn renders_form_chart_settings_with_points_scale_label_color_only_to_platform_pr
 fn renders_form_chart_settings_for_native_ut_provkontr_target_to_platform_proven_xml() {
     assert_platform_proven_form_chart_settings(
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-provkontr-target/raw/target.txt"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-provkontr-target/raw/target.txt"
         ),
         include_str!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-provkontr-target/native/target-settings.xml"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-provkontr-target/native/target-settings.xml"
         ),
     );
 }
@@ -26207,7 +26209,7 @@ fn revision_three_button_names_its_location_in_command_bar() {
 #[test]
 fn a_planner_border_with_a_zero_style_id_is_a_control_border() {
     let raw = include_str!(
-        "../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/bits-a.txt"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-planner-settings/raw/bits-a.txt"
     )
     .replace(
         "48312c09-257f-4b29-b280-284dd89efc1e",
@@ -26292,7 +26294,7 @@ fn a_view_status_addition_reads_center_and_a_lowered_stretch() {
 #[test]
 fn a_chart_writes_its_reference_bands_palette() {
     let raw = include_str!(
-        "../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/raw/zero-series.txt"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/form-chart-series-count/raw/zero-series.txt"
     )
     .trim()
     .to_owned();
@@ -26381,4 +26383,46 @@ fn encode_base64_for_test(bytes: &[u8]) -> String {
         }
     }
     output
+}
+
+#[test]
+fn tooltip_representation_production_has_no_corpus_literals() {
+    let production = include_str!("../form_body.rs");
+    let start = production
+        .find("pub(super) fn parse_form_field_tooltip_representation")
+        .unwrap();
+    let end = production[start..]
+        .find("pub(super) fn parse_form_input_field_input_hint")
+        .map(|offset| start + offset)
+        .unwrap();
+    let implementation = &production[start..end];
+
+    for forbidden in [
+        "02023637-7868-4a5f-8576-835a76e0c9ba",
+        "bsp_test",
+        "ConfigDump",
+        "InputHint",
+        "ListChoiceMode",
+        "uuid",
+        "path",
+    ] {
+        assert!(
+            !implementation.contains(forbidden),
+            "production literal: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn form_body_empty_auto_command_bar_rule_has_no_corpus_owner_literals() {
+    let production = include_str!("../form_body.rs");
+    for owner_literal in [
+        "Пользователи",
+        "ВыборОбъектовМетаданных",
+        "ОперандыДляРасчетовКоманднаяПанель",
+        "RowsBar",
+        "579baaa4-6493-4d99-8744-6399757295c7",
+    ] {
+        assert!(!production.contains(owner_literal), "{owner_literal}");
+    }
 }
