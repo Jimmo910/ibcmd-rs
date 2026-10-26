@@ -39,6 +39,8 @@ pub struct MssqlExtensionLoadReport {
     pub claimed_platform_profile: String,
     pub verified_platform_profile: String,
     pub storage_schema_sha256: String,
+    pub identity_source: &'static str,
+    pub physical_database_binding_verified: bool,
     pub all_extensions: bool,
     pub activation_required: bool,
     pub dry_run: bool,
@@ -77,6 +79,8 @@ pub struct MssqlExtensionActivationReport {
     pub claimed_platform_profile: String,
     pub verified_platform_profile: String,
     pub storage_schema_sha256: String,
+    pub identity_source: &'static str,
+    pub physical_database_binding_verified: bool,
     pub extension: String,
     pub dry_run: bool,
     pub executed: bool,
@@ -241,7 +245,7 @@ pub fn load_extensions(args: &MssqlLoadExtensionArgs) -> Result<MssqlExtensionLo
         // The whole tree, or a selection of more than module bodies: compared
         // with the export of the active image, only the objects of changed
         // files are compiled.
-        let Some(edit) = crate::mssql_extension_tree_load::compile_tree_edit(
+        let Some(edit) = crate::mssql_extension_tree_load::compile_tree_edit_for_restructure(
             &sql,
             &args.database,
             args.source_version,
@@ -268,6 +272,41 @@ pub fn load_extensions(args: &MssqlLoadExtensionArgs) -> Result<MssqlExtensionLo
             edit.rows,
         )
         .with_context(|| format!("failed to prepare extension {:?}", extension.name))?;
+        // Compilation is only a proposal. Prove every structural transition
+        // before the first ConfigCASSave write, including --all-extensions.
+        let schema = extension_transition_fallback(
+            crate::mssql_extension_tree_load::require_nonstructural_stage(
+                &sql,
+                &args.database,
+                args.source_version,
+                &active,
+                &plan,
+            ),
+            || {
+                crate::mssql_extension_restructure::prepare(
+                    &sql,
+                    &args.database,
+                    args.platform_profile,
+                    extension.physical_registry_id,
+                    &active,
+                    &plan,
+                )
+            },
+        )
+        .with_context(|| {
+            format!(
+                "unsupported schema transition of extension {:?}; nothing was staged",
+                extension.name
+            )
+        })?;
+        if schema.is_some() {
+            require_restructure_scope(extension.scope)?;
+            require_restructure_formats(
+                args.platform_profile,
+                manifest.identity().storage_format,
+                manifest.identity().storage_format,
+            )?;
+        }
         prepared.push(PreparedLoad {
             extension: extension.clone(),
             input_dir,
@@ -339,6 +378,8 @@ pub fn load_extensions(args: &MssqlLoadExtensionArgs) -> Result<MssqlExtensionLo
         claimed_platform_profile: profile_verification.claimed_platform_profile,
         verified_platform_profile: profile_verification.verified_platform_profile,
         storage_schema_sha256: profile_verification.storage_schema_sha256,
+        identity_source: profile_verification.identity_source,
+        physical_database_binding_verified: profile_verification.physical_database_binding_verified,
         all_extensions: args.all_extensions,
         activation_required: true,
         dry_run: args.dry_run,
@@ -466,6 +507,9 @@ pub(crate) fn activate_staged_extension_verified(
             claimed_platform_profile: profile_verification.claimed_platform_profile,
             verified_platform_profile: profile_verification.verified_platform_profile,
             storage_schema_sha256: profile_verification.storage_schema_sha256,
+            identity_source: profile_verification.identity_source,
+            physical_database_binding_verified: profile_verification
+                .physical_database_binding_verified,
             extension: args.extension.clone(),
             dry_run: args.dry_run,
             executed: false,
@@ -482,6 +526,7 @@ pub(crate) fn activate_staged_extension_verified(
                 live_cache_invalidation_verified: false,
                 existing_sessions_retain_generation: false,
                 recovery_token: String::new(),
+                restructured_objects: Vec::new(),
             },
             script: None,
             recovery: None,
@@ -539,27 +584,57 @@ pub(crate) fn activate_staged_extension_verified(
         },
         args.allow_non_lab,
     )?;
-    if !plan.is_no_op() {
+    let schema = if !plan.is_no_op() {
         let root = CasHash::parse_hex(&extension.active_cas_root)?;
-        let (active, _) = fetch_cas_storage_image_with_manifest(
+        let (active, active_manifest) = fetch_cas_storage_image_with_manifest(
             &sql,
             &args.database,
             MssqlStorageTable::ConfigCas,
             root,
         )?;
-        crate::mssql_extension_tree_load::require_nonstructural_stage(
-            &sql,
-            &args.database,
-            match args.platform_profile {
-                crate::mssql_platform_profile::MssqlNativePlatformProfile::Platform8_5_1_1150 => {
-                    crate::cli::InfobaseConfigSourceVersion::V2_21
-                }
-                _ => crate::cli::InfobaseConfigSourceVersion::V2_20,
+        let source_version = match args.platform_profile {
+            crate::mssql_platform_profile::MssqlNativePlatformProfile::Platform8_5_1_1150 => {
+                crate::cli::InfobaseConfigSourceVersion::V2_21
+            }
+            _ => crate::cli::InfobaseConfigSourceVersion::V2_20,
+        };
+        let schema = extension_transition_fallback(
+            crate::mssql_extension_tree_load::require_nonstructural_stage(
+                &sql,
+                &args.database,
+                source_version,
+                &active,
+                &stage,
+            ),
+            || {
+                crate::mssql_extension_restructure::prepare(
+                    &sql,
+                    &args.database,
+                    args.platform_profile,
+                    extension.physical_registry_id,
+                    &active,
+                    &stage,
+                )
             },
-            &active,
-            &stage,
-        )?;
-    }
+        )
+        .context("extension schema transition is not publishable; nothing was published")?;
+        if schema.is_some() {
+            require_restructure_formats(
+                args.platform_profile,
+                active_manifest.identity().storage_format,
+                plan.storage_format(),
+            )?;
+        }
+        schema
+    } else {
+        None
+    };
+    let plan = if let Some(schema) = &schema {
+        require_restructure_scope(extension.scope)?;
+        plan.with_restructuring(schema)?
+    } else {
+        plan
+    };
     // The tool's own RAS verification made the cluster open idle SQL sessions on
     // this database; the session gate of an exclusive activation must not count
     // them (#409 F-3), and an infobase that has clients is refused before any
@@ -568,11 +643,10 @@ pub(crate) fn activate_staged_extension_verified(
         && !plan.is_no_op()
     {
         plan.with_own_ras_processes(
-            crate::mssql_platform_profile::own_ras_processes_for_exclusive(
+            crate::mssql_platform_profile::own_ras_processes_for_verified_exclusive(
                 &args.rac,
                 &args.ras_endpoint,
-                profile_verification.verified_cluster_id,
-                profile_verification.verified_infobase_id,
+                &profile_verification,
             )?,
         )
     } else {
@@ -582,23 +656,16 @@ pub(crate) fn activate_staged_extension_verified(
         crate::mssql_extension_activation::render_extension_activation_sql(&args.database, &plan)?;
     let artifact_root = std::env::temp_dir().join("ibcmd-rs");
     fs::create_dir_all(&artifact_root)?;
-    let root_token = &rendered.report.published_root_sha1[..16];
-    let endpoint_digest = Sha256::digest(format!("{}\0{}", args.server, args.database).as_bytes());
-    let endpoint_token = endpoint_digest[..6]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    let endpoint_token = &endpoint_token[..12];
-    let script = args.script_output.clone().unwrap_or_else(|| {
-        artifact_root.join(format!(
-            "activate_extension_{endpoint_token}_{namespace}_{root_token}.sql"
-        ))
-    });
-    let recovery = args.recovery_output.clone().unwrap_or_else(|| {
-        artifact_root.join(format!(
-            "recovery_extension_{endpoint_token}_{namespace}_{root_token}.json"
-        ))
-    });
+    let (default_script, default_recovery) = activation_artifact_paths(
+        &artifact_root,
+        &args.server,
+        &args.database,
+        &namespace,
+        &rendered.report.published_root_sha1,
+        rendered.sql().as_bytes(),
+    );
+    let script = args.script_output.clone().unwrap_or(default_script);
+    let recovery = args.recovery_output.clone().unwrap_or(default_recovery);
     publish_activation_artifacts(
         &script,
         rendered.sql().as_bytes(),
@@ -613,6 +680,8 @@ pub(crate) fn activate_staged_extension_verified(
         claimed_platform_profile: profile_verification.claimed_platform_profile,
         verified_platform_profile: profile_verification.verified_platform_profile,
         storage_schema_sha256: profile_verification.storage_schema_sha256,
+        identity_source: profile_verification.identity_source,
+        physical_database_binding_verified: profile_verification.physical_database_binding_verified,
         extension: args.extension.clone(),
         dry_run: args.dry_run,
         executed: !args.dry_run && !rendered.sql().is_empty(),
@@ -620,6 +689,84 @@ pub(crate) fn activate_staged_extension_verified(
         script: Some(script),
         recovery: Some(recovery),
     })
+}
+
+/// Legacy body overlays retain their existing format support. New metadata
+/// records need an independently measured writer/storage-format pairing.
+fn require_restructure_formats(
+    profile: crate::mssql_platform_profile::MssqlNativePlatformProfile,
+    active: u32,
+    proposed: u32,
+) -> Result<()> {
+    use crate::mssql_platform_profile::MssqlNativePlatformProfile;
+    let expected = match profile {
+        MssqlNativePlatformProfile::Platform8_3_27_2214 => 80_327,
+        MssqlNativePlatformProfile::Platform8_5_1_1150 => 80_501,
+        _ => bail!(
+            "extension restructuring is not measured for {}",
+            profile.id()
+        ),
+    };
+    if active != expected || proposed != expected {
+        bail!(
+            "extension restructuring on {} requires the measured configinfo format {expected}; active={active}, staged={proposed}; no format upgrade was performed and nothing was changed",
+            profile.id()
+        );
+    }
+    Ok(())
+}
+
+// A fallback is a second proof, never permission to discard the first refusal.
+fn extension_transition_fallback<T>(
+    nonstructural: Result<()>,
+    prepare: impl FnOnce() -> Result<Option<T>>,
+) -> Result<Option<T>> {
+    match nonstructural {
+        Ok(()) => Ok(None),
+        Err(refusal) => match prepare()? {
+            Some(plan) => Ok(Some(plan)),
+            None => Err(refusal),
+        },
+    }
+}
+
+/// Base data separation is supported. The installation scope of the
+/// extension is a distinct protocol and is admitted only where measured.
+fn require_restructure_scope(scope: crate::mssql_extensions::MssqlExtensionScope) -> Result<()> {
+    if scope != crate::mssql_extensions::MssqlExtensionScope::Infobase {
+        bail!(
+            "structural publication is measured for extensions installed for the whole infobase; a data-separation-scoped extension needs a separately verified protocol; nothing was changed"
+        );
+    }
+    Ok(())
+}
+
+/// Replanning creates fresh DBNames version identifiers. Keep each exact
+/// plan immutable without making a dry run block the subsequent real apply.
+fn activation_artifact_paths(
+    root: &Path,
+    server: &str,
+    database: &str,
+    namespace: &str,
+    cas_root: &str,
+    script: &[u8],
+) -> (PathBuf, PathBuf) {
+    let endpoint = Sha256::digest(format!("{server}\0{database}").as_bytes());
+    let endpoint = endpoint[..6]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let plan = Sha256::digest(script);
+    let plan = plan[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let root_token = &cas_root[..16];
+    let identity = format!("{endpoint}_{namespace}_{root_token}_{plan}");
+    (
+        root.join(format!("activate_extension_{identity}.sql")),
+        root.join(format!("recovery_extension_{identity}.json")),
+    )
 }
 
 fn publish_activation_artifacts(
@@ -1237,6 +1384,139 @@ fn resolve_password(args: &MssqlLoadExtensionArgs) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_admission_code_only_proof_never_queries_structural_capabilities() {
+        let allowed = extension_transition_fallback::<()>(Ok(()), || {
+            panic!("code-only route queried structural SQL capabilities")
+        })
+        .unwrap();
+        assert!(allowed.is_none());
+        let refused = extension_transition_fallback::<()>(
+            Err(anyhow::anyhow!("original source refusal")),
+            || Ok(None),
+        )
+        .unwrap_err();
+        assert_eq!(refused.to_string(), "original source refusal");
+        assert_eq!(
+            extension_transition_fallback(Err(anyhow::anyhow!("needs DDL")), || Ok(Some(7)))
+                .unwrap(),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn final_admission_preserves_real_body_removal_refusal_when_planner_has_no_ddl() {
+        use ibcmd_cf::{archive::decode_archive_uniform, payload::PayloadEncoding};
+        use ibcmd_core::{
+            artifact::StorageProfileId, limits::ResourceLimits, storage::StorageProvenance,
+        };
+        let set = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/1c-fixtures/coverage/8.5.1.1150/extensions/restructuring");
+        let baseline = set.join("native/CovRestructureBaseline");
+        let edited =
+            std::env::temp_dir().join(format!("ibcmd-admission-refusal-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&edited).unwrap();
+        for relative in crate::load::relative_files(&baseline).unwrap() {
+            let target = edited.join(&relative);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::copy(baseline.join(&relative), target).unwrap();
+        }
+        std::fs::remove_file(edited.join("Catalogs/Cov_Own/Ext/ObjectModule.bsl")).unwrap();
+        let refusal = crate::mssql_extension_tree_load::require_nonstructural_source_transition(
+            &baseline, &edited,
+        );
+        assert!(
+            refusal
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("ObjectModule.bsl")
+        );
+        let packed = crate::module_blob::decode_base64_mime(
+            &std::fs::read_to_string(set.join("variants/CovRestructureBaseline.cfe.b64")).unwrap(),
+        )
+        .unwrap();
+        let archive = decode_archive_uniform(
+            std::io::Cursor::new(&packed),
+            ResourceLimits::for_input_bytes(packed.len() as u64),
+            StorageProfileId::parse("mssql-extension-8.3.27").unwrap(),
+            StorageProvenance::new("public native Coverage regression").unwrap(),
+            PayloadEncoding::RawDeflate,
+        )
+        .unwrap();
+        let state = crate::mssql_extension_restructure::ExtensionRestructureState {
+            params: vec![],
+            schemas: vec![],
+            services: vec![],
+        };
+        let schema_refusal = crate::mssql_extension_restructure::plan_from_source_trees(
+            &baseline,
+            &edited,
+            archive.image(),
+            archive.image(),
+            [0; 16],
+            &state,
+        )
+        .unwrap_err();
+        assert!(schema_refusal.to_string().contains("ObjectModule.bsl"));
+        let result = extension_transition_fallback::<()>(refusal, || Ok(None));
+        std::fs::remove_dir_all(edited).unwrap();
+        assert!(
+            result.is_err(),
+            "a planner None must preserve the original publication/staging refusal"
+        );
+    }
+
+    #[test]
+    fn structural_formats_are_exact_without_narrowing_legacy_body_overlays() {
+        use crate::mssql_platform_profile::MssqlNativePlatformProfile::{
+            Platform8_3_27_2214 as P27, Platform8_5_1_1150 as P85,
+        };
+        require_restructure_formats(P27, 80_327, 80_327).unwrap();
+        require_restructure_formats(P85, 80_501, 80_501).unwrap();
+        for legacy in [80_310, 80_314, 80_321, 80_324] {
+            assert!(require_restructure_formats(P27, legacy, legacy).is_err());
+            P27.require_extension_storage_format(legacy).unwrap();
+        }
+        assert!(require_restructure_formats(P85, 80_327, 80_327).is_err());
+        P85.require_extension_storage_format(80_327).unwrap();
+        assert!(require_restructure_formats(P85, 80_501, 80_327).is_err());
+        assert!(require_restructure_formats(P27, 80_327, 80_501).is_err());
+    }
+
+    #[test]
+    fn structural_scope_admission_is_distinct_from_base_data_separation() {
+        use crate::mssql_extensions::MssqlExtensionScope;
+        require_restructure_scope(MssqlExtensionScope::Infobase).unwrap();
+        let error = require_restructure_scope(MssqlExtensionScope::DataSeparation).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("data-separation-scoped extension")
+        );
+        assert!(error.to_string().contains("nothing was changed"));
+    }
+
+    #[test]
+    fn default_activation_artifacts_distinguish_replanned_schema_versions() {
+        let root = Path::new("artifacts");
+        let cas = "0123456789abcdef0123456789abcdef01234567";
+        let first =
+            activation_artifact_paths(root, "server", "database", "namespace", cas, b"version-A");
+        assert_eq!(
+            first,
+            activation_artifact_paths(root, "server", "database", "namespace", cas, b"version-A")
+        );
+        let next =
+            activation_artifact_paths(root, "server", "database", "namespace", cas, b"version-B");
+        assert_ne!(first.0, next.0);
+        assert_ne!(first.1, next.1);
+        let other =
+            activation_artifact_paths(root, "server", "other", "namespace", cas, b"version-A");
+        assert_ne!(first, other);
+    }
+
     use crate::mssql_platform_profile::MssqlNativePlatformProfile;
     use ibcmd_core::artifact::StorageProfileId;
     use ibcmd_core::storage::{

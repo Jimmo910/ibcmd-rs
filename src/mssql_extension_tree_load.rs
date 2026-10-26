@@ -9,10 +9,9 @@
 //! again and must equal the tree, `ConfigDumpInfo.xml` aside: an edit the
 //! compiler does not write faithfully is refused by name and nothing is staged.
 //!
-//! Activation publishes rows and restructures nothing, so an edit that changes
-//! what a database table holds is refused here too: only the bodies of an
-//! object (module, form, template, picture, rights, help) and the descriptors
-//! of the families that own no table are taken.
+//! The ordinary route admits nonstructural changes. The schema-planned route
+//! can compile structural changes as a proposal, but its caller must prove the
+//! physical transition before staging or publishing any row.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -36,6 +35,9 @@ const CONFIG_DUMP_INFO: &str = "ConfigDumpInfo.xml";
 /// change in place).
 const TABLELESS_FAMILIES: &[(&str, &str)] = &[
     ("CommonForms", "CommonForm"),
+    ("DataProcessors", "DataProcessor"),
+    ("HTTPServices", "HTTPService"),
+    ("Subsystems", "Subsystem"),
     ("CommonModules", "CommonModule"),
     ("CommonPictures", "CommonPicture"),
     ("CommonTemplates", "CommonTemplate"),
@@ -96,7 +98,11 @@ impl Drop for Scratch {
 ///
 /// One extension per process: the offline staging compiler reads its base rows
 /// from a process-wide table.
-pub(crate) fn compile_tree_edit(
+///
+/// Compiles a proposed schema update without authorising publication. The
+/// caller must prove it nonstructural or validate its physical schema plan
+/// before staging or activating any row.
+pub(crate) fn compile_tree_edit_for_restructure(
     sql: &SqlExec,
     database: &str,
     source_version: InfobaseConfigSourceVersion,
@@ -124,8 +130,36 @@ pub(crate) fn compile_tree_edit(
             report.storage.opaque
         );
     }
-    let mut keys = keys_by_output(&report);
-    let mut diff = diff_trees_normalized(&base_export.0, input_dir)?;
+    compile_tree_edit_from_export(
+        input_dir,
+        active,
+        prefixes,
+        &base_export.0,
+        keys_by_output(&report),
+        |image, expected| {
+            verify_export(
+                image,
+                expected,
+                source_version,
+                Some(crate::mssql_dump::extension::base_index_provider(
+                    sql,
+                    database,
+                    source_version,
+                )),
+            )
+        },
+    )
+}
+
+fn compile_tree_edit_from_export(
+    input_dir: &Path,
+    active: &StorageImage,
+    prefixes: &[String],
+    base_export: &Path,
+    mut keys: BTreeMap<String, String>,
+    verify: impl FnOnce(&StorageImage, &Expected<'_>) -> Result<()>,
+) -> Result<Option<TreeEdit>> {
+    let mut diff = diff_trees_normalized(base_export, input_dir)?;
     let prefixes = prefixes
         .iter()
         .map(|prefix| prefix.trim_matches('/').replace('\\', "/"))
@@ -142,26 +176,8 @@ pub(crate) fn compile_tree_edit(
     if diff.changed.is_empty() && diff.added.is_empty() && diff.removed.is_empty() {
         return Ok(None);
     }
-    let mut version_edit = None;
-    let root_edit_supported = diff.changed.iter().any(|path| path == "Configuration.xml")
-        && match (
-            std::fs::read_to_string(base_export.0.join("Configuration.xml")),
-            std::fs::read_to_string(input_dir.join("Configuration.xml")),
-        ) {
-            (Ok(active_root), Ok(tree_root)) => {
-                version_edit = root_version_edit(&active_root, &tree_root);
-                root_children_only_change(&active_root, &tree_root) || version_edit.is_some()
-            }
-            _ => false,
-        };
-    let refused = structural_refusals(&diff, root_edit_supported);
-    if !refused.is_empty() {
-        bail!(
-            "these changes are not loaded (activation restructures nothing, so an edit of what a \
-             table holds is the platform's own load): {}",
-            list_paths(&refused)
-        );
-    }
+    let root_edit = compilation_root_edit(base_export, input_dir, &diff, &prefixes)?;
+    let version_edit = root_edit.version;
 
     let base_rows = active
         .entries()
@@ -192,7 +208,10 @@ pub(crate) fn compile_tree_edit(
         let packed = base_rows
             .get(key)
             .context("the active image has no root row")?;
-        Some((key.clone(), patch_root_version(packed, key, old, new)?))
+        // Keep the base only as a fallback. Added child descriptors cause
+        // compile_edit to rewrite the root's collections; Version must be
+        // applied to that result rather than replacing it with the old root.
+        Some((key.clone(), packed.clone(), old.clone(), new.clone()))
     } else {
         None
     };
@@ -210,22 +229,21 @@ pub(crate) fn compile_tree_edit(
             }
         })
         .context("failed to compile the changed objects")?;
-    if let Some((key, packed)) = version_row {
+    if let Some((key, base, old, new)) = version_row {
+        let current = edit.rows.get(&key).unwrap_or(&base);
+        let packed = patch_root_version(current, &key, &old, &new)?;
         edit.rows.insert(key, packed);
         edit.prefixes.insert("Configuration.xml".to_owned());
     }
 
     let image = proposed_image(active, &edit.rows, &edit.dropped)?;
-    verify_export(
+    verify(
         &image,
         &Expected {
             tree: input_dir,
-            active_export: &base_export.0,
+            active_export: base_export,
             prefixes: &prefixes,
         },
-        source_version,
-        sql,
-        database,
     )?;
 
     let rows = image
@@ -278,19 +296,7 @@ pub(crate) fn require_nonstructural_stage(
     active: &StorageImage,
     stage: &crate::mssql_extension_stage::ExtensionStagePlan,
 ) -> Result<()> {
-    let rows: BTreeMap<_, _> = stage
-        .rows()
-        .iter()
-        .filter(|r| r.logical_name != "configinfo")
-        .map(|r| (r.logical_name.clone(), r.binary_data.clone()))
-        .collect();
-    let dropped = active
-        .entries()
-        .iter()
-        .map(|e| e.logical_key().as_str().to_owned())
-        .filter(|key| !rows.contains_key(key))
-        .collect();
-    let proposed = proposed_image(active, &rows, &dropped)?;
+    let proposed = stage_image(active, stage)?;
     let base = Scratch::new("activation-base");
     let next = Scratch::new("activation-next");
     for (image, dir) in [(active, &base.0), (&proposed, &next.0)] {
@@ -308,12 +314,19 @@ pub(crate) fn require_nonstructural_stage(
             );
         }
     }
-    let diff = diff_trees_normalized(&base.0, &next.0)?;
-    let old = std::fs::read_to_string(base.0.join("Configuration.xml"))?;
-    let new = std::fs::read_to_string(next.0.join("Configuration.xml"))?;
-    let root_supported =
-        root_children_only_change(&old, &new) || root_version_edit(&old, &new).is_some();
-    let refused = structural_refusals(&diff, root_supported);
+    require_nonstructural_source_transition(&base.0, &next.0)
+}
+
+/// The same pure source proof used by activation after its complete exports.
+pub(crate) fn require_nonstructural_source_transition(base: &Path, next: &Path) -> Result<()> {
+    let diff = diff_trees_normalized(base, next)?;
+    let old = std::fs::read_to_string(base.join("Configuration.xml"))?;
+    let new = std::fs::read_to_string(next.join("Configuration.xml"))?;
+    let root_edit = root_policy(&old, &new, false).map_err(|paths| anyhow!(
+        "extension stage requires an unmodeled schema transition, nothing was published: Configuration.xml ({})", paths.join(", ")
+    ))?;
+    validate_root_membership(base, next, &diff, &root_edit)?;
+    let refused = structural_refusals(&diff, true);
     if !refused.is_empty() {
         bail!(
             "extension stage requires an unmodeled schema transition, nothing was published: {}",
@@ -323,11 +336,268 @@ pub(crate) fn require_nonstructural_stage(
     Ok(())
 }
 
+fn reference_path(reference: &ibcmd_xml::extension_root::RootChildReference) -> Option<String> {
+    crate::mssql_dump::root_family_folder(&reference.kind)
+        .map(|folder| format!("{folder}/{}.xml", reference.name))
+}
+fn descriptor_identity(
+    root: &Path,
+    path: &str,
+    reference: &ibcmd_xml::extension_root::RootChildReference,
+) -> Result<uuid::Uuid> {
+    use ibcmd_xml::{AttributeKind, XmlNode, XmlReader};
+    let xml = XmlReader::from_slice(&std::fs::read(root.join(path)).with_context(|| {
+        format!(
+            "root reference {}.{} lacks descriptor {path}",
+            reference.kind, reference.name
+        )
+    })?)?;
+    fn children(element: &ibcmd_xml::XmlElement) -> Vec<&ibcmd_xml::XmlElement> {
+        element
+            .children()
+            .iter()
+            .filter_map(|node| {
+                if let XmlNode::Element(element) = node {
+                    Some(element)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+    }
+    let objects = children(xml.root());
+    let [object] = objects.as_slice() else {
+        bail!("descriptor {path} has no unique metadata object");
+    };
+    if xml.root().name().raw() != "MetaDataObject" || object.name().raw() != reference.kind {
+        bail!(
+            "descriptor {path} does not have root reference kind {}",
+            reference.kind
+        );
+    }
+    let properties = children(object)
+        .into_iter()
+        .filter(|e| e.name().raw() == "Properties")
+        .collect::<Vec<_>>();
+    let [properties] = properties.as_slice() else {
+        bail!("descriptor {path} lacks unique Properties");
+    };
+    let names = children(properties)
+        .into_iter()
+        .filter(|e| e.name().raw() == "Name")
+        .collect::<Vec<_>>();
+    let [name] = names.as_slice() else {
+        bail!("descriptor {path} lacks unique Name");
+    };
+    let value = name
+        .children()
+        .iter()
+        .filter_map(|node| {
+            if let XmlNode::Text(text) = node {
+                Some(text.value())
+            } else {
+                None
+            }
+        })
+        .collect::<String>();
+    if value != reference.name
+        || !name.attributes().is_empty()
+        || name
+            .children()
+            .iter()
+            .any(|n| !matches!(n, XmlNode::Text(_)))
+    {
+        bail!(
+            "descriptor {path} does not have root reference name {}",
+            reference.name
+        );
+    }
+    let id = object
+        .attributes()
+        .iter()
+        .find_map(|attribute| match attribute.kind() {
+            AttributeKind::Ordinary(name) if name.raw() == "uuid" => Some(attribute.value()),
+            _ => None,
+        })
+        .with_context(|| format!("descriptor {path} lacks uuid"))?;
+    uuid::Uuid::parse_str(id).with_context(|| format!("descriptor {path} has invalid uuid"))
+}
+fn validate_root_membership(
+    base: &Path,
+    next: &Path,
+    diff: &TreeDiff,
+    edit: &ibcmd_xml::extension_root::ExtensionRootEdit,
+) -> Result<()> {
+    let selected = |path: &String| {
+        diff.changed.contains(path) || diff.added.contains(path) || diff.removed.contains(path)
+    };
+    let mut retained = BTreeMap::new();
+    let mut removed = BTreeMap::new();
+    for child in &edit.removed_children {
+        let path = reference_path(child).context("removed root reference has unknown family")?;
+        if !diff.removed.contains(&path) || next.join(&path).exists() {
+            bail!(
+                "root removal {}.{} requires the selected removal of descriptor {path}",
+                child.kind,
+                child.name
+            );
+        }
+        removed.insert(descriptor_identity(base, &path, child)?, child);
+    }
+    for child in &edit.retained_children {
+        let Some(path) = reference_path(child) else {
+            continue;
+        };
+        if !edit.added_children.is_empty() || selected(&path) {
+            let before = descriptor_identity(base, &path, child)?;
+            if selected(&path) && descriptor_identity(next, &path, child)? != before {
+                bail!(
+                    "retained root reference {}.{} changes descriptor uuid",
+                    child.kind,
+                    child.name
+                );
+            }
+            if retained.insert(before, child).is_some() {
+                bail!("retained root references share a descriptor uuid");
+            }
+        }
+    }
+    let mut added = BTreeSet::new();
+    for child in &edit.added_children {
+        let path = reference_path(child).context("added root reference has unknown family")?;
+        if !(diff.added.contains(&path) || diff.changed.contains(&path)) {
+            bail!(
+                "root addition {}.{} requires descriptor {path} selected for compilation",
+                child.kind,
+                child.name
+            );
+        }
+        let id = descriptor_identity(next, &path, child)?;
+        if retained.contains_key(&id) || !added.insert(id) {
+            bail!(
+                "root addition {}.{} aliases another descriptor uuid",
+                child.kind,
+                child.name
+            );
+        }
+        if removed
+            .get(&id)
+            .is_some_and(|before| before.kind != child.kind)
+        {
+            bail!(
+                "root addition {}.{} reuses the identity of a different metadata kind",
+                child.kind,
+                child.name
+            );
+        }
+    }
+    Ok(())
+}
+/// A structural schema plan replaces a source refusal only after proving the
+/// same root/descriptor identities as the whole-tree compiler. DATA additions
+/// are admitted here; their physical effects are classified by the planner.
+pub(crate) fn require_structural_root_correspondence(base: &Path, next: &Path) -> Result<()> {
+    let diff = diff_trees_normalized(base, next)?;
+    compilation_root_edit(base, next, &diff, &[]).map(|_| ())
+}
+fn compilation_root_edit(
+    base: &Path,
+    input: &Path,
+    diff: &TreeDiff,
+    prefixes: &[String],
+) -> Result<ibcmd_xml::extension_root::ExtensionRootEdit> {
+    let root_selected = prefixes.is_empty() || under_prefixes("Configuration.xml", prefixes);
+    if !root_selected && diff.added.iter().chain(&diff.removed).any(|path| {
+        let parts = path.split('/').collect::<Vec<_>>();
+        matches!(parts.as_slice(), [family,file] if file.ends_with(".xml") && crate::metadata_model::index::kind_of_collection(family).is_some())
+    }) {
+        bail!("top-level descriptor additions/removals require selecting Configuration.xml with the descriptor");
+    }
+    let old = std::fs::read_to_string(base.join("Configuration.xml"))?;
+    let new = std::fs::read_to_string(
+        if root_selected { input } else { base }.join("Configuration.xml"),
+    )?;
+    let edit = root_policy(&old, &new, true).map_err(|changed| {
+        anyhow!(
+            "unsupported extension root transition, nothing was staged: Configuration.xml ({})",
+            changed.join(", ")
+        )
+    })?;
+    validate_root_membership(base, input, diff, &edit)?;
+    Ok(edit)
+}
+
+/// Materialises the stage's content rows as an extension image. The caller
+/// must first verify the stage's manifest/CAS graph; this helper intentionally
+/// provides no schema-safety or publication authorisation.
+pub(crate) fn stage_image(
+    active: &StorageImage,
+    stage: &crate::mssql_extension_stage::ExtensionStagePlan,
+) -> Result<StorageImage> {
+    let rows: BTreeMap<_, _> = stage
+        .rows()
+        .iter()
+        .filter(|r| r.logical_name != "configinfo")
+        .map(|r| (r.logical_name.clone(), r.binary_data.clone()))
+        .collect();
+    let dropped = active
+        .entries()
+        .iter()
+        .map(|e| e.logical_key().as_str().to_owned())
+        .filter(|key| !rows.contains_key(key))
+        .collect();
+    proposed_image(active, &rows, &dropped)
+}
+
 /// Two files of a tree are the same file: byte for byte, and a module
 /// (`.bsl`) also when only its byte order mark or line ends differ.
 fn same_content(path: &str, left: &[u8], right: &[u8]) -> bool {
     left == right
         || (path.ends_with(".bsl") && module_text_normalized(left) == module_text_normalized(right))
+        || (path == "Configuration.xml" && ibcmd_xml::equal_ignoring_source_formatting(left, right))
+        || (path.ends_with("/Ext/Form.xml")
+            && ibcmd_xml::source_defaults::form_source_input_equal(left, right))
+        || (metadata_descriptor(path, left)
+            && ibcmd_xml::source_defaults::metadata_source_input_equal(left, right))
+}
+fn metadata_descriptor(path: &str, bytes: &[u8]) -> bool {
+    if !path.ends_with(".xml") || path.contains("/Ext/") || path.starts_with("Ext/") {
+        return false;
+    }
+    let Ok(xml) = ibcmd_xml::XmlReader::from_slice(bytes) else {
+        return false;
+    };
+    if xml.root().name().raw() != "MetaDataObject" {
+        return false;
+    }
+    let objects = xml
+        .root()
+        .children()
+        .iter()
+        .filter_map(|n| {
+            if let ibcmd_xml::XmlNode::Element(e) = n {
+                Some(e)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let [object] = objects.as_slice() else {
+        return false;
+    };
+    let parts = path.split('/').collect::<Vec<_>>();
+    match parts.as_slice() {
+        [family, _] => crate::mssql_dump::root_family_folder(object.name().raw()) == Some(*family),
+        [family, _, "Forms", _] => {
+            crate::metadata_model::index::kind_of_collection(family).is_some()
+                && object.name().raw() == "Form"
+        }
+        [family, _, "Templates", _] => {
+            crate::metadata_model::index::kind_of_collection(family).is_some()
+                && object.name().raw() == "Template"
+        }
+        _ => false,
+    }
 }
 
 /// `diff_trees` for a tree an editor may have saved: `ConfigDumpInfo.xml` is
@@ -471,19 +741,14 @@ fn verify_export(
     image: &StorageImage,
     expected: &Expected<'_>,
     source_version: InfobaseConfigSourceVersion,
-    sql: &SqlExec,
-    database: &str,
+    base_provider: Option<crate::mssql_dump::extension::BaseIndexProvider>,
 ) -> Result<()> {
     let scratch = Scratch::new("proposed");
     crate::mssql_dump::extension::export_extension_image_to_source(
         image,
         &scratch.0,
         source_version,
-        Some(crate::mssql_dump::extension::base_index_provider(
-            sql,
-            database,
-            source_version,
-        )),
+        base_provider,
     )
     .context("failed to export the proposed extension image")?;
     let back = relative_files(&scratch.0)?;
@@ -545,7 +810,7 @@ fn list_paths(paths: &[String]) -> String {
 /// object's table holds (a descriptor of a family that owns one, an object or
 /// a body added or removed) belongs to the platform's own load. Each is named
 /// with the reason. The root is accepted only after comparing it with the
-/// active export: table-less child lists alone, or its Version text alone.
+/// active export: table-less child lists, its Version, or both together.
 pub(crate) fn structural_refusals(diff: &TreeDiff, root_edit_supported: bool) -> Vec<String> {
     let mut refused = Vec::new();
     let mut check = |path: &str, moved: Option<&str>| {
@@ -569,11 +834,25 @@ fn is_tableless_family(family: &str) -> bool {
     TABLELESS_FAMILIES.iter().any(|(dir, _)| *dir == family)
 }
 
+fn subsystem_metadata_path(mut parts: &[&str]) -> bool {
+    loop {
+        match parts {
+            ["Subsystems", file] => return file.ends_with(".xml"),
+            ["Subsystems", _, "Ext", ..] => return true,
+            ["Subsystems", _, rest @ ..] if rest.first() == Some(&"Subsystems") => parts = rest,
+            _ => return false,
+        }
+    }
+}
+
 fn refusal(path: &str, moved: Option<&str>, root_edit_supported: bool) -> Option<&'static str> {
     if path == CONFIG_DUMP_INFO {
         return None;
     }
     let segments = path.split('/').collect::<Vec<_>>();
+    if subsystem_metadata_path(&segments) {
+        return None;
+    }
     if let Some(moved) = moved {
         // An object of a table-less family comes or goes with its descriptor
         // and its bodies (the root's child list follows, see
@@ -584,6 +863,14 @@ fn refusal(path: &str, moved: Option<&str>, root_edit_supported: bool) -> Option
                 return None;
             }
             [family, _, "Ext", ..] if is_tableless_family(family) => return None,
+            [family, _, "Forms" | "Templates", file]
+                if is_tableless_family(family) && file.ends_with(".xml") =>
+            {
+                return None;
+            }
+            [family, _, "Forms" | "Templates", _, "Ext", ..] if is_tableless_family(family) => {
+                return None;
+            }
             [_, _, "Forms", _, "Ext", "Form", "Module.bsl"] => return None,
             _ => {}
         }
@@ -623,118 +910,39 @@ fn refusal(path: &str, moved: Option<&str>, root_edit_supported: bool) -> Option
 
 /// The root descriptors differ in the `<ChildObjects>` lines of table-less
 /// families and nowhere else.
+#[cfg(test)]
 pub(crate) fn root_children_only_change(active: &str, tree: &str) -> bool {
-    fn without_tableless_children(text: &str) -> Option<String> {
-        let open = "<ChildObjects>";
-        let close = "</ChildObjects>";
-        let start = text.find(open)? + open.len();
-        let end = start + text[start..].find(close)?;
-        let kept = text[start..end]
-            .lines()
-            .filter(|line| {
-                let line = line.trim();
-                !TABLELESS_FAMILIES.iter().any(|(_, tag)| {
-                    line.strip_prefix(&format!("<{tag}>"))
-                        .is_some_and(|rest| rest.ends_with(&format!("</{tag}>")))
-                })
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        Some(format!("{}{}{}", &text[..start], kept, &text[end..]))
-    }
-    let (active, tree) = (active.replace("\r\n", "\n"), tree.replace("\r\n", "\n"));
-    match (
-        without_tableless_children(&active),
-        without_tableless_children(&tree),
-    ) {
-        (Some(a), Some(b)) => a == b,
-        _ => false,
-    }
+    root_children_change(active, tree, false)
 }
 
-/// A canonical root descriptor changes only its dotted numeric Version,
-/// preserving the active version's component count. Every other byte,
-/// including adopted state, identity and child lists, must remain unchanged.
+fn root_policy(
+    active: &str,
+    tree: &str,
+    all_families: bool,
+) -> std::result::Result<ibcmd_xml::extension_root::ExtensionRootEdit, Vec<String>> {
+    ibcmd_xml::extension_root::extension_root_edit(active.as_bytes(), tree.as_bytes(), |tag| {
+        if all_families {
+            crate::mssql_dump::root_family_folder(tag).is_some()
+        } else {
+            TABLELESS_FAMILIES.iter().any(|(_, child)| *child == tag)
+        }
+    })
+}
+#[cfg(test)]
+fn root_children_change(active: &str, tree: &str, all_families: bool) -> bool {
+    root_policy(active, tree, all_families).is_ok_and(|edit| edit.version.is_none())
+}
+#[cfg(test)]
 fn root_version_edit(active: &str, tree: &str) -> Option<(String, String)> {
-    fn version_and_mask(text: &str) -> Option<(String, String)> {
-        let xml = ibcmd_xml::XmlReader::from_slice(text.as_bytes()).ok()?;
-        fn elements(node: &ibcmd_xml::XmlElement) -> Vec<&ibcmd_xml::XmlElement> {
-            node.children()
-                .iter()
-                .filter_map(|child| match child {
-                    ibcmd_xml::XmlNode::Element(element) => Some(element),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        }
-        if xml.root().name().raw() != "MetaDataObject" {
-            return None;
-        }
-        let configurations = elements(xml.root())
-            .into_iter()
-            .filter(|node| node.name().raw() == "Configuration")
-            .collect::<Vec<_>>();
-        let [configuration] = configurations.as_slice() else {
-            return None;
-        };
-        let properties = elements(configuration)
-            .into_iter()
-            .filter(|node| node.name().raw() == "Properties")
-            .collect::<Vec<_>>();
-        let [properties] = properties.as_slice() else {
-            return None;
-        };
-        let versions = elements(properties)
-            .into_iter()
-            .filter(|node| node.name().raw() == "Version")
-            .collect::<Vec<_>>();
-        let [version] = versions.as_slice() else {
-            return None;
-        };
-        if !version.attributes().is_empty() || !elements(version).is_empty() {
-            return None;
-        }
-        // Noncanonical tags or a second Version elsewhere cannot provide a
-        // different masking range from the semantic property above.
-        let open = "<Version>";
-        let close = "</Version>";
-        if text.matches(open).count() != 1 || text.matches(close).count() != 1 {
-            return None;
-        }
-        let start = text.find(open)? + open.len();
-        let end = start + text[start..].find(close)?;
-        let value = &text[start..end];
-        let semantic = version
-            .children()
-            .iter()
-            .filter_map(|child| match child {
-                ibcmd_xml::XmlNode::Text(text) => Some(text.value()),
-                _ => None,
-            })
-            .collect::<String>();
-        if semantic != value {
-            return None;
-        }
-        let components = value.split('.').collect::<Vec<_>>();
-        if components.len() < 2
-            || components
-                .iter()
-                .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
-        {
-            return None;
-        }
-        Some((
-            value.to_owned(),
-            format!("{}{}", &text[..start], &text[end..]),
-        ))
-    }
-    match (version_and_mask(active), version_and_mask(tree)) {
-        (Some((old, a)), Some((new, b))) => {
-            (old != new && old.split('.').count() == new.split('.').count() && a == b)
-                .then_some((old, new))
-        }
-        _ => None,
-    }
+    root_version_edit_for_policy(active, tree, false)
+}
+#[cfg(test)]
+fn root_version_edit_for_policy(
+    active: &str,
+    tree: &str,
+    all_families: bool,
+) -> Option<(String, String)> {
+    root_policy(active, tree, all_families).ok()?.version
 }
 
 /// The native 8.3.27 extension properties tuple stores Version in member15.
@@ -1074,5 +1282,523 @@ mod tests {
             );
         }
         assert!(root_version_edit(root, root).is_none());
+    }
+    #[test]
+    fn version_and_tableless_child_edits_compose() {
+        let before = "<MetaDataObject><Configuration uuid=\"root\"><Properties><ObjectBelonging>Adopted</ObjectBelonging><Name>Coverage</Name><Version>1.1.0.0</Version><Unknown>keep</Unknown></Properties><ChildObjects>\n<CommonModule>Existing</CommonModule>\n<Catalog>ExistingData</Catalog>\n</ChildObjects></Configuration></MetaDataObject>";
+        let after = before.replace("1.1.0.0", "1.1.0.1").replace(
+            "<CommonModule>Existing</CommonModule>",
+            "<CommonModule>Existing</CommonModule>\n<CommonModule>Added</CommonModule>",
+        );
+        assert_eq!(
+            root_version_edit(before, &after),
+            Some(("1.1.0.0".to_owned(), "1.1.0.1".to_owned()))
+        );
+        assert!(
+            root_version_edit(
+                before,
+                &after.replace("<Unknown>keep</Unknown>", "<Unknown>changed</Unknown>")
+            )
+            .is_none()
+        );
+        assert!(
+            root_version_edit(
+                before,
+                &after.replace(
+                    "<Catalog>ExistingData</Catalog>",
+                    "<Catalog>OtherData</Catalog>"
+                )
+            )
+            .is_none()
+        );
+    }
+    #[test]
+    fn restructure_root_policy_admits_collections_without_other_properties() {
+        let before = "<MetaDataObject><Configuration uuid=\"root\"><Properties><Name>Coverage</Name><Version>1.1.0.1</Version><Unknown>keep</Unknown></Properties><ChildObjects>\n<Catalog>Existing</Catalog>\n</ChildObjects></Configuration></MetaDataObject>";
+        let after = before.replace("1.1.0.1", "1.1.0.2").replace("<Catalog>Existing</Catalog>", "<Catalog>Existing</Catalog>\n<Catalog>Added</Catalog>\n<InformationRegister>AddedRegister</InformationRegister>\n<HTTPService>AddedService</HTTPService>");
+        assert!(root_version_edit(before, &after).is_none());
+        assert_eq!(
+            root_version_edit_for_policy(before, &after, true),
+            Some(("1.1.0.1".to_owned(), "1.1.0.2".to_owned()))
+        );
+        assert!(
+            root_version_edit_for_policy(
+                before,
+                &after.replace("<Unknown>keep</Unknown>", "<Unknown>changed</Unknown>"),
+                true
+            )
+            .is_none()
+        );
+        assert!(
+            root_version_edit_for_policy(
+                before,
+                &after.replace("uuid=\"root\"", "uuid=\"other\""),
+                true
+            )
+            .is_none()
+        );
+        assert!(
+            root_version_edit_for_policy(
+                before,
+                &after.replace(
+                    "<HTTPService>AddedService</HTTPService>",
+                    "<Unmodeled>New</Unmodeled>"
+                ),
+                true
+            )
+            .is_none()
+        );
+        let children_only = after.replace("1.1.0.2", "1.1.0.1");
+        assert!(!root_children_only_change(before, &children_only));
+        assert!(root_children_change(before, &children_only, true));
+    }
+    #[test]
+    fn formatted_root_version_and_new_common_form_are_semantic_edits() {
+        let before = r#"<MetaDataObject xmlns="urn:metadata" version="2.21"><Configuration uuid="root"><Properties><Name>Coverage</Name><Version>1.2.0.0</Version><UsePurposes/></Properties><ChildObjects><Catalog>Existing</Catalog></ChildObjects></Configuration></MetaDataObject>"#;
+        let after = "\u{feff}<?xml version=\"1.0\"?>\n<MetaDataObject version=\"2.21\" xmlns=\"urn:metadata\">\n  <Configuration uuid=\"root\">\n    <Properties><Name>Coverage</Name><Version>1.2.0.4</Version><UsePurposes></UsePurposes></Properties>\n    <ChildObjects><Catalog>Existing</Catalog><CommonForm>Dialog</CommonForm></ChildObjects>\n  </Configuration>\n</MetaDataObject>";
+        assert_eq!(
+            root_version_edit(before, after),
+            Some(("1.2.0.0".into(), "1.2.0.4".into()))
+        );
+        assert!(root_children_only_change(
+            before,
+            &after.replace("1.2.0.4", "1.2.0.0")
+        ));
+        assert!(!root_children_only_change(
+            before,
+            &after.replace("<Name>Coverage</Name>", "<Name>Other</Name>")
+        ));
+    }
+    #[test]
+    fn root_roundtrip_allows_only_xml_formatting_not_property_values() {
+        let before = b"<Configuration b=\"2\" a=\"1\"><Properties><Comment> keep </Comment><UsePurposes/></Properties></Configuration>";
+        let formatted = b"<Configuration a=\"1\" b=\"2\">\n  <Properties><Comment> keep </Comment><UsePurposes></UsePurposes></Properties>\n</Configuration>";
+        assert!(same_content("Configuration.xml", before, formatted));
+        assert!(!same_content(
+            "Configuration.xml",
+            before,
+            &String::from_utf8_lossy(formatted)
+                .replace(" keep ", "keep")
+                .into_bytes()
+        ));
+        assert!(!same_content("Other.xml", before, formatted));
+    }
+
+    #[test]
+    fn data_processor_nested_dialog_has_no_persistent_schema_transition() {
+        let refused = structural_refusals(
+            &diff(
+                &["DataProcessors/Tools.xml", "Configuration.xml"],
+                &[
+                    "DataProcessors/Tools/Forms/Import.xml",
+                    "DataProcessors/Tools/Forms/Import/Ext/Form.xml",
+                    "DataProcessors/Tools/Forms/Import/Ext/Form/Module.bsl",
+                ],
+                &[],
+            ),
+            true,
+        );
+        assert!(refused.is_empty(), "{refused:?}");
+        assert!(!structural_refusals(&diff(&["Catalogs/Data.xml"], &[], &[]), true).is_empty());
+    }
+    #[test]
+    fn native_dialog_tree_compiles_and_verifies_in_an_isolated_process() {
+        const CHILD: &str = "IBCMD_RS_DIALOG_TEST_PLATFORM";
+        let platform = match std::env::var(CHILD) {
+            Ok(platform) => platform,
+            Err(_) => {
+                for platform in ["8.5.1.1150", "8.3.27.2214"] {
+                    for case in ["Update", "Defaults"] {
+                        let output = std::process::Command::new(std::env::current_exe().unwrap())
+                        .args(["--exact", "mssql_extension_tree_load::tests::native_dialog_tree_compiles_and_verifies_in_an_isolated_process", "--nocapture"])
+                        .env(CHILD, platform).env("IBCMD_RS_DIALOG_TEST_CASE", case).output().unwrap();
+                        assert!(
+                            output.status.success(),
+                            "{platform}: {}\n{}",
+                            String::from_utf8_lossy(&output.stdout),
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                        assert!(
+                            String::from_utf8_lossy(&output.stdout)
+                                .lines()
+                                .any(|line| line.starts_with(
+                                    "test result: ok. 1 passed; 0 failed; 0 ignored;"
+                                )),
+                            "{platform}/{case}: child did not run the exact native fixture test"
+                        );
+                    }
+                }
+                return;
+            }
+        };
+        let fixture = std::env::var_os("IBCMD_RS_EXTENSION_TEST_CORPUS")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/1c-fixtures")
+            })
+            .join("coverage")
+            .join(&platform)
+            .join("extensions/restructuring");
+        let case = std::env::var("IBCMD_RS_DIALOG_TEST_CASE").unwrap_or_else(|_| "Update".into());
+        let canonical = fixture
+            .join("native")
+            .join(format!("CovRestructureDialog{case}"));
+        let input_scratch = Scratch::new("dialog-test-input");
+        let input = input_scratch.0.clone();
+        let from = if case == "Defaults" {
+            fixture.join("input/dialog-defaults")
+        } else {
+            canonical.clone()
+        };
+        for path in relative_files(&from).unwrap() {
+            let destination = input.join(&path);
+            std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            std::fs::copy(from.join(&path), destination).unwrap();
+        }
+        if case == "Update" {
+            let root = std::fs::read_to_string(input.join("Configuration.xml")).unwrap();
+            let formatted = root
+                .trim_start_matches('\u{feff}')
+                .replace("\r\n", "\n")
+                .replace('\t', "  ")
+                .replace("<Comment/>", "<Comment></Comment>")
+                .replace("<Vendor/>", "<Vendor></Vendor>");
+            std::fs::write(input.join("Configuration.xml"), formatted).unwrap();
+        }
+        // The unused palette declaration belongs to the native XML 2.21 envelope.
+        if case == "Defaults" && platform.starts_with("8.5.") {
+            let descriptor = input.join("DataProcessors/Cov_ImportTools/Forms/ImportDialog.xml");
+            let document =
+                ibcmd_xml::XmlReader::from_slice(&std::fs::read(&descriptor).unwrap()).unwrap();
+            let attributes = document.root().attributes().iter().filter(|attribute| {
+                !matches!(attribute.kind(), ibcmd_xml::AttributeKind::Namespace(Some(prefix)) if prefix == "pal")
+            }).cloned().collect::<Vec<_>>();
+            assert_eq!(attributes.len() + 1, document.root().attributes().len());
+            let root = ibcmd_xml::XmlElement::with_parts(
+                document.root().name().clone(),
+                attributes,
+                document.root().children().to_vec(),
+            );
+            let bytes = ibcmd_xml::XmlWriter::to_vec(
+                &document.with_root(root),
+                ibcmd_xml::LexicalPolicy::Preserve,
+            )
+            .unwrap();
+            std::fs::write(descriptor, bytes).unwrap();
+        }
+        let packed = crate::module_blob::decode_base64_mime(
+            &std::fs::read_to_string(fixture.join("variants/CovRestructureDialogBaseline.cfe.b64"))
+                .unwrap(),
+        )
+        .unwrap();
+        let archive = ibcmd_cf::archive::decode_archive_uniform(
+            std::io::Cursor::new(&packed),
+            ResourceLimits::for_input_bytes(packed.len() as u64),
+            ibcmd_core::artifact::StorageProfileId::parse("mssql-extension-8.3.27").unwrap(),
+            ibcmd_core::storage::StorageProvenance::new("generated dialog extension baseline")
+                .unwrap(),
+            ibcmd_cf::payload::PayloadEncoding::RawDeflate,
+        )
+        .unwrap();
+        let version = if platform.starts_with("8.5.") {
+            InfobaseConfigSourceVersion::V2_21
+        } else {
+            InfobaseConfigSourceVersion::V2_20
+        };
+        let base = Scratch::new("dialog-test-base");
+        let report = crate::mssql_dump::extension::export_extension_entries_to_source(
+            "mssql-extension-8.3.27",
+            archive
+                .image()
+                .entries()
+                .iter()
+                .map(|e| {
+                    (
+                        e.logical_key().as_str().to_owned(),
+                        e.packed_payload().to_vec(),
+                    )
+                })
+                .collect(),
+            &base.0,
+            false,
+            version,
+        )
+        .unwrap();
+        // A CFE manifest is validated above, whereas SQL active images retain
+        // only its content rows. Compile exactly that production representation.
+        let active = StorageImage::with_retained_byte_limit(
+            archive
+                .image()
+                .entries()
+                .iter()
+                .filter(|e| e.logical_key().as_str() != "configinfo")
+                .cloned()
+                .collect(),
+            ResourceLimits::for_input_bytes(packed.len() as u64).max_retained_bytes_usize(),
+        )
+        .unwrap();
+        assert_eq!((report.storage.failed, report.storage.opaque), (0, 0));
+        let before = std::fs::read_to_string(base.0.join("Configuration.xml")).unwrap();
+        let after = std::fs::read_to_string(input.join("Configuration.xml")).unwrap();
+        let policy = root_policy(&before, &after, false).unwrap();
+        assert_eq!(
+            policy.version,
+            Some((
+                "1.2.0.4".into(),
+                if case == "Defaults" {
+                    "1.2.0.6".into()
+                } else {
+                    "1.2.0.5".into()
+                }
+            ))
+        );
+        let diff = diff_trees_normalized(&base.0, &input).unwrap();
+        let refused = structural_refusals(&diff, true);
+        assert!(refused.is_empty(), "{platform}: {refused:?}");
+        let edit = compile_tree_edit_from_export(
+            &input,
+            &active,
+            &[],
+            &base.0,
+            keys_by_output(&report),
+            |image, expected| {
+                verify_export(image, expected, version, None)?;
+                let native_check = Scratch::new("dialog-native-compare");
+                let report = crate::mssql_dump::extension::export_extension_image_to_source(
+                    image,
+                    &native_check.0,
+                    version,
+                    None,
+                )?;
+                assert_eq!((report.storage.failed, report.storage.opaque), (0, 0));
+                let files = |root: &Path| {
+                    relative_files(root)
+                        .unwrap()
+                        .into_iter()
+                        .filter(|p| p != CONFIG_DUMP_INFO)
+                        .map(|p| (p.clone(), std::fs::read(root.join(p)).unwrap()))
+                        .collect::<BTreeMap<_, _>>()
+                };
+                let want = files(&canonical);
+                let got = files(&native_check.0);
+                let differ = want
+                    .keys()
+                    .chain(got.keys())
+                    .filter(|p| want.get(*p) != got.get(*p))
+                    .collect::<BTreeSet<_>>();
+                assert!(
+                    differ.is_empty(),
+                    "{platform}/{case} native source differences: {differ:?}"
+                );
+                Ok(())
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            edit.changed_files
+                .iter()
+                .any(|p| p.contains("/Forms/ImportDialog/Ext/Form.xml"))
+        );
+        assert!(
+            edit.compiled_objects
+                .iter()
+                .any(|p| p.starts_with("DataProcessors/"))
+        );
+    }
+    fn root_review_tree(children: &str, descriptors: &[(&str, &str, &str, &str)]) -> Scratch {
+        let root = Scratch::new("root-review");
+        std::fs::create_dir_all(&root.0).unwrap();
+        std::fs::write(root.0.join("Configuration.xml"), format!("<Configuration><Properties><Version>1.2.0.0</Version></Properties><ChildObjects>{children}</ChildObjects></Configuration>")).unwrap();
+        for (path, kind, name, uuid) in descriptors {
+            let file = root.0.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file,format!("<MetaDataObject xmlns='http://v8.1c.ru/8.3/MDClasses' version='2.20'><{kind} uuid='{uuid}'><Properties><Name>{name}</Name></Properties></{kind}></MetaDataObject>")).unwrap();
+        }
+        root
+    }
+    #[test]
+    fn root_review_rejects_unbacked_membership_and_identity_deltas() {
+        let a = (
+            "CommonModules/A.xml",
+            "CommonModule",
+            "A",
+            "aaaaaaaa-0000-4000-8000-000000000001",
+        );
+        let b = (
+            "CommonModules/B.xml",
+            "CommonModule",
+            "B",
+            "aaaaaaaa-0000-4000-8000-000000000002",
+        );
+        let old = root_review_tree("<CommonModule>A</CommonModule>", &[a]);
+        let mut accepted = Vec::new();
+        for (label, children, files) in [
+            ("root-only removal", "", vec![a]),
+            (
+                "root-only rename",
+                "<CommonModule>B</CommonModule>",
+                vec![a],
+            ),
+            (
+                "missing addition descriptor",
+                "<CommonModule>A</CommonModule><CommonModule>B</CommonModule>",
+                vec![a],
+            ),
+            (
+                "duplicate membership",
+                "<CommonModule>A</CommonModule><CommonModule>A</CommonModule>",
+                vec![a],
+            ),
+            (
+                "retained UUID replacement",
+                "<CommonModule>A</CommonModule>",
+                vec![(a.0, a.1, a.2, b.3)],
+            ),
+            (
+                "addition name mismatch",
+                "<CommonModule>A</CommonModule><CommonModule>B</CommonModule>",
+                vec![a, (b.0, b.1, "Other", b.3)],
+            ),
+            (
+                "addition aliases retained UUID",
+                "<CommonModule>A</CommonModule><CommonModule>B</CommonModule>",
+                vec![a, (b.0, b.1, b.2, a.3)],
+            ),
+        ] {
+            let next = root_review_tree(children, &files);
+            if require_nonstructural_source_transition(&old.0, &next.0).is_ok() {
+                accepted.push(label);
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "unsafe source transitions accepted: {accepted:?}"
+        );
+    }
+    #[test]
+    fn root_review_keeps_coordinated_tableless_edits_and_requested_order() {
+        let a = (
+            "CommonModules/A.xml",
+            "CommonModule",
+            "A",
+            "aaaaaaaa-0000-4000-8000-000000000001",
+        );
+        let b = (
+            "CommonModules/B.xml",
+            "CommonModule",
+            "B",
+            "aaaaaaaa-0000-4000-8000-000000000002",
+        );
+        let old = root_review_tree("<CommonModule>A</CommonModule>", &[a]);
+        for (children, files) in [
+            ("", vec![]),
+            ("<CommonModule>B</CommonModule>", vec![(b.0, b.1, b.2, a.3)]),
+            (
+                "<CommonModule>A</CommonModule><CommonModule>B</CommonModule>",
+                vec![a, b],
+            ),
+        ] {
+            let next = root_review_tree(children, &files);
+            require_nonstructural_source_transition(&old.0, &next.0).unwrap();
+        }
+        let old = root_review_tree(
+            "<CommonModule>A</CommonModule><CommonModule>B</CommonModule>",
+            &[a, b],
+        );
+        let next = root_review_tree(
+            "<CommonModule>B</CommonModule><CommonModule>A</CommonModule>",
+            &[a, b],
+        );
+        require_nonstructural_source_transition(&old.0, &next.0).unwrap();
+    }
+    #[test]
+    fn root_review_keeps_http_and_nested_subsystems_tableless() {
+        let old = root_review_tree("", &[]);
+        let next = root_review_tree(
+            "<HTTPService>H</HTTPService><Subsystem>S</Subsystem>",
+            &[
+                (
+                    "HTTPServices/H.xml",
+                    "HTTPService",
+                    "H",
+                    "aaaaaaaa-0000-4000-8000-000000000001",
+                ),
+                (
+                    "Subsystems/S.xml",
+                    "Subsystem",
+                    "S",
+                    "aaaaaaaa-0000-4000-8000-000000000002",
+                ),
+                (
+                    "Subsystems/S/Subsystems/Child.xml",
+                    "Subsystem",
+                    "Child",
+                    "aaaaaaaa-0000-4000-8000-000000000003",
+                ),
+            ],
+        );
+        let asset = next
+            .0
+            .join("Subsystems/S/Subsystems/Child/Ext/CommandInterface.xml");
+        std::fs::create_dir_all(asset.parent().unwrap()).unwrap();
+        std::fs::write(asset, b"<CommandInterface/>").unwrap();
+        require_nonstructural_source_transition(&old.0, &next.0).unwrap();
+        std::fs::create_dir_all(next.0.join("Subsystems/S/Other")).unwrap();
+        std::fs::write(next.0.join("Subsystems/S/Other/Unknown.xml"), b"unknown").unwrap();
+        assert!(require_nonstructural_source_transition(&old.0, &next.0).is_err());
+    }
+    #[test]
+    fn root_review_selected_imports_require_selected_counterparts() {
+        let a = (
+            "CommonModules/A.xml",
+            "CommonModule",
+            "A",
+            "aaaaaaaa-0000-4000-8000-000000000001",
+        );
+        let b = (
+            "CommonModules/B.xml",
+            "CommonModule",
+            "B",
+            "aaaaaaaa-0000-4000-8000-000000000002",
+        );
+        let old = root_review_tree("<CommonModule>A</CommonModule>", &[a]);
+        let next = root_review_tree(
+            "<CommonModule>A</CommonModule><CommonModule>B</CommonModule>",
+            &[a, b],
+        );
+        for (prefixes, valid) in [
+            (vec![], true),
+            (vec!["Configuration.xml".to_owned()], false),
+            (vec!["CommonModules/B".to_owned()], false),
+            (
+                vec!["Configuration.xml".to_owned(), "CommonModules/B".to_owned()],
+                true,
+            ),
+        ] {
+            let mut diff = diff_trees_normalized(&old.0, &next.0).unwrap();
+            if !prefixes.is_empty() {
+                for files in [&mut diff.changed, &mut diff.added, &mut diff.removed] {
+                    files.retain(|p| under_prefixes(p, &prefixes));
+                }
+            }
+            assert_eq!(
+                compilation_root_edit(&old.0, &next.0, &diff, &prefixes).is_ok(),
+                valid,
+                "{prefixes:?}"
+            );
+        }
+        let next = root_review_tree("<CommonModule>B</CommonModule>", &[a]);
+        for (root, text) in [(&old.0, "before"), (&next.0, "after")] {
+            let file = root.join("CommonModules/A/Ext/Module.bsl");
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, text).unwrap();
+        }
+        let prefixes = vec!["CommonModules/A/Ext/Module.bsl".to_owned()];
+        let mut diff = diff_trees_normalized(&old.0, &next.0).unwrap();
+        for files in [&mut diff.changed, &mut diff.added, &mut diff.removed] {
+            files.retain(|p| under_prefixes(p, &prefixes));
+        }
+        compilation_root_edit(&old.0, &next.0, &diff, &prefixes).unwrap();
     }
 }

@@ -841,8 +841,9 @@ pub struct OtherSession {
 /// of `own_ras_processes` are left out ([`session_exemption`]).
 fn other_sessions_query(own_ras_processes: &[OwnRasProcess]) -> String {
     format!(
-        "SELECT session_id, ISNULL(login_name, N''), ISNULL(host_name, N''), ISNULL(program_name, N''), status, ISNULL(CONVERT(varchar(27), last_request_end_time, 121), N'') \
+        "{}SELECT session_id, ISNULL(login_name, N''), ISNULL(host_name, N''), ISNULL(program_name, N''), status, ISNULL(CONVERT(varchar(27), last_request_end_time, 121), N'') \
          FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND database_id = DB_ID(@P1) AND ISNULL(host_process_id, -1) <> @P2{} ORDER BY session_id",
+        crate::mssql_platform_profile::session_visibility_gate(sqlgen::code::NO_VIEW_SERVER_STATE),
         session_exemption(own_ras_processes)
     )
 }
@@ -854,11 +855,14 @@ pub fn other_sessions(
 ) -> Result<Vec<OtherSession>> {
     let permitted = scalar_i64(
         client,
-        "SELECT CONVERT(bigint, HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW SERVER STATE'))",
+        &format!(
+            "SELECT CONVERT(bigint, {})",
+            crate::mssql_platform_profile::SESSION_VISIBILITY_PREDICATE
+        ),
     )?;
     if permitted != 1 {
         return Err(ExclusiveAccessUnprovable {
-            reason: "exclusive access cannot be proven: the login lacks VIEW SERVER STATE, so other sessions are invisible".to_owned(),
+            reason: crate::mssql_platform_profile::SESSION_VISIBILITY_ERROR.to_owned(),
         }
         .into());
     }

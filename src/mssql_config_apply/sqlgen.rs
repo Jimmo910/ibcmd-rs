@@ -418,12 +418,9 @@ pub fn render_apply_script(input: &ScriptInputs) -> Result<String> {
 
     // Exclusive access: no other user session on the database.
     if input.require_exclusive {
-        throw(
-            &mut sql,
-            "HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW SERVER STATE') <> 1",
+        sql.push_str(&crate::mssql_platform_profile::session_visibility_gate(
             code::NO_VIEW_SERVER_STATE,
-            "exclusive access cannot be proven without VIEW SERVER STATE",
-        );
+        ));
         throw(
             &mut sql,
             &format!(
@@ -1274,6 +1271,16 @@ mod tests {
         // #408 step 2: the old activation commands hand their exclusive mode to this apply, and the tool's own RAS
         // verification made the cluster open idle SQL sessions on the database (#409 F-3).
         let plain = render_apply_script(&inputs()).unwrap();
+        assert!(
+            plain.find("VIEW SERVER PERFORMANCE STATE").unwrap()
+                < plain
+                    .find("EXISTS (SELECT 1 FROM sys.dm_exec_sessions")
+                    .unwrap()
+        );
+        assert!(
+            plain.find("VIEW SERVER PERFORMANCE STATE").unwrap()
+                < plain.find("INSERT dbo.Config").unwrap()
+        );
         assert!(
             !plain.contains("1CV83 Server"),
             "no own process, no exemption"

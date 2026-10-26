@@ -772,6 +772,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-restructure"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "ibcmd-schema",
+]
+
+[[package]]
 name = "ibcmd-rs"
 version = "0.4.1"
 dependencies = [
@@ -790,6 +799,7 @@ dependencies = [
  "ibcmd-form-schema",
  "ibcmd-moxel",
  "ibcmd-postgres",
+ "ibcmd-restructure",
  "ibcmd-schema",
  "ibcmd-v8",
  "ibcmd-xml",

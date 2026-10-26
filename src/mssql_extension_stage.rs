@@ -1,8 +1,8 @@
 //! Transactional staging primitives for 8.3.27 MSSQL configuration extensions.
 //!
 //! This module deliberately stops at `ConfigCASSave`. It neither publishes
-//! rows into `ConfigCAS` nor changes `_ExtensionsInfo`; activation remains a
-//! native platform operation.
+//! rows into `ConfigCAS` nor changes `_ExtensionsInfo`; activation is handled
+//! separately by `mssql_extension_activation`.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter, Write as _};
