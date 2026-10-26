@@ -91,18 +91,18 @@ single exact-warning response completed apply/save, followed by export-only CDI
 and XML. No create/load/apply/save was blindly replayed after successful phases.
 
 Actual sanitized target bindings: server `WIN-LHDQGRLB1L1`, database
-`IBCMDLAB_PUBLIC_SQL_151c08962516426e96ccf4e48d240ff9`, database ID12,
+`IBCMDLAB_PUBLIC_SQL_151c08962516426e96ccf4e48d240ff9`, database ID 12,
 GUID `9000716B-B12F-45BE-BB5B-27FB88534F95`, family/recovery fork
-`DF1E79FC-77D9-4DF6-AF59-C753F3AF6EFC`, SQL ProductVersion16.0.1000.6,
+`DF1E79FC-77D9-4DF6-AF59-C753F3AF6EFC`, SQL ProductVersion 16.0.1000.6,
 collation Cyrillic_General_CI_AS. Identity is unchanged and the recorded final
 observation has no other target user sessions and FULL RELEASE. This historical
 quiescence observation is not a future lease or freeze interval.
 
-VM-local outputs: saved CF77760 bytes SHA-256
+VM-local outputs: saved CF 77760 bytes SHA-256
 `4baf69f561e84e22b8986e6ab95d74ee83bf80373f971aa1454eb1ea9dbe33e7`;
 6 XML files/25135 bytes, inventory SHA-256
 `4bcc455f8d1a4a61b20546951bcd4b403c3d58b8ce0fe8e0589440f0a164e9cc`;
-CDI1101 bytes SHA-256
+CDI 1101 bytes SHA-256
 `d26f3f250f563454701dabc537ac116f6240bef21485f5326350e9ace182ca46`,
 identical to the CDI within full XML export. Raw files remain in the VM. The
 original public CF, saved CF and prior receipts remain unchanged.
@@ -142,7 +142,7 @@ The PS5.1 compatibility helpers have actual operator Windows conversion-only
 Independently rehashed receipt: `lenovo-lab-inspection/artifacts/snapshot-runtime-control-f29671fb-3358-4f86-82b1-ece0df199f8b/release.sanitized.json`,
 SHA-256 `e8279d993efd9b6053aaea1ab6927b7a776f7a37c9f2b608c3d74c06ad6787ca`.
 This binds wrapper `0d133311...` and conversion control `66bd3299...` on
-PowerShell5.1.20348.558/.NET4.0.30319.42000; it does not prove provider/capture.
+PowerShell 5.1.20348.558 / .NET 4.0.30319.42000; it does not prove provider/capture.
 A future changed measurement-plan/schema path needs its own reviewed controls.
 
 ## Capture/candidate bindings still to measure (STOP before those probes)

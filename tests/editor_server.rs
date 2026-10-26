@@ -120,7 +120,12 @@ struct Server {
 
 impl Server {
     fn start(corpus: &Corpus) -> Self {
-        let mut child = Command::new(BIN)
+        Self::start_with_temp(corpus, None)
+    }
+
+    fn start_with_temp(corpus: &Corpus, retained_temp: Option<&Path>) -> Self {
+        let mut command = Command::new(BIN);
+        command
             .args(["serve", "--stdio"])
             .current_dir(&corpus.root)
             .env("IBCMD_RS_CONFIG", &corpus.settings)
@@ -129,9 +134,15 @@ impl Server {
             .env_remove("IBCMD_RS_DB_USER")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("start ibcmd-rs serve");
+            .stderr(Stdio::null());
+        if let Some(temp) = retained_temp {
+            command
+                .env("IBCMD_TEST_KEEP_FIXTURES", "1")
+                .env("TMPDIR", temp)
+                .env("TMP", temp)
+                .env("TEMP", temp);
+        }
+        let mut child = command.spawn().expect("start ibcmd-rs serve");
         let stdin = child.stdin.take();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         Self {
@@ -1005,13 +1016,27 @@ fn file_import_corpus(tag: &str) -> (Corpus, PathBuf, PathBuf) {
 fn file_import_rpc_requires_confirmation_and_consumes_one_opaque_plan() {
     let (corpus, db, tree) = file_import_corpus("file-import-confirm");
     let before = fs::read(db.join("1Cv8.1CD")).unwrap();
-    let mut server = Server::start(&corpus);
+    let child_temp = corpus.root.join("server-private-temp");
+    fs::create_dir(&child_temp).unwrap();
+    // BIN is the non-test production executable: KEEP1 must not retain its
+    // compiler scratch. Only this child receives the isolated temp/retention env.
+    let mut server = Server::start_with_temp(&corpus, Some(&child_temp));
     server.ok("initialize", corpus.initialize_params());
     let prepared = server.ok(
         "objects/import/prepare",
         json!({"infobase":"demo","sourceDir":tree,"objects":["CommonModule.ФайловаяБазаПроверка"]}),
     );
     assert_eq!(prepared["preflight"]["ready"], true);
+    let compiler_scratch = fs::read_dir(&child_temp)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("ibcmd-editor-import-")
+        })
+        .collect::<Vec<_>>();
     assert_eq!(fs::read(db.join("1Cv8.1CD")).unwrap(), before);
     assert_eq!(
         server.error(
@@ -1036,6 +1061,10 @@ fn file_import_rpc_requires_confirmation_and_consumes_one_opaque_plan() {
     );
     server.ok("shutdown", Value::Null);
     assert_eq!(server.finish(true), 0);
+    assert!(
+        compiler_scratch.is_empty(),
+        "production preflight retained compiler scratch under KEEP1: {compiler_scratch:?}"
+    );
 }
 #[cfg(unix)]
 #[test]

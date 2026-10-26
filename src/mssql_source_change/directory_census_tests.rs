@@ -1,11 +1,20 @@
 //! Strict directory membership controls; no compiler or database fixture.
 use super::*;
 
-// No Drop cleanup: all paths are newly created public test artifacts retained
-// for inspection. Removal from the source census uses an owned parking sibling.
+// Removal from the source census uses an owned parking sibling. Exact KEEP1
+// retains this fresh fixture; ordinary test runs clean it after releasing custody.
 struct Fixture {
     root: PathBuf,
     source: PathBuf,
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").as_deref()
+            != Some(std::ffi::OsStr::new("1"))
+        {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
 }
 impl Fixture {
     fn new() -> Self {

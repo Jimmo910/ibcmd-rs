@@ -9,8 +9,11 @@ would lose unselected staging and leave a check/write race across SQL sessions.
 
 ## What changes
 
-- Add a bounded SQL main-configuration preparation contract for existing selected
-  module/form files and object selections, plus synchronized changed selection.
+- Add bounded SQL main-configuration preparation for exactly one existing
+  `CommonModules/<name>/Ext/Module.bsl` or one Document-owned
+  `Documents/<document>/Forms/<form>/Ext/Form/Module.bsl` in the admitted cohort.
+  Object selections, synchronized changed selection and multiple selections are
+  unsupported in this slice.
 - Pin source custody, connection generation, actual SQL database identity and the
   complete CONFIG/CONFIGSAVE compiler readset in an opaque one-use plan.
 - Preserve existing staging outside selected row keys; validate references and

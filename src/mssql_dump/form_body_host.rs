@@ -1,11 +1,11 @@
-//! What the form body reader (`form_body.rs`) is handed by the rest of the
+//! What the form body reader (`ibcmd_form_body::form_body`) is handed by the
 //! root instead of reading it: the `module_blob` readers of the Form
 //! Attributes conditional-appearance tail ([`ROOT_FORM_BODY_HOST`]) and the
 //! state of the extension export running now
-//! ([`active_form_extension_export`]). `FormParseContext::new` takes both;
-//! nothing else in `form_body.rs` names `module_blob` or `extension`.
+//! ([`active_form_extension_export`]). `FormParseContext::new` takes both; the
+//! reader, in its crate, names neither `module_blob` nor `extension`.
 
-use super::form_body::{FormBodyHost, FormExtensionExport};
+use ibcmd_form_body::form_body::{FormBodyHost, FormExtensionExport};
 
 /// The root's readers of the Form Attributes tail's physical layout.
 pub(super) const ROOT_FORM_BODY_HOST: FormBodyHost = FormBodyHost {

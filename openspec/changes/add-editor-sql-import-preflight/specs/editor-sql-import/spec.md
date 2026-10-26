@@ -233,9 +233,10 @@ success because its callback swallowed the failure.
   reported as a successful rollback.
 
 
-### Requirement: Initial editor SQL operation is existing CommonModule text only
-The initial SQL editor operation SHALL accept exactly one canonical existing
-CommonModule module file with mandatory verification. Its private server-owned
+### Requirement: Editor SQL operation is one existing CommonModule or Document FormModule
+The SQL editor operation SHALL accept exactly one canonical existing CommonModule
+`Ext/Module.bsl` or Document-owned FormModule `Ext/Form/Module.bsl` within the
+admitted Document-only root cohort, with mandatory verification. Its private server-owned
 admission SHALL validate closed measured SQL storage semantics and current
 execution identity using the same canonical fragment as snapshot and held CAS.
 It SHALL retain Config, ConfigSave and Params locks in that order, refuse dynamic
@@ -249,7 +250,7 @@ activate the staged configuration.
 - **THEN** the request is refused before source or SQL I/O.
 
 #### Scenario: Prepared editor operation is single-use and outcome preserving
-- **GIVEN** an admitted source/snapshot-bound CommonModule plan and explicit confirmation
+- **GIVEN** an admitted source/snapshot-bound CommonModule or Document FormModule plan and explicit confirmation
 - **WHEN** its target/epoch/TTL-bound token is consumed for publication
 - **THEN** only retained bytes may be staged, full held CAS remains mandatory,
   and acknowledged Committed or Unknown outcomes SHALL NOT become cancellation

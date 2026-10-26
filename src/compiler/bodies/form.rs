@@ -361,6 +361,66 @@ mod tests {
     }
 
     #[test]
+    fn native_module_token_range_excludes_preserved_ascii_whitespace() {
+        let prefix = "\u{feff}{4,{50,0},";
+        let suffix = ",{4,1,{7,0}},{0,0},{0,0},{0,0},{0,0},0,0}";
+        let module = "новый \"quoted\"\r\n";
+        for (before, after) in [(" \t\r\n", ""), ("", "\r\n\t "), (" \t\r\n", "\r\n\t ")] {
+            let expected_prefix = format!("{prefix}{before}");
+            let expected_suffix = format!("{after}{suffix}");
+            let plain = format!("{expected_prefix}\"old\"{expected_suffix}");
+            let old = deflate_bytes(plain.as_bytes()).unwrap();
+            let (old_body, old_token) = native_module_layout(&old).unwrap();
+            // Independent fixture offsets distinguish the quoted token from
+            // the containing comma-delimited field and its ASCII whitespace.
+            assert_eq!(old_token, expected_prefix.len()..expected_prefix.len() + 5);
+            assert_eq!(&old_body.plaintext()[old_token.clone()], b"\"old\"");
+            let new =
+                crate::module_blob::pack_form_body_blob_from_module_text(&old, module.as_bytes())
+                    .unwrap()
+                    .blob;
+            let (new_body, new_token) = native_module_layout(&new).unwrap();
+            assert_eq!(new_body.module_text(), module);
+            assert_eq!(
+                &new_body.plaintext()[new_token.clone()],
+                "\"новый \"\"quoted\"\"\r\n\"".as_bytes()
+            );
+            assert_eq!(
+                &new_body.plaintext()[..new_token.start],
+                expected_prefix.as_bytes()
+            );
+            assert_eq!(
+                &new_body.plaintext()[new_token.end..],
+                expected_suffix.as_bytes()
+            );
+            assert_eq!(
+                &old_body.plaintext()[..old_token.start],
+                &new_body.plaintext()[..new_token.start]
+            );
+            assert_eq!(
+                &old_body.plaintext()[old_token.end..],
+                &new_body.plaintext()[new_token.end..]
+            );
+            verify_native_form_module_only_edit(&old, &new).unwrap();
+
+            for boundary in [new_token.start, new_token.end] {
+                let mut altered = String::from_utf8(new_body.plaintext().to_vec()).unwrap();
+                altered.insert(boundary, '\t');
+                let altered = deflate_bytes(altered.as_bytes()).unwrap();
+                // Neighbor whitespace remains grammatically valid but is
+                // outside the only token the module edit may replace.
+                assert!(decode_native_managed_form_module_layout(&altered).is_ok());
+                assert_eq!(
+                    verify_native_form_module_only_edit(&old, &altered),
+                    Err(ManagedFormCodecError::InvalidShape(
+                        "native Form edit changed bytes outside the quoted module".into()
+                    ))
+                );
+            }
+        }
+    }
+
+    #[test]
     fn native_module_envelope_refuses_unmeasured_shapes_and_partial_input() {
         let old = native_module_fixture();
         let text = String::from_utf8(inflate(&old).unwrap()).unwrap();

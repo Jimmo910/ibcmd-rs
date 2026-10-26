@@ -629,10 +629,26 @@ mod tests {
         root
     }
 
-    fn retained_module_root() -> PathBuf {
+    struct ModuleRoot(PathBuf);
+    impl std::ops::Deref for ModuleRoot {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for ModuleRoot {
+        fn drop(&mut self) {
+            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").as_deref()
+                != Some(std::ffi::OsStr::new("1"))
+            {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+    }
+    fn retained_module_root() -> ModuleRoot {
         let root = std::env::temp_dir().join(format!("ibcmd-native-bsl-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
-        root // Deliberately retained lab evidence; no teardown/deletion.
+        ModuleRoot(root)
     }
 
     #[test]

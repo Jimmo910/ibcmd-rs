@@ -49,6 +49,9 @@ impl ImportScratch {
 }
 impl Drop for ImportScratch {
     fn drop(&mut self) {
+        // Retention is confined to the unit-test build. The environment cannot
+        // bypass owned-scratch cleanup in production or integration builds.
+        #[cfg(test)]
         if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").as_deref()
             == Some(std::ffi::OsStr::new("1"))
         {

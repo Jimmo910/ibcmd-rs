@@ -61,7 +61,8 @@ impl<P> Registry<P> {
             .map(|_| Uuid::new_v4())
             .find(|token| !self.pending.contains_key(token))
             .ok_or(InsertError::TokenUnavailable)?;
-        self.pending.retain(|_, entry| entry.target != target);
+        self.pending
+            .retain(|_, entry| entry.target != target && now < entry.expires);
         // Preserve the existing fifth-distinct-plan policy: clear all old plans.
         if self.pending.len() >= MAX_PENDING {
             self.pending.clear();
@@ -88,7 +89,9 @@ impl<P> Registry<P> {
         current_epoch: u64,
         now: Instant,
     ) -> Result<P, TakeError> {
-        let plan = self.pending.remove(token).ok_or(TakeError::Missing)?;
+        let plan = self.pending.remove(token);
+        self.pending.retain(|_, entry| now < entry.expires);
+        let plan = plan.ok_or(TakeError::Missing)?;
         if now < plan.created {
             return Err(TakeError::ClockReversed);
         }
@@ -113,6 +116,91 @@ impl<P> Registry<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug)]
+    struct DropProbe(std::rc::Rc<std::cell::Cell<usize>>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    fn probe() -> (DropProbe, std::rc::Rc<std::cell::Cell<usize>>) {
+        let drops = std::rc::Rc::new(std::cell::Cell::new(0));
+        (DropProbe(drops.clone()), drops)
+    }
+
+    #[test]
+    fn insert_releases_expired_other_targets_before_capacity_policy() {
+        let now = Instant::now();
+        let later = now.checked_add(Duration::from_secs(1)).unwrap();
+        let expiry = now.checked_add(PLAN_TTL).unwrap();
+        let mut registry = Registry::new();
+        let (expired, expired_drops) = probe();
+        registry.insert("expired", 1, expired, now).unwrap();
+        let mut live = Vec::new();
+        for target in ["a", "b", "c"] {
+            let (payload, drops) = probe();
+            let token = registry.insert(target, 1, payload, later).unwrap();
+            live.push((target, token, drops));
+        }
+        let (new, new_drops) = probe();
+        registry.insert("new", 1, new, expiry).unwrap();
+        assert_eq!(expired_drops.get(), 1);
+        assert_eq!(registry.pending.len(), MAX_PENDING);
+        for (target, token, drops) in live {
+            assert_eq!(drops.get(), 0, "live target was evicted: {target}");
+            drop(registry.take(&token, target, 1, expiry).unwrap());
+            assert_eq!(drops.get(), 1);
+        }
+        assert_eq!(new_drops.get(), 0);
+        registry.clear();
+        assert_eq!(new_drops.get(), 1);
+    }
+
+    #[test]
+    fn missing_take_releases_expired_payloads_but_preserves_future_plans() {
+        let now = Instant::now();
+        let expiry = now.checked_add(PLAN_TTL).unwrap();
+        let future = expiry.checked_add(Duration::from_secs(1)).unwrap();
+        let mut registry = Registry::new();
+        // Insert the future-dated entry first: inserting it last would itself
+        // reap the expired entry, hiding whether a missing take reaps anything.
+        let (payload, future_drops) = probe();
+        let token = registry.insert("future", 1, payload, future).unwrap();
+        let (expired, expired_drops) = probe();
+        registry.insert("expired", 1, expired, now).unwrap();
+        assert!(matches!(
+            registry.take(&Uuid::nil(), "missing", 1, expiry),
+            Err(TakeError::Missing)
+        ));
+        assert_eq!(expired_drops.get(), 1);
+        assert_eq!(future_drops.get(), 0);
+        assert!(matches!(
+            registry.take(&token, "future", 1, expiry),
+            Err(TakeError::ClockReversed)
+        ));
+        assert_eq!(future_drops.get(), 1);
+    }
+
+    #[test]
+    fn requested_expired_token_keeps_its_error_while_other_payloads_are_released() {
+        let now = Instant::now();
+        let expiry = now.checked_add(PLAN_TTL).unwrap();
+        let mut registry = Registry::new();
+        let (requested, requested_drops) = probe();
+        let token = registry.insert("requested", 1, requested, now).unwrap();
+        let (other, other_drops) = probe();
+        registry.insert("other", 1, other, now).unwrap();
+        assert!(matches!(
+            registry.take(&token, "requested", 1, expiry),
+            Err(TakeError::Expired)
+        ));
+        assert_eq!(requested_drops.get(), 1);
+        assert_eq!(other_drops.get(), 1);
+        assert!(registry.pending.is_empty());
+    }
 
     #[test]
     fn exact_expiry_boundary_is_refused_and_consumed() {

@@ -1,11 +1,21 @@
-//! Retained public directory fixtures; no platform/compiler/database needed.
+//! Public directory fixtures; no platform/compiler/database needed.
 use super::{RootAnchor, SourceChangeError};
 use std::{fs, path::PathBuf, process::Command};
 
-// No Drop cleanup. Replacements park old directories in the same owned root.
+// Replacements park old directories in the same owned root. Exact KEEP1
+// retains fixtures and child receipts; ordinary runs clean the parent fixture.
 struct Fixture {
     root: PathBuf,
     source: PathBuf,
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").as_deref()
+            != Some(std::ffi::OsStr::new("1"))
+        {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
 }
 impl Fixture {
     fn new() -> Self {

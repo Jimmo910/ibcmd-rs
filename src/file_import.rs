@@ -296,6 +296,8 @@ mod tests {
     }
     #[test]
     fn owned_scratch_is_removed_on_success_error_and_unwind() {
+        // This unit-test build permits explicit retention; non-test library
+        // builds compile out that override in ImportScratch::drop.
         let retained = std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").as_deref()
             == Some(std::ffi::OsStr::new("1"));
         let success = ImportScratch::create().unwrap();

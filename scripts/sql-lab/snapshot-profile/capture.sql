@@ -5,9 +5,9 @@ SET NOCOUNT ON;
 SET XACT_ABORT ON;
 SET LOCK_TIMEOUT 5000;
 IF @@TRANCOUNT <> 0 THROW 57700, 'capture requires an idle session', 1;
-IF @P2 NOT BETWEEN 1 AND 1024 OR @P3 NOT BETWEEN 1 AND 1048576
- OR @P4 NOT BETWEEN 1 AND 8388608 OR @P5 NOT BETWEEN 1 AND 262144
- OR @P6 NOT BETWEEN 1 AND 128 OR @P8 NOT BETWEEN 1 AND 32768
+IF @P2 IS NULL OR @P2 NOT BETWEEN 1 AND 1024 OR @P3 IS NULL OR @P3 NOT BETWEEN 1 AND 1048576
+ OR @P4 IS NULL OR @P4 NOT BETWEEN 1 AND 8388608 OR @P5 IS NULL OR @P5 NOT BETWEEN 1 AND 262144
+ OR @P6 IS NULL OR @P6 NOT BETWEEN 1 AND 128 OR @P8 IS NULL OR @P8 NOT BETWEEN 1 AND 32768
  THROW 57701, 'capture limits are outside operator envelope', 1;
 -- Exact intended database before resolving application storage definitions.
 IF CONVERT(varbinary(max),DB_NAME())<>CONVERT(varbinary(max),@P11)
@@ -65,7 +65,7 @@ BEGIN TRY
  DECLARE @SchemaHash varbinary(32)=HASHBYTES('SHA2_256',CONVERT(varbinary(max),@Schema));
  IF @P1 IS NOT NULL AND @SchemaHash<>@P1
    THROW 57703, 'capture schema changed from expected measurement', 1;
- IF CONVERT(nvarchar(128),SERVERPROPERTY('ProductVersion'))<>@P9
+ IF @P9 IS NULL OR CONVERT(nvarchar(128),SERVERPROPERTY('ProductVersion'))<>@P9
    THROW 57704, 'capture SQL version differs', 1;
  -- Verify exact expected identity before any payload can be returned.
  IF NOT EXISTS (SELECT 1 FROM sys.databases d

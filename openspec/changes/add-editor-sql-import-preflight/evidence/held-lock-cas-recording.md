@@ -998,3 +998,42 @@ fixture submodule is pinned to8d138b896f462c3053d16076cbabf0ffe5030c1c.
 This source review is not execution evidence: the new merge-head hosted and
 focused results are reported separately in PR640. The earlier exact runtime
 receipts remain historical; no SQL/native/VM operation was repeated.
+
+
+## Review5654540045 and subsequent Form reader move
+
+The review is COMMENTED, not an approval. Its ten actionable findings were
+checked against head38f43e2b and the working integration of master47e53bf9
+(#641). That move caused one policy-catalog conflict; all76 incoming records
+and only the prior approved empty import-evidence record remain (77 total).
+
+Confirmed corrections: operator-only capture parameter NULL refusal, production
+scratch retention isolated to cfg(test), expired-plan payload release during
+insert/take, shared Windows packaging checks in workflow and xtask, and the five
+scope/status/evidence documentation findings. Shared packaging refuses dirty or
+changed tracked source before accepting immutable HEAD/tree receipt pins. Three
+test-fixture cleanup nitpicks now honor exact KEEP1 retention; existing public
+lab artifacts were not removed.
+
+The native Form-range finding is a false positive for the admitted ASCII
+grammar: the shared scanner already trims space/tab/CR/LF from field ranges.
+The new native-seven-tail test checks exact quoted-token offsets, raw
+prefix/suffix preservation and refusal of neighbouring whitespace changes.
+It passed with production parsing unchanged; no redundant trim or grammar
+expansion was introduced.
+
+Registry drop-counter regressions first produced9PASS/3FAIL at the intended
+expiry/capacity assertions, then the corrected server suite passed108 tests.
+Strict Form tests passed11, passive adapter tests6 and test-build scratch
+lifecycle1. An initially empty output-writer filter is not counted. SQL NULL
+source controls produced seven intended RED subcases then GREEN; this is not
+a SQL-engine NULL execution measurement. Source review covered token burn/error
+ordering, the passive adapter authority refusal and the shared packaging helper.
+
+The ordinary editor-server regression uses the real non-test binary with KEEP1
+and isolated child TMP/TEMP/TMPDIR, then checks that successful preflight leaves
+no compiler scratch. It is compiled locally; execution is reserved for hosted
+CI because local fixture deletion is restricted. No source-extraction mock,
+manual SQL/native replay, dependency addition, permission change, bot invocation
+or legacy writer-profile admission was introduced. Final revision-specific
+checks and the Windows packaging receipt are reported separately in PR640.

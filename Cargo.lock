@@ -727,13 +727,18 @@ name = "ibcmd-form-body"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "flate2",
  "ibcmd-1c-text",
  "ibcmd-1c-vocab",
  "ibcmd-core",
+ "ibcmd-form-schema",
+ "ibcmd-moxel",
  "ibcmd-schema",
  "ibcmd-xml",
  "quick-xml 0.38.4",
  "serde",
+ "serde_json",
+ "sha2",
  "uuid",
 ]
 
