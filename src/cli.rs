@@ -2060,10 +2060,10 @@ pub struct MssqlLoadExtensionArgs {
     /// Exact target infobase UUID.
     #[arg(long, required = true)]
     pub infobase_id: Option<Uuid>,
-    /// Infobase administrator used by `rac infobase info`.
+    /// Legacy compatibility option; direct SQL verification ignores it.
     #[arg(long)]
     pub infobase_user: Option<String>,
-    /// Infobase administrator password; empty when omitted.
+    /// Legacy compatibility option; direct SQL verification ignores it.
     #[arg(long)]
     pub infobase_pwd: Option<String>,
     /// Run this sqlcmd.exe (and bcp.exe) instead of the built-in SQL Server
@@ -2148,8 +2148,10 @@ pub struct MssqlActivateStagedExtensionArgs {
     pub cluster_id: Option<Uuid>,
     #[arg(long, required = true)]
     pub infobase_id: Option<Uuid>,
+    /// Legacy compatibility option; direct SQL verification ignores it.
     #[arg(long)]
     pub infobase_user: Option<String>,
+    /// Legacy compatibility option; direct SQL verification ignores it.
     #[arg(long)]
     pub infobase_pwd: Option<String>,
     /// Run this sqlcmd.exe (and bcp.exe) instead of the built-in SQL Server
@@ -2414,8 +2416,10 @@ pub struct MssqlActivateStagedMainArgs {
     /// 1C infobase UUID required to bind the verified registration.
     #[arg(long, required_unless_present = "managed_worker_parent")]
     pub infobase_id: Option<Uuid>,
+    /// Legacy compatibility option; direct SQL verification ignores it.
     #[arg(long)]
     pub infobase_user: Option<String>,
+    /// Legacy compatibility option; direct SQL verification ignores it.
     #[arg(long)]
     pub infobase_pwd: Option<String>,
 }
@@ -2616,8 +2620,10 @@ pub struct MssqlApplySourceChangeArgs {
     pub cluster_id: Option<Uuid>,
     #[arg(long, required_unless_present = "managed_worker_parent")]
     pub infobase_id: Option<Uuid>,
+    /// Legacy compatibility option; direct SQL verification ignores it.
     #[arg(long)]
     pub infobase_user: Option<String>,
+    /// Legacy compatibility option; direct SQL verification ignores it.
     #[arg(long)]
     pub infobase_pwd: Option<String>,
     /// Watch the selected source closure and activate every stable save.

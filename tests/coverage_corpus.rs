@@ -671,3 +671,196 @@ fn variant_files_are_attributed_by_object() {
         "Languages/Русский.xml"
     );
 }
+
+/// Export equality alone cannot detect a SQL-apply refusal. The generated
+/// baseline/update pair also holds the measured native schema/name transition.
+#[test]
+fn coverage_extension_restructuring_matches_native_schema_and_names() {
+    use ibcmd_cf::{archive::decode_archive_uniform, payload::PayloadEncoding};
+    use ibcmd_core::{
+        artifact::StorageProfileId, limits::ResourceLimits, storage::StorageProvenance,
+    };
+    use ibcmd_restructure::names::{DbNames, inflate};
+    use ibcmd_rs::mssql_extension_restructure::{
+        ExtensionRestructureState, Param, Schema, plan_from_source_trees,
+    };
+    for platform in ["8.5.1.1150", "8.3.27.2214"] {
+        for (facts_file, variant, refused) in [
+            ("native-plan.json", "CovRestructureUpdate", false),
+            (
+                "native-plan-two-plain-jobs.json",
+                "CovRestructureTwoPlainJobs",
+                false,
+            ),
+            ("native-plan-two-jobs.json", "CovRestructureTwoJobs", true),
+            (
+                "native-plan-main-separation.json",
+                "CovRestructureUpdate",
+                false,
+            ),
+        ] {
+            let set = coverage_paths::root()
+                .join("coverage")
+                .join(platform)
+                .join("extensions/restructuring");
+            let facts: Value =
+                serde_json::from_slice(&fs::read(set.join(facts_file)).unwrap()).unwrap();
+            let data = |field: &str| decode_base64(facts[field].as_str().unwrap().as_bytes());
+            let decode = |value: &Value| decode_base64(value.as_str().unwrap().as_bytes());
+            let row = |name: &str, bytes: Vec<u8>| Param {
+                name: name.into(),
+                size: bytes.len() as i64,
+                part: 0,
+                data: bytes,
+            };
+            let names_row = facts["target_names_row"].as_str().unwrap();
+            // All extension references in the ordinary case are its own.
+            // The separated-base case also supplies its native main type index.
+            let main = if facts["main_names_before"].is_string() {
+                data("main_names_before")
+            } else {
+                DbNames {
+                    max: facts["main_names_header"].as_u64().unwrap(),
+                    entries: Vec::new(),
+                }
+                .to_row()
+                .unwrap()
+            };
+            let names_tables = if facts["names_tables_before"].is_string() {
+                data("names_tables_before")
+            } else {
+                b"\xef\xbb\xbf{0,{0}}".to_vec()
+            };
+            let state = ExtensionRestructureState {
+                params: vec![
+                    row("DBNames", main),
+                    row(names_row, data("target_names_before")),
+                    row("DBNames-Ext-1", data("system_names_before")),
+                    row(
+                        &format!("DBNamesVersion-{names_row}"),
+                        data("target_names_version_before"),
+                    ),
+                    row(
+                        "DBNamesVersion-DBNames-Ext-1",
+                        data("system_names_version_before"),
+                    ),
+                    row("a07b62f0-1f01-484a-93d9-d42764cedac0.si", names_tables),
+                ],
+                schemas: [(0, "schema_main_before"), (1, "schema_before")]
+                    .into_iter()
+                    .map(|(id, key)| Schema {
+                        id,
+                        status: 100,
+                        current: data(key),
+                        created: ibcmd_rs::restructure::storage::EMPTY_GENERATION.to_vec(),
+                        dropped: ibcmd_rs::restructure::storage::EMPTY_GENERATION.to_vec(),
+                    })
+                    .collect(),
+                services: facts["extensions_restruct_before"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| {
+                        (
+                            decode(&row["_ExtDataID"]),
+                            decode(&row["_RestructData"]),
+                            row["_RestructDataInt"].as_i64().unwrap(),
+                            row["_RestructDataType"].as_i64().unwrap(),
+                        )
+                    })
+                    .collect(),
+            };
+            let archive = |name: &str| {
+                let packed =
+                    decode_base64(&fs::read(set.join(format!("variants/{name}.cfe.b64"))).unwrap());
+                decode_archive_uniform(
+                    std::io::Cursor::new(&packed),
+                    ResourceLimits::for_input_bytes(packed.len() as u64),
+                    StorageProfileId::parse("mssql-extension-8.3.27").unwrap(),
+                    StorageProvenance::new("generated native Coverage extension update").unwrap(),
+                    PayloadEncoding::RawDeflate,
+                )
+                .unwrap()
+            };
+            let active = archive("CovRestructureBaseline");
+            let proposed = archive(variant);
+            let outcome = plan_from_source_trees(
+                &set.join("native/CovRestructureBaseline"),
+                &set.join("native").join(variant),
+                active.image(),
+                proposed.image(),
+                data("extension_id").try_into().unwrap(),
+                &state,
+            );
+            if refused {
+                let error = outcome.unwrap_err().to_string();
+                assert!(
+                    error.contains("predefined"),
+                    "{platform}/{variant}: {error}"
+                );
+                continue;
+            }
+            let plan = outcome
+                .unwrap()
+                .expect("the measured update needs SQL schema publication");
+            let touched = plan.touched_tables();
+            for metadata in ["SchemaStorage", "Params", "_ExtensionsRestruct"] {
+                assert!(
+                    touched.iter().any(|table| table == metadata),
+                    "{platform}/{facts_file}: actual restructuring report omits {metadata}: {touched:?}"
+                );
+            }
+            assert_eq!(
+                touched.iter().collect::<BTreeSet<_>>().len(),
+                touched.len(),
+                "write set must not repeat a table"
+            );
+            assert_eq!(
+                plan.after_schema,
+                data("schema_after"),
+                "{platform}/{facts_file}: full extension schema"
+            );
+            assert_eq!(
+                inflate(&plan.after_names).unwrap(),
+                inflate(&data("target_names_after")).unwrap(),
+                "{platform}/{facts_file}: all target mappings"
+            );
+            assert_eq!(
+                inflate(&plan.after_system_names).unwrap(),
+                inflate(&data("system_names_after")).unwrap(),
+                "{platform}/{facts_file}: shared extension reservations"
+            );
+            assert_eq!(
+                data("schema_main_before"),
+                data("schema_main_after"),
+                "extension update preserves the main schema"
+            );
+            let id = uuid::Uuid::parse_str(
+                ibcmd_schema::extension_schema::ExtensionScheduledJobsLayout::SERVICE_ID,
+            )
+            .unwrap();
+            let physical = id.to_bytes_le();
+            let expected = facts["extensions_restruct_after"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| decode(&row["_ExtDataID"]) == physical)
+                .unwrap();
+            assert_eq!(
+                plan.after_scheduled_jobs.as_ref().unwrap(),
+                &decode(&expected["_RestructData"]),
+                "{platform}/{facts_file}: scheduled-job service mapping"
+            );
+            if facts_file == "native-plan-main-separation.json" {
+                assert!(
+                    plan.phase_sql().contains("_DataSeparationUse581"),
+                    "separated service context must be retained"
+                );
+                assert!(
+                    plan.phase_sql().contains("_Fld582"),
+                    "separated service value must be copied"
+                );
+            }
+        }
+    }
+}

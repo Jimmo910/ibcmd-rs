@@ -978,3 +978,23 @@ The additional all-target workspace check, explicit public-body offline gate,
 focused suites and both cleanup modes above also passed on this integration.
 New-head hosted checks and PR mergeability are tracked on PR640 after publishing
 this local integration; prior07385992 hosted success is historical evidence only.
+
+
+## Subsequent upstream Form reader extraction (06a582ff)
+
+Upstream master06a582ffc43e1f17e9518a78adab0ff780a9240d introduces the
+Form reader entrypoint extraction (#592) after the prior review-ready head499f1bc7.
+The only textual merge conflict is the physical-adapter policy catalog. Its
+resolution retains all76 incoming records byte-for-byte and only the previously
+approved empty import_evidence.rs record (77 total,62 additional bytes); no
+allowance is added. The policy guard, its self-tests and strict change validation
+passed. Independent source review confirmed that the moved Form entrypoints
+retain the same root codec and explicit host/extension context.
+
+The strict original/native Form module envelope and SQL/server source paths
+are unchanged. The original module-token range parser, explicit SQL integration
+test target and Windows libtest packaging remain present. The incoming public
+fixture submodule is pinned to8d138b896f462c3053d16076cbabf0ffe5030c1c.
+This source review is not execution evidence: the new merge-head hosted and
+focused results are reported separately in PR640. The earlier exact runtime
+receipts remain historical; no SQL/native/VM operation was repeated.
