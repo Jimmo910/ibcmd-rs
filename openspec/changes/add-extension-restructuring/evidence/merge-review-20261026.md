@@ -30,7 +30,7 @@ seven root defects were reproduced before the root fix. The subsequent combined
 identity regression was separately red, then green. Independent direct harness
 verification at 03291c9879cfa6e43fa807796cd639bed47d6bd3 passed tree 19,
 admission 6, profile 17 and completed-stage probe 1 (one helper case overlaps).
-Parent verification passed the same suites. The inner check gate passed all
+Parent reruns on 6cd5902e passed tree 19, admission 5, profile 17 and probe 1; the combined regression then passed on 03291c98. The inner check gate passed all
 7 steps, including the actual Coverage plan consumer, on that revision.
 
 SQL feature source: [Microsoft STRING_AGG requirements](https://learn.microsoft.com/en-us/sql/t-sql/functions/string-agg-transact-sql?view=sql-server-2017).
