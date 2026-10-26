@@ -182,7 +182,12 @@ fn native_module_layout(
             "native Form parsers disagree".into(),
         ));
     }
-    Ok((ManagedFormBody { plain, parsed }, range))
+    // The field scanner trims space/tab/CR/LF, but admitted form-feed can
+    // remain around the quoted token. Protect those neighboring bytes too.
+    let field = &text[range.clone()];
+    let start = range.start + field.len() - field.trim_start().len();
+    let end = range.end - (field.len() - field.trim_end().len());
+    Ok((ManagedFormBody { plain, parsed }, start..end))
 }
 
 /// Preserve every original plaintext byte outside the quoted module token.
@@ -417,6 +422,59 @@ mod tests {
                     ))
                 );
             }
+        }
+    }
+
+    #[test]
+    fn native_module_ff_range_excludes_admitted_form_feed() {
+        let prefix = "\u{feff}{4,{50,0},";
+        let suffix = ",{4,1,{7,0}},{0,0},{0,0},{0,0},{0,0},0,0}";
+        for (before, after) in [("\x0c", ""), ("", "\x0c"), ("\x0c", "\x0c")] {
+            let expected_prefix = format!("{prefix}{before}");
+            let expected_suffix = format!("{after}{suffix}");
+            let plain = format!("{expected_prefix}\"old\"{expected_suffix}");
+            let old = deflate_bytes(plain.as_bytes()).unwrap();
+            assert_eq!(
+                decode_native_managed_form_module_layout(&old)
+                    .unwrap()
+                    .module_text(),
+                "old"
+            );
+            let (body, token) = native_module_layout(&old).unwrap();
+            assert_eq!(token, expected_prefix.len()..expected_prefix.len() + 5);
+            assert_eq!(&body.plaintext()[token.clone()], b"\"old\"");
+            assert_eq!(&body.plaintext()[..token.start], expected_prefix.as_bytes());
+            assert_eq!(&body.plaintext()[token.end..], expected_suffix.as_bytes());
+        }
+    }
+
+    #[test]
+    fn native_module_ff_neighbor_mutations_and_packer_loss_are_refused() {
+        let prefix = "\u{feff}{4,{50,0},";
+        let suffix = ",{4,1,{7,0}},{0,0},{0,0},{0,0},{0,0},0,0}";
+        for (before, after) in [("\x0c", ""), ("", "\x0c"), ("\x0c", "\x0c")] {
+            let expected_prefix = format!("{prefix}{before}");
+            let expected_suffix = format!("{after}{suffix}");
+            let plain = format!("{expected_prefix}\"old\"{expected_suffix}");
+            let old = deflate_bytes(plain.as_bytes()).unwrap();
+            assert!(decode_native_managed_form_module_layout(&old).is_ok());
+            let preserved = format!("{expected_prefix}\"new\"{expected_suffix}");
+            let new = deflate_bytes(preserved.as_bytes()).unwrap();
+            verify_native_form_module_only_edit(&old, &new).unwrap();
+            for boundary in [expected_prefix.len(), expected_prefix.len() + 5] {
+                let mut altered = preserved.clone();
+                altered.insert(boundary, '\x0c');
+                let altered = deflate_bytes(altered.as_bytes()).unwrap();
+                assert!(decode_native_managed_form_module_layout(&altered).is_ok());
+                assert!(verify_native_form_module_only_edit(&old, &altered).is_err());
+            }
+            let packed = crate::module_blob::pack_form_body_blob_from_module_text(&old, b"new")
+                .unwrap()
+                .blob;
+            let packed_plain = inflate(&packed).unwrap();
+            assert!(!packed_plain.contains(&b'\x0c'));
+            assert!(decode_native_managed_form_module_layout(&packed).is_ok());
+            assert!(verify_native_form_module_only_edit(&old, &packed).is_err());
         }
     }
 

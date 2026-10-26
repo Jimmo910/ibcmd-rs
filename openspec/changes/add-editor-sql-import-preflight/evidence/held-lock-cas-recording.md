@@ -1015,12 +1015,16 @@ changed tracked source before accepting immutable HEAD/tree receipt pins. Three
 test-fixture cleanup nitpicks now honor exact KEEP1 retention; existing public
 lab artifacts were not removed.
 
-The native Form-range finding is a false positive for the admitted ASCII
-grammar: the shared scanner already trims space/tab/CR/LF from field ranges.
-The new native-seven-tail test checks exact quoted-token offsets, raw
-prefix/suffix preservation and refusal of neighbouring whitespace changes.
-It passed with production parsing unchanged; no redundant trim or grammar
-expansion was introduced.
+The initial native Form-range controls covered space/tab/CR/LF and passed,
+which led to an incomplete false-positive classification. A subsequent parser
+boundary check found that the native lexical parser also admits form-feed,
+whereas the shared field scanner does not trim it. Two new tests actually failed
+at the intended wider range and accepted neighbouring-FF mutation. The native
+witness now narrows that field range to the quoted token, matching the existing
+original-layout witness. Non-module bytes remain protected; the unchanged
+packer's loss of FF therefore refuses before any publication. No grammar,
+opaque-section serialization, legacy codec or packer behavior was widened.
+Independent source review cleared this minimal fail-closed correction.
 
 Registry drop-counter regressions first produced9PASS/3FAIL at the intended
 expiry/capacity assertions, then the corrected server suite passed108 tests.
@@ -1037,3 +1041,13 @@ CI because local fixture deletion is restricted. No source-extraction mock,
 manual SQL/native replay, dependency addition, permission change, bot invocation
 or legacy writer-profile admission was introduced. Final revision-specific
 checks and the Windows packaging receipt are reported separately in PR640.
+
+
+The form-feed correction passed workspace all-target checking, all13 Form
+codec tests,108 server/SQL tests and the explicitly invoked retained1153-byte
+native-body check (packed SHA256
+`7f989004e1b22bd2896b74cdf8c4b2df9bc0562eae5f5069be806ff8b73043ff`).
+The two new FF tests were observed RED before the witness fix. This tightens
+byte-preservation refusal; it is not a new SQL/native execution or support for
+rewriting unknown FF-framed bodies. The incomplete initial four-whitespace
+classification was corrected explicitly in both this record and PR640.
