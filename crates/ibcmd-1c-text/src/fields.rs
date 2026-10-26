@@ -133,6 +133,49 @@ pub fn decode_base64_mime(input: &str) -> Option<Vec<u8>> {
     Some(output)
 }
 
+/// [`decode_base64_mime`], but a group of four padded by three or four `=`
+/// is read too, as one byte (`Q===` is `0x40`, `====` is `0`), where
+/// `decode_base64_mime` answers `None`.
+///
+/// This is `module_blob`'s decoder, which the root reads stored and
+/// imported payloads with (as `module_blob::decode_base64_mime`), and the
+/// one `ibcmd-form-body`'s record reader reads a record's
+/// `{#base64:...}` fields with; it stays as lenient as it was there.
+pub fn decode_base64_mime_lenient(input: &str) -> Option<Vec<u8>> {
+    let values = input
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect::<Vec<_>>();
+    if values.len() % 4 != 0 {
+        return None;
+    }
+
+    let mut output = Vec::with_capacity(values.len() / 4 * 3);
+    for chunk in values.chunks(4) {
+        let mut decoded = [0u8; 4];
+        let mut padding = 0usize;
+        for (index, byte) in chunk.iter().copied().enumerate() {
+            if byte == b'=' {
+                padding += 1;
+                decoded[index] = 0;
+                continue;
+            }
+            if padding > 0 {
+                return None;
+            }
+            decoded[index] = base64_value(byte)?;
+        }
+        output.push((decoded[0] << 2) | (decoded[1] >> 4));
+        if padding < 2 {
+            output.push((decoded[1] << 4) | (decoded[2] >> 2));
+        }
+        if padding < 1 {
+            output.push((decoded[2] << 6) | decoded[3]);
+        }
+    }
+    Some(output)
+}
+
 /// The six bits one base64 character (RFC 4648 alphabet) stands for; `None`
 /// for `=` and any other byte.
 pub fn base64_value(byte: u8) -> Option<u8> {
@@ -257,6 +300,37 @@ mod tests {
             let encoded = encode_base64(&bytes[..length]);
             assert_eq!(
                 decode_base64_mime(&encoded).as_deref(),
+                Some(&bytes[..length])
+            );
+        }
+    }
+
+    #[test]
+    fn the_lenient_decoder_also_reads_a_group_padded_by_three_or_four() {
+        for (input, lenient, strict) in [
+            ("Q===", Some(vec![0x40]), None),
+            ("====", Some(vec![0]), None),
+            ("QUJD\r\nQ===", Some(b"ABC@".to_vec()), None),
+            ("QQ==", Some(b"A".to_vec()), Some(b"A".to_vec())),
+            ("QUI=", Some(b"AB".to_vec()), Some(b"AB".to_vec())),
+            (
+                "QUJD QUJD",
+                Some(b"ABCABC".to_vec()),
+                Some(b"ABCABC".to_vec()),
+            ),
+            ("Q=JD", None, None),
+            ("QUJ", None, None),
+            ("QU*D", None, None),
+            ("", Some(vec![]), Some(vec![])),
+        ] {
+            assert_eq!(decode_base64_mime_lenient(input), lenient, "{input:?}");
+            assert_eq!(decode_base64_mime(input), strict, "{input:?}");
+        }
+        let bytes: Vec<u8> = (0..=255).collect();
+        for length in 0..=bytes.len() {
+            let encoded = encode_base64(&bytes[..length]);
+            assert_eq!(
+                decode_base64_mime_lenient(&encoded).as_deref(),
                 Some(&bytes[..length])
             );
         }

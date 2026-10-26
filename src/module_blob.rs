@@ -9,7 +9,7 @@ use crate::form_schema::form_text_document_context_menu_child_is_valid;
 use anyhow::{Context, Result, anyhow};
 use flate2::Compression;
 use flate2::write::DeflateEncoder;
-use ibcmd_1c_text::{base64_value, crlf_line_breaks, format_1c_string, is_uuid_like_ascii};
+use ibcmd_1c_text::{crlf_line_breaks, format_1c_string, is_uuid_like_ascii};
 use ibcmd_1c_vocab::is_svg_content;
 use ibcmd_core::dcs::{DcsConditionalAppearance, DcsFilter, DcsOrder};
 use ibcmd_schema::{
@@ -56,6 +56,7 @@ use crate::v8_container::{
 };
 
 // The rest of the root reaches these by their `module_blob` paths.
+pub(crate) use ibcmd_1c_text::decode_base64_mime_lenient as decode_base64_mime;
 pub(crate) use ibcmd_1c_text::{encode_base64, platform_base64_token};
 pub(crate) use ibcmd_1c_vocab::inflate_raw;
 
@@ -32401,41 +32402,6 @@ pub(crate) fn deflate_raw(input: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(input)?;
     encoder.finish().context("failed to finish deflate stream")
-}
-
-pub(crate) fn decode_base64_mime(input: &str) -> Option<Vec<u8>> {
-    let values = input
-        .bytes()
-        .filter(|byte| !byte.is_ascii_whitespace())
-        .collect::<Vec<_>>();
-    if values.len() % 4 != 0 {
-        return None;
-    }
-
-    let mut output = Vec::with_capacity(values.len() / 4 * 3);
-    for chunk in values.chunks(4) {
-        let mut decoded = [0u8; 4];
-        let mut padding = 0usize;
-        for (index, byte) in chunk.iter().copied().enumerate() {
-            if byte == b'=' {
-                padding += 1;
-                decoded[index] = 0;
-                continue;
-            }
-            if padding > 0 {
-                return None;
-            }
-            decoded[index] = base64_value(byte)?;
-        }
-        output.push((decoded[0] << 2) | (decoded[1] >> 4));
-        if padding < 2 {
-            output.push((decoded[1] << 4) | (decoded[2] >> 2));
-        }
-        if padding < 1 {
-            output.push((decoded[2] << 6) | decoded[3]);
-        }
-    }
-    Some(output)
 }
 
 fn replace_header_uuid(text: &mut String) -> Result<VersionReplacement> {
