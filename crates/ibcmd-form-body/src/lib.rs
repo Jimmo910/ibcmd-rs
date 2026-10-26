@@ -2,18 +2,23 @@
 //! record and writes the form's `Form.xml`. Beside it: the per-export indexes
 //! and the compatibility-mode rules its `FormParseContext` holds, the files a
 //! form's items carry, the dump timing report its entry points add their parts
-//! to, and the code it reads besides them: the form body record
-//! (`ParsedFormBodyBlob`), an adopted form's event block, base form slot and
-//! adoption model (`FormAdoption`), the platform 8.5 layout's down-conversion
-//! (`layout_8_5_1`) and the data-composition normalizer (`dcs.rs`), which the
-//! root's template exporters share.
+//! to, and the code it reads besides them: the form body record and its
+//! reader (`ParsedFormBodyBlob`, `parse_form_body_plain`, with the upgrade of
+//! an older platform's root-`42` body it applies first), the physical layout
+//! of the record's Form Attributes tail (`attributes_tail.rs`), the
+//! braced-record text primitives both read ([`record_text`]), an adopted
+//! form's event block, base form slot and adoption model (`FormAdoption`), the
+//! platform 8.5 layout's down-conversion (`layout_8_5_1`) and the
+//! data-composition normalizer (`dcs.rs`), which the root's template exporters
+//! share.
 //!
 //! Everything here moved from the root crate (`mssql_dump`'s `form_body.rs`,
 //! `mod.rs`, `refs.rs`, `dcs.rs`, `source_assets.rs`, `timing.rs`,
 //! `form_ref_index.rs`, `form_extension.rs`, `form/layout_8_5_1.rs` and
-//! `form/xml_2_21_writer.rs`, and `module_blob.rs`), which still reaches every
-//! item by its old name and path through imports. The bodies are unchanged but
-//! for mechanical clippy fixes (listed in #588 and #592); declarations and the
+//! `form/xml_2_21_writer.rs`, and `module_blob.rs` with its `form_root_42.rs`),
+//! which still reaches every item by its old name and path through imports.
+//! The bodies are unchanged but for mechanical clippy fixes (listed in #588,
+//! #592 and the step that moved the record reader); declarations and the
 //! fields the root reads or fills are `pub`, and the four test helpers the
 //! root's own tests call (`parse_form_child_item`,
 //! `collect_form_child_item_indexes`, `extract_form_command_interface`,
@@ -21,14 +26,13 @@
 //! builders of these indexes read the root's metadata rows and stay there,
 //! and so do the few methods that need a root type
 //! (`MetadataFieldDeclarationIndex::written_as` and the sums of
-//! `MssqlDumpTimingReport`) or would widen the root's public API
-//! (`FormBodyRevision::parse`), as root traits. The reader's root half stays
-//! there too (`mssql_dump/form_body_host.rs`, `form_body_entry.rs`): the
-//! `module_blob` readers of the Form Attributes tail and the extension export
-//! running now, which `FormParseContext::new` is given, and the entry points
-//! that decode a stored form through the root's codec. The tests that decode
-//! a template or a form through the root's codec, or read its metadata rows,
-//! stay in the root.
+//! `MssqlDumpTimingReport`), as root traits. The reader's root half stays
+//! there too (`mssql_dump/form_body_entry.rs`): the extension export running
+//! now, which `FormParseContext::new` is given, and the entry points that
+//! decode a stored form through the root's codec; so does the record's
+//! inflating entry point (`module_blob::parse_form_body_blob`). The tests that
+//! decode a template or a form through the root's codec, or read its metadata
+//! rows, stay in the root.
 //!
 //! The code came from the physical-adapter guard's slice, so the guard scans
 //! every non-test `*.rs` file under this crate's `src/`
@@ -37,6 +41,7 @@
 //! the slice at once and fails the guard until its record is reviewed.
 
 mod assets;
+mod attributes_tail;
 mod blob;
 mod compatibility;
 mod dcs;
@@ -44,12 +49,21 @@ mod declarations;
 pub mod form_body;
 mod form_extension;
 mod form_ref_index;
+mod form_root_42;
 mod indexes;
 pub mod layout_8_5_1;
+pub mod record_text;
 mod timing;
 
 pub use assets::FormItemAsset;
-pub use blob::{FormBodyRevision, ParsedFormBodyBlob};
+pub use attributes_tail::{
+    FormAttributesTailLayout, parse_form_attributes_conditional_appearance_tail,
+    scan_form_attributes_tail_layout,
+};
+pub use blob::{
+    FormBodyContainer, FormBodyRevision, ParsedFormBodyBlob, parse_form_body_plain,
+    parse_original_form_body_plain,
+};
 pub use compatibility::{
     FormCompatibility, compatibility_mode_spells_any_ref, forms_mark_no_main_table_default_picture,
     forms_write_usual_group_behavior,

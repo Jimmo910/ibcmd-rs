@@ -6,7 +6,14 @@
 //! (`mod.rs`; `extract_base64_payload`, `decode_base64_mime` and
 //! `format_1c_date_time` from `source_assets.rs`; the UUID scan
 //! `uuid_like_values` from `refs.rs`), which still reaches every item by its
-//! old name through imports. The root's
+//! old name through imports. The writers `encode_base64`,
+//! `platform_base64_token`, `format_1c_string` and `crlf_line_breaks` are the
+//! one copy of what `module_blob`, `mssql_dump::form::load_8_5_1`, the root's
+//! asset, dynamic-list and editor-protocol writers and `ibcmd-form-native`
+//! each spelled out, and `decode_base64_mime_lenient` is the one copy of the
+//! base64 reader `module_blob` and `ibcmd-form-body`'s record reader each
+//! held, which reads what the stricter `decode_base64_mime` refuses. The
+//! root's
 //! form-body, reference and metadata readers register their texts in this
 //! crate's per-thread jump table ([`register_brace_jumps`]); the splitters
 //! here read the same table, so it has one definition, in this crate.
@@ -28,12 +35,14 @@ pub use braced::{
     split_1c_braced_fields, split_1c_braced_fields_bounded, split_1c_braced_sequence,
 };
 pub use fields::{
-    decode_base64_mime, extract_base64_payload, format_1c_date_time, is_uuid_like_ascii,
-    is_uuid_text, parse_1c_bool_field, parse_1c_bool_field_or_default, parse_1c_bool_flag,
-    parse_1c_u32_field, parse_non_zero_uuid, parse_uuid_field, uuid_like_values,
+    base64_value, decode_base64_mime, decode_base64_mime_lenient, encode_base64,
+    extract_base64_payload, format_1c_date_time, is_uuid_like_ascii, is_uuid_text,
+    parse_1c_bool_field, parse_1c_bool_field_or_default, parse_1c_bool_flag, parse_1c_u32_field,
+    parse_non_zero_uuid, parse_uuid_field, platform_base64_token, uuid_like_values,
     uuid_like_values_in_text_order,
 };
 pub use strings::{
-    parse_1c_quoted_string, parse_1c_quoted_string_with_len, parse_1c_string, parse_1c_synonyms,
+    crlf_line_breaks, format_1c_string, parse_1c_quoted_string, parse_1c_quoted_string_with_len,
+    parse_1c_string, parse_1c_synonyms,
 };
 pub use xml::{escape_xml_character_data, escape_xml_element_text, escape_xml_text, xml_bool};

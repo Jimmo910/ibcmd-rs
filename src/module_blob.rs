@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -8,8 +8,9 @@ use std::sync::{Arc, Mutex};
 use crate::form_schema::form_text_document_context_menu_child_is_valid;
 use anyhow::{Context, Result, anyhow};
 use flate2::Compression;
-use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
+use ibcmd_1c_text::{crlf_line_breaks, format_1c_string, is_uuid_like_ascii};
+use ibcmd_1c_vocab::is_svg_content;
 use ibcmd_core::dcs::{DcsConditionalAppearance, DcsFilter, DcsOrder};
 use ibcmd_schema::{
     FormTextDocumentContextMenuMultiplicity, bundled_dcs_conditional_appearance_policy,
@@ -22,9 +23,7 @@ use ibcmd_xml::{
     emit_dcs_filter_storage_document, emit_dcs_order_storage_document,
     emit_form_attributes_conditional_appearance_storage_document,
     emit_form_attributes_empty_storage_document, parse_dcs_conditional_appearance_storage_document,
-    parse_dcs_filter_storage_document, parse_dcs_order_storage_document,
-    parse_form_attributes_conditional_appearance_storage_document,
-    parse_form_attributes_empty_storage_document, parse_form_dcs_children,
+    parse_dcs_filter_storage_document, parse_dcs_order_storage_document, parse_form_dcs_children,
 };
 use quick_xml::Reader;
 use quick_xml::escape::{resolve_xml_entity, unescape};
@@ -51,9 +50,15 @@ use crate::form_schema::{
     form_tooltip_representation_schema, form_tooltip_representation_supports_xml_tag,
     normalize_form_table_command_bar_location_xml,
 };
+use crate::mssql_dump::sanitize_source_path_segment;
 use crate::v8_container::{
     V8Element, build_v8_container, make_v8_element_header, parse_v8_container, read_v8_element_data,
 };
+
+// The rest of the root reaches these by their `module_blob` paths.
+pub(crate) use ibcmd_1c_text::decode_base64_mime_lenient as decode_base64_mime;
+pub(crate) use ibcmd_1c_text::{encode_base64, platform_base64_token};
+pub(crate) use ibcmd_1c_vocab::inflate_raw;
 
 const DEFAULT_INFO: &[u8] = b"\xEF\xBB\xBF{3,1,0,\"\",0}";
 // Platform-level 1C standard pictures and form type IDs, not database metadata UUIDs.
@@ -109,6 +114,20 @@ pub struct PatchedVersionsBlob {
 // crate's (the form reader there reads them); this module unpacks them and
 // keeps their public paths.
 pub use ibcmd_form_body::ParsedFormBodyBlob;
+// The form body record (with the root-`42` upgrade it reads first), the
+// physical layout of its Form Attributes tail and the braced-record text
+// primitives both read moved to that crate too; the packers here patch
+// the ranges they locate.
+pub(crate) use ibcmd_form_body::record_text::scan_braced_fields;
+use ibcmd_form_body::record_text::{
+    decode_base64_payload_field, parse_1c_quoted_string, scan_1c_quoted_string_end,
+    scan_balanced_braces, trim_ascii_ws_range,
+};
+use ibcmd_form_body::{
+    FormBodyContainer, parse_form_attributes_conditional_appearance_tail,
+    scan_form_attributes_tail_layout,
+};
+pub(crate) use ibcmd_form_body::{parse_form_body_plain, parse_original_form_body_plain};
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 struct FormXmlBodyProperties {
@@ -1068,7 +1087,6 @@ struct FlowchartXmlItem {
     events: BTreeMap<String, Option<String>>,
 }
 
-mod form_root_42;
 mod help_pages;
 mod interface_assets;
 
@@ -1660,7 +1678,7 @@ impl MetadataSourceContext {
     fn resolve_form_uuid(&self, reference: &str) -> Result<String> {
         let reference = reference.trim();
         // A form the configuration no longer has is spelled by its bare uuid.
-        if is_uuid_text(reference) {
+        if is_uuid_like_ascii(reference.as_bytes()) {
             return Ok(reference.to_ascii_lowercase());
         }
         let path = if let Some(name) = reference.strip_prefix("CommonForm.") {
@@ -3074,16 +3092,6 @@ pub fn raw_deflated_help_content_sha256(blob: &[u8]) -> Result<String> {
     }
 
     Ok(format!("{:X}", hasher.finalize()))
-}
-
-fn decode_base64_payload_field(field: &str) -> Result<Vec<u8>> {
-    let Some(payload) = field
-        .strip_prefix("{#base64:")
-        .and_then(|value| value.strip_suffix('}'))
-    else {
-        return Err(anyhow!("base64 payload wrapper is missing"));
-    };
-    decode_base64_mime(payload).ok_or_else(|| anyhow!("base64 payload is invalid"))
 }
 
 fn hash_usize(hasher: &mut Sha256, value: usize) {
@@ -5897,7 +5905,7 @@ fn native_button_command(
     if let Some((head, tail)) = path.split_once(':')
         && !head.is_empty()
         && head.bytes().all(|byte| byte.is_ascii_digit())
-        && is_uuid_reference(tail)
+        && is_uuid_like_ascii(tail.as_bytes())
     {
         return Ok(format!("{{{head},{tail}}}"));
     }
@@ -6416,8 +6424,8 @@ fn native_choice_list_reference(
     // `<type uuid>.<value uuid>` is the exporter's spelling of a value its
     // type does not name; the body holds the two uuids (2 of 2).
     if let Some((type_id, value_id)) = reference.split_once('.')
-        && is_uuid_text(type_id)
-        && is_uuid_text(value_id)
+        && is_uuid_like_ascii(type_id.as_bytes())
+        && is_uuid_like_ascii(value_id.as_bytes())
     {
         return Ok((type_id.to_string(), value_id.to_string()));
     }
@@ -7877,7 +7885,7 @@ fn native_picture_of(
     // uuid; the body holds the common-picture shape with that uuid (16 of 16).
     if let Some(uuid) = reference
         .strip_prefix("0:")
-        .filter(|tail| is_uuid_text(tail))
+        .filter(|tail| is_uuid_like_ascii(tail.as_bytes()))
     {
         let load_transparent = match picture.load_transparent.as_deref().map(str::trim) {
             Some("true") => true,
@@ -8105,7 +8113,7 @@ fn native_rights(
                 anyhow!("{owner} names Role.{role} and no configuration is on hand")
             })?;
             source.resolve_simple_metadata_uuid(name, "Role", "Roles", "Role.")?
-        } else if is_uuid_text(name) {
+        } else if is_uuid_like_ascii(name.as_bytes()) {
             name.clone()
         } else {
             return Err(anyhow!("{owner} names {name}, which is not a role"));
@@ -8453,7 +8461,7 @@ fn native_inline_data_path(
                         .trim_start_matches('-')
                         .bytes()
                         .all(|byte| byte.is_ascii_digit())
-                        || is_uuid_text(part))
+                        || is_uuid_like_ascii(part.as_bytes()))
             })
         });
     let full = if raw {
@@ -8876,7 +8884,7 @@ fn format_native_form_body(
             // stores that form's own uuid (3 of 3).
             Some(
                 // A storage the configuration no longer has is its bare uuid.
-                if is_uuid_text(reference.trim()) {
+                if is_uuid_like_ascii(reference.trim().as_bytes()) {
                     reference.trim().to_ascii_lowercase()
                 } else if reference.contains(".Form.")
                     || reference.trim().starts_with("CommonForm.")
@@ -9168,7 +9176,7 @@ fn format_native_form_body(
             let reference = reference.trim();
             let uuid = if reference.is_empty() {
                 "00000000-0000-0000-0000-000000000000".to_string()
-            } else if is_uuid_text(reference) {
+            } else if is_uuid_like_ascii(reference.as_bytes()) {
                 // The exporter spells an option it cannot name -- a deleted
                 // one -- by its uuid, which is what the body holds.
                 reference.to_string()
@@ -10213,14 +10221,6 @@ fn is_form_item_picture_asset_content(bytes: &[u8]) -> bool {
         || is_svg_content(bytes)
 }
 
-fn is_svg_content(bytes: &[u8]) -> bool {
-    let Ok(text) = std::str::from_utf8(bytes) else {
-        return false;
-    };
-    let text = text.trim_start_matches('\u{feff}').trim_start();
-    text.starts_with("<svg") || text.starts_with("<?xml") && text.contains("<svg")
-}
-
 fn form_item_asset_file_name(property_name: &str, content: &[u8]) -> String {
     format!("{property_name}.{}", form_item_asset_extension(content))
 }
@@ -10240,22 +10240,6 @@ fn form_item_asset_extension(content: &[u8]) -> &'static str {
         "svg"
     } else {
         "bin"
-    }
-}
-
-fn sanitize_source_path_segment(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
-            output.push('_');
-        } else {
-            output.push(ch);
-        }
-    }
-    if output.trim().is_empty() {
-        "Unnamed".to_string()
-    } else {
-        output
     }
 }
 
@@ -16460,7 +16444,7 @@ fn native_command_interface_item(
         None => "{0}".to_string(),
         Some(name) => {
             let uuid = common_command_group_uuid(name)
-                .or_else(|| is_uuid_reference(name).then(|| name.to_string()))
+                .or_else(|| is_uuid_like_ascii(name.as_bytes()).then(|| name.to_string()))
                 .or_else(|| {
                     let name = name.strip_prefix("CommandGroup.")?;
                     source?
@@ -16522,7 +16506,7 @@ fn native_command_interface_command(
     if let Some((head, tail)) = reference.split_once(':')
         && head.bytes().all(|byte| byte.is_ascii_digit())
         && !head.is_empty()
-        && is_uuid_reference(tail)
+        && is_uuid_like_ascii(tail.as_bytes())
     {
         return Ok(format!("{{{head},{tail}}}"));
     }
@@ -16648,19 +16632,6 @@ const OBJECT_STANDARD_COMMAND_ORDINALS: &[(&str, &str, u32)] = &[
     ("InformationRegister", "OpenList", 0),
     ("Report", "Open", 0),
 ];
-
-/// Whether a string is a bare uuid, which both a command and a command group
-/// can be spelled as when the export could not name the target.
-fn is_uuid_reference(value: &str) -> bool {
-    value.len() == 36
-        && value.bytes().enumerate().all(|(index, byte)| {
-            if matches!(index, 8 | 13 | 18 | 23) {
-                byte == b'-'
-            } else {
-                byte.is_ascii_hexdigit()
-            }
-        })
-}
 
 /// Whether a path sits under a command interface panel, either of the two.
 ///
@@ -18974,7 +18945,7 @@ fn collect_form_command_uuids(text: &str, uuids: &mut BTreeMap<String, String>) 
                     .get(1)
                     .map(|range| text[range.clone()].trim().to_string())
             })
-            .filter(|uuid| is_uuid_text(uuid))
+            .filter(|uuid| is_uuid_like_ascii(uuid.as_bytes()))
     {
         uuids.insert(name, uuid);
         return Ok(());
@@ -19214,7 +19185,7 @@ fn retain_form_layout_top_level_child_items(
         let uuid_range = fields[span.first_uuid_index + index * 2].clone();
         let item_range = fields[span.first_uuid_index + 1 + index * 2].clone();
         let uuid = text[uuid_range].trim().to_string();
-        if !is_uuid_text(&uuid) {
+        if !is_uuid_like_ascii(uuid.as_bytes()) {
             return Ok(());
         }
         let item_text = text[item_range].to_string();
@@ -22613,7 +22584,7 @@ fn form_layout_direct_child_items_span_at(
     }
     for index in 0..count {
         let uuid_range = fields.get(first_uuid_index + index * 2)?.clone();
-        if !is_uuid_text(text[uuid_range].trim()) {
+        if !is_uuid_like_ascii(text[uuid_range].trim().as_bytes()) {
             return None;
         }
         let item_range = fields.get(first_uuid_index + 1 + index * 2)?.clone();
@@ -22897,7 +22868,7 @@ fn retain_form_layout_direct_child_items(
             return Ok(());
         };
         let uuid = text[uuid_range].trim().to_string();
-        if !is_uuid_text(&uuid) {
+        if !is_uuid_like_ascii(uuid.as_bytes()) {
             return Ok(());
         }
         let item_text = text[item_range].to_string();
@@ -24263,255 +24234,6 @@ fn retain_form_body_attributes(text: &mut String, attributes: &[FormXmlAttribute
     Ok(())
 }
 
-/// The physical layout of everything a packed form body writes after its
-/// declared attribute entries.
-///
-/// Read off the packed body of all 4 997 forms the UT 11.5.27.75
-/// configuration carries, with no counterexample:
-///
-/// ```text
-/// tail    = 4, attrCount, attribute x attrCount, EXTRAS
-/// EXTRAS  = subCount, subTable x subCount,
-///           bindingCount, bindingField x (4 * bindingCount),
-///           storage document
-/// binding = "sourcePath", "resolvedPath", resolvedChain, ownerChain
-/// chain   = n, segment x n         segment = index | index, uuid
-/// ```
-///
-/// The two leading fields the previous reading took for a pair of activity
-/// markers are these two counts: `0,0` is a body with no sub-tables and no
-/// bindings, `0,1` one with a single binding. Reading them as an enumerated
-/// marker pair accounted for 4 538 of the 4 997 bodies and silently mis-read
-/// the rest, because a body with sub-tables, or with more than one binding,
-/// has no marker to match.
-struct FormAttributesTailLayout {
-    /// How many `sourcePath -> resolvedPath` bindings the tail declares.
-    binding_count: usize,
-    /// The trailing field carrying the Base64 storage document.
-    payload: Range<usize>,
-    /// Everything from the binding count through the storage document. The
-    /// sub-tables sit before it and belong to properties this code does not
-    /// own, so a rewrite replaces exactly this span and nothing earlier.
-    binding_block: Range<usize>,
-}
-
-/// Walks the packed tail of a form body and reports where the storage
-/// document sits, or `Ok(None)` when the body carries no such tail at all.
-///
-/// Every field is accounted for: a tail whose counts do not consume it
-/// exactly is refused rather than read past, so a layout this walk does not
-/// describe can never be mistaken for one it does.
-fn scan_form_attributes_tail_layout(text: &str) -> Result<Option<FormAttributesTailLayout>> {
-    let fields = scan_braced_fields(text, 0)?;
-    let policy = bundled_dcs_form_attributes_conditional_appearance_policy()
-        .map_err(|error| anyhow!(error.to_string()))?;
-    let container_marker = fields.first().map(|range| text[range.clone()].trim());
-    if container_marker != Some(policy.storage_container_marker()) {
-        return Ok(None);
-    }
-    let count = fields
-        .get(1)
-        .and_then(|range| text[range.clone()].trim().parse::<usize>().ok())
-        .ok_or_else(|| anyhow!("Form Attributes container has no valid declared count"))?;
-    let extras_start = 2usize
-        .checked_add(count)
-        .ok_or_else(|| anyhow!("Form Attributes declared count overflows"))?;
-    if fields.len() < extras_start {
-        return Err(anyhow!(
-            "Form Attributes container has fewer entries than its declared count"
-        ));
-    }
-    let extras = &fields[extras_start..];
-    if extras.is_empty() {
-        return Ok(None);
-    }
-    let sub_count = text[extras[0].clone()]
-        .trim()
-        .parse::<usize>()
-        .map_err(|_| anyhow!("Form Attributes tail has no valid sub-table count"))?;
-    let mut index = 1usize
-        .checked_add(sub_count)
-        .ok_or_else(|| anyhow!("Form Attributes tail sub-table count overflows"))?;
-    let binding_block_start = extras
-        .get(index)
-        .ok_or_else(|| anyhow!("Form Attributes tail sub-tables overrun the container"))?
-        .start;
-    let binding_count = text[extras[index].clone()]
-        .trim()
-        .parse::<usize>()
-        .map_err(|_| anyhow!("Form Attributes tail has no valid binding count"))?;
-    index += 1;
-    for _ in 0..binding_count {
-        let binding = extras
-            .get(index..index + FORM_ATTRIBUTES_TAIL_BINDING_FIELDS)
-            .ok_or_else(|| anyhow!("Form Attributes tail bindings overrun the container"))?;
-        validate_form_attributes_tail_binding(text, binding)?;
-        index += FORM_ATTRIBUTES_TAIL_BINDING_FIELDS;
-    }
-    if index + 1 != extras.len() {
-        return Err(anyhow!(
-            "Form Attributes tail carries fields its declared counts do not account for"
-        ));
-    }
-    let payload = extras[index].clone();
-    if !text[payload.clone()].trim().starts_with("{#base64:") {
-        // The trailing field is not a storage document at all. All 4 997 UT
-        // bodies do carry one -- a conditional appearance has nowhere else to
-        // live -- so this is a body that has none rather than one whose
-        // document failed to read, and only a tail that binds a path can
-        // contradict that.
-        if binding_count != 0 {
-            return Err(anyhow!(
-                "Form Attributes tail declares bindings but carries no storage document"
-            ));
-        }
-        return Ok(None);
-    }
-    Ok(Some(FormAttributesTailLayout {
-        binding_count,
-        binding_block: binding_block_start..payload.end,
-        payload,
-    }))
-}
-
-/// `"sourcePath"`, `"resolvedPath"`, `resolvedChain`, `ownerChain`.
-const FORM_ATTRIBUTES_TAIL_BINDING_FIELDS: usize = 4;
-
-/// Authenticates one binding against the two relations that hold across all
-/// 349 bindings the UT configuration carries.
-///
-/// Field 2 is the path as the settings document spells it and field 3 is the
-/// same path in its storage spelling (`ПометкаУдаления` -> `DeletionMark`),
-/// empty when it does not resolve. The chain in field 4 carries one segment
-/// per dot-separated step of that resolved path, and the owner chain in
-/// field 5 is either empty or a prefix of it. Both relations are checked
-/// here, so a tail split on the wrong field boundaries cannot pass.
-fn validate_form_attributes_tail_binding(text: &str, fields: &[Range<usize>]) -> Result<()> {
-    let [source_path, resolved_path, resolved_chain, owner_chain] = fields else {
-        return Err(anyhow!("Form Attributes tail binding is not four fields"));
-    };
-    parse_1c_quoted_string(&text[source_path.clone()])?;
-    let resolved = parse_1c_quoted_string(&text[resolved_path.clone()])?;
-    let resolved_chain = parse_form_attributes_tail_chain(text, resolved_chain)?;
-    let owner_chain = parse_form_attributes_tail_chain(text, owner_chain)?;
-    let steps = if resolved.is_empty() {
-        0
-    } else {
-        resolved.split('.').count()
-    };
-    if resolved_chain.len() != steps {
-        return Err(anyhow!(
-            "Form Attributes tail binding chain does not match its resolved path"
-        ));
-    }
-    if owner_chain.len() > resolved_chain.len()
-        || owner_chain != resolved_chain[..owner_chain.len()]
-    {
-        return Err(anyhow!(
-            "Form Attributes tail binding owner chain is not a prefix of its resolved chain"
-        ));
-    }
-    Ok(())
-}
-
-/// Reads one `{n, segment x n}` chain, returning its segments verbatim so the
-/// owner/resolved prefix relation can be compared without interpreting them.
-fn parse_form_attributes_tail_chain(text: &str, range: &Range<usize>) -> Result<Vec<String>> {
-    if scan_balanced_braces(text, range.start)? != range.end {
-        return Err(anyhow!(
-            "Form Attributes tail chain does not span its own field"
-        ));
-    }
-    let fields = scan_braced_fields(text, range.start)?;
-    let count = fields
-        .first()
-        .and_then(|field| text[field.clone()].trim().parse::<usize>().ok())
-        .ok_or_else(|| anyhow!("Form Attributes tail chain has no valid segment count"))?;
-    if fields.len() != count + 1 {
-        return Err(anyhow!(
-            "Form Attributes tail chain declares a segment count it does not carry"
-        ));
-    }
-    let mut segments = Vec::with_capacity(count);
-    for field in fields.iter().skip(1) {
-        let segment = scan_braced_fields(text, field.start)?;
-        let index = text[segment
-            .first()
-            .ok_or_else(|| anyhow!("Form Attributes tail chain segment is empty"))?
-            .clone()]
-        .trim();
-        if index.parse::<i64>().is_err() {
-            return Err(anyhow!(
-                "Form Attributes tail chain segment has no numeric index"
-            ));
-        }
-        match segment.len() {
-            1 => segments.push(index.to_string()),
-            2 => {
-                let uuid = text[segment[1].clone()].trim();
-                if uuid.is_empty()
-                    || !uuid
-                        .bytes()
-                        .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
-                {
-                    return Err(anyhow!(
-                        "Form Attributes tail chain segment reference is not a UUID"
-                    ));
-                }
-                segments.push(format!("{index}|{uuid}"));
-            }
-            _ => {
-                return Err(anyhow!(
-                    "Form Attributes tail chain segment is outside the evidenced shape"
-                ));
-            }
-        }
-    }
-    Ok(segments)
-}
-
-/// The storage document the packed tail carries, or `Ok(None)` when the body
-/// has no tail. Callers that cannot type the document re-spell it instead.
-pub(crate) fn form_attributes_conditional_appearance_tail_storage_document(
-    text: &str,
-) -> Result<Option<Vec<u8>>> {
-    let Some(layout) = scan_form_attributes_tail_layout(text)? else {
-        return Ok(None);
-    };
-    Ok(Some(decode_base64_payload_field(
-        text[layout.payload].trim(),
-    )?))
-}
-
-pub(crate) fn parse_form_attributes_conditional_appearance_tail(
-    text: &str,
-) -> Result<DcsChildParseOutcome<DcsConditionalAppearance>> {
-    let Some(layout) = scan_form_attributes_tail_layout(text)? else {
-        return Ok(DcsChildParseOutcome::Absent);
-    };
-    let bytes = decode_base64_payload_field(text[layout.payload].trim())?;
-    if layout.binding_count == 0 {
-        // A tail that binds no path carries the empty settings document, and
-        // that pairing holds for all 4 871 such UT bodies. Requiring it here
-        // keeps a document with content from being dropped as if absent.
-        parse_form_attributes_empty_storage_document(&bytes)
-            .map_err(|error| anyhow!(error.to_string()))?;
-        return Ok(DcsChildParseOutcome::Absent);
-    }
-    match parse_form_attributes_conditional_appearance_storage_document(&bytes)
-        .map_err(|error| anyhow!(error.to_string()))?
-    {
-        // The converse pairing: all 126 UT bodies that bind a path carry a
-        // conditional appearance. A document that reads as absent against a
-        // tail that declares bindings is not understood, so it is handed on
-        // as unsupported rather than silently dropping the property.
-        DcsChildParseOutcome::Absent => Ok(DcsChildParseOutcome::Unsupported(
-            "Form Attributes tail declares bindings but its storage document reads as absent",
-        )),
-        outcome => Ok(outcome),
-    }
-}
-
 fn format_form_attributes_type_index_descriptor(indexes: &[u32]) -> String {
     let mut output = format!("{{{}", indexes.len());
     for index in indexes {
@@ -25256,7 +24978,7 @@ fn form_setting_base64_xml(existing: &str) -> Result<Option<String>> {
 }
 
 fn find_form_setting_value_range(text: &str, key: &str) -> Option<Range<usize>> {
-    let needle = format!("\"{}\"", key.replace('"', "\"\""));
+    let needle = format_1c_string(key);
     let mut offset = 0usize;
     while let Some(relative) = text[offset..].find(&needle) {
         let key_start = offset + relative;
@@ -25869,116 +25591,7 @@ pub fn parse_form_body_blob(blob: &[u8]) -> Result<ParsedFormBodyBlob> {
     parse_form_body_plain(&plain)
 }
 
-pub(crate) fn parse_form_body_plain(plain: &str) -> Result<ParsedFormBodyBlob> {
-    // An older platform's root-`42` form is read as 8.3.27 re-saves it.
-    let upgraded = form_root_42::upgrade_root_42_body(plain);
-    let plain = upgraded.as_deref().unwrap_or(plain);
-    parse_original_form_body_plain(plain).map(|(parsed, _)| parsed)
-}
-
-/// Parse the original container without legacy upgrades, retaining its module span.
-pub(crate) fn parse_original_form_body_plain(
-    plain: &str,
-) -> Result<(ParsedFormBodyBlob, Range<usize>)> {
-    let container = FormBodyContainer::parse(plain)?;
-    let layout = plain[container.layout_range.clone()].trim().to_string();
-    let module_text = parse_1c_quoted_string(plain[container.module_range.clone()].trim())
-        .context("Form body module text field is not a quoted string")?;
-    Ok((
-        ParsedFormBodyBlob {
-            revision: container.revision,
-            layout,
-            module_text,
-            trailing: container
-                .trailing_ranges
-                .into_iter()
-                .map(|range| plain[range].trim().to_string())
-                .collect(),
-            trailing_fields: container.trailing_fields,
-        },
-        container.module_range,
-    ))
-}
-
 pub use ibcmd_form_body::FormBodyRevision;
-
-/// Reading the revision a record declares stays here: as a method of the
-/// crate's type it would be public, and it is a step of this module's
-/// container check alone.
-trait FormBodyRevisionExt: Sized {
-    fn parse(declared: Option<&str>) -> Result<Self>;
-}
-
-impl FormBodyRevisionExt for FormBodyRevision {
-    /// Reads the revision the record itself declares. Fail-closed: an
-    /// undeclared or unnamed revision is refused, never assumed.
-    fn parse(declared: Option<&str>) -> Result<Self> {
-        match declared {
-            Some("3") => Ok(Self::V3),
-            Some("4") => Ok(Self::V4),
-            Some(other) => Err(anyhow!(
-                "Form body declares unsupported container revision {other}"
-            )),
-            None => Err(anyhow!("Form body declares no container revision")),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct FormBodyContainer {
-    revision: FormBodyRevision,
-    layout_range: Range<usize>,
-    module_range: Range<usize>,
-    trailing_ranges: Vec<Range<usize>>,
-    trailing_fields: usize,
-}
-
-impl FormBodyContainer {
-    fn parse(plain: &str) -> Result<Self> {
-        let body_start = plain
-            .find('{')
-            .ok_or_else(|| anyhow!("Form body has no braced payload"))?;
-        let fields = scan_braced_fields(plain, body_start)?;
-        let revision =
-            FormBodyRevision::parse(fields.first().map(|range| plain[range.clone()].trim()))?;
-        let layout_range = fields
-            .get(1)
-            .ok_or_else(|| anyhow!("Form body has no layout field"))?
-            .clone();
-        validate_form_body_layout(plain[layout_range.clone()].trim())?;
-        let module_range = fields
-            .get(2)
-            .ok_or_else(|| anyhow!("Form body has no module text field"))?
-            .clone();
-        if parse_1c_quoted_string(plain[module_range.clone()].trim()).is_err() {
-            return Err(anyhow!(
-                "Form body module text field is not a quoted string"
-            ));
-        }
-        Ok(Self {
-            revision,
-            layout_range,
-            module_range,
-            trailing_ranges: fields.iter().skip(3).cloned().collect(),
-            trailing_fields: fields.len().saturating_sub(3),
-        })
-    }
-}
-
-fn validate_form_body_layout(layout: &str) -> Result<()> {
-    let fields = scan_braced_fields(layout, 0)?;
-    if !fields.first().is_some_and(|range| {
-        layout[range.clone()]
-            .trim()
-            .chars()
-            .all(|ch| ch.is_ascii_digit())
-    }) {
-        return Err(anyhow!(
-            "Form body layout field does not start with a numeric marker"
-        ));
-    }
-    Ok(())
-}
 
 pub fn pack_role_rights_blob_from_xml(
     base_blob: &[u8],
@@ -26751,7 +26364,7 @@ fn validate_role_object_ref(plain: &str, object_ref_range: Range<usize>) -> Resu
         .get(1)
         .ok_or_else(|| anyhow!("object reference has no UUID field"))?;
     let uuid = plain[uuid_range.clone()].trim();
-    if !is_uuid_text(uuid) {
+    if !is_uuid_like_ascii(uuid.as_bytes()) {
         return Err(anyhow!("object reference has invalid UUID {uuid}"));
     }
     Ok(())
@@ -26763,7 +26376,7 @@ fn role_object_ref_key(plain: &str, object_ref_range: Range<usize>) -> Result<Ro
         .get(1)
         .ok_or_else(|| anyhow!("object reference has no UUID field"))?;
     let uuid = plain[uuid_range.clone()].trim();
-    if !is_uuid_text(uuid) {
+    if !is_uuid_like_ascii(uuid.as_bytes()) {
         return Err(anyhow!("object reference has invalid UUID {uuid}"));
     }
     Ok(RoleObjectRefKey {
@@ -27319,7 +26932,7 @@ fn role_restriction_condition_replacements(
     if nested.len() == count * 2
         && nested
             .first()
-            .is_some_and(|range| is_uuid_text(plain[range.clone()].trim()))
+            .is_some_and(|range| is_uuid_like_ascii(plain[range.clone()].trim().as_bytes()))
     {
         for pair in nested.chunks(2) {
             collect_role_restriction_pair_replacement(
@@ -28462,23 +28075,6 @@ fn collect_flowchart_item_replacements(
     Ok(())
 }
 
-/// A line break inside a stored string is CRLF, while the XML hands its text
-/// over with the bare LF the file spells (ERP УХ
-/// `СхемыСправки/ВалютныйКонтрольРасчетыСПоставщикомПостоплата`: `…валюты\n`
-/// in the XML, `…валюты\r\n` stored); the exporter turns it back into LF.
-fn crlf_line_breaks(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 8);
-    let mut previous = '\0';
-    for ch in text.chars() {
-        if ch == '\n' && previous != '\r' {
-            out.push('\r');
-        }
-        out.push(ch);
-        previous = ch;
-    }
-    out
-}
-
 fn flowchart_base_ranges(
     plain: &str,
     code: &str,
@@ -28849,29 +28445,6 @@ pub fn pack_ext_picture_blob_from_bytes_with_base(
         plain_bytes: plain.len(),
         output_sha256,
     })
-}
-
-/// A `{#base64:...}` payload laid out as the platform stores it: 64
-/// characters per line, each full line ended by `\r\r\n` -- so a payload whose
-/// length is a multiple of 64 ends with the break too (help and picture rows
-/// of both corpora).
-///
-/// That last break is the platform's current writer: of the payloads whose
-/// length is a multiple of 64, 32 of 32 БСП and 362 of 384 ERP УХ help
-/// payloads carry it, and 31 of 34 and 174 of 184 common pictures. The rest
-/// were written by an older writer the source does not tell apart.
-pub(crate) fn platform_base64_token(bytes: &[u8]) -> String {
-    let encoded = encode_base64(bytes);
-    let mut token = String::with_capacity(encoded.len() + encoded.len() / 64 * 3 + 10);
-    token.push_str("{#base64:");
-    for line in encoded.as_bytes().chunks(64) {
-        token.push_str(std::str::from_utf8(line).expect("base64 is ASCII"));
-        if line.len() == 64 {
-            token.push_str("\r\r\n");
-        }
-    }
-    token.push('}');
-    token
 }
 
 fn replace_first_base64_payload(text: &mut String, payload: &str) -> bool {
@@ -30581,7 +30154,7 @@ fn patch_configuration_metadata_text(
     let header_uuid = text
         .get(uuid_start..uuid_end)
         .ok_or_else(|| anyhow!("configuration metadata tuple UUID is truncated"))?;
-    if !is_uuid_text(header_uuid) {
+    if !is_uuid_like_ascii(header_uuid.as_bytes()) {
         return Err(anyhow!(
             "configuration metadata tuple UUID is invalid: {header_uuid}"
         ));
@@ -31286,7 +30859,7 @@ fn std_picture_value_uuid(reference: &str) -> Option<&'static str> {
     value
         .strip_prefix("{0,")
         .and_then(|rest| rest.strip_suffix('}'))
-        .filter(|uuid| is_uuid_text(uuid))
+        .filter(|uuid| is_uuid_like_ascii(uuid.as_bytes()))
 }
 
 fn parse_command_group_picture(
@@ -32074,225 +31647,6 @@ fn replace_1c_quoted_string(text: &mut String, start: usize, value: &str) -> Res
     Ok(start + replacement.len())
 }
 
-fn scan_1c_quoted_string_end(text: &str, start: usize) -> Result<usize> {
-    let bytes = text.as_bytes();
-    if bytes.get(start) != Some(&b'"') {
-        return Err(anyhow!("expected 1C string at byte {start}"));
-    }
-    let mut index = start + 1;
-    while index < bytes.len() {
-        if bytes[index] == b'"' {
-            if bytes.get(index + 1) == Some(&b'"') {
-                index += 2;
-            } else if is_1c_string_escape_unit(bytes, index + 1) {
-                // A quote, a backslash and four lowercase hex digits spell one
-                // UTF-16 unit of a character outside the basic plane; the
-                // literal goes on behind them.
-                index += 6;
-            } else {
-                return Ok(index + 1);
-            }
-        } else {
-            index += 1;
-        }
-    }
-    Err(anyhow!("unterminated 1C string at byte {start}"))
-}
-
-/// Whether `bytes[at..]` starts with `\` and four lowercase hex digits (the
-/// rest of a `"\d83d`-style code unit escape inside a 1C string literal).
-fn is_1c_string_escape_unit(bytes: &[u8], at: usize) -> bool {
-    bytes.get(at) == Some(&b'\\')
-        && bytes.get(at + 1..at + 5).is_some_and(|digits| {
-            digits
-                .iter()
-                .all(|digit| digit.is_ascii_digit() || (b'a'..=b'f').contains(digit))
-        })
-}
-
-/// The characters of the inside of a 1C string literal: `""` is a quote and
-/// `"\xxxx` one UTF-16 code unit, a high one waiting for its low partner.
-fn decode_1c_string_body(inner: &str) -> Result<String> {
-    let mut output = String::with_capacity(inner.len());
-    let mut pending_high: Option<u16> = None;
-    let mut rest = inner;
-    while let Some(character) = rest.chars().next() {
-        if character != '"' {
-            if pending_high.is_some() {
-                return Err(anyhow!("unpaired high surrogate in a 1C string"));
-            }
-            output.push(character);
-            rest = &rest[character.len_utf8()..];
-            continue;
-        }
-        let tail = &rest[1..];
-        if tail.starts_with('"') {
-            if pending_high.is_some() {
-                return Err(anyhow!("unpaired high surrogate in a 1C string"));
-            }
-            output.push('"');
-            rest = &tail[1..];
-            continue;
-        }
-        if is_1c_string_escape_unit(tail.as_bytes(), 0) {
-            let unit = u16::from_str_radix(&tail[1..5], 16)
-                .map_err(|_| anyhow!("bad code unit escape in a 1C string"))?;
-            match unit {
-                0xD800..=0xDBFF => {
-                    if pending_high.is_some() {
-                        return Err(anyhow!("unpaired high surrogate in a 1C string"));
-                    }
-                    pending_high = Some(unit);
-                }
-                0xDC00..=0xDFFF => {
-                    let high = u32::from(
-                        pending_high
-                            .take()
-                            .ok_or_else(|| anyhow!("unpaired low surrogate in a 1C string"))?,
-                    );
-                    let scalar = 0x10000 + ((high - 0xD800) << 10) + (u32::from(unit) - 0xDC00);
-                    output.push(
-                        char::from_u32(scalar)
-                            .ok_or_else(|| anyhow!("bad surrogate pair in a 1C string"))?,
-                    );
-                }
-                _ => {
-                    if pending_high.is_some() {
-                        return Err(anyhow!("unpaired high surrogate in a 1C string"));
-                    }
-                    output.push(
-                        char::from_u32(u32::from(unit))
-                            .ok_or_else(|| anyhow!("bad code unit in a 1C string"))?,
-                    );
-                }
-            }
-            rest = &tail[5..];
-            continue;
-        }
-        return Err(anyhow!("unexpected quote inside a 1C string"));
-    }
-    if pending_high.is_some() {
-        return Err(anyhow!("unpaired high surrogate in a 1C string"));
-    }
-    Ok(output)
-}
-
-fn parse_1c_quoted_string(text: &str) -> Result<String> {
-    let text = text.trim();
-    let end = scan_1c_quoted_string_end(text, 0)?;
-    if end != text.len() {
-        return Err(anyhow!("unexpected trailing data after 1C string"));
-    }
-    decode_1c_string_body(&text[1..end - 1])
-}
-
-fn scan_balanced_braces(text: &str, start: usize) -> Result<usize> {
-    let bytes = text.as_bytes();
-    if bytes.get(start) != Some(&b'{') {
-        return Err(anyhow!("expected 1C braced expression at byte {start}"));
-    }
-
-    let mut index = start;
-    let mut depth = 0usize;
-    let mut in_string = false;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'"' if in_string && bytes.get(index + 1) == Some(&b'"') => {
-                index += 2;
-            }
-            b'"' => {
-                in_string = !in_string;
-                index += 1;
-            }
-            b'{' if !in_string => {
-                depth += 1;
-                index += 1;
-            }
-            b'}' if !in_string => {
-                depth = depth
-                    .checked_sub(1)
-                    .ok_or_else(|| anyhow!("unbalanced 1C braced expression"))?;
-                index += 1;
-                if depth == 0 {
-                    return Ok(index);
-                }
-            }
-            _ => {
-                index += 1;
-            }
-        }
-    }
-    Err(anyhow!("unterminated 1C braced expression at byte {start}"))
-}
-
-pub(crate) fn scan_braced_fields(text: &str, start: usize) -> Result<Vec<Range<usize>>> {
-    let bytes = text.as_bytes();
-    if bytes.get(start) != Some(&b'{') {
-        return Err(anyhow!("expected 1C braced expression at byte {start}"));
-    }
-
-    let mut fields = Vec::new();
-    let mut field_start = start + 1;
-    let mut index = start + 1;
-    let mut depth = 0usize;
-    let mut in_string = false;
-
-    while index < bytes.len() {
-        match bytes[index] {
-            b'"' if in_string && bytes.get(index + 1) == Some(&b'"') => {
-                index += 2;
-            }
-            b'"' => {
-                in_string = !in_string;
-                index += 1;
-            }
-            b'{' if !in_string => {
-                depth += 1;
-                index += 1;
-            }
-            b'}' if !in_string && depth > 0 => {
-                depth -= 1;
-                index += 1;
-            }
-            b'}' if !in_string => {
-                fields.push(trim_ascii_ws_range(text, field_start..index));
-                return Ok(fields);
-            }
-            b',' if !in_string && depth == 0 => {
-                fields.push(trim_ascii_ws_range(text, field_start..index));
-                field_start = index + 1;
-                index += 1;
-            }
-            _ => {
-                index += 1;
-            }
-        }
-    }
-
-    Err(anyhow!("unterminated 1C braced expression at byte {start}"))
-}
-
-fn trim_ascii_ws_range(text: &str, range: Range<usize>) -> Range<usize> {
-    let bytes = text.as_bytes();
-    let mut start = range.start;
-    let mut end = range.end;
-    while start < end
-        && bytes
-            .get(start)
-            .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
-    {
-        start += 1;
-    }
-    while end > start
-        && bytes
-            .get(end - 1)
-            .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
-    {
-        end -= 1;
-    }
-    start..end
-}
-
 fn skip_ascii_ws(text: &str, start: usize) -> usize {
     let bytes = text.as_bytes();
     let mut index = start;
@@ -32328,11 +31682,6 @@ fn format_1c_synonyms(synonyms: &[LocalizedString]) -> String {
     }
     output.push('}');
     output
-}
-
-fn format_1c_string(value: &str) -> String {
-    let escaped = value.replace('"', "\"\"");
-    format!("\"{escaped}\"")
 }
 
 fn is_defined_type_reference(reference: &str) -> bool {
@@ -33049,86 +32398,10 @@ fn build_module_inner(elements: &[V8Element; 2]) -> Result<Vec<u8>> {
     build_v8_container(elements)
 }
 
-pub(crate) fn inflate_raw(input: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = DeflateDecoder::new(input);
-    let mut output = Vec::new();
-    decoder.read_to_end(&mut output)?;
-    Ok(output)
-}
-
 pub(crate) fn deflate_raw(input: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(input)?;
     encoder.finish().context("failed to finish deflate stream")
-}
-
-pub(crate) fn encode_base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let first = chunk[0];
-        let second = chunk.get(1).copied().unwrap_or(0);
-        let third = chunk.get(2).copied().unwrap_or(0);
-        output.push(ALPHABET[(first >> 2) as usize] as char);
-        output.push(ALPHABET[(((first & 0b0000_0011) << 4) | (second >> 4)) as usize] as char);
-        if chunk.len() > 1 {
-            output.push(ALPHABET[(((second & 0b0000_1111) << 2) | (third >> 6)) as usize] as char);
-        } else {
-            output.push('=');
-        }
-        if chunk.len() > 2 {
-            output.push(ALPHABET[(third & 0b0011_1111) as usize] as char);
-        } else {
-            output.push('=');
-        }
-    }
-    output
-}
-
-pub(crate) fn decode_base64_mime(input: &str) -> Option<Vec<u8>> {
-    let values = input
-        .bytes()
-        .filter(|byte| !byte.is_ascii_whitespace())
-        .collect::<Vec<_>>();
-    if values.len() % 4 != 0 {
-        return None;
-    }
-
-    let mut output = Vec::with_capacity(values.len() / 4 * 3);
-    for chunk in values.chunks(4) {
-        let mut decoded = [0u8; 4];
-        let mut padding = 0usize;
-        for (index, byte) in chunk.iter().copied().enumerate() {
-            if byte == b'=' {
-                padding += 1;
-                decoded[index] = 0;
-                continue;
-            }
-            if padding > 0 {
-                return None;
-            }
-            decoded[index] = base64_value(byte)?;
-        }
-        output.push((decoded[0] << 2) | (decoded[1] >> 4));
-        if padding < 2 {
-            output.push((decoded[1] << 4) | (decoded[2] >> 2));
-        }
-        if padding < 1 {
-            output.push((decoded[2] << 6) | decoded[3]);
-        }
-    }
-    Some(output)
-}
-
-fn base64_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'A'..=b'Z' => Some(byte - b'A'),
-        b'a'..=b'z' => Some(byte - b'a' + 26),
-        b'0'..=b'9' => Some(byte - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    }
 }
 
 fn replace_header_uuid(text: &mut String) -> Result<VersionReplacement> {
@@ -33206,7 +32479,7 @@ fn replace_uuid_at(text: &mut String, uuid_start: usize, name: &str) -> Result<V
         .get(uuid_start..uuid_end)
         .ok_or_else(|| anyhow!("UUID for {name} exceeds text length"))?
         .to_string();
-    if !is_uuid_text(&old_uuid) {
+    if !is_uuid_like_ascii(old_uuid.as_bytes()) {
         return Err(anyhow!("invalid UUID for {name}: {old_uuid}"));
     }
     let new_uuid = Uuid::new_v4().hyphenated().to_string();
@@ -33216,23 +32489,6 @@ fn replace_uuid_at(text: &mut String, uuid_start: usize, name: &str) -> Result<V
         old_uuid,
         new_uuid,
     })
-}
-
-fn is_uuid_text(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    if bytes.len() != 36 {
-        return false;
-    }
-    for (index, byte) in bytes.iter().enumerate() {
-        if matches!(index, 8 | 13 | 18 | 23) {
-            if *byte != b'-' {
-                return false;
-            }
-        } else if !byte.is_ascii_hexdigit() {
-            return false;
-        }
-    }
-    true
 }
 
 pub fn hex_sha256(bytes: &[u8]) -> String {
@@ -33249,32 +32505,6 @@ mod tests {
         parse_common_command_representation,
     };
     use crate::v8_container::{V8Element, make_v8_element_header, parse_v8_container};
-
-    /// A character outside the basic plane is written inside a string literal
-    /// as two code unit escapes, each behind a quote (`"\d83d"\dcce`): the
-    /// literal goes on behind them, and neither the scan for the end of the
-    /// literal nor the decoding may stop at the quote.
-    #[test]
-    fn a_string_literal_holds_code_unit_escapes() {
-        let literal = "\"a>\"\\d83d\"\\dcce \"\" b\"";
-        assert_eq!(
-            super::scan_1c_quoted_string_end(literal, 0).unwrap(),
-            literal.len()
-        );
-        assert_eq!(
-            super::parse_1c_quoted_string(literal).unwrap(),
-            "a>\u{1F4CE} \" b"
-        );
-        // Lone halves are refused, not replaced.
-        assert!(super::parse_1c_quoted_string("\"\"\\d83d\"").is_err());
-        assert!(super::parse_1c_quoted_string("\"\"\\dcce\"").is_err());
-        // A closing quote followed by text that merely looks like an escape
-        // (uppercase digits, a short run) still closes the literal.
-        assert_eq!(
-            super::scan_1c_quoted_string_end("\"x\",\\D83D", 0).unwrap(),
-            3
-        );
-    }
 
     /// Every `<ExcludedCommand>` name the compiler accepts must be the name the
     /// export writes for the uuid it packs, and no accepted name may share its
@@ -39486,8 +38716,8 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         let picture_fields = super::scan_braced_fields(&parsed.layout, layout_fields[3].start)?;
 
         assert_eq!(&parsed.layout[layout_fields[1].clone()], "1");
-        assert!(super::is_uuid_text(
-            &parsed.layout[layout_fields[2].clone()]
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[layout_fields[2].clone()].as_bytes()
         ));
         assert_eq!(&parsed.layout[picture_fields[0].clone()], "12");
         assert_eq!(&parsed.layout[picture_fields[5].clone()], "1");
@@ -39760,7 +38990,9 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
 
         assert_eq!(&parsed.layout[fields[0].clone()], "59");
         assert_eq!(&parsed.layout[fields[1].clone()], "1");
-        assert!(super::is_uuid_text(&parsed.layout[fields[2].clone()]));
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[fields[2].clone()].as_bytes()
+        ));
         assert!(parsed.layout.contains(r#"{34,{44,"#), "{}", parsed.layout);
         assert!(parsed.layout.contains(r#""HelpButton""#));
         assert!(parsed.layout.contains(r#"{1,"en","Help"}"#));
@@ -39850,7 +39082,7 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
 
         assert_eq!(&parsed.layout[layout_fields[1].clone()], "1");
         assert_eq!(&parsed.layout[button_command_fields[0].clone()], "2");
-        assert!(super::is_uuid_text(&command_uuid));
+        assert!(super::is_uuid_like_ascii(command_uuid.as_bytes()));
         assert_eq!(&parsed.trailing[2][commands_fields[1].clone()], "1");
         assert_eq!(&parsed.trailing[2][command_identity_fields[0].clone()], "2");
         assert_eq!(
@@ -40159,8 +39391,12 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
 
         assert_eq!(&parsed.layout[fields[0].clone()], "59");
         assert_eq!(&parsed.layout[fields[1].clone()], "2");
-        assert!(super::is_uuid_text(&parsed.layout[fields[2].clone()]));
-        assert!(super::is_uuid_text(&parsed.layout[fields[4].clone()]));
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[fields[2].clone()].as_bytes()
+        ));
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[fields[4].clone()].as_bytes()
+        ));
         assert!(parsed.layout.contains(r#"{22,{64,"#), "{}", parsed.layout);
         assert!(
             parsed
@@ -40320,8 +39556,8 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         assert_eq!(&parsed.layout[pages_fields[10].clone()], "0");
         assert_eq!(&parsed.layout[pages_fields[13].clone()], "14");
         assert_eq!(&parsed.layout[pages_fields[21].clone()], "1");
-        assert!(super::is_uuid_text(
-            &parsed.layout[pages_fields[22].clone()]
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[pages_fields[22].clone()].as_bytes()
         ));
         assert_eq!(&parsed.layout[page_fields[0].clone()], "22");
         assert_eq!(&parsed.layout[page_fields[5].clone()], "4");
@@ -40429,8 +39665,8 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         assert_eq!(&parsed.layout[group_fields[9].clone()], "3");
         assert_eq!(&parsed.layout[group_fields[10].clone()], "0");
         assert_eq!(&parsed.layout[group_fields[21].clone()], "1");
-        assert!(super::is_uuid_text(
-            &parsed.layout[group_fields[22].clone()]
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[group_fields[22].clone()].as_bytes()
         ));
         assert_eq!(&parsed.layout[button_fields[0].clone()], "34");
         assert_eq!(&parsed.layout[button_fields[5].clone()], r#""Run""#);
@@ -40690,8 +39926,8 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         assert_eq!(&parsed.layout[group_fields[5].clone()], "0");
         assert_eq!(&parsed.layout[group_fields[6].clone()], r#""Actions""#);
         assert_eq!(&parsed.layout[group_fields[10].clone()], "1");
-        assert!(super::is_uuid_text(
-            &parsed.layout[group_fields[11].clone()]
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[group_fields[11].clone()].as_bytes()
         ));
         assert_eq!(&parsed.layout[button_fields[0].clone()], "34");
         assert_eq!(&parsed.layout[button_fields[5].clone()], r#""HelpButton""#);
@@ -40889,8 +40125,8 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
             "{64,22222222-2222-4222-8222-222222222222}"
         );
         assert_eq!(&parsed.layout[group_fields[10].clone()], "1");
-        assert!(super::is_uuid_text(
-            &parsed.layout[group_fields[11].clone()]
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[group_fields[11].clone()].as_bytes()
         ));
         assert_eq!(&parsed.layout[button_fields[0].clone()], "34");
         assert_eq!(&parsed.layout[button_fields[5].clone()], r#""HelpButton""#);
@@ -42800,8 +42036,8 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
             "{25,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb}"
         );
         assert_eq!(&parsed.layout[table_fields[10].clone()], "1");
-        assert!(super::is_uuid_text(
-            &parsed.layout[table_fields[11].clone()]
+        assert!(super::is_uuid_like_ascii(
+            parsed.layout[table_fields[11].clone()].as_bytes()
         ));
         assert_eq!(&parsed.layout[input_fields[0].clone()], "48");
         assert_eq!(&parsed.layout[input_fields[6].clone()], r#""Description""#);
@@ -47064,9 +46300,9 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         assert_eq!(header.old_uuid, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa");
         assert_eq!(root.old_uuid, "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb");
         assert_eq!(file.old_uuid, "cccccccc-cccc-4ccc-cccc-cccccccccccc");
-        assert!(super::is_uuid_text(&header.new_uuid));
-        assert!(super::is_uuid_text(&root.new_uuid));
-        assert!(super::is_uuid_text(&file.new_uuid));
+        assert!(super::is_uuid_like_ascii(header.new_uuid.as_bytes()));
+        assert!(super::is_uuid_like_ascii(root.new_uuid.as_bytes()));
+        assert!(super::is_uuid_like_ascii(file.new_uuid.as_bytes()));
     }
 
     #[test]
@@ -47125,7 +46361,7 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
 
         assert!(output.starts_with("\u{feff}{1,2,"));
         assert_eq!(addition.old_uuid, "");
-        assert!(super::is_uuid_text(&addition.new_uuid));
+        assert!(super::is_uuid_like_ascii(addition.new_uuid.as_bytes()));
         assert!(output.contains(&format!("\"file.5\",{}", addition.new_uuid)));
 
         Ok(())

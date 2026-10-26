@@ -1051,7 +1051,6 @@ mod form;
 // its items by their old names and paths through this import.
 use ibcmd_form_body::form_body;
 mod form_body_entry;
-mod form_body_host;
 mod form_extension;
 #[cfg(test)]
 mod revision_mix_tests;
@@ -44587,7 +44586,7 @@ fn return_values_reuse_xml(value: ReturnValuesReuseValue) -> &'static str {
     }
 }
 
-fn sanitize_source_path_segment(value: &str) -> String {
+pub(crate) fn sanitize_source_path_segment(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     for ch in value.chars() {
         if ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
