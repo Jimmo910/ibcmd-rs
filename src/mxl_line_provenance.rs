@@ -213,12 +213,14 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn test_root(name: &str) -> PathBuf {
+    fn test_root(name: &str) -> crate::test_scratch::TestScratch {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("ibcmd-mxl-provenance-{name}-{nonce}"))
+        crate::test_scratch::TestScratch::adopt(
+            std::env::temp_dir().join(format!("ibcmd-mxl-provenance-{name}-{nonce}")),
+        )
     }
 
     fn args(root: &Path) -> MxlLineProvenanceCorpusArgs {
@@ -297,7 +299,6 @@ mod tests {
         limits.corpus_bytes = 1;
         let error = run_mxl_line_provenance_corpus_with_limits(&args(&root), limits).unwrap_err();
         assert!(error.to_string().contains("byte limit"));
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -308,7 +309,6 @@ mod tests {
         fs::write(root.join("outside.raw"), b"x").unwrap();
         let canonical = fs::canonicalize(&dump).unwrap();
         assert!(candidate_asset_path(&canonical, Path::new("../outside.raw")).is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
@@ -324,7 +324,6 @@ mod tests {
         symlink(&outside, dump.join("escape.raw")).unwrap();
         let canonical = fs::canonicalize(&dump).unwrap();
         assert!(candidate_asset_path(&canonical, Path::new("escape.raw")).is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(windows)]
@@ -345,6 +344,5 @@ mod tests {
         }
         let canonical = fs::canonicalize(&dump).unwrap();
         assert!(candidate_asset_path(&canonical, Path::new("escape.raw")).is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 }

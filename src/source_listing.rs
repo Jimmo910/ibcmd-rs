@@ -282,7 +282,7 @@ pub(crate) fn is_dir(path: &Path) -> bool {
 mod tests {
     use super::*;
 
-    fn tree(files: &[&str]) -> PathBuf {
+    fn tree(files: &[&str]) -> crate::test_scratch::TestScratch {
         let root = std::env::temp_dir().join(format!(
             "ibcmd-rs-source-listing-{}",
             uuid::Uuid::new_v4().hyphenated()
@@ -292,7 +292,7 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, b"x").unwrap();
         }
-        root
+        crate::test_scratch::TestScratch::adopt(root)
     }
 
     #[test]
@@ -346,7 +346,6 @@ mod tests {
             listing.answer(Path::new("C:/elsewhere/A.xml")),
             Answer::Unknown
         );
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -362,6 +361,5 @@ mod tests {
             });
         }
         assert_eq!(answer(&path), Answer::Unknown);
-        let _ = fs::remove_dir_all(&root);
     }
 }

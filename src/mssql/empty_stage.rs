@@ -2106,6 +2106,7 @@ mod tests {
             "ibcmd-rs-descriptor-walk-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         for file in [
             "Configuration.xml",
             "ConfigDumpInfo.xml",
@@ -2139,6 +2140,7 @@ mod tests {
             "ibcmd-rs-dump-info-stubs-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(&root).unwrap();
         assert!(dump_info_stub_candidates(&root).unwrap().is_empty());
         fs::write(

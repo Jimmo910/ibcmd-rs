@@ -1141,14 +1141,14 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn temp_root(prefix: &str) -> PathBuf {
+    fn temp_root(prefix: &str) -> crate::test_scratch::TestScratch {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!("{prefix}-{}-{stamp}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        root
+        crate::test_scratch::TestScratch::adopt(root)
     }
 
     #[test]

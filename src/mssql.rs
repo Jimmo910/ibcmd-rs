@@ -11633,6 +11633,7 @@ mod tests {
             "ibcmd-rs-unsupported-dialect-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let xml_path = root.join("Documents").join("Order.xml");
         fs::create_dir_all(xml_path.parent().unwrap()).unwrap();
         fs::write(
@@ -11652,7 +11653,6 @@ mod tests {
 
         assert!(error.to_string().contains("unsupported metadata XML"));
         assert!(error.to_string().contains("XML dialect 2.22"));
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -11661,6 +11661,7 @@ mod tests {
             "ibcmd-rs-unsupported-form-dialect-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let metadata_xml = root.join("CommonForms").join("Item.xml");
         let body_path = root
             .join("CommonForms")
@@ -11693,7 +11694,6 @@ mod tests {
 
         assert!(error.to_string().contains("unsupported Form body"));
         assert!(error.to_string().contains("XML dialect 2.22"));
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -11702,6 +11702,7 @@ mod tests {
             "ibcmd-rs-form-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let metadata_xml = root.join("CommonForms").join("Item.xml");
         let ext = root.join("CommonForms").join("Item").join("Ext");
         let form_path = ext.join("Form.xml");
@@ -11744,8 +11745,6 @@ mod tests {
             crate::compiler::bodies::form::decode_managed_form(&profile, &rows[0].blob).unwrap();
         assert_eq!(decoded.module_text(), "Procedure Run()\r\nEndProcedure");
         assert!(decoded.parsed().layout.starts_with("{50,"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -11754,6 +11753,7 @@ mod tests {
             "ibcmd-rs-form-external-command-base-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let metadata_xml = root.join("CommonForms").join("Item.xml");
         let form_path = root
             .join("CommonForms")
@@ -11787,7 +11787,6 @@ mod tests {
             format!("{error:#}").contains("a unit test must not reach SQL Server"),
             "unexpected error: {error:#}"
         );
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -11796,6 +11795,7 @@ mod tests {
             "ibcmd-rs-readable-command-interface-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let owner_xml = root.join("Subsystems").join("Sales.xml");
         let body_path = root
             .join("Subsystems")
@@ -11835,7 +11835,6 @@ mod tests {
             format!("{error:#}").contains("a unit test must not reach SQL Server"),
             "unexpected error: {error:#}"
         );
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -11848,6 +11847,7 @@ mod tests {
     fn bulk_stage_rows_are_written_in_bcp_native_layout() {
         let path =
             std::env::temp_dir().join(format!("ibcmd-rs-bulk-layout-{}.bcp", std::process::id()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&path);
         let rows = [
             BulkStageRow {
                 file_name: "ab",
@@ -11879,6 +11879,7 @@ mod tests {
     fn a_large_row_is_written_in_parts_that_each_carry_the_whole_size() {
         let path =
             std::env::temp_dir().join(format!("ibcmd-rs-bulk-parts-{}.bcp", std::process::id()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&path);
         let blob = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         let rows = [BulkStageRow {
             file_name: "a",
@@ -11986,6 +11987,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&dir);
         fs::create_dir_all(&dir).unwrap();
         let xml = dir.join("CommonModule.xml");
         fs::write(
@@ -12011,7 +12013,6 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("source XML version mismatch"));
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -12453,6 +12454,7 @@ mod tests {
     #[test]
     fn recovery_artifacts_are_written_once_and_whole() {
         let root = std::env::temp_dir().join(format!("ibcmd-rs-artifact-{}", uuid::Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let path = root.join("nested").join("recovery.json");
         super::write_new_or_identical(&path, b"{\"rows\":1}").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"{\"rows\":1}");
@@ -12469,7 +12471,6 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect::<Vec<_>>();
         assert_eq!(left, [std::ffi::OsString::from("recovery.json")]);
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -12477,6 +12478,7 @@ mod tests {
         for _ in 0..4 {
             let root = std::env::temp_dir()
                 .join(format!("ibcmd-rs-artifact-race-{}", uuid::Uuid::new_v4()));
+            let _scratch = crate::test_scratch::TestScratch::adopt(&root);
             std::fs::create_dir_all(&root).unwrap();
             let path = root.join("recovery.json");
             let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
@@ -12507,7 +12509,6 @@ mod tests {
                 "the published bytes must belong to the successful writer"
             );
             assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
-            std::fs::remove_dir_all(root).unwrap();
         }
     }
 
@@ -13369,6 +13370,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let catalog_xml = root.join("Catalogs").join("Products.xml");
         let catalog_ext = root.join("Catalogs").join("Products").join("Ext");
         let module_xml = root.join("CommonModules").join("Utils.xml");
@@ -13525,8 +13527,6 @@ mod tests {
         assert!(row.reason.contains("FileName-to-generation-UUID map"));
         assert!(row.reason.contains("unchanged row set"));
         assert!(row.reason.contains("database-specific GUIDs"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -13535,6 +13535,7 @@ mod tests {
             "ibcmd-rs-metadata-xml-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let processor_xml = root.join("DataProcessors").join("Loader.xml");
         fs::create_dir_all(processor_xml.parent().unwrap()).unwrap();
         fs::write(
@@ -13576,8 +13577,6 @@ mod tests {
         assert!(row.reason.contains("Command=1"));
         assert!(row.reason.contains("Form=1"));
         assert!(row.reason.contains("serialized child-object indexes"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -13586,6 +13585,7 @@ mod tests {
             "ibcmd-rs-exchange-content-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let exchange_xml = root.join("ExchangePlans").join("Sync.xml");
         let content_path = root
             .join("ExchangePlans")
@@ -13625,8 +13625,6 @@ mod tests {
         assert_eq!(row.source_path, "ExchangePlans/Sync/Ext/Content.xml");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -13635,6 +13633,7 @@ mod tests {
             "ibcmd-rs-predefined-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let catalog_xml = root.join("Catalogs").join("Products.xml");
         let predefined_path = root
             .join("Catalogs")
@@ -13704,8 +13703,6 @@ mod tests {
         assert!(row.reason.contains("8 editable value fields"));
         assert!(row.reason.contains("child table counts"));
         assert!(row.reason.contains("type UUID slots"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -13714,6 +13711,7 @@ mod tests {
             "ibcmd-rs-form-module-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let form_xml = root.join("CommonForms").join("Item.xml");
         let module_path = root
             .join("CommonForms")
@@ -13748,8 +13746,6 @@ mod tests {
         assert_eq!(row.source_path, "CommonForms/Item/Ext/Form/Module.bsl");
         assert!(row.reason.contains("Form body source is absent"));
         assert!(row.reason.contains("marker-50 source model"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -13758,6 +13754,7 @@ mod tests {
             "ibcmd-rs-form-empty-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let metadata_xml = root.join("CommonForms").join("Item.xml");
         let body_path = root
             .join("CommonForms")
@@ -13798,8 +13795,6 @@ mod tests {
         assert_eq!(row.source_path, "CommonForms/Item/Ext/Form.xml");
         assert!(row.reason.contains("marker-50 body codec"));
         assert!(row.reason.contains("without reading an active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -13808,6 +13803,7 @@ mod tests {
             "ibcmd-rs-form-section-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let metadata_xml = root.join("CommonForms").join("Item.xml");
         let body_path = root
             .join("CommonForms")
@@ -13866,8 +13862,6 @@ mod tests {
         assert_eq!(row.source_path, "CommonForms/Item/Ext/Form.xml");
         assert!(row.reason.contains("1 source asset file"));
         assert!(row.reason.contains("embedded Form item assets"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -13876,6 +13870,7 @@ mod tests {
             "ibcmd-rs-role-rights-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let role_xml = root.join("Roles").join("Editor.xml");
         let rights_path = root
             .join("Roles")
@@ -13936,8 +13931,6 @@ mod tests {
         assert!(row.reason.contains("platform right UUID slots"));
         assert!(row.reason.contains("restricted-right payload shape"));
         assert!(row.reason.contains("restriction templates"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -13946,6 +13939,7 @@ mod tests {
             "ibcmd-rs-flowchart-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let process_xml = root.join("BusinessProcesses").join("Approval.xml");
         let flowchart_path = root
             .join("BusinessProcesses")
@@ -14016,8 +14010,6 @@ mod tests {
         assert!(row.reason.contains("serialized item table order"));
         assert!(row.reason.contains("event handlers"));
         assert!(row.reason.contains("task descriptions"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14026,6 +14018,7 @@ mod tests {
             "ibcmd-rs-help-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let catalog_xml = root.join("Catalogs").join("Products.xml");
         let body_path = root
             .join("Catalogs")
@@ -14064,8 +14057,6 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].body_id, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa.1");
         assert_eq!(rows[0].path, body_path);
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14074,6 +14065,7 @@ mod tests {
             "ibcmd-rs-filter-criterion-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let filter_xml = root.join("FilterCriteria").join("Important.xml");
         let filter_ext = root.join("FilterCriteria").join("Important").join("Ext");
         fs::create_dir_all(&filter_ext).unwrap();
@@ -14113,8 +14105,6 @@ mod tests {
         );
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14123,6 +14113,7 @@ mod tests {
             "ibcmd-rs-web-service-module-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let service_xml = root.join("WebServices").join("Orders.xml");
         let service_ext = root.join("WebServices").join("Orders").join("Ext");
         fs::create_dir_all(&service_ext).unwrap();
@@ -14163,8 +14154,6 @@ mod tests {
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("V8 container from source BSL"));
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14173,6 +14162,7 @@ mod tests {
             "ibcmd-rs-configuration-module-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let configuration_xml = root.join("Configuration.xml");
         let ext = root.join("Ext");
         fs::create_dir_all(&ext).unwrap();
@@ -14211,8 +14201,6 @@ mod tests {
         assert!(row.reason.contains("configuration application module"));
         assert!(row.reason.contains("root Ext/*.bsl"));
         assert!(row.reason.contains("without reading active Config rows"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14221,6 +14209,7 @@ mod tests {
             "ibcmd-rs-family345-selected-{}",
             uuid::Uuid::new_v4()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let ext = root.join("Catalogs/Products/Ext");
         fs::create_dir_all(&ext).unwrap();
         let text = b"Procedure OnWrite()\nEndProcedure";
@@ -14268,7 +14257,6 @@ mod tests {
             )
             .is_err()
         );
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -14277,6 +14265,7 @@ mod tests {
             "ibcmd-rs-object-module-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let catalog_xml = root.join("Catalogs").join("Products.xml");
         let body_path = root
             .join("Catalogs")
@@ -14309,8 +14298,6 @@ mod tests {
             module_blob_text_sha256(&rows[0].blob).unwrap(),
             hex_sha256(text)
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14319,6 +14306,7 @@ mod tests {
             "ibcmd-rs-configuration-module-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let configuration_xml = root.join("Configuration.xml");
         let body_path = root.join("Ext").join("ManagedApplicationModule.bsl");
         fs::create_dir_all(body_path.parent().unwrap()).unwrap();
@@ -14347,8 +14335,6 @@ mod tests {
             module_blob_text_sha256(&rows[0].blob).unwrap(),
             hex_sha256(text)
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14357,6 +14343,7 @@ mod tests {
             "ibcmd-rs-common-module-bin-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let module_xml = root.join("CommonModules").join("BinaryModule.xml");
         let module_ext = root.join("CommonModules").join("BinaryModule").join("Ext");
         fs::create_dir_all(&module_ext).unwrap();
@@ -14399,8 +14386,6 @@ mod tests {
         assert_eq!(row.source_path, "CommonModules/BinaryModule/Ext/Module.bin");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains(".bin V8 container"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14409,6 +14394,7 @@ mod tests {
             "ibcmd-rs-object-module-bin-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let processor_xml = root.join("DataProcessors").join("BinaryProcessor.xml");
         let body_path = root
             .join("DataProcessors")
@@ -14441,8 +14427,6 @@ mod tests {
             raw_deflated_plain_sha256(&rows[0].blob).unwrap(),
             hex_sha256(&container)
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14451,6 +14435,7 @@ mod tests {
             "ibcmd-rs-web-service-module-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let service_xml = root.join("WebServices").join("Orders.xml");
         let body_path = root
             .join("WebServices")
@@ -14483,8 +14468,6 @@ mod tests {
             module_blob_text_sha256(&rows[0].blob).unwrap(),
             hex_sha256(text)
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14493,6 +14476,7 @@ mod tests {
             "ibcmd-rs-filter-criterion-module-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let filter_xml = root.join("FilterCriteria").join("Important.xml");
         let body_path = root
             .join("FilterCriteria")
@@ -14525,8 +14509,6 @@ mod tests {
             module_blob_text_sha256(&rows[0].blob).unwrap(),
             hex_sha256(text)
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14535,6 +14517,7 @@ mod tests {
             "ibcmd-rs-nested-command-module-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let xml_path = root.join("DataProcessors").join("Loader.xml");
         let body_path = root
             .join("DataProcessors")
@@ -14581,8 +14564,6 @@ mod tests {
             module_blob_text_sha256(&rows[0].blob).unwrap(),
             hex_sha256(text)
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14591,6 +14572,7 @@ mod tests {
             "ibcmd-rs-raw-bootstrap-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let package_xml = root.join("XDTOPackages").join("Exchange.xml");
         let package_ext = root.join("XDTOPackages").join("Exchange").join("Ext");
         fs::create_dir_all(&package_ext).unwrap();
@@ -14631,8 +14613,6 @@ mod tests {
         assert_eq!(row.source_path, "XDTOPackages/Exchange/Ext/Package.bin");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14641,6 +14621,7 @@ mod tests {
             "ibcmd-rs-ws-reference-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let reference_xml = root.join("WSReferences").join("UpdateFiles.xml");
         let reference_ext = root.join("WSReferences").join("UpdateFiles").join("Ext");
         fs::create_dir_all(&reference_ext).unwrap();
@@ -14684,8 +14665,6 @@ mod tests {
         );
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14694,6 +14673,7 @@ mod tests {
             "ibcmd-rs-raw-template-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let template_xml = root.join("CommonTemplates").join("SharedText.xml");
         let template_ext = root.join("CommonTemplates").join("SharedText").join("Ext");
         fs::create_dir_all(&template_ext).unwrap();
@@ -14735,8 +14715,6 @@ mod tests {
         );
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14745,6 +14723,7 @@ mod tests {
             "ibcmd-rs-spreadsheet-template-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let template_xml = root.join("CommonTemplates").join("Table.xml");
         let template_ext = root.join("CommonTemplates").join("Table").join("Ext");
         fs::create_dir_all(&template_ext).unwrap();
@@ -14787,8 +14766,6 @@ mod tests {
         assert_eq!(row.source_path, "CommonTemplates/Table/Ext/Template.xml");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14797,6 +14774,7 @@ mod tests {
             "ibcmd-rs-html-template-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let template_xml = root.join("CommonTemplates").join("Web.xml");
         let template_ext = root.join("CommonTemplates").join("Web").join("Ext");
         fs::create_dir_all(&template_ext).unwrap();
@@ -14839,8 +14817,6 @@ mod tests {
         assert_eq!(row.source_path, "CommonTemplates/Web/Ext/Template.xml");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading an active base blob"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14849,6 +14825,7 @@ mod tests {
             "ibcmd-rs-style-body-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let style_xml = root.join("Styles").join("Main.xml");
         let style_ext = root.join("Styles").join("Main").join("Ext");
         fs::create_dir_all(&style_ext).unwrap();
@@ -14881,8 +14858,6 @@ mod tests {
         assert_eq!(row.source_path, "Styles/Main/Ext/Style.xml");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14891,6 +14866,7 @@ mod tests {
             "ibcmd-rs-binary-template-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let template_xml = root.join("CommonTemplates").join("Archive.xml");
         let template_ext = root.join("CommonTemplates").join("Archive").join("Ext");
         fs::create_dir_all(&template_ext).unwrap();
@@ -14929,8 +14905,6 @@ mod tests {
         assert_eq!(row.source_path, "CommonTemplates/Archive/Ext/Template.bin");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14939,6 +14913,7 @@ mod tests {
             "ibcmd-rs-common-picture-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let picture_xml = root.join("CommonPictures").join("Logo.xml");
         let picture_ext = root.join("CommonPictures").join("Logo").join("Ext");
         let picture_body = picture_ext.join("Picture.xml");
@@ -14977,8 +14952,6 @@ mod tests {
         assert_eq!(row.source_path, "CommonPictures/Logo/Ext/Picture.xml");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -14987,6 +14960,7 @@ mod tests {
             "ibcmd-rs-additional-indexes-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let document_xml = root.join("Documents").join("Order.xml");
         let document_ext = root.join("Documents").join("Order").join("Ext");
         fs::create_dir_all(&document_ext).unwrap();
@@ -15026,8 +15000,6 @@ mod tests {
         assert_eq!(row.source_path, "Documents/Order/Ext/AdditionalIndexes.xml");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15036,6 +15008,7 @@ mod tests {
             "ibcmd-rs-additional-indexes-unmapped-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let register_xml = root.join("InformationRegisters").join("Prices.xml");
         let register_ext = root.join("InformationRegisters").join("Prices").join("Ext");
         fs::create_dir_all(&register_ext).unwrap();
@@ -15080,8 +15053,6 @@ mod tests {
         assert!(row.reason.contains("InformationRegister"));
         assert!(row.reason.contains("confirmed Config.FileName suffix"));
         assert!(row.reason.contains("current staging skips"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15090,6 +15061,7 @@ mod tests {
             "ibcmd-rs-command-interface-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let subsystem_xml = root.join("Subsystems").join("Sales.xml");
         let command_interface_path = root
             .join("Subsystems")
@@ -15153,8 +15125,6 @@ mod tests {
             row.reason
                 .contains("Catalog.Products.StandardCommand.OpenList")
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15163,6 +15133,7 @@ mod tests {
             "ibcmd-rs-common-command-interface-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let command_xml = root.join("CommonCommands").join("Offline.xml");
         let command_interface_path = root
             .join("CommonCommands")
@@ -15205,8 +15176,6 @@ mod tests {
         );
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("raw command references"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15215,6 +15184,7 @@ mod tests {
             "ibcmd-rs-scheduled-job-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let job_xml = root.join("ScheduledJobs").join("LoadRates.xml");
         let job_ext = root.join("ScheduledJobs").join("LoadRates").join("Ext");
         fs::create_dir_all(&job_ext).unwrap();
@@ -15247,8 +15217,6 @@ mod tests {
         assert_eq!(row.source_path, "ScheduledJobs/LoadRates/Ext/Schedule.xml");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15257,6 +15225,7 @@ mod tests {
             "ibcmd-rs-raw-body-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let body_path = root
             .join("XDTOPackages")
             .join("Exchange")
@@ -15288,8 +15257,6 @@ mod tests {
             raw_deflated_plain_sha256(&rows[0].blob).unwrap(),
             hex_sha256(body)
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15298,6 +15265,7 @@ mod tests {
             "ibcmd-rs-xdto-package-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let xml_path = root.join("XDTOPackages").join("Exchange.xml");
         let body_path = root
             .join("XDTOPackages")
@@ -15338,8 +15306,6 @@ mod tests {
             raw_deflated_plain_sha256(&rows[0].blob).unwrap(),
             hex_sha256(body)
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15348,6 +15314,7 @@ mod tests {
             "ibcmd-rs-ws-reference-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let body_path = root
             .join("WSReferences")
             .join("UpdateFiles")
@@ -15379,8 +15346,6 @@ mod tests {
             raw_deflated_plain_sha256(&rows[0].blob).unwrap(),
             hex_sha256(body)
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15389,6 +15354,7 @@ mod tests {
             "ibcmd-rs-additional-indexes-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let document_xml = root.join("Documents").join("Order.xml");
         let body_path = root
             .join("Documents")
@@ -15423,8 +15389,6 @@ mod tests {
             hex_sha256("\u{feff}{1,\r\n{0}\r\n}".as_bytes())
         );
         let _ = body;
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15433,6 +15397,7 @@ mod tests {
             "ibcmd-rs-additional-indexes-unmapped-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let register_xml = root.join("InformationRegisters").join("Prices.xml");
         let body_path = root
             .join("InformationRegisters")
@@ -15458,8 +15423,6 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("unsupported AdditionalIndexes"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15468,6 +15431,7 @@ mod tests {
             "ibcmd-rs-binary-template-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let template_xml = root.join("CommonTemplates").join("Archive.xml");
         let body_path = root
             .join("CommonTemplates")
@@ -15509,8 +15473,6 @@ mod tests {
             .exact_bytes(),
             Some(b"PK\x03\x04".as_slice())
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15519,6 +15481,7 @@ mod tests {
             "ibcmd-rs-dcs-picture-kind-{}",
             uuid::Uuid::new_v4()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(root.join("CommonPictures")).unwrap();
         fs::write(root.join("CommonPictures/Information.xml"), br#"<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.21"><CommonPicture uuid="11111111-2222-4333-8444-555555555555"><Properties><Name>Information</Name></Properties></CommonPicture></MetaDataObject>"#).unwrap();
         let source = decode_base64_fixture(include_str!(concat!(
@@ -15546,7 +15509,6 @@ mod tests {
         let context = MetadataSourceContext::new(root.clone());
         assert!(super::compile_dcs_template_body(source.as_bytes(), Some(&context)).is_ok());
         assert!(super::compile_dcs_template_body(common.as_bytes(), Some(&context)).is_err());
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15555,6 +15517,7 @@ mod tests {
             "ibcmd-rs-dcs-template-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let template_xml = root.join("CommonTemplates").join("Schema.xml");
         let body_path = root
             .join("CommonTemplates")
@@ -15612,8 +15575,6 @@ mod tests {
                 .unwrap()
                 .contains("<name>Source1</name>")
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     fn decode_base64_fixture(encoded: &str) -> Vec<u8> {
@@ -15660,6 +15621,7 @@ mod tests {
             "ibcmd-rs-dcs-style-item-bootstrap-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let template_xml = root.join("CommonTemplates").join("AreaProbe.xml");
         let body_path = root
             .join("CommonTemplates")
@@ -15759,8 +15721,6 @@ mod tests {
                 .all(|row| !row.reason.contains("DCS bootstrap is blocked")),
             "resolver built from StyleItems/CorpusAccent.xml must unblock the DCS bootstrap row: {rows_with_style_item:?}"
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15769,6 +15729,7 @@ mod tests {
             "ibcmd-rs-style-reference-scan-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
 
         // No StyleItems directory at all: empty map, not an error.
         assert_eq!(
@@ -15822,8 +15783,6 @@ mod tests {
                 .map(String::as_str),
             Some("Secondary")
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15832,6 +15791,7 @@ mod tests {
             "ibcmd-rs-unknown-template-kind-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let template_xml = root.join("CommonTemplates").join("Future.xml");
         fs::create_dir_all(template_xml.parent().unwrap()).unwrap();
         let owner = br#"<?xml version="1.0" encoding="UTF-8"?>
@@ -15873,8 +15833,6 @@ mod tests {
         assert_eq!(row.generation, "requires_base_blob");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("FutureTemplate"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -15883,6 +15841,7 @@ mod tests {
             "ibcmd-rs-spreadsheet-template-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let template_xml = root.join("CommonTemplates").join("Table.xml");
         let body_path = root
             .join("CommonTemplates")
@@ -15918,8 +15877,6 @@ mod tests {
         .unwrap();
         assert_eq!(rows[0].blob, expected.blob);
         assert_eq!(rows[0].blob_sha256, hex_sha256(&rows[0].blob));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[cfg(feature = "mssql-live-tests")]
@@ -15998,6 +15955,7 @@ mod tests {
             "ibcmd-rs-html-template-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let template_xml = root.join("CommonTemplates").join("Web.xml");
         let body_path = root
             .join("CommonTemplates")
@@ -16038,8 +15996,6 @@ mod tests {
         .unwrap();
         assert_eq!(rows[0].blob, expected.blob);
         assert_eq!(rows[0].blob_sha256, hex_sha256(&rows[0].blob));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16048,6 +16004,7 @@ mod tests {
             "ibcmd-rs-style-body-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let style_xml = root.join("Styles").join("Main.xml");
         let body_path = root
             .join("Styles")
@@ -16080,8 +16037,6 @@ mod tests {
             pack_style_body_blob_from_xml(sample_style_body_xml(), Some(&source)).unwrap();
         assert_eq!(rows[0].blob, expected.blob);
         assert_eq!(rows[0].blob_sha256, hex_sha256(&rows[0].blob));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16090,6 +16045,7 @@ mod tests {
             "ibcmd-rs-common-picture-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let picture_xml = root.join("CommonPictures").join("Logo.xml");
         let picture_body = root
             .join("CommonPictures")
@@ -16122,8 +16078,6 @@ mod tests {
             raw_deflated_first_base64_payload_sha256(&rows[0].blob).unwrap(),
             hex_sha256(b"PNG")
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16132,6 +16086,7 @@ mod tests {
             "ibcmd-rs-exchange-plan-content-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let exchange_xml = root.join("ExchangePlans").join("Sync.xml");
         let content_path = root
             .join("ExchangePlans")
@@ -16193,8 +16148,6 @@ mod tests {
                     .as_bytes()
             )
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16203,6 +16156,7 @@ mod tests {
             "ibcmd-rs-scheduled-job-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let job_xml = root.join("ScheduledJobs").join("LoadRates.xml");
         let body_path = root
             .join("ScheduledJobs")
@@ -16236,8 +16190,6 @@ mod tests {
                     .as_bytes(),
             )
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16246,6 +16198,7 @@ mod tests {
             "ibcmd-rs-configuration-picture-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let configuration_xml = root.join("Configuration.xml");
         let splash_xml = root.join("Ext").join("Splash.xml");
         let splash_file = root.join("Ext").join("Splash").join("splash.png");
@@ -16282,8 +16235,6 @@ mod tests {
         assert_eq!(row.source_path, "Ext/Splash.xml");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16292,6 +16243,7 @@ mod tests {
             "ibcmd-rs-configuration-picture-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let body_path = root.join("Ext").join("Splash.xml");
         let picture_file = body_path.with_extension("").join("splash.png");
         fs::create_dir_all(picture_file.parent().unwrap()).unwrap();
@@ -16319,8 +16271,6 @@ mod tests {
             raw_deflated_first_base64_payload_sha256(&rows[0].blob).unwrap(),
             hex_sha256(b"SPLASH")
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16329,6 +16279,7 @@ mod tests {
             "ibcmd-rs-main-section-picture-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let configuration_xml = root.join("Configuration.xml");
         let body_path = root.join("Ext").join("MainSectionPicture.xml");
         let picture_file = body_path.with_extension("").join("main.png");
@@ -16365,8 +16316,6 @@ mod tests {
         assert_eq!(row.source_path, "Ext/MainSectionPicture.xml");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16375,6 +16324,7 @@ mod tests {
             "ibcmd-extension-logo-no-base-{}",
             uuid::Uuid::new_v4()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let body_path = root.join("Ext/Logo.xml");
         let picture_file = body_path.with_extension("").join("Picture.zip");
         fs::create_dir_all(picture_file.parent().unwrap()).unwrap();
@@ -16402,7 +16352,6 @@ mod tests {
             raw_deflated_first_base64_payload_sha256(&rows[0].blob).unwrap(),
             hex_sha256(b"ZIP-SOURCE-PAYLOAD")
         );
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16411,6 +16360,7 @@ mod tests {
             "ibcmd-rs-main-section-picture-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let body_path = root.join("Ext").join("MainSectionPicture.xml");
         let picture_file = body_path.with_extension("").join("main.png");
         fs::create_dir_all(picture_file.parent().unwrap()).unwrap();
@@ -16439,8 +16389,6 @@ mod tests {
             raw_deflated_first_base64_payload_sha256(&rows[0].blob).unwrap(),
             hex_sha256(b"MAIN-SECTION")
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16449,6 +16397,7 @@ mod tests {
             "ibcmd-rs-configuration-binary-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let configuration_xml = root.join("Configuration.xml");
         let ext = root.join("Ext");
         fs::create_dir_all(&ext).unwrap();
@@ -16485,8 +16434,6 @@ mod tests {
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("inflated raw-deflated source bytes"));
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16495,6 +16442,7 @@ mod tests {
             "ibcmd-rs-parent-configurations-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let configuration_xml = root.join("Configuration.xml");
         let body_path = root.join("Ext").join("ParentConfigurations.bin");
         fs::create_dir_all(body_path.parent().unwrap()).unwrap();
@@ -16524,8 +16472,6 @@ mod tests {
             raw_deflated_plain_sha256(&rows[0].blob).unwrap(),
             hex_sha256(body)
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     const HOME_PAGE_WORK_AREA_XML: &[u8] = b"\xef\xbb\xbf<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<HomePageWorkArea xmlns=\"http://v8.1c.ru/8.3/xcf/extrnprops\" xmlns:xr=\"http://v8.1c.ru/8.3/xcf/readable\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" version=\"2.20\">\r\n\t<WorkingAreaTemplate>TwoColumnsVariableWidth</WorkingAreaTemplate>\r\n\t<LeftColumn>\r\n\t\t<Item>\r\n\t\t\t<Form>0c03f54c-e251-4dc9-85cb-f1c23b377597</Form>\r\n\t\t\t<Height>10</Height>\r\n\t\t\t<Visibility>\r\n\t\t\t\t<xr:Common>true</xr:Common>\r\n\t\t\t</Visibility>\r\n\t\t</Item>\r\n\t</LeftColumn>\r\n\t<RightColumn>\r\n\t</RightColumn>\r\n</HomePageWorkArea>";
@@ -16536,6 +16482,7 @@ mod tests {
             "ibcmd-rs-home-page-work-area-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let configuration_xml = root.join("Configuration.xml");
         let ext = root.join("Ext");
         fs::create_dir_all(&ext).unwrap();
@@ -16572,8 +16519,6 @@ mod tests {
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("HomePageWorkArea.xml"));
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16582,6 +16527,7 @@ mod tests {
             "ibcmd-rs-home-page-work-area-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let body_path = root.join("Ext").join("HomePageWorkArea.xml");
         fs::create_dir_all(body_path.parent().unwrap()).unwrap();
         fs::write(&body_path, HOME_PAGE_WORK_AREA_XML).unwrap();
@@ -16611,8 +16557,6 @@ mod tests {
                 b"\xef\xbb\xbf{1,2,1,\r\n{0,\r\n{0,0c03f54c-e251-4dc9-85cb-f1c23b377597},10,\r\n{0,\r\n{0,\r\n{\"B\",1},0}\r\n}\r\n},0,2}"
             )
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16621,6 +16565,7 @@ mod tests {
             "ibcmd-rs-command-interface-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let subsystem_xml = root.join("Subsystems").join("Admin.xml");
         let subsystem_ext = root.join("Subsystems").join("Admin").join("Ext");
         fs::create_dir_all(&subsystem_ext).unwrap();
@@ -16660,8 +16605,6 @@ mod tests {
         assert_eq!(row.source_path, "Subsystems/Admin/Ext/CommandInterface.xml");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("raw command references"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16670,6 +16613,7 @@ mod tests {
             "ibcmd-rs-command-interface-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let subsystem_xml = root.join("Subsystems").join("Admin.xml");
         let body_path = root
             .join("Subsystems")
@@ -16704,8 +16648,6 @@ mod tests {
                 b"\xef\xbb\xbf{7,1,1,\r\n{100,aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa},\r\n{0,\r\n{0,\r\n{\"B\",1},0}\r\n},0,0,0,0,0}"
             )
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16714,6 +16656,7 @@ mod tests {
             "ibcmd-rs-common-command-interface-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let common_command_xml = root.join("CommonCommands").join("Offline.xml");
         let body_path = root
             .join("CommonCommands")
@@ -16748,8 +16691,6 @@ mod tests {
                 b"\xef\xbb\xbf{7,1,1,\r\n{100,aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa},\r\n{0,\r\n{0,\r\n{\"B\",1},0}\r\n},0,0,0,0,0}"
             )
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16758,6 +16699,7 @@ mod tests {
             "ibcmd-rs-configuration-command-interface-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let configuration_xml = root.join("Configuration.xml");
         let ext = root.join("Ext");
         fs::create_dir_all(&ext).unwrap();
@@ -16797,8 +16739,6 @@ mod tests {
         assert_eq!(row.source_path, "Ext/CommandInterface.xml");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("raw command references"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16807,6 +16747,7 @@ mod tests {
             "ibcmd-rs-configuration-command-interface-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let body_path = root.join("Ext").join("CommandInterface.xml");
         fs::create_dir_all(body_path.parent().unwrap()).unwrap();
         fs::write(&body_path, sample_raw_command_interface_xml()).unwrap();
@@ -16836,8 +16777,6 @@ mod tests {
                 b"\xef\xbb\xbf{7,1,1,\r\n{100,aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa},\r\n{0,\r\n{0,\r\n{\"B\",1},0}\r\n},0,0,0,0,0}"
             )
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16846,6 +16785,7 @@ mod tests {
             "ibcmd-rs-configuration-main-section-command-interface-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let configuration_xml = root.join("Configuration.xml");
         let ext = root.join("Ext");
         fs::create_dir_all(&ext).unwrap();
@@ -16887,8 +16827,6 @@ mod tests {
         );
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("raw command references"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16897,6 +16835,7 @@ mod tests {
             "ibcmd-rs-configuration-main-section-command-interface-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let body_path = root.join("Ext").join("MainSectionCommandInterface.xml");
         fs::create_dir_all(body_path.parent().unwrap()).unwrap();
         fs::write(&body_path, sample_raw_command_interface_xml()).unwrap();
@@ -16926,8 +16865,6 @@ mod tests {
                 b"\xef\xbb\xbf{7,1,1,\r\n{100,aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa},\r\n{0,\r\n{0,\r\n{\"B\",1},0}\r\n},0,0,0,0,0}"
             )
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     const CLIENT_APPLICATION_INTERFACE_XML: &[u8] = b"\xef\xbb\xbf<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<ClientApplicationInterface xmlns=\"http://v8.1c.ru/8.2/managed-application/core\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"InterfaceLayouter\">\r\n\t<panelDef id=\"b553047f-c9aa-4157-978d-448ecad24248\"/>\r\n\t<panelDef id=\"8e10648b-f52d-4ec2-b4dd-87de33778d95\"/>\r\n</ClientApplicationInterface>";
@@ -16938,6 +16875,7 @@ mod tests {
             "ibcmd-rs-configuration-client-interface-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let configuration_xml = root.join("Configuration.xml");
         let ext = root.join("Ext");
         fs::create_dir_all(&ext).unwrap();
@@ -16976,8 +16914,6 @@ mod tests {
         assert_eq!(row.source_path, "Ext/ClientApplicationInterface.xml");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -16986,6 +16922,7 @@ mod tests {
             "ibcmd-rs-configuration-client-interface-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let body_path = root.join("Ext").join("ClientApplicationInterface.xml");
         fs::create_dir_all(body_path.parent().unwrap()).unwrap();
         fs::write(&body_path, CLIENT_APPLICATION_INTERFACE_XML).unwrap();
@@ -17014,8 +16951,6 @@ mod tests {
                 b"\xef\xbb\xbf{1,\r\n{0,1,\r\n{0,0}\r\n},\r\n{0,2,\r\n{0,0}\r\n},\r\n{0,3,\r\n{0,0}\r\n},\r\n{0,4,\r\n{0,0}\r\n},2,\r\n{b553047f-c9aa-4157-978d-448ecad24248,0},1,\r\n{8e10648b-f52d-4ec2-b4dd-87de33778d95,1,\"\"},0}"
             )
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -17024,6 +16959,7 @@ mod tests {
             "ibcmd-rs-mobile-client-signature-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let configuration_xml = root.join("Configuration.xml");
         let ext = root.join("Ext");
         fs::create_dir_all(&ext).unwrap();
@@ -17062,8 +16998,6 @@ mod tests {
         assert_eq!(row.source_path, "Ext/MobileClientSignature.bin");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -17072,6 +17006,7 @@ mod tests {
             "ibcmd-rs-mobile-client-signature-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let body_path = root.join("Ext").join("MobileClientSignature.bin");
         fs::create_dir_all(body_path.parent().unwrap()).unwrap();
         let body = b"{2,\"\",\"\",{0},0}";
@@ -17100,8 +17035,6 @@ mod tests {
             raw_deflated_plain_sha256(&rows[0].blob).unwrap(),
             hex_sha256(body)
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -17110,6 +17043,7 @@ mod tests {
             "ibcmd-rs-standalone-content-readiness-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let configuration_xml = root.join("Configuration.xml");
         let ext = root.join("Ext");
         fs::create_dir_all(&ext).unwrap();
@@ -17149,8 +17083,6 @@ mod tests {
         assert_eq!(row.source_path, "Ext/StandaloneConfigurationContent.bin");
         assert!(!row.current_staging_fetches_base_blob);
         assert!(row.reason.contains("without reading the active Config row"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -17159,6 +17091,7 @@ mod tests {
             "ibcmd-rs-standalone-content-no-fetch-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let body_path = root.join("Ext").join("StandaloneConfigurationContent.bin");
         fs::create_dir_all(body_path.parent().unwrap()).unwrap();
         // What the exporter writes for a record with no sections beyond the
@@ -17189,8 +17122,6 @@ mod tests {
             raw_deflated_plain_sha256(&rows[0].blob).unwrap(),
             hex_sha256(b"\xef\xbb\xbf{2,0}")
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -17250,6 +17181,7 @@ mod tests {
             "ibcmd-rs-nested-command-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let xml_path = root.join("DataProcessors/Scanning.xml");
         let module_path =
             root.join("DataProcessors/Scanning/Commands/ScanSheet/Ext/CommandModule.bsl");
@@ -17292,8 +17224,6 @@ mod tests {
                 body_path: module_path,
             }]
         );
-
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

@@ -492,6 +492,7 @@ mod tests {
     fn predefined_items_are_named_by_the_tree() {
         let root =
             std::env::temp_dir().join(format!("ibcmd-rs-patch-refusal-{}", std::process::id()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let folder = root.join("Catalogs").join("Состояния").join("Ext");
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(
@@ -515,7 +516,6 @@ mod tests {
             text.contains("добавление предопределённых элементов пока не загружается"),
             "{text}"
         );
-        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

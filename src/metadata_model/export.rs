@@ -730,6 +730,7 @@ mod tests {
                 .map(|elapsed| elapsed.as_nanos())
                 .unwrap_or_default()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(root.join("Enums")).unwrap();
         fs::write(
             root.join("Configuration.xml"),
@@ -820,6 +821,5 @@ mod tests {
         );
         assert_eq!(names.types.len(), 3);
         assert_eq!(names.types[2].name, "EnumList.E");
-        fs::remove_dir_all(&root).ok();
     }
 }

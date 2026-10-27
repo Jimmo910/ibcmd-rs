@@ -76,6 +76,7 @@ fn a_tree_imported_into_postgresql_exports_back() {
 
     let out: PathBuf =
         std::env::temp_dir().join(format!("ibcmd-rs-pg-import-{}", std::process::id()));
+    let _scratch = crate::common::Scratch::adopt(&out);
     let _ = fs::remove_dir_all(&out);
     let mut export = vec!["infobase", "config", "export", "--platform=8.5.1"]
         .into_iter()
@@ -97,5 +98,4 @@ fn a_tree_imported_into_postgresql_exports_back() {
     for (path, bytes) in &expected {
         assert!(actual[path] == *bytes, "{path} differs");
     }
-    let _ = fs::remove_dir_all(&out);
 }

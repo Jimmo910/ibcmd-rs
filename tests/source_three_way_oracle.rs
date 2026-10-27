@@ -60,6 +60,7 @@ fn offline_run_writes_stable_hash_only_evidence_for_all_branches() {
         "ibcmd-rs-three-way-oracle-{}",
         uuid::Uuid::new_v4()
     ));
+    let _scratch = crate::common::Scratch::adopt(&root);
     let native = root.join("native");
     let edt = root.join("edt");
     let ours = root.join("ours");
@@ -113,7 +114,6 @@ fn offline_run_writes_stable_hash_only_evidence_for_all_branches() {
         ..args
     };
     assert!(run_source_three_way_oracle(&nested_output_args).is_err());
-    fs::remove_dir_all(root).unwrap();
 }
 
 fn write_case(root: &std::path::Path, name: &str, content: &str) {

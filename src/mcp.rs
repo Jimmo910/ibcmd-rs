@@ -1106,39 +1106,7 @@ pub fn run(args: McpArgs) -> Result<()> {
 }
 
 #[cfg(all(test, unix))]
-struct TestScratch(PathBuf);
-#[cfg(all(test, unix))]
-impl TestScratch {
-    fn new(prefix: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
-        fs::create_dir(&root).unwrap();
-        Self(root)
-    }
-    fn keep_fixtures() -> bool {
-        std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1")
-    }
-}
-#[cfg(all(test, unix))]
-impl std::ops::Deref for TestScratch {
-    type Target = Path;
-    fn deref(&self) -> &Path {
-        &self.0
-    }
-}
-#[cfg(all(test, unix))]
-impl AsRef<Path> for TestScratch {
-    fn as_ref(&self) -> &Path {
-        &self.0
-    }
-}
-#[cfg(all(test, unix))]
-impl Drop for TestScratch {
-    fn drop(&mut self) {
-        if !Self::keep_fixtures() {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-}
+use crate::test_scratch::TestScratch;
 
 #[cfg(all(test, unix))]
 mod source_snapshot_tests {
@@ -1152,13 +1120,13 @@ mod source_snapshot_tests {
         assert!(
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let root = scratch_root();
-                path = Some(root.0.clone());
+                path = Some(root.to_path_buf());
                 fs::write(root.join("owned"), "fixture").unwrap();
                 panic!("synthetic test failure");
             }))
             .is_err()
         );
-        assert_eq!(path.unwrap().exists(), TestScratch::keep_fixtures());
+        assert_eq!(path.unwrap().exists(), crate::test_scratch::keep_fixtures());
     }
     #[test]
     fn additions_and_renames_invalidate_the_snapshot() {

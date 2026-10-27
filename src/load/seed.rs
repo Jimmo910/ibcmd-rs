@@ -797,6 +797,7 @@ mod tests {
     fn the_seed_identities_are_the_seeds_own() {
         let scratch =
             std::env::temp_dir().join(format!("ibcmd-rs-seed-identities-{}", std::process::id()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&scratch);
         fs::create_dir_all(&scratch).unwrap();
         for (seed, file) in [(&PROCESSOR, "seed.epf"), (&REPORT, "seed.erf")] {
             let path = scratch.join(file);
@@ -828,6 +829,5 @@ mod tests {
                 );
             }
         }
-        let _ = fs::remove_dir_all(&scratch);
     }
 }

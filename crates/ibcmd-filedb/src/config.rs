@@ -337,7 +337,7 @@ mod read_budget_tests {
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
-            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            if !crate::test_scratch::keep_fixtures() {
                 let _ = fs::remove_dir_all(&self.root);
             }
         }

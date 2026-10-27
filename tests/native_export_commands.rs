@@ -13,13 +13,13 @@ const FAILED: i32 = if cfg!(windows) { -1 } else { 255 };
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase")
 }
-fn lab(tag: &str) -> (PathBuf, PathBuf) {
-    // Retain failure evidence; TMPDIR is controlled by the caller.
-    let root = std::env::temp_dir().join(format!(
+fn lab(tag: &str) -> (crate::common::Scratch, PathBuf) {
+    // IBCMD_TEST_KEEP_FIXTURES=1 keeps the lab for debugging.
+    let root = crate::common::Scratch::adopt(std::env::temp_dir().join(format!(
         "native-export-{}-{tag}-{}",
         std::process::id(),
         uuid::Uuid::new_v4()
-    ));
+    )));
     let db = root.join("db");
     fs::create_dir_all(&db).unwrap();
     let mut bytes = Vec::new();
@@ -357,12 +357,12 @@ fn query_output_resolves_directory_aliases_but_rejects_leaf_links() {
     assert!(!real.join("must-not-exist").exists());
 }
 
-fn recorded_lab(case: &str) -> (PathBuf, PathBuf, PathBuf) {
-    let root = std::env::temp_dir().join(format!(
+fn recorded_lab(case: &str) -> (crate::common::Scratch, PathBuf, PathBuf) {
+    let root = crate::common::Scratch::adopt(std::env::temp_dir().join(format!(
         "native-export-recorded-{}-{}",
         case,
         uuid::Uuid::new_v4()
-    ));
+    )));
     let db = root.join("db");
     fs::create_dir_all(&db).unwrap();
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -793,6 +793,7 @@ fn postgres_query_routes_refuse_before_connecting_or_publishing() {
     };
 
     let root = std::env::temp_dir().join(format!("native-pg-query-{}", uuid::Uuid::new_v4()));
+    let _scratch = crate::common::Scratch::adopt(&root);
     fs::create_dir(&root).unwrap();
     let reference_bytes = fs::read(fixture().join("tiny-xml/ConfigDumpInfo.xml")).unwrap();
     let mut failures = Vec::new();
@@ -1195,7 +1196,7 @@ fn selected_source_asset_refusal_preserves_existing_and_absent_destinations() {
 #[test]
 fn selected_nested_descriptor_refusal_does_not_hide_behind_the_root_inventory() {
     use ibcmd_rs::metadata_model::brace::Brace;
-    let (_, recorded_db, recorded) = recorded_lab("owned");
+    let (_recorded_root, recorded_db, recorded) = recorded_lab("owned");
     let mut source = ibcmd_filedb::FileDb::open(&recorded_db).unwrap();
     let rows = source.config_rows("CONFIG").unwrap();
     drop(source);
@@ -1259,7 +1260,7 @@ fn selected_nested_descriptor_refusal_does_not_hide_behind_the_root_inventory() 
 #[test]
 fn unselected_orphan_form_diagnostics_do_not_expand_selected_completeness() {
     use std::io::Write;
-    let (_, recorded_db, recorded) = recorded_lab("owned");
+    let (_recorded_root, recorded_db, recorded) = recorded_lab("owned");
     let mut source = ibcmd_filedb::FileDb::open(&recorded_db).unwrap();
     let mut rows = source.config_rows("CONFIG").unwrap();
     drop(source);
@@ -1356,7 +1357,7 @@ fn selected_semantic_refusal_also_checks_narrow_and_legacy_writer_paths() {
             ));
         }
     }
-    let (_, recorded_db, _) = recorded_lab("owned");
+    let (_recorded_root, recorded_db, _) = recorded_lab("owned");
     let mut source = ibcmd_filedb::FileDb::open(&recorded_db).unwrap();
     let rows = source.config_rows("CONFIG").unwrap();
     drop(source);

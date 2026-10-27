@@ -113,7 +113,11 @@ fn observation(
 /// the creator; only native effects/observations are replaced.
 fn setup(
     extra: impl FnOnce(&LifetimeBinding) -> Vec<Observation>,
-) -> (ManagedWorker<Host>, PathBuf, Rc<RefCell<Vec<&'static str>>>) {
+) -> (
+    crate::test_scratch::TestScratch,
+    ManagedWorker<Host>,
+    Rc<RefCell<Vec<&'static str>>>,
+) {
     let id = Uuid::new_v4();
     let initial = binding(Uuid::nil());
     let mut registered = initial.clone();
@@ -136,16 +140,20 @@ fn setup(
         stop_error: false,
         cold_observations: vec![true; 6],
     };
-    let path = std::env::temp_dir().join(format!("ibcmd-managed-journal-{}.jsonl", initial.nonce));
+    // The journal outlives the session that writes it: the guard is the
+    // first value of the tuple, so callers drop it last.
+    let path = crate::test_scratch::TestScratch::adopt(
+        std::env::temp_dir().join(format!("ibcmd-managed-journal-{}.jsonl", initial.nonce)),
+    );
     let journal = Journal::create(&path, initial.nonce).unwrap();
     let mut session = ManagedWorker::from_fresh_creator(host, initial, journal).unwrap();
     session.register_and_load().unwrap();
-    (session, path, effects)
+    (path, session, effects)
 }
 
 #[test]
 fn shutdown_retains_history_and_original_journal_and_invalidates_publication() {
-    let (mut session, path, effects) = setup(|b| vec![observation(b, true, true, Some(43))]);
+    let (path, mut session, effects) = setup(|b| vec![observation(b, true, true, Some(43))]);
     let cold = session.shutdown().unwrap();
     assert_eq!(cold.session.ever_loaded.len(), 1);
     assert_eq!(
@@ -165,7 +173,7 @@ fn shutdown_retains_history_and_original_journal_and_invalidates_publication() {
 #[test]
 fn shutdown_unknown_and_foreign_observation_never_issue_cold_or_undo_authority() {
     for scenario in ["second_base", "stop_unknown", "cold_unknown"] {
-        let (mut session, path, effects) = setup(|b| {
+        let (path, mut session, effects) = setup(|b| {
             let mut o = observation(b, true, true, Some(43));
             if scenario == "second_base" {
                 o.loaded.insert(Uuid::new_v4());
@@ -190,7 +198,7 @@ fn shutdown_unknown_and_foreign_observation_never_issue_cold_or_undo_authority()
 #[test]
 fn cold_replacement_prevents_undo_and_unknown_sql_can_never_retry() {
     for scenario in ["before_sql", "unknown_sql", "after_sql"] {
-        let (mut session, path, _) = setup(|b| vec![observation(b, true, true, Some(43))]);
+        let (path, mut session, _) = setup(|b| vec![observation(b, true, true, Some(43))]);
         session.runtime.cold_observations = match scenario {
             "before_sql" => vec![true, false],
             "after_sql" => vec![true, true, false],
@@ -253,7 +261,7 @@ fn second_base_and_removed_registration_refuse_before_stage() {
         "worker_uuid",
         "worker_pid",
     ] {
-        let (mut session, path, effects) = setup(|b| {
+        let (path, mut session, effects) = setup(|b| {
             let mut o = observation(b, true, true, Some(43));
             let second = Uuid::new_v4();
             match scenario {
@@ -298,7 +306,7 @@ fn second_base_and_removed_registration_refuse_before_stage() {
 
 #[test]
 fn post_commit_identity_failure_is_committed_and_never_signals() {
-    let (mut session, path, effects) = setup(|b| {
+    let (path, mut session, effects) = setup(|b| {
         let clean = observation(b, true, true, Some(43));
         let mut drift = observation(b, true, true, Some(43));
         drift.binding.agent.birth_100ns += 1;
@@ -328,7 +336,7 @@ fn post_commit_identity_failure_is_committed_and_never_signals() {
 #[test]
 fn uncertain_sql_and_failed_handoff_are_distinct_from_rollback() {
     for which in ["stage", "commit", "handoff"] {
-        let (mut session, path, effects) = setup(|b| {
+        let (path, mut session, effects) = setup(|b| {
             (0..3)
                 .map(|_| observation(b, true, true, Some(43)))
                 .collect()
@@ -368,7 +376,7 @@ fn uncertain_sql_and_failed_handoff_are_distinct_from_rollback() {
 
 #[test]
 fn successful_turn_off_without_replacement_is_not_handoff_success() {
-    let (mut session, path, _) = setup(|b| {
+    let (path, mut session, _) = setup(|b| {
         (0..4)
             .map(|_| observation(b, true, true, Some(43)))
             .collect()
@@ -387,7 +395,7 @@ fn successful_turn_off_without_replacement_is_not_handoff_success() {
 
 #[test]
 fn actual_orchestration_records_intents_before_native_effect_and_replacement() {
-    let (mut session, path, effects) = setup(|b| {
+    let (path, mut session, effects) = setup(|b| {
         let mut records: Vec<_> = (0..3)
             .map(|_| observation(b, true, true, Some(43)))
             .collect();

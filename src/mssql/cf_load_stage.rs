@@ -317,14 +317,14 @@ mod tests {
         rows
     }
 
-    fn scratch(tag: &str) -> PathBuf {
+    fn scratch(tag: &str) -> crate::test_scratch::TestScratch {
         let dir = std::env::temp_dir().join(format!(
             "ibcmd-rs-cf-load-stage-{tag}-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        dir
+        crate::test_scratch::TestScratch::adopt(dir)
     }
 
     #[test]
@@ -394,7 +394,6 @@ mod tests {
         assert!(apply.contains("USE [Db];"), "{apply}");
         assert!(apply.contains(") <> 5\n"), "{apply}");
         assert!(apply.contains("DELETE FROM dbo.ConfigSave;"), "{apply}");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -432,6 +431,5 @@ mod tests {
         fs::write(&damaged, write_format15_to_vec(&document).unwrap()).unwrap();
         let error = cf_stage_rows(&damaged).unwrap_err().to_string();
         assert!(error.contains("element version"), "{error}");
-        let _ = fs::remove_dir_all(&dir);
     }
 }
