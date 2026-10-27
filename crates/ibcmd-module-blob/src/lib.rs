@@ -9,7 +9,11 @@
 //! `v8_container.rs`), and `inflate_raw` from `ibcmd-1c-vocab`, which now
 //! imports it from here. The root still reaches every item by its old path
 //! through re-exports (`module_blob::…`, `crate::v8_container::…`). The bodies
-//! are unchanged but for visibility: what the root reads is `pub`. The
+//! are unchanged but for visibility (what the root reads is `pub`) and one
+//! name: the lenient base64 decoder the root re-exports as
+//! `decode_base64_mime` is called `decode_base64_mime_lenient` here, its own
+//! name in `ibcmd-1c-text`. The tests moved with them; their fixture paths
+//! start from this crate and one clippy finding is fixed. The
 //! command-line wrappers that read and write files and their reports
 //! (`pack_module_blob`, `patch_versions_blob`), and the Help-content digest,
 //! which reads a braced record through `ibcmd_form_body::record_text`, stay in

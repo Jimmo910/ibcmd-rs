@@ -52,8 +52,8 @@ pub fn raw_deflated_first_base64_payload_sha256(blob: &[u8]) -> Result<String> {
 }
 
 /// A raw deflate stream inflated; a stream that does not inflate is the
-/// decoder's I/O error alone, which callers name in their own context
-/// (`module_blob`'s readers).
+/// decoder's I/O error alone, which callers name in their own context (the
+/// root's `module_blob` readers, `ibcmd-1c-vocab`'s `inflate_raw_deflate`).
 pub fn inflate_raw(input: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = DeflateDecoder::new(input);
     let mut output = Vec::new();
