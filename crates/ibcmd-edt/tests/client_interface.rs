@@ -8,12 +8,19 @@ use std::{
 const NATIVE: &[u8] = include_bytes!("fixtures/client-interface/direct.xml");
 const EDT_LF: &[u8] = include_bytes!("fixtures/client-interface/direct-lf.cai");
 
-fn retained(label: &str) -> PathBuf {
+/// A scratch directory, removed with the value (also when the test fails)
+/// unless `IBCMD_TEST_KEEP_FIXTURES=1`.
+fn scratch(label: &str) -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix(&format!("ibcmd-cai-{label}-"))
+        .disable_cleanup(keep_fixtures())
         .tempdir()
         .unwrap()
-        .keep()
+}
+
+/// Whether the fixtures are kept for debugging: `IBCMD_TEST_KEEP_FIXTURES=1`.
+fn keep_fixtures() -> bool {
+    std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1")
 }
 
 fn native_source(root: &Path, cai: &[u8]) -> PathBuf {
@@ -46,7 +53,8 @@ fn interface(config: &morph1c_core::ir::Configuration) -> &ClientApplicationInte
 
 #[test]
 fn witnessed_direct_panels_and_five_definitions_are_modelled_without_synthetic_groups() {
-    let root = retained("direct");
+    let root = scratch("direct");
+    let root = root.path().to_path_buf();
     let source = native_source(&root, NATIVE);
     let config = read_config(Format::Designer, &source, &ConvertOptions::default())
         .unwrap()
@@ -128,7 +136,8 @@ fn witnessed_direct_panels_and_five_definitions_are_modelled_without_synthetic_g
 
 #[test]
 fn legacy_group_and_full_six_panel_table_remain_exact() {
-    let root = retained("legacy");
+    let root = scratch("legacy");
+    let root = root.path().to_path_buf();
     let text = String::from_utf8(NATIVE.to_vec()).unwrap();
     let start = text.find("\t<top>").unwrap();
     let end = text.find("\t<panelDef").unwrap();
@@ -184,7 +193,8 @@ fn unknown_missing_duplicate_or_reordered_panel_definitions_are_rejected() {
             ),
         ),
     ] {
-        let root = retained(label);
+        let root = scratch(label);
+        let root = root.path().to_path_buf();
         let source = native_source(&root, body.as_bytes());
         assert!(
             read_config(Format::Designer, &source, &ConvertOptions::default()).is_err(),
@@ -210,7 +220,8 @@ fn lf_framing_does_not_accept_mixed_framing_or_extra_model_cells() {
             ),
         ),
     ] {
-        let root = retained(label);
+        let root = scratch(label);
+        let root = root.path().to_path_buf();
         let source = native_source(&root, NATIVE);
         let config = read_config(Format::Designer, &source, &ConvertOptions::default())
             .unwrap()

@@ -35,7 +35,7 @@ impl Drop for Fixture {
                 .unwrap()
                 .starts_with("ibcmd-original-source-")
         );
-        if self.path.is_dir() && std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+        if self.path.is_dir() && !crate::test_scratch::keep_fixtures() {
             fs::remove_dir_all(&self.path).unwrap();
         }
     }

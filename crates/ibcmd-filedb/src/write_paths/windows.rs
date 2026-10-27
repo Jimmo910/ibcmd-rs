@@ -174,7 +174,7 @@ mod tests {
     use super::*;
     use crate::write_paths::WritePaths;
     use std::io::Write;
-    fn root() -> PathBuf {
+    fn root() -> crate::test_scratch::TestScratch {
         let root = std::env::temp_dir().join(format!(
             "windows-filedb-custody-{}-{}",
             std::process::id(),
@@ -184,7 +184,7 @@ mod tests {
                 .as_nanos()
         ));
         fs::create_dir(&root).unwrap();
-        root
+        crate::test_scratch::TestScratch::adopt(root)
     }
     #[test]
     fn held_ancestors_and_exclusive_leaf_survive_both_publication_steps() {
@@ -222,7 +222,6 @@ mod tests {
         drop(copy);
         drop(paths);
         fs::rename(root.join("outer"), root.join("rebound")).unwrap();
-        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn equal_bytes_do_not_hide_a_rebound_leaf_or_an_outside_mutation() {
@@ -246,7 +245,6 @@ mod tests {
         assert_eq!(fs::read(&outside).unwrap(), b"untouched");
         drop(held);
         drop(paths);
-        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn directory_junctions_are_rejected_without_following_their_target() {
@@ -271,6 +269,5 @@ mod tests {
         assert!(WritePaths::open(&alias.join("data")).is_err());
         assert_eq!(fs::read(target.join("data")).unwrap(), b"untouched");
         fs::remove_dir(&alias).unwrap();
-        fs::remove_dir_all(root).unwrap();
     }
 }

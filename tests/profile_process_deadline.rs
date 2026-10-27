@@ -1,7 +1,8 @@
 //! Real original-process boundary controls for the actual private production
 //! profile/LIVE owners. Every unknown scenario has a fresh process. No native
-//! platform, SQL, PID lookup, signals, waits, joins or recursive cleanup.
+//! platform, SQL, PID lookup, signals, waits or joins.
 
+mod common;
 #[path = "../src/profile_process.rs"]
 mod profile_process;
 #[path = "../src/rac_process.rs"]
@@ -47,11 +48,11 @@ fn main() {
         Some("helper") => helper(&arguments[2..]),
         Some("scenario") => scenario(&arguments[2], Path::new(&arguments[3])),
         None => {
-            let directory = std::env::temp_dir().join(format!(
+            let directory = common::Scratch::adopt(std::env::temp_dir().join(format!(
                 "ibcmd-profile-deadline-{}-{}",
                 std::process::id(),
                 uuid::Uuid::new_v4()
-            ));
+            )));
             std::fs::create_dir(&directory).unwrap();
             for name in SCENARIOS {
                 let marker = directory.join(name);
@@ -70,7 +71,9 @@ fn main() {
                 "{} actual profile/LIVE original-process scenarios PASS",
                 SCENARIOS.len()
             );
-            // Keep evidence and let finite original holders expire naturally.
+            // Finite original holders expire naturally; one the collector
+            // abandoned may still write its marker for a few seconds.
+            directory.remove_within(Duration::from_secs(10));
         }
         _ => panic!("unrecognized test role"),
     }

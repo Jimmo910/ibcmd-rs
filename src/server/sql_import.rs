@@ -538,8 +538,7 @@ mod selected_plan_request_tests {
     fn supported_roles_dispatch_before_source_without_compiler_fallback() {
         let sql = crate::sql::SqlExec::detached("SQL must not be contacted");
         let client = sql.client().unwrap();
-        let root = std::env::temp_dir().join(format!("sql-selected-role-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir(&root).unwrap();
+        let root = crate::test_scratch::TestScratch::new("sql-selected-role");
         let absent = root.join("missing-source");
         let check: readset::Check = Arc::new(|| Ok(()));
         for path in [FORM, "CommonModules/Synthetic/Ext/Module.bsl"] {

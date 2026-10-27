@@ -2085,6 +2085,7 @@ mod tests {
     #[test]
     fn compiles_a_subsystem_with_content_children_and_a_multiline_explanation() {
         let root = std::env::temp_dir().join(format!("ibcmd_rs_common_{}", std::process::id()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let _ = fs::remove_dir_all(&root);
         write(
             &root,

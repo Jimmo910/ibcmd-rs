@@ -1495,6 +1495,7 @@ mod tests {
                 std::process::id(),
                 version.as_str()
             ));
+            let _scratch = crate::test_scratch::TestScratch::adopt(&out);
             let _ = std::fs::remove_dir_all(&out);
             let report = export_extension_image_to_source(&image, &out, version, None).unwrap();
             assert_eq!((report.storage.failed, report.storage.opaque), (0, 0));
@@ -1751,6 +1752,7 @@ mod tests {
             std::process::id(),
             case.replace('/', "-")
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&out);
         let _ = std::fs::remove_dir_all(&out);
         export_extension_image_to_source(&image, &out, InfobaseConfigSourceVersion::V2_20, None)
             .map_err(|error| format!("{error:#}"))?;

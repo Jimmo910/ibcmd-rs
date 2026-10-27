@@ -65,11 +65,29 @@ fn reference(cf: &Path, dir: &Path) -> BTreeMap<String, Vec<u8>> {
 struct Corpus {
     root: PathBuf,
     settings: PathBuf,
+    /// Removes `root` with the corpus, also when the test fails; `None` for
+    /// a corpus kept on purpose or one in another fixture's folder.
+    _scratch: Option<common::Scratch>,
 }
 
 impl Corpus {
     fn new(tag: &str) -> Self {
-        let root = common::temp_dir(&format!("editor-server-{tag}"));
+        let scratch = common::temp_dir(&format!("editor-server-{tag}"));
+        let mut corpus = Self::fill(scratch.to_path_buf());
+        corpus._scratch = Some(scratch);
+        corpus
+    }
+
+    /// The corpus in the fixed folder `ibcmd-external-editor-server-<tag>`,
+    /// left in place after the test: the VS Code tests read the `protocol`
+    /// corpus's `rows/demo` (`IBCMD_TEST_ROWS`, editors/vscode/README.md) and
+    /// the `export` corpus's `rows/demo` and `reference/demo`
+    /// (`editors/vscode/test/real.test.js`, `source-host-suite.js`).
+    fn kept(tag: &str) -> Self {
+        Self::fill(common::kept_temp_dir(&format!("editor-server-{tag}")))
+    }
+
+    fn fill(root: PathBuf) -> Self {
         for (id, fixture) in FIXTURES {
             let cf = common::fixture(fixture);
             rows_dir(&cf, &root.join("rows").join(id));
@@ -82,7 +100,11 @@ impl Corpus {
             "platform = \"8.3.27\"\n\n[[database]]\nname = \"demo\"\nplatform = \"8.3.27\"\nrows-dir = \"rows/demo\"\n\n[[database]]\nserver = \"sql01\"\nname = \"bsp_*\"\nplatform = \"8.3.27\"\n",
         )
         .unwrap();
-        Self { root, settings }
+        Self {
+            root,
+            settings,
+            _scratch: None,
+        }
     }
 
     fn rows(&self, id: &str) -> PathBuf {
@@ -319,7 +341,8 @@ fn decode_base64(text: &str) -> Vec<u8> {
 
 #[test]
 fn serve_speaks_the_protocol_and_its_lifecycle() {
-    let corpus = Corpus::new("protocol");
+    // The VS Code tests read this corpus's rows after the run.
+    let corpus = Corpus::kept("protocol");
     let mut server = Server::start(&corpus);
 
     // Before initialize, and with a protocol of another major.
@@ -518,7 +541,8 @@ fn invalid_rpc_envelopes_do_not_dispatch_operations() {
 
 #[test]
 fn serve_exports_objects_as_the_command_line_does() {
-    let corpus = Corpus::new("export");
+    // The VS Code tests read this corpus's rows and references after the run.
+    let corpus = Corpus::kept("export");
     let mut server = Server::start(&corpus);
     server.ok("initialize", corpus.initialize_params());
     for (id, _) in FIXTURES {
@@ -1289,6 +1313,7 @@ fn source_read_refuses_only_requested_invalid_descriptor_cold_and_cached() {
         let corpus = Corpus {
             root: case.root.clone(),
             settings: case.settings.clone(),
+            _scratch: None,
         };
         let mut server = Server::start(&corpus);
         server.ok(

@@ -2,6 +2,7 @@
 //! They cannot create native Ready/Observation/worker capabilities.
 #![allow(dead_code)] // Shared private child also contains unrelated shutdown owners.
 
+mod common;
 #[path = "../src/mssql_managed_worker/identity.rs"]
 mod identity;
 use identity::ProcessIdentity;
@@ -53,8 +54,9 @@ fn main() {
                 println!("managed original-handle controls require Windows; no runtime claim");
                 return;
             }
-            let directory =
-                std::env::temp_dir().join(format!("managed-deadline-{}", uuid::Uuid::new_v4()));
+            let directory = common::Scratch::adopt(
+                std::env::temp_dir().join(format!("managed-deadline-{}", uuid::Uuid::new_v4())),
+            );
             std::fs::create_dir(&directory).unwrap();
             for name in SCENARIOS {
                 let marker = directory.join(name);
@@ -72,6 +74,8 @@ fn main() {
                 );
             }
             println!("{} actual managed command scenarios PASS", SCENARIOS.len());
+            // A holder the collector abandoned may keep running for a few seconds.
+            directory.remove_within(Duration::from_secs(10));
         }
     }
 }

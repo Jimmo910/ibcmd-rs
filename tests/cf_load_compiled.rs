@@ -22,7 +22,7 @@ fn load(tree: &Path, output: &Path, base: &Path) -> Output {
         .expect("run ibcmd-rs")
 }
 
-fn exported(fixture: &str, input: &str, tag: &str) -> (PathBuf, PathBuf) {
+fn exported(fixture: &str, input: &str, tag: &str) -> (PathBuf, common::Scratch) {
     let base = common::fixture(fixture).join(input);
     let tree = common::temp_dir(tag);
     let run = common::export(&base, &tree);
@@ -34,10 +34,8 @@ fn exported(fixture: &str, input: &str, tag: &str) -> (PathBuf, PathBuf) {
     (base, tree)
 }
 
-fn fresh_output(tag: &str, ext: &str) -> PathBuf {
-    let path = common::temp_dir(tag).with_extension(ext);
-    let _ = fs::remove_file(&path);
-    path
+fn fresh_output(tag: &str, ext: &str) -> common::Scratch {
+    common::temp_file(tag, ext)
 }
 
 /// Loads `tree` onto `base` and checks the result exports back to `tree`.
@@ -64,7 +62,7 @@ fn load_back(
     tag: &str,
     ext: &str,
     objects_changed: bool,
-) -> (serde_json::Value, String, PathBuf) {
+) -> (serde_json::Value, String, common::Scratch) {
     let out = fresh_output(&format!("{tag}-out"), ext);
     let run = load(tree, &out, base);
     assert!(
@@ -356,7 +354,7 @@ fn an_added_common_module_of_an_extension_is_listed_in_configinfo() {
 
 /// A copy of the platform's dump of an edited tree
 /// (`_onecdec/make_edit_fixtures.py`).
-fn platform_edited_tree(case: &str, tag: &str) -> PathBuf {
+fn platform_edited_tree(case: &str, tag: &str) -> common::Scratch {
     let tree = common::temp_dir(tag);
     let source = common::fixture("edits").join(case).join("tree");
     for (path, bytes) in common::files(&source) {

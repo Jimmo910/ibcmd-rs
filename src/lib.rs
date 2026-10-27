@@ -89,3 +89,5 @@ pub mod mcp;
 
 #[cfg(test)]
 mod test_process;
+#[cfg(test)]
+mod test_scratch;

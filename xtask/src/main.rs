@@ -24,6 +24,8 @@ usage: cargo xtask <task> [--keep-going] [--base <rev>]
   affected      print the test commands for the files changed since --base
   hook-rustfmt  format the .rs file named in an agent PostToolUse payload
   hook-stop     the lint steps of `check` for an agent Stop hook
+  temp-left     the last step of `ci`: fail when its test steps left anything
+                in their temporary directory, <temp>/ibcmd-ci-<hash>
 
 --base defaults to the merge base of HEAD and origin/master.
 Logs of every step: target/xtask/<step>.log";
@@ -33,6 +35,14 @@ const ROOT_PACKAGE: &str = "ibcmd-rs";
 /// (`tests/integration.rs`); a suite outside it is a `[[test]]` of its own.
 const ROOT_INTEGRATION: &str = "integration";
 const MERGE_WORKFLOW: &str = ".github/workflows/offline-e2e.yml";
+/// The names a test run leaves there on purpose: the editor-server corpora
+/// the VS Code tests read by name, and the parent the engine's scratch
+/// folders share, when it is empty.
+const KEPT_TEMP: [&str; 2] = [
+    "ibcmd-external-editor-server-protocol",
+    "ibcmd-external-editor-server-export",
+];
+const SHARED_SCRATCH_PARENT: &str = "ibcmd-rs";
 const TAIL_LINES: usize = 40;
 
 const NOTE_ROOT_SRC: &str = "src/ changed: run the root suites that cover it \
@@ -67,14 +77,23 @@ fn main() -> ExitCode {
     let root = repository_root();
     match task.as_deref() {
         Some("check") => check(&root, base.as_deref(), keep_going),
-        Some("ci") => finish(
-            run_steps(&root, &ci_steps(&root), keep_going),
-            "ci",
-            CI_NOT_RUN,
-        ),
+        Some("ci") => {
+            let temp = test_temp(&root);
+            let _ = fs::remove_dir_all(&temp);
+            if let Err(error) = fs::create_dir_all(&temp) {
+                eprintln!("xtask: cannot create {}: {error}", temp.display());
+                return ExitCode::FAILURE;
+            }
+            finish(
+                run_steps(&root, &ci_steps(&root), keep_going),
+                "ci",
+                CI_NOT_RUN,
+            )
+        }
         Some("affected") => print_affected(&root, base.as_deref()),
         Some("hook-rustfmt") => hook_rustfmt(&root),
         Some("hook-stop") => hook_stop(&root),
+        Some("temp-left") => temp_left(&test_temp(&root)),
         Some(other) => usage_error(&format!("unknown task `{other}`")),
         None => usage_error("no task given"),
     }
@@ -99,6 +118,8 @@ struct Step {
     program: String,
     args: Vec<String>,
     env: Vec<(&'static str, &'static str)>,
+    /// The temporary directory the step runs with, if not the inherited one.
+    temp: Option<PathBuf>,
     hint: Option<&'static str>,
     /// Why the step cannot run here. It is reported, never silently dropped.
     missing: Option<String>,
@@ -111,6 +132,7 @@ impl Step {
             program: program.to_owned(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
             env: Vec::new(),
+            temp: None,
             hint: None,
             missing: None,
         }
@@ -128,6 +150,12 @@ impl Step {
 
     fn env(mut self, key: &'static str, value: &'static str) -> Self {
         self.env.push((key, value));
+        self
+    }
+
+    /// Runs the step with `TMPDIR`, `TEMP` and `TMP` set to `dir`.
+    fn temp(mut self, dir: &Path) -> Self {
+        self.temp = Some(dir.to_path_buf());
         self
     }
 
@@ -210,8 +238,24 @@ fn ci_steps_for_platform(root: &Path, windows: bool) -> Vec<Step> {
     let python = if windows { "python" } else { "python3" };
 
     let mut steps = vec![format_step()];
-    steps.push(Step::new("pinned fixtures validation", python, &["tools/coverage/fixture_paths.py"]));
-    steps.push(Step::new("native coverage generator tests", python, &["-m", "unittest", "discover", "-s", "tests/fixtures/1c-fixtures/tools/coverage", "-p", "test_*.py"]));
+    steps.push(Step::new(
+        "pinned fixtures validation",
+        python,
+        &["tools/coverage/fixture_paths.py"],
+    ));
+    steps.push(Step::new(
+        "native coverage generator tests",
+        python,
+        &[
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests/fixtures/1c-fixtures/tools/coverage",
+            "-p",
+            "test_*.py",
+        ],
+    ));
     steps.push(pwsh(
         "EDT corpus governance self-test",
         "tools/validate-edt-corpus.ps1",
@@ -267,37 +311,50 @@ fn ci_steps_for_platform(root: &Path, windows: bool) -> Vec<Step> {
         )
         .needs_program(),
     );
-    steps.push(Step::cargo(
-        "test -p ibcmd-schema",
-        &["test", "--locked", "-p", "ibcmd-schema"],
-    ));
-    steps.push(Step::cargo(
-        "test (workspace crates)",
-        &["test", "--locked", "--workspace", "--exclude", ROOT_PACKAGE],
-    ));
-    steps.push(Step::cargo(
-        "test (root integration suites)",
-        &[
-            "test",
-            "--locked",
-            "-p",
-            ROOT_PACKAGE,
-            "--test",
-            "*",
-            "--no-default-features",
-        ],
-    ));
-    steps.push(Step::cargo(
-        "test (root library)",
-        &[
-            "test",
-            "--locked",
-            "-p",
-            ROOT_PACKAGE,
-            "--lib",
-            "--no-default-features",
-        ],
-    ));
+    let temp = test_temp(root);
+    steps.push(
+        Step::cargo(
+            "test -p ibcmd-schema",
+            &["test", "--locked", "-p", "ibcmd-schema"],
+        )
+        .temp(&temp),
+    );
+    steps.push(
+        Step::cargo(
+            "test (workspace crates)",
+            &["test", "--locked", "--workspace", "--exclude", ROOT_PACKAGE],
+        )
+        .temp(&temp),
+    );
+    steps.push(
+        Step::cargo(
+            "test (root integration suites)",
+            &[
+                "test",
+                "--locked",
+                "-p",
+                ROOT_PACKAGE,
+                "--test",
+                "*",
+                "--no-default-features",
+            ],
+        )
+        .temp(&temp),
+    );
+    steps.push(
+        Step::cargo(
+            "test (root library)",
+            &[
+                "test",
+                "--locked",
+                "-p",
+                ROOT_PACKAGE,
+                "--lib",
+                "--no-default-features",
+            ],
+        )
+        .temp(&temp),
+    );
     if windows {
         steps.push(pwsh(
             "package Windows root lib test",
@@ -305,6 +362,12 @@ fn ci_steps_for_platform(root: &Path, windows: bool) -> Vec<Step> {
             false,
         ));
     }
+    let xtask =
+        env::current_exe().map_or_else(|_| "xtask".to_owned(), |path| path.display().to_string());
+    steps.push(
+        Step::new("temporary directory left empty", &xtask, &["temp-left"])
+            .hint("a test must remove what it creates: docs/testing.md, \"Temporary directories\""),
+    );
     steps
 }
 
@@ -427,16 +490,76 @@ fn run_logged(root: &Path, step: &Step, log: &Path) -> io::Result<bool> {
     let mut out = fs::File::create(log)?;
     writeln!(out, "$ {} {}", step.program, step.args.join(" "))?;
     let err = out.try_clone()?;
-    let status = Command::new(&step.program)
+    let mut command = Command::new(&step.program);
+    command
         .args(&step.args)
         .envs(step.env.iter().copied())
-        .env("CARGO_TERM_COLOR", "never")
+        .env("CARGO_TERM_COLOR", "never");
+    if let Some(temp) = &step.temp {
+        for key in ["TMPDIR", "TEMP", "TMP"] {
+            command.env(key, temp);
+        }
+    }
+    let status = command
         .current_dir(root)
         .stdin(Stdio::null())
         .stdout(out)
         .stderr(err)
         .status()?;
     Ok(status.success())
+}
+
+/// The temporary directory (`TMPDIR`, `TEMP`, `TMP`) of the test steps of
+/// `ci`, emptied before them and checked after them, as the offline matrix
+/// checks its own (docs/testing.md, "Temporary directories"). It is one per
+/// worktree, and it sits in the system temporary directory rather than under
+/// `target/` because a Unix socket path the tests bind there must stay
+/// shorter than about 100 bytes.
+fn test_temp(root: &Path) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    root.hash(&mut hasher);
+    env::temp_dir().join(format!("ibcmd-ci-{:08x}", hasher.finish() as u32))
+}
+
+/// The `temp-left` task: fails when `dir` holds anything but the names kept
+/// on purpose, and removes `dir` when it does not.
+fn temp_left(dir: &Path) -> ExitCode {
+    let left = match left_in(dir) {
+        Ok(left) => left,
+        Err(error) => {
+            println!("cannot list {}: {error}", dir.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    for name in &left {
+        println!("left in {}: {name}", dir.display());
+    }
+    if left.is_empty() {
+        println!("{} holds nothing unexpected", dir.display());
+        let _ = fs::remove_dir_all(dir);
+        ExitCode::SUCCESS
+    } else {
+        println!("{} entries left by the test steps", left.len());
+        ExitCode::FAILURE
+    }
+}
+
+/// The names in `dir` but those of [`KEPT_TEMP`] and an empty
+/// [`SHARED_SCRATCH_PARENT`], sorted.
+fn left_in(dir: &Path) -> io::Result<Vec<String>> {
+    let mut left = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let kept = KEPT_TEMP.contains(&name.as_str())
+            || (name == SHARED_SCRATCH_PARENT
+                && fs::read_dir(entry.path()).is_ok_and(|mut inner| inner.next().is_none()));
+        if !kept {
+            left.push(name);
+        }
+    }
+    left.sort();
+    Ok(left)
 }
 
 fn tail(log: &Path) -> Vec<String> {
@@ -886,25 +1009,90 @@ mod tests {
         let script = "tools/package-windows-root-lib-test.ps1";
         for windows in [false, true] {
             let steps = ci_steps_for_platform(&root, windows);
-            let library = steps.iter().position(|step| step.name == "test (root library)").unwrap();
-            let packages: Vec<_> = steps.iter().enumerate()
+            let library = steps
+                .iter()
+                .position(|step| step.name == "test (root library)")
+                .unwrap();
+            let packages: Vec<_> = steps
+                .iter()
+                .enumerate()
                 .filter(|(_, step)| step.name == "package Windows root lib test")
                 .collect();
             assert_eq!(packages.len(), usize::from(windows));
+            let cleanup = steps
+                .iter()
+                .position(|step| step.name == "temporary directory left empty")
+                .unwrap();
+            assert_eq!(cleanup, library + 1 + usize::from(windows));
+            for name in [
+                "test -p ibcmd-schema",
+                "test (workspace crates)",
+                "test (root integration suites)",
+                "test (root library)",
+            ] {
+                let step = steps.iter().find(|step| step.name == name).unwrap();
+                assert_eq!(step.temp.as_deref(), Some(test_temp(&root).as_path()));
+            }
             if windows {
                 let (index, step) = packages[0];
                 assert_eq!(index, library + 1);
                 assert_eq!(step.program, "pwsh");
-                assert_eq!(step.args, ["-NoProfile", "-File", script, "-RepositoryRoot", "."]);
+                assert_eq!(
+                    step.args,
+                    ["-NoProfile", "-File", script, "-RepositoryRoot", "."]
+                );
             }
         }
         let workflow = fs::read_to_string(root.join(MERGE_WORKFLOW)).unwrap();
-        let package = workflow.split("      - name: Package Windows root lib test\n")
-            .nth(1).unwrap().split("      - name:").next().unwrap();
+        let package = workflow
+            .split("      - name: Package Windows root lib test\n")
+            .nth(1)
+            .unwrap()
+            .split("      - name:")
+            .next()
+            .unwrap();
         assert!(package.contains("runner.os == 'Windows'"));
         assert!(package.contains(&format!("./{script} -RepositoryRoot . -OutputDirectory")));
-        assert!(workflow.find("- name: Test the root library offline").unwrap()
-            < workflow.find("- name: Package Windows root lib test").unwrap());
+        assert!(
+            workflow
+                .find("- name: Upload Windows root lib test")
+                .unwrap()
+                < workflow
+                    .find("- name: Check that the tests left the temporary directory empty")
+                    .unwrap()
+        );
+        assert!(
+            workflow
+                .find("- name: Test the root library offline")
+                .unwrap()
+                < workflow
+                    .find("- name: Package Windows root lib test")
+                    .unwrap()
+        );
+    }
+
+    #[test]
+    fn temp_left_allows_only_the_names_kept_on_purpose() {
+        /// Removes the directory with the test, also when it fails.
+        struct Scratch(PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let dir = Scratch(env::temp_dir().join(format!("xtask-temp-left-{}", std::process::id())));
+        let _ = fs::remove_dir_all(&dir.0);
+        for kept in KEPT_TEMP {
+            fs::create_dir_all(dir.0.join(kept).join("rows")).unwrap();
+        }
+        fs::create_dir(dir.0.join(SHARED_SCRATCH_PARENT)).unwrap();
+        assert!(left_in(&dir.0).unwrap().is_empty());
+        fs::write(dir.0.join(SHARED_SCRATCH_PARENT).join("stale"), b"").unwrap();
+        fs::write(dir.0.join("mcp-export-completeness-1"), b"").unwrap();
+        assert_eq!(
+            left_in(&dir.0).unwrap(),
+            [SHARED_SCRATCH_PARENT, "mcp-export-completeness-1"]
+        );
     }
 
     #[test]

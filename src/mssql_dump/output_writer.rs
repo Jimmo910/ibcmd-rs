@@ -616,7 +616,7 @@ impl Drop for OutputWriter {
 mod tests {
     use super::*;
 
-    fn scratch(name: &str) -> PathBuf {
+    fn scratch(name: &str) -> crate::test_scratch::TestScratch {
         let root = std::env::temp_dir().join(format!(
             "ibcmd-output-writer-{name}-{}-{}",
             std::process::id(),
@@ -626,7 +626,7 @@ mod tests {
                 .unwrap_or_default()
         ));
         fs::create_dir_all(&root).unwrap();
-        root
+        crate::test_scratch::TestScratch::adopt(root)
     }
 
     struct ModuleRoot(PathBuf);
@@ -766,7 +766,6 @@ mod tests {
             assert!(out.join("empty").join("nested").is_dir());
             assert_eq!(fs::read_to_string(out.join("same.txt")).unwrap(), "second");
         }
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -800,7 +799,6 @@ mod tests {
             assert!(message.contains("blocker"), "{message}");
             let _ = refused;
         }
-        fs::remove_dir_all(&root).ok();
     }
 
     /// Collects what a writer hands it.
@@ -858,7 +856,6 @@ mod tests {
             );
         }
         assert!(!out.exists(), "no folder is created for a sink");
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]

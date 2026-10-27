@@ -1328,7 +1328,10 @@ mod tests {
         assert!(in_scope(&[], "Documents/Sale.xml"));
     }
 
-    fn comparer(tree_files: &[(&str, &[u8])], scope: &[&str]) -> (TreeComparer, PathBuf) {
+    fn comparer(
+        tree_files: &[(&str, &[u8])],
+        scope: &[&str],
+    ) -> (TreeComparer, crate::test_scratch::TestScratch) {
         let root = std::env::temp_dir().join(format!(
             "ibcmd-rs-stage-guard-{}-{}",
             std::process::id(),
@@ -1368,7 +1371,7 @@ mod tests {
             .map(|file| (file.path.clone(), Some(file.sha256.clone())))
             .collect();
         let comparer = TreeComparer::new(&root.join("virtual"), &root, listed, &scope);
-        (comparer, root)
+        (comparer, crate::test_scratch::TestScratch::adopt(root))
     }
 
     fn produce(comparer: &TreeComparer, relative: &str, bytes: &[u8]) {
@@ -1380,7 +1383,7 @@ mod tests {
 
     #[test]
     fn the_comparer_sorts_out_identical_changed_missing_and_extra_files() {
-        let (comparer, root) = comparer(
+        let (comparer, _root) = comparer(
             &[
                 ("Configuration.xml", b"<a/>"),
                 ("Catalogs/A.xml", b"<a><x>1</x></a>"),
@@ -1419,7 +1422,6 @@ mod tests {
                 "only in state Catalogs/New.xml",
             ]
         );
-        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -1444,7 +1446,6 @@ mod tests {
         assert_eq!(result.identical, 1);
         assert_eq!(result.differences.len(), 1);
         assert_eq!(result.differences[0].path, "Catalogs/A.xml");
-        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -1472,7 +1473,6 @@ mod tests {
             .collect::<Vec<_>>();
         // The readme is not a file of the configuration, the missing one is.
         assert_eq!(listed, ["Catalogs/A.xml", "Catalogs/Gone.xml"]);
-        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -1498,7 +1498,6 @@ mod tests {
         assert_eq!(result.compared, 7);
         assert_eq!(result.identical, 7);
         assert!(result.differences.is_empty(), "{:?}", result.differences);
-        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -1542,13 +1541,12 @@ mod tests {
                     .any(|d| d.path == extra && matches!(d.difference, Difference::OnlyInState)),
                 "{folder}"
             );
-            fs::remove_dir_all(root).ok();
         }
     }
 
     #[test]
     fn a_path_prefix_limits_the_comparison() {
-        let (comparer, root) = comparer(
+        let (comparer, _root) = comparer(
             &[
                 ("Catalogs/A.xml", b"<a/>"),
                 ("Catalogs/A/Ext/ObjectModule.bsl", b"old"),
@@ -1567,7 +1565,6 @@ mod tests {
             result.differences[0].path,
             "Catalogs/A/Ext/ObjectModule.bsl"
         );
-        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -1633,7 +1630,7 @@ mod tests {
 
     use super::super::empty_stage::prepare_empty_stage;
 
-    fn scratch(label: &str) -> PathBuf {
+    fn scratch(label: &str) -> crate::test_scratch::TestScratch {
         let path = std::env::temp_dir().join(format!(
             "ibcmd-rs-stage-guard-{label}-{}-{}",
             std::process::id(),
@@ -1643,7 +1640,7 @@ mod tests {
                 .unwrap_or_default()
         ));
         fs::create_dir_all(&path).unwrap();
-        path
+        crate::test_scratch::TestScratch::adopt(path)
     }
 
     fn fixture() -> PathBuf {
@@ -1759,7 +1756,6 @@ mod tests {
         assert!(checked.checked_files >= 15, "{checked:?}");
         assert_eq!(checked.checked_files, checked.identical_files);
         assert_eq!(checked.state_rows, rows.len());
-        fs::remove_dir_all(work).ok();
     }
 
     fn a_change_the_stage_does_not_carry_is_refused_and_named() {
@@ -1799,7 +1795,6 @@ mod tests {
             message.contains("В ConfigSave ничего не записано."),
             "{message}"
         );
-        fs::remove_dir_all(work).ok();
     }
 
     fn a_change_the_stage_carries_passes() {
@@ -1845,7 +1840,6 @@ mod tests {
             &[],
         ));
         assert!(message.contains("ObjectModule.bsl"), "{message}");
-        fs::remove_dir_all(work).ok();
     }
 
     fn files_only_one_side_has_are_refused() {
@@ -1872,7 +1866,6 @@ mod tests {
             message.contains("  Languages/Русский.xml: файла нет в дереве, а в базе он остался бы"),
             "{message}"
         );
-        fs::remove_dir_all(work).ok();
     }
 
     fn a_tree_that_only_formats_differently_passes() {
@@ -1903,7 +1896,6 @@ mod tests {
             &staged(&rows),
         )
         .unwrap();
-        fs::remove_dir_all(work).ok();
     }
 
     /// The base-free stage switches process-wide writers into base-free mode

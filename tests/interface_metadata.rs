@@ -49,6 +49,7 @@ fn interface_descriptor_preserves_names_and_switchable_both_directions() {
                 std::process::id(),
                 uuid::Uuid::new_v4()
             ));
+            let _scratch = crate::common::Scratch::adopt(&root);
             std::fs::create_dir(&root).unwrap();
             let path = root.join("Interfaces/OwnInterface.xml");
             let bytes = Arc::new(xml.as_bytes().to_vec());
@@ -89,7 +90,6 @@ fn interface_descriptor_preserves_names_and_switchable_both_directions() {
                 std::fs::read(output.join("Interfaces/OwnInterface.xml")).unwrap(),
                 expected.into_bytes()
             );
-            std::fs::remove_dir_all(&root).unwrap();
         }
     }
 }
@@ -177,6 +177,7 @@ fn invalid_interface_cf_is_refused_without_fail_on_opaque() {
         .unwrap();
     let root =
         std::env::temp_dir().join(format!("ibcmd-invalid-interface-{}", uuid::Uuid::new_v4()));
+    let _scratch = crate::common::Scratch::adopt(&root);
     std::fs::create_dir(&root).unwrap();
     let cf = root.join("invalid.cf");
     std::fs::write(&cf, archive).unwrap();
@@ -205,5 +206,4 @@ fn invalid_interface_cf_is_refused_without_fail_on_opaque() {
     );
     assert!(!out.join("Interfaces/OwnInterface.xml").exists());
     assert!(!out.join("Configuration.xml").exists());
-    std::fs::remove_dir_all(root).unwrap();
 }

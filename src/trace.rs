@@ -599,6 +599,7 @@ mod tests {
     #[test]
     fn groups_extended_event_xml() {
         let dir = std::env::temp_dir().join(format!("ibcmd-rs-trace-test-{}", std::process::id()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&dir);
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("events.xml");
         fs::write(
@@ -707,6 +708,7 @@ mod tests {
             "ibcmd-rs-trace-boundary-test-{}",
             std::process::id()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&dir);
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("events.xml");
         fs::write(
@@ -792,6 +794,7 @@ mod tests {
     fn analyze_trace_files_merges_multiple_inputs() {
         let dir =
             std::env::temp_dir().join(format!("ibcmd-rs-trace-merge-test-{}", std::process::id()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&dir);
         let _ = fs::create_dir_all(&dir);
         let first = dir.join("first.xml");
         let second = dir.join("second.xml");
@@ -865,6 +868,7 @@ mod tests {
             "ibcmd-rs-trace-batch-statement-test-{}",
             std::process::id()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&dir);
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("events.xml");
         fs::write(
@@ -941,6 +945,7 @@ mod tests {
             "ibcmd-rs-trace-load-pattern-test-{}",
             std::process::id()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&dir);
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("events.xml");
         fs::write(

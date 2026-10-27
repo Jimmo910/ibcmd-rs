@@ -388,6 +388,7 @@ fn an_empty_language_is_written_as_the_platform_writes_it() {
     // 8.3.27.2214 never writes `<v8:lang></v8:lang>`: an empty language is
     // `<v8:lang/>` (ИТК common module and common picture synonyms).
     let dir = std::env::temp_dir().join(format!("ibcmd-empty-lang-{}", std::process::id()));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&dir);
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("CommonModule.xml");
     let xml = "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<Synonym>\r\n\t<v8:item>\r\n\t\t<v8:lang></v8:lang>\r\n\t\t<v8:content>Инфостарт</v8:content>\r\n\t</v8:item>\r\n</Synonym>";

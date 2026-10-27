@@ -74,6 +74,7 @@ fn minimized_selected_rows_group_profile_keeps_its_known_failure() {
             .unwrap()
             .as_nanos()
     ));
+    let _scratch = crate::common::Scratch::adopt(&temp);
     fs::create_dir_all(temp.join("rows")).unwrap();
     let mut changed = None;
     for (index, name) in names.iter().enumerate() {
@@ -162,7 +163,6 @@ fn minimized_selected_rows_group_profile_keeps_its_known_failure() {
             "coverage selected-rows identity profile: known revision 22, kind 10, four-member bag gap"
         );
     }
-    fs::remove_dir_all(temp).unwrap();
 }
 
 // The probe edits whole tuple fields, so changing the bag cannot leave stale
@@ -284,6 +284,7 @@ fn clean_room_corpus_stored_row_route_holds_its_baseline() {
             .unwrap()
             .as_nanos()
     ));
+    let _scratch = crate::common::Scratch::adopt(&temp);
     fs::create_dir(&temp).unwrap();
     let mut reports = Vec::new();
     for (i, set) in sets.iter().enumerate() {
@@ -380,7 +381,6 @@ fn clean_room_corpus_stored_row_route_holds_its_baseline() {
     if let Some(path) = std::env::var_os("IBCMD_COVERAGE_STORAGE_REPORT") {
         fs::write(path, serde_json::to_vec_pretty(&reports).unwrap()).unwrap();
     }
-    fs::remove_dir_all(temp).unwrap();
 }
 
 fn assert_native_interface_descriptor_parity(
@@ -497,6 +497,7 @@ fn minimized_xml_probes_keep_their_precise_contracts() {
             .unwrap()
             .as_nanos()
     ));
+    let _scratch = crate::common::Scratch::adopt(&temp);
     let mut reports = Vec::new();
     for (index, definition) in document["cases"].as_array().unwrap().iter().enumerate() {
         let mut case = definition.clone();
@@ -630,7 +631,6 @@ fn minimized_xml_probes_keep_their_precise_contracts() {
     if let Some(path) = std::env::var_os("IBCMD_COVERAGE_SOURCE_REPORT") {
         fs::write(path, serde_json::to_vec_pretty(&reports).unwrap()).unwrap();
     }
-    fs::remove_dir_all(temp).unwrap();
 }
 
 #[test]
@@ -645,6 +645,7 @@ fn coverage_empty_html_stored_record_has_a_precise_known_gap() {
             .unwrap()
             .as_nanos()
     ));
+    let _scratch = crate::common::Scratch::adopt(&temp);
     fs::create_dir_all(temp.join("rows")).unwrap();
     let cf = decode(&fs::read(fixture.join("configuration.cf.b64")).unwrap());
     let mut reader = StreamingReader::open_default(Cursor::new(cf)).unwrap();
@@ -720,5 +721,4 @@ fn coverage_empty_html_stored_record_has_a_precise_known_gap() {
     if let Ok(bytes) = fs::read(manifest_path) {
         let _: Value = serde_json::from_slice(&bytes).unwrap();
     }
-    fs::remove_dir_all(temp).unwrap();
 }

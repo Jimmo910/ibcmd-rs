@@ -26,6 +26,19 @@ pub struct Case {
     pub settings: PathBuf,
     pub object: String,
     pub rows_dir: bool,
+    /// Removes `root` with the case, also when the test fails.
+    _scratch: Owned,
+}
+/// The folder of a case, removed with it unless `IBCMD_TEST_KEEP_FIXTURES=1`
+/// keeps it for debugging. This file is also a module of the root library's
+/// unit tests, so it has no `common` to borrow a guard from.
+struct Owned(PathBuf);
+impl Drop for Owned {
+    fn drop(&mut self) {
+        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none_or(|value| value != "1") {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 }
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -77,6 +90,7 @@ impl Case {
         use ibcmd_rs::metadata_model::brace::Brace;
         let root =
             std::env::temp_dir().join(format!("mcp-export-completeness-{}", uuid::Uuid::new_v4()));
+        let scratch = Owned(root.clone());
         fs::create_dir_all(root.join("db")).unwrap();
         let database = root.join("db/1Cv8.1CD");
         fs::write(&database, unpack(&fixture("file-infobase/tiny.1CD.gz"))).unwrap();
@@ -165,6 +179,7 @@ impl Case {
             settings,
             object,
             rows_dir,
+            _scratch: scratch,
         };
         if matches!(
             scenario,

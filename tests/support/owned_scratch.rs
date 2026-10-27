@@ -21,10 +21,15 @@ impl Deref for OwnedScratch {
 }
 impl Drop for OwnedScratch {
     fn drop(&mut self) {
-        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+        if !keep_fixtures() {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+}
+
+/// Whether test fixtures are kept for debugging: `IBCMD_TEST_KEEP_FIXTURES=1`.
+fn keep_fixtures() -> bool {
+    std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1")
 }
 
 #[test]
@@ -34,10 +39,7 @@ fn owned_fixture_cleanup_covers_success_and_unwind() {
         fs::write(scratch.join("fixture"), b"owned").unwrap();
         scratch.to_path_buf()
     };
-    assert_eq!(
-        path.exists(),
-        std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some()
-    );
+    assert_eq!(path.exists(), keep_fixtures());
     let mut path = None;
     assert!(
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -48,8 +50,5 @@ fn owned_fixture_cleanup_covers_success_and_unwind() {
         }))
         .is_err()
     );
-    assert_eq!(
-        path.unwrap().exists(),
-        std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some()
-    );
+    assert_eq!(path.unwrap().exists(), keep_fixtures());
 }

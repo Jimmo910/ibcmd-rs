@@ -443,9 +443,9 @@ mod tests {
     pub(super) fn fixture() -> Rows {
         static ROWS: OnceLock<Rows> = OnceLock::new();
         ROWS.get_or_init(|| {
-            // Existing public tiny fixture only; retained unconditionally.
-            let root = std::env::temp_dir().join(format!("sql-module-snapshot-{}", Uuid::new_v4()));
-            std::fs::create_dir(&root).unwrap();
+            // Only cloned row bytes outlive this closure; the later reader
+            // closes before the temporary public fixture is removed.
+            let root = crate::test_scratch::TestScratch::new("sql-module-snapshot");
             let gzip = include_bytes!("../../../tests/fixtures/file-infobase/tiny.1CD.gz");
             let mut bytes = Vec::new();
             flate2::read::GzDecoder::new(gzip.as_slice())

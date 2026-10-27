@@ -304,6 +304,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let parent = root.join("outer/db");
         fs::create_dir_all(&parent).unwrap();
         let data = parent.join("data");
@@ -343,9 +344,6 @@ mod tests {
         assert!(paths.require_binding(&data, &original).is_err());
         drop(original);
         drop(paths);
-        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
-            fs::remove_dir_all(root).unwrap();
-        }
     }
     #[test]
     fn ancestor_rebind_cannot_redirect_copy_creation_or_error_cleanup() {
@@ -357,6 +355,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let parent = root.join("db");
         fs::create_dir_all(&parent).unwrap();
         let data = parent.join("data");
@@ -388,9 +387,6 @@ mod tests {
         assert!(root.join("retained/work").exists());
         drop(original);
         drop(paths);
-        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
-            fs::remove_dir_all(root).unwrap();
-        }
     }
     #[test]
     fn leaf_symlinks_are_never_followed() {
@@ -403,6 +399,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir(&root).unwrap();
         let outside = root.join("outside");
         fs::write(&outside, b"untouched").unwrap();
@@ -413,8 +410,5 @@ mod tests {
         assert!(paths.create_new(&target, true).is_err());
         assert_eq!(fs::read(&outside).unwrap(), b"untouched");
         drop(paths);
-        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
-            fs::remove_dir_all(root).unwrap();
-        }
     }
 }

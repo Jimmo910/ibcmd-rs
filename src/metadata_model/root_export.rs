@@ -910,6 +910,7 @@ mod tests {
                 .map(|elapsed| elapsed.as_nanos())
                 .unwrap_or_default()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(root.join("Languages")).unwrap();
         let language_uuid = "22222222-2222-2222-2222-222222222222";
         fs::write(
@@ -1066,6 +1067,5 @@ mod tests {
             top_level_objects(&tree).unwrap(),
             vec![("Language".to_string(), language_uuid.to_string())]
         );
-        fs::remove_dir_all(&root).ok();
     }
 }

@@ -1883,6 +1883,7 @@ mod tests {
     #[test]
     fn html_source_apply_overlays_full_existing_asset_and_stages_only_that_owner() {
         let root = std::env::temp_dir().join(format!("ibcmd-rs-family345-{}", Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let source = root.join("source");
         let active = root.join("active");
         let proposed = root.join("proposed");
@@ -1929,7 +1930,6 @@ mod tests {
         )
         .unwrap();
         assert!(overlay_selected_bodies(&source, &active, &proposed, selected).is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 
     fn full_owner_report() -> crate::mssql_dump::MssqlDumpConfigReport {
@@ -1972,6 +1972,7 @@ mod tests {
     fn complete_owner_export_refuses_scoped_missing_and_unemitted_root_graphs() {
         let root =
             std::env::temp_dir().join(format!("ibcmd-rs-family345-export-{}", Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let selected = "Catalogs/Goods/Ext/ObjectModule.bsl".to_owned();
         fs::create_dir_all(root.join("Catalogs/Goods/Ext")).unwrap();
         fs::write(root.join("Catalogs/Goods.xml"), format!("<MetaDataObject><Catalog uuid=\"{OWNER}\"><Properties><Name>Goods</Name></Properties></Catalog></MetaDataObject>")).unwrap();
@@ -2003,7 +2004,6 @@ mod tests {
         report.tables[0].metadata_root_inventory.missing = 0;
         fs::remove_file(root.join(&paths[0])).unwrap();
         assert!(ensure_full_owner_export_complete(&root, &paths, &ids, &report).is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2265,6 +2265,7 @@ mod tests {
     #[test]
     fn resolves_one_common_module_to_owner_and_body_rows() {
         let root = std::env::temp_dir().join(format!("ibcmd-rs-selection-{}", Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let module_dir = root.join("CommonModules").join("Tools").join("Ext");
         fs::create_dir_all(&module_dir).unwrap();
         fs::write(
@@ -2286,12 +2287,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(selected, [OWNER.to_owned(), format!("{OWNER}.0")]);
-
-        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn module_only_form_compile_removes_layout_from_the_temporary_tree() {
         let root = std::env::temp_dir().join(format!("ibcmd-rs-form-compile-{}", Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let ext = root.join("CommonForms").join("Demo").join("Ext");
         fs::create_dir_all(ext.join("Form")).unwrap();
         fs::write(ext.join("Form.xml"), "<Form/>").unwrap();
@@ -2306,7 +2306,6 @@ mod tests {
 
         assert!(!ext.join("Form.xml").exists());
         assert!(ext.join("Form").join("Module.bsl").is_file());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2339,6 +2338,7 @@ mod tests {
     #[test]
     fn watched_source_fingerprint_changes_only_with_content() {
         let root = std::env::temp_dir().join(format!("ibcmd-rs-watch-{}", Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("Module.bsl"), "v1").unwrap();
         let paths = vec!["Module.bsl".to_owned()];
@@ -2347,12 +2347,12 @@ mod tests {
         assert_eq!(source_closure_fingerprint(&root, &paths).unwrap(), first);
         fs::write(root.join("Module.bsl"), "v2").unwrap();
         assert_ne!(source_closure_fingerprint(&root, &paths).unwrap(), first);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn watch_cache_periodically_catches_same_size_same_timestamp_edit() {
         let root = std::env::temp_dir().join(format!("ibcmd-rs-watch-cache-{}", Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir(&root).unwrap();
         let file = root.join("Module.bsl");
         fs::write(&file, "v1").unwrap();
@@ -2408,6 +2408,7 @@ mod tests {
     #[test]
     fn watch_cache_read_failure_requires_a_fresh_successful_digest() {
         let root = std::env::temp_dir().join(format!("ibcmd-rs-watch-cache-{}", Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir(&root).unwrap();
         let file = root.join("Module.bsl");
         fs::write(&file, "v1").unwrap();

@@ -453,7 +453,7 @@ mod tests {
         Ok(encoder.finish()?)
     }
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
+    fn temp_root(name: &str) -> crate::test_scratch::TestScratch {
         let mut root = std::env::temp_dir();
         root.push(format!(
             "{name}-{}",
@@ -462,6 +462,6 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        root
+        crate::test_scratch::TestScratch::adopt(root)
     }
 }

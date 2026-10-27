@@ -34,10 +34,9 @@ fn codec_profile() -> CommonModuleProfile {
 fn public_rows() -> Rows {
     static ROWS: OnceLock<Rows> = OnceLock::new();
     ROWS.get_or_init(|| {
-        // No Drop/teardown: keep this newly allocated public fixture intact.
-        let root =
-            std::env::temp_dir().join(format!("sql-selected-transaction-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir(&root).unwrap();
+        // The cached rows own their bytes; the file and reader are needed only
+        // while this closure runs. The later reader drops before its scratch.
+        let root = crate::test_scratch::TestScratch::new("sql-selected-transaction");
         let compressed = include_bytes!("../../../tests/fixtures/file-infobase/tiny.1CD.gz");
         let mut bytes = Vec::new();
         flate2::read::GzDecoder::new(compressed.as_slice())

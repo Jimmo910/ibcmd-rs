@@ -693,7 +693,7 @@ mod tests {
         encoder.finish().unwrap()
     }
 
-    fn folder_of(rows: &[(String, Vec<u8>)]) -> std::path::PathBuf {
+    fn folder_of(rows: &[(String, Vec<u8>)]) -> crate::test_scratch::TestScratch {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -706,7 +706,7 @@ mod tests {
         for (name, bytes) in rows {
             std::fs::write(dir.join(format!("{name}__part0.bin")), bytes).unwrap();
         }
-        dir
+        crate::test_scratch::TestScratch::adopt(dir)
     }
 
     fn owned_rows(names: &[(&str, Vec<u8>)]) -> Vec<(String, Vec<u8>)> {
@@ -770,7 +770,6 @@ mod tests {
                 "the alias is published; its plain row and the unlisted `gone` are not"
             );
         }
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// No marker: nothing moves, aliases of unlisted generations included.
@@ -792,12 +791,11 @@ mod tests {
                 names(&["a", &alias, "gone", "versions"])
             );
         }
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The rows of an object an online update changed: the plain rows keep the
     /// text before it, the aliases hold the text the infobase reads.
-    fn aliased_object_folder() -> std::path::PathBuf {
+    fn aliased_object_folder() -> crate::test_scratch::TestScratch {
         let object = "a627e390-8fad-4a95-afe6-674f54813188";
         folder_of(&owned_rows(&[
             (object, vec![1]),
@@ -919,6 +917,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&out);
         let result = crate::mssql_dump::dump_config(&crate::cli::MssqlDumpConfigArgs {
             sqlcmd: None,
             bcp_executable: None,
@@ -928,7 +927,7 @@ mod tests {
             sql_pwd: None,
             sql_pwd_env: "IBCMD_DB_PSW".to_owned(),
             database: "f2_export".to_owned(),
-            rows_dir: Some(dir.clone()),
+            rows_dir: Some(dir.to_path_buf()),
             file_infobase: None,
             postgres: None,
             postgres_snapshot: None,

@@ -122,6 +122,7 @@ fn matrix_roundtrip_is_strict_and_deterministic() {
     )
     .unwrap();
     let output = std::env::temp_dir().join(format!("ibcmd-rs-parity-{}.json", std::process::id()));
+    let _scratch = crate::common::Scratch::adopt(&output);
     let _ = fs::remove_file(&output);
     write_parity_matrix(&matrix, &output, false).unwrap();
     assert_eq!(read_parity_matrix(&output).unwrap(), matrix);
@@ -130,7 +131,6 @@ fn matrix_roundtrip_is_strict_and_deterministic() {
         render_parity_matrix_markdown(&matrix).unwrap(),
         render_parity_matrix_markdown(&matrix).unwrap()
     );
-    fs::remove_file(output).unwrap();
 }
 
 #[test]
@@ -189,6 +189,7 @@ fn paired_publication_preflights_conflicts_and_preserves_old_files() {
         "ibcmd-rs-parity-publish-{}-{nonce}",
         std::process::id()
     ));
+    let _scratch = crate::common::Scratch::adopt(&root);
     fs::create_dir(&root).unwrap();
     let json = root.join("matrix.json");
     let markdown = root.join("matrix.md");
@@ -219,7 +220,6 @@ fn paired_publication_preflights_conflicts_and_preserves_old_files() {
         let name = entry.unwrap().file_name().to_string_lossy().into_owned();
         !name.ends_with(".tmp") && !name.ends_with(".backup")
     }));
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -275,6 +275,7 @@ fn cli_builds_and_merges_fixture_matrices() {
         "ibcmd-rs-parity-cli-{}-{nonce}",
         std::process::id()
     ));
+    let _scratch = crate::common::Scratch::adopt(&output);
     fs::create_dir(&output).unwrap();
     let ut = output.join("ut.json");
     let bsp = output.join("bsp.json");
@@ -318,7 +319,6 @@ fn cli_builds_and_merges_fixture_matrices() {
             .success()
     );
     assert_eq!(read_parity_matrix(&merged).unwrap().runs.len(), 2);
-    fs::remove_dir_all(output).unwrap();
 }
 
 #[test]

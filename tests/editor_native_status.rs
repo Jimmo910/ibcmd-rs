@@ -72,6 +72,7 @@ fn fixture(name: &str) -> PathBuf {
 #[test]
 fn rpc_native_evidence_is_additive_identity_bound_and_never_clean_on_full_or_bad_reference() {
     let root = std::env::temp_dir().join(format!("issue380-native-rpc-{}", uuid::Uuid::new_v4()));
+    let _scratch = crate::common::Scratch::adopt(&root);
     fs::create_dir_all(root.join("db")).unwrap();
     fs::create_dir(root.join("baseline")).unwrap();
     let mut bytes = Vec::new();
