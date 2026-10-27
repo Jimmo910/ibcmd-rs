@@ -350,15 +350,6 @@ fn parse_visibility(node: &Node, resolver: &Resolver<'_>) -> Result<(bool, Vec<V
 // Names.
 // ---------------------------------------------------------------------------
 
-/// What resolving names reads more than once, kept for the life of the
-/// source context: the class and uuid of a metadata file, and the commands an
-/// owner declares.
-#[derive(Debug, Default)]
-pub(super) struct InterfaceResolutionMemo {
-    headers: BTreeMap<PathBuf, Option<(String, String)>>,
-    commands: BTreeMap<PathBuf, Option<Arc<BTreeMap<String, String>>>>,
-}
-
 struct Resolver<'a> {
     source: Option<&'a MetadataSourceContext>,
 }

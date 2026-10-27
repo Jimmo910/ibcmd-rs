@@ -199,14 +199,6 @@ fn is_stored_link_anchor(text: &str, value_start: usize) -> bool {
             .is_some_and(|tag| text[tag + 1..].starts_with('a'))
 }
 
-/// What a readable reference names in the source tree.
-#[derive(Clone, Debug)]
-pub(super) enum HelpReference {
-    Resolved(String),
-    /// No file of the tree declares it: the configuration has no such object.
-    Absent,
-}
-
 fn help_reference(
     source: Option<&MetadataSourceContext>,
     reference: &str,
@@ -233,119 +225,6 @@ fn is_help_link_reference(reference: &str) -> bool {
                     .any(|ch| ch.is_whitespace() || matches!(ch, '/' | '\\' | '"' | '#'))
         })
         && (parts[0] == "Configuration" || metadata_reference_source_folder(reference).is_some())
-}
-
-impl MetadataSourceContext {
-    /// The uuid a readable help reference names, read from the source tree
-    /// and memoised: an object, a nested subsystem, a form, a template, a
-    /// recalculation, a command, a common picture or the configuration itself
-    /// -- every name the exporter's help index holds.
-    ///
-    /// A reference whose file -- or whose owner's file -- the tree does not
-    /// have is [`HelpReference::Absent`]; a file that is there and declares
-    /// something else, or does not parse, is an error.
-    fn help_reference(&self, reference: &str) -> Result<HelpReference> {
-        if let Ok(cache) = self.help_references.lock()
-            && let Some(found) = cache.get(reference)
-        {
-            return found.clone().map_err(|error| anyhow!(error));
-        }
-        let resolved = match self.read_help_reference_uuid(reference) {
-            Ok(uuid) => Ok(HelpReference::Resolved(uuid)),
-            Err(error) if is_not_found(&error) => Ok(HelpReference::Absent),
-            Err(error) => Err(format!("{error:#}")),
-        };
-        if let Ok(mut cache) = self.help_references.lock() {
-            cache.insert(reference.to_string(), resolved.clone());
-        }
-        resolved.map_err(|error| anyhow!(error))
-    }
-
-    fn read_help_reference_uuid(&self, reference: &str) -> Result<String> {
-        let parts = reference.split('.').collect::<Vec<_>>();
-        let (path, kind) = match parts.as_slice() {
-            ["Configuration", _] => return self.resolve_configuration_uuid(reference),
-            [_, _, "Command", _] => return self.resolve_command_reference_uuid(reference),
-            [class, name] => {
-                let (prefix, folder) = metadata_reference_source_folder(reference)
-                    .ok_or_else(|| anyhow!("unsupported reference class `{class}`"))?;
-                (
-                    self.source_root.join(folder).join(format!("{name}.xml")),
-                    prefix,
-                )
-            }
-            ["Subsystem", ..] if parts.iter().step_by(2).all(|class| *class == "Subsystem") => {
-                let mut path = self.source_root.join("Subsystems");
-                let names = parts.iter().skip(1).step_by(2).collect::<Vec<_>>();
-                for (index, name) in names.iter().enumerate() {
-                    path = if index + 1 == names.len() {
-                        path.join(format!("{name}.xml"))
-                    } else {
-                        path.join(name).join("Subsystems")
-                    };
-                }
-                (path, "Subsystem")
-            }
-            [
-                owner_class,
-                owner,
-                child_class @ ("Form" | "Template" | "Recalculation"),
-                child,
-            ] => {
-                let owner_reference = format!("{owner_class}.{owner}");
-                let (_, folder) = metadata_reference_source_folder(&owner_reference)
-                    .ok_or_else(|| anyhow!("unsupported owner class `{owner_class}`"))?;
-                let child_folder = match *child_class {
-                    "Form" => "Forms",
-                    "Template" => "Templates",
-                    _ => "Recalculations",
-                };
-                (
-                    self.source_root
-                        .join(folder)
-                        .join(owner)
-                        .join(child_folder)
-                        .join(format!("{child}.xml")),
-                    *child_class,
-                )
-            }
-            [owner_class, owner, child_class, child] => {
-                return self.resolve_metadata_child_uuid(
-                    &format!("{owner_class}.{owner}"),
-                    child_class,
-                    child,
-                );
-            }
-            _ => return Err(anyhow!("unsupported reference shape")),
-        };
-        let xml = self
-            .read_source(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let properties = parse_simple_metadata_xml_properties(&xml)
-            .with_context(|| format!("failed to parse {}", path.display()))?;
-        let name = parts.last().copied().unwrap_or_default();
-        // The tree is read on a case-insensitive file system, where
-        // `Catalog.x` finds `Catalogs/X.xml`: the file must declare the very
-        // class and name the reference spells.
-        if properties.kind != kind || properties.name != name {
-            return Err(anyhow!(
-                "{} declares {}.{}",
-                path.display(),
-                properties.kind,
-                properties.name
-            ));
-        }
-        Ok(properties.uuid)
-    }
-}
-
-/// Whether reading the tree failed because a file or a folder is not there.
-fn is_not_found(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        cause
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
-    })
 }
 
 #[cfg(test)]
