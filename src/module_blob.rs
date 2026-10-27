@@ -29981,10 +29981,8 @@ fn patch_configuration_source_metadata(
     properties: &SimpleMetadataXmlProperties,
     xml: &[u8],
 ) -> Result<String> {
-    use crate::metadata_model::{
-        brace::{self, Brace},
-        xml::MetadataXml,
-    };
+    use crate::metadata_model::xml::MetadataXml;
+    use ibcmd_restructure::brace::{self, Brace};
     let patched = patch_configuration_metadata_text(text, properties)?;
     let document = MetadataXml::parse(xml)?;
     let Some(version) = document.object()?.path(&["Properties", "Version"]) else {
@@ -30609,7 +30607,7 @@ fn builtin_v8_type_id(type_name: &str) -> Option<&'static str> {
         "cfg:BusinessProcessRef" => Some("214fa4d8-6ba4-4748-a5e1-6332b5887780"),
         // Every other platform type the metadata descriptors already name
         // (`cfg:BusinessProcessRoutePointRef` and the rest of that table).
-        other => crate::metadata_model::types::builtin_type_id(other),
+        other => ibcmd_1c_vocab::builtin_type_id(other),
     }
 }
 
