@@ -991,7 +991,7 @@ fn inner_of(raw: &str) -> Option<&str> {
 }
 
 fn base64_mime(bytes: &[u8]) -> String {
-    let encoded = crate::module_blob::encode_base64(bytes);
+    let encoded = ibcmd_1c_text::encode_base64(bytes);
     encoded
         .as_bytes()
         .chunks(64)

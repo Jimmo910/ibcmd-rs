@@ -1160,12 +1160,6 @@ pub(crate) use source_assets::{
 };
 
 pub(crate) use form_body::{FormItemSchemaTraceEvent, FormItemTraceEvent, FormItemTraceSink};
-/// The exporter's reading of a chart attribute's member 14, which the form
-/// writer's chart codec checks every value it builds against.
-pub(crate) use form_body::{
-    render_form_chart_settings_value, render_form_flowchart_settings_value,
-    render_form_gantt_chart_settings_value, render_form_planner_settings_value,
-};
 #[cfg(test)]
 pub(crate) use form_body_entry::render_form_body_xml_offline;
 pub(crate) use form_body_entry::trace_form_body_with_context;

@@ -51,12 +51,11 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow, bail, ensure};
+use ibcmd_form_native::{format_native_color, format_native_font};
+use ibcmd_form_schema::FormControlBorderStyle;
 use quick_xml::Reader;
 use quick_xml::escape::{resolve_xml_entity, unescape};
 use quick_xml::events::{BytesStart, Event};
-
-use super::form_native::{format_native_color, format_native_font};
-use crate::form_schema::FormControlBorderStyle;
 
 /// The namespace the `d4p1:` prefix of a chart's `<Settings>` names.
 const CHART_NAMESPACE: &str = "http://v8.1c.ru/8.2/data/chart";
@@ -96,7 +95,7 @@ pub(crate) fn format_form_embedded_chart(settings_xml: &str) -> Result<String> {
     verify_round_trip(
         settings_xml,
         &value,
-        crate::mssql_dump::render_form_chart_settings_value,
+        ibcmd_form_body::form_body::render_form_chart_settings_value,
     )?;
     Ok(value)
 }
@@ -107,7 +106,7 @@ pub(crate) fn format_form_embedded_gantt_chart(settings_xml: &str) -> Result<Str
     verify_round_trip(
         settings_xml,
         &value,
-        crate::mssql_dump::render_form_gantt_chart_settings_value,
+        ibcmd_form_body::form_body::render_form_gantt_chart_settings_value,
     )?;
     Ok(value)
 }
@@ -167,7 +166,7 @@ pub(crate) fn format_form_embedded_flowchart(settings_xml: &str) -> Result<Strin
     verify_round_trip(
         settings_xml,
         &value,
-        crate::mssql_dump::render_form_flowchart_settings_value,
+        ibcmd_form_body::form_body::render_form_flowchart_settings_value,
     )?;
     Ok(value)
 }
@@ -2418,15 +2417,16 @@ mod tests {
             .chain([OLD_SHAPE_CHART.1]);
         for native in charts {
             let written = format_form_embedded_chart(element(native)).expect("chart is written");
-            let rendered = crate::mssql_dump::render_form_chart_settings_value(&written)
+            let rendered = ibcmd_form_body::form_body::render_form_chart_settings_value(&written)
                 .expect("the exporter reads the written chart");
             assert_eq!(rendered, crlf(native));
         }
         for (name, _, native) in SAVED_GANTT_CHARTS {
             let written = format_form_embedded_gantt_chart(element(native))
                 .unwrap_or_else(|error| panic!("{name}: {error:#}"));
-            let rendered = crate::mssql_dump::render_form_gantt_chart_settings_value(&written)
-                .expect("the exporter reads the written Gantt chart");
+            let rendered =
+                ibcmd_form_body::form_body::render_form_gantt_chart_settings_value(&written)
+                    .expect("the exporter reads the written Gantt chart");
             assert_eq!(rendered, crlf(native), "{name}");
         }
     }
@@ -2576,9 +2576,8 @@ mod tests {
         .expect("offline context");
         let render = |path: &str, uuid: &str| -> Option<String> {
             let text = std::fs::read_to_string(path).ok()?;
-            let body =
-                crate::module_blob::parse_form_body_plain(text.trim_start_matches('\u{feff}'))
-                    .expect("form body parses");
+            let body = ibcmd_form_body::parse_form_body_plain(text.trim_start_matches('\u{feff}'))
+                .expect("form body parses");
             crate::mssql_dump::render_form_body_xml_offline(&body, &context, uuid)
         };
         let index = std::fs::read_to_string(format!("{corpus}/index.tsv")).expect("index.tsv");
