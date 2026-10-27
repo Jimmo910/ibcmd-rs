@@ -209,6 +209,25 @@ impl fmt::Debug for HeldSourceRoot {
     }
 }
 
+/// The compiler's source context (`module_blob::MetadataSourceContext`)
+/// reads a held tree through this. Each method calls the inherent method of
+/// the same name (a type-relative path picks the inherent method over the
+/// trait's) and converts its `SourceChangeError` the way `?` does, so the
+/// error the context returns is this tree's own and downcasts to it.
+impl crate::module_blob::OriginalSourceTree for HeldSourceRoot {
+    fn canonical_root(&self) -> &Path {
+        HeldSourceRoot::canonical_root(self)
+    }
+
+    fn read_original_path(&self, path: &Path) -> anyhow::Result<Arc<Vec<u8>>> {
+        Ok(HeldSourceRoot::read_original_path(self, path)?)
+    }
+
+    fn require_unchanged(&self) -> anyhow::Result<()> {
+        Ok(HeldSourceRoot::require_unchanged(self)?)
+    }
+}
+
 impl HeldSourceRoot {
     pub fn open(root: &Path, limits: SourceInventoryLimits) -> Result<Self, SourceChangeError> {
         validate_limits(limits)?;

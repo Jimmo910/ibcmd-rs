@@ -1076,6 +1076,25 @@ pub use interface_assets::{
     InterfaceAssetSource, interface_asset_plaintext, pack_interface_asset_blob,
 };
 
+/// The original source tree one operation holds open: the files it reads
+/// are the copies captured when the tree was opened, and the tree is checked
+/// for change before anything is published. A context built on one
+/// (`MetadataSourceContext::with_original_source`) reads every source file
+/// through it and never from the file system. The root's
+/// `mssql_source_change::HeldSourceRoot` is the one implementation; the
+/// methods are its own, by the same names.
+pub(crate) trait OriginalSourceTree: std::fmt::Debug + Send + Sync {
+    /// The canonical root the tree was opened at.
+    fn canonical_root(&self) -> &Path;
+    /// The captured bytes of `path`, a path under the root, or why there are
+    /// none: the path is outside the root or the census, or the file changed
+    /// while it was read.
+    fn read_original_path(&self, path: &Path) -> Result<Arc<Vec<u8>>>;
+    /// Fails when a file read so far, or the tree's census, changed since
+    /// the tree was opened.
+    fn require_unchanged(&self) -> Result<()>;
+}
+
 #[derive(Debug, Clone)]
 pub struct MetadataSourceContext {
     source_root: PathBuf,
@@ -1115,7 +1134,7 @@ pub struct MetadataSourceContext {
     /// ERP УХ's stage re-read metadata XMLs 150 000 times, about 20 ms each.
     preloaded: PreloadedSourceFiles,
     /// Explicit operation-local original census, never a path-cache fallback.
-    original_source: Option<Arc<crate::mssql_source_change::HeldSourceRoot>>,
+    original_source: Option<Arc<dyn OriginalSourceTree>>,
 }
 
 /// A source file's bytes: shared with the preloaded store, or read for the
@@ -1189,9 +1208,7 @@ impl MetadataSourceContext {
         }
     }
 
-    pub(crate) fn with_original_source(
-        source: Arc<crate::mssql_source_change::HeldSourceRoot>,
-    ) -> Self {
+    pub(crate) fn with_original_source(source: Arc<dyn OriginalSourceTree>) -> Self {
         Self {
             original_source: Some(source.clone()),
             ..Self::new(source.canonical_root().to_owned())
