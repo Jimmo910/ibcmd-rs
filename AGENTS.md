@@ -40,6 +40,10 @@ cargo build --locked --profile iter                                      # binar
 - Debug builds for tests, `--profile iter` for corpus runs, `--release` only
   for release checks. One cargo command at a time per target directory;
   parallel agents work in separate worktrees.
+- A test removes every directory and file it creates under the temporary
+  directory through a `Drop` guard, so a failing test cleans up too;
+  `IBCMD_TEST_KEEP_FIXTURES=1` keeps them only for debugging, and CI fails on
+  leftovers (docs/testing.md, "Temporary directories").
 - Clean up after your tests and builds. A debug `target/` grows by tens of
   GB per worktree (a shared one reached 140 GB), and a full disk breaks every
   build on the machine with linker crashes. When the work in a worktree is

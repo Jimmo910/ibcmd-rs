@@ -1180,7 +1180,6 @@ mod tests {
         assert!(error.to_string().contains("identity changed"));
         assert_eq!(fs::read_dir(&output_parent).unwrap().count(), 0);
         assert_eq!(fs::read_dir(&displaced_parent).unwrap().count(), 0);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(windows)]
@@ -1199,7 +1198,6 @@ mod tests {
         assert!(fs::rename(&output_parent, &displaced_parent).is_err());
         assert_eq!(fs::read_dir(&output_parent).unwrap().count(), 0);
         drop(plan);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1298,7 +1296,6 @@ mod tests {
 
         let error = ensure_same_path_state(&path, &original_state).unwrap_err();
         assert!(error.to_string().contains("changed or was replaced"));
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
@@ -1337,14 +1334,13 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("symlink or reparse"));
-        fs::remove_dir_all(root).unwrap();
     }
 
-    fn unique_test_root(label: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
+    fn unique_test_root(label: &str) -> crate::test_scratch::TestScratch {
+        crate::test_scratch::TestScratch::adopt(std::env::temp_dir().join(format!(
             "ibcmd-rs-source-oracle-{label}-{}",
             uuid::Uuid::new_v4()
-        ))
+        )))
     }
 
     fn hostile_report() -> SourceThreeWayOracleReport {

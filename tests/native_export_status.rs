@@ -1,4 +1,6 @@
 //! Shared native version contract for CLI and RPC consumers.
+mod common;
+
 use ibcmd_rs::native_export_status::{ChangeKind, ConfigDumpInfoSnapshot};
 fn tiny() -> Vec<u8> {
     include_bytes!("fixtures/file-infobase/tiny-xml/ConfigDumpInfo.xml").to_vec()
@@ -79,6 +81,7 @@ fn inventory_reader_refuses_diagnostic_writes_before_reading_any_source() {
     use clap::Parser;
     use ibcmd_rs::cli::{Cli, Commands};
     let root = std::env::temp_dir().join(format!("inventory-no-write-{}", uuid::Uuid::new_v4()));
+    let _scratch = crate::common::Scratch::adopt(&root);
     let journal = root.join("journal.json");
     let cli = Cli::try_parse_from([
         std::ffi::OsString::from("ibcmd-rs"),
@@ -197,6 +200,7 @@ fn nonempty_malformed_stored_rows_never_become_an_empty_inventory() {
     use clap::Parser;
     use ibcmd_rs::cli::{Cli, Commands};
     let root = std::env::temp_dir().join(format!("inventory-bad-rows-{}", uuid::Uuid::new_v4()));
+    let _scratch = crate::common::Scratch::adopt(&root);
     let rows = root.join("rows");
     std::fs::create_dir_all(&rows).unwrap();
     std::fs::write(rows.join("root__part0.bin"), [0xff, 0xff, 0xff]).unwrap();
@@ -226,6 +230,7 @@ fn inventory_reader_refuses_inflate_debug_directories_for_a_valid_source() {
     use ibcmd_rs::cli::{Cli, Commands};
     use std::io::Read;
     let root = std::env::temp_dir().join(format!("inventory-no-inflate-{}", uuid::Uuid::new_v4()));
+    let _scratch = crate::common::Scratch::adopt(&root);
     let db = root.join("db");
     std::fs::create_dir_all(&db).unwrap();
     let mut bytes = Vec::new();

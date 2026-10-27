@@ -1,4 +1,7 @@
-//! Staged editor export acceptance. Fixtures are retained: no destructive teardown.
+//! Staged editor export acceptance. Each fixture is removed with its guard,
+//! also when the test fails (docs/testing.md, "Temporary directories").
+mod common;
+
 use ibcmd_rs::stored_objects::{ConfigSource, StoredConfiguration};
 use std::{
     fs,
@@ -10,8 +13,10 @@ fn fixture(name: &str) -> PathBuf {
         .join("tests/fixtures/file-infobase")
         .join(name)
 }
-fn setup() -> (PathBuf, StoredConfiguration) {
-    let root = std::env::temp_dir().join(format!("editor-export-{}", uuid::Uuid::new_v4()));
+fn setup() -> (common::Scratch, StoredConfiguration) {
+    let root = common::Scratch::adopt(
+        std::env::temp_dir().join(format!("editor-export-{}", uuid::Uuid::new_v4())),
+    );
     fs::create_dir_all(root.join("db")).unwrap();
     let mut bytes = Vec::new();
     flate2::read::GzDecoder::new(fs::File::open(fixture("tiny.1CD.gz")).unwrap())

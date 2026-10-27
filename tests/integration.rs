@@ -109,6 +109,43 @@ fn scratch_tags_are_refused_across_suites() {
     assert!(second.is_err(), "a second suite claimed the same tag");
 }
 
+/// A `common::Scratch` removes its path at the end of the test and when the
+/// test panics (unless IBCMD_TEST_KEEP_FIXTURES=1 keeps it), and every
+/// `common::temp_dir` call gets a path of its own.
+#[test]
+fn scratch_paths_are_fresh_and_removed_on_success_and_unwind() {
+    let kept = common::keep_fixtures();
+    let dir = {
+        let scratch = common::temp_dir("integration-scratch-probe");
+        std::fs::create_dir(&scratch).unwrap();
+        std::fs::write(scratch.join("owned"), b"fixture").unwrap();
+        scratch.to_path_buf()
+    };
+    assert_eq!(dir.exists(), kept);
+    let file = {
+        let scratch = common::temp_file("integration-scratch-probe-file", "bin");
+        std::fs::write(&scratch, b"fixture").unwrap();
+        scratch.to_path_buf()
+    };
+    assert_eq!(file.exists(), kept);
+    let mut unwound = None;
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let scratch = common::Scratch::new("ibcmd-external-integration-scratch-unwind");
+            unwound = Some(scratch.to_path_buf());
+            std::fs::write(scratch.join("owned"), b"fixture").unwrap();
+            panic!("synthetic test failure");
+        }))
+        .is_err()
+    );
+    assert_eq!(unwound.unwrap().exists(), kept);
+    let (first, second) = (
+        common::temp_dir("integration-scratch-probe"),
+        common::temp_dir("integration-scratch-probe"),
+    );
+    assert_ne!(first.to_path_buf(), second.to_path_buf());
+}
+
 /// Each `tests/<suite>.rs` is a module here or a `[[test]]` target in
 /// `Cargo.toml`, never both: with `autotests = false` nothing else builds it.
 #[test]

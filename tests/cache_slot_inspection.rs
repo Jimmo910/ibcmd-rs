@@ -14,26 +14,21 @@ use ibcmd_rs::restructure::caches::slots::{
 const OWN_UUID: &str = "11111111-1111-4111-8111-111111111111";
 
 struct Compiled {
-    root: PathBuf,
+    /// This fixture's own XML inputs, removed with it.
+    _root: crate::common::Scratch,
     row: Brace,
     bytes: Vec<u8>,
     source: Vec<(PathBuf, Arc<Vec<u8>>)>,
-}
-impl Drop for Compiled {
-    fn drop(&mut self) {
-        // This exclusively created directory contains only this fixture's own XML inputs.
-        fs::remove_dir_all(&self.root).unwrap();
-    }
 }
 
 // Independently authored source XML. No native/GPL fixture bytes or descriptor template.
 // Required scalar spellings come from the existing compiler property tables.
 fn compiled(kind: &str, mode: &str, dialect: &str) -> Compiled {
-    let root = std::env::temp_dir().join(format!(
+    let root = crate::common::Scratch::adopt(std::env::temp_dir().join(format!(
         "ibcmd-slot-inspection-{}-{}",
         std::process::id(),
         uuid::Uuid::new_v4()
-    ));
+    )));
     fs::create_dir(&root).unwrap();
     let envelope = |body: &str| {
         format!(
@@ -157,7 +152,7 @@ fn compiled(kind: &str, mode: &str, dialect: &str) -> Compiled {
     let bytes = compile_descriptor(kind, &path, &source[1].1, &context).unwrap();
     let row = parse_row(&bytes).unwrap();
     Compiled {
-        root,
+        _root: root,
         row,
         bytes,
         source,

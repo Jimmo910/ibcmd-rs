@@ -1773,6 +1773,7 @@ mod tests {
     fn native_pipeline_refuses_stale_preflight_reference(case: &str, existing: bool) {
         use std::io::Read;
         let root = std::env::temp_dir().join(format!("native-selection-{}", uuid::Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let db = root.join("db");
         fs::create_dir_all(&db).unwrap();
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase");
@@ -2283,12 +2284,12 @@ mod tests {
             "ibcmd-rs-export-not-empty-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("x.txt"), b"x").unwrap();
         let error = prepare_output_dir(&root, false).unwrap_err();
         assert!(error.downcast_ref::<OutputDirectoryNotEmpty>().is_some());
         assert!(root.join("x.txt").is_file());
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

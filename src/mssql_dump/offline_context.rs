@@ -402,6 +402,7 @@ mod tests {
     fn saved_run_skips_dotted_binary_before_utf8_decode() {
         let root =
             std::env::temp_dir().join(format!("ibcmd-offline-context-{}", uuid::Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let dump = root.join("candidate_dump");
         let inflated = dump.join("Config_inflated");
         fs::create_dir_all(&inflated).unwrap();
@@ -431,6 +432,5 @@ mod tests {
         assert_eq!(context.summary.input_rows, 1);
         assert_eq!(context.summary.metadata_rows, 1);
         assert_eq!(context.summary.warnings.len(), 1);
-        fs::remove_dir_all(root).unwrap();
     }
 }

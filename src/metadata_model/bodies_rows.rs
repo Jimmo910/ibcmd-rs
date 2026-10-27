@@ -194,6 +194,7 @@ mod tests {
             "ibcmd-rs-stub-rows-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         write(
             &root,
             "Configuration.xml",

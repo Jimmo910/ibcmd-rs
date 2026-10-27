@@ -903,7 +903,6 @@ mod tests {
                 0,
                 "never save transient storage instead of A: {case}"
             );
-            fs::remove_dir_all(dir).unwrap();
         }
     }
 
@@ -990,7 +989,6 @@ mod tests {
             );
             assert!(!dir.join("rows.pack").exists());
         }
-        fs::remove_dir_all(dir).unwrap();
     }
 
     struct EmptyRecoveryStorage;
@@ -1085,14 +1083,14 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
-    fn scratch(name: &str) -> PathBuf {
+    fn scratch(name: &str) -> crate::test_scratch::TestScratch {
         let dir = std::env::temp_dir().join(format!(
             "ibcmd-rs-recovery-test-{name}-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        dir
+        crate::test_scratch::TestScratch::adopt(dir)
     }
 
     fn artifact(root: &Path, database: &str, token: &str, created: u64) -> PathBuf {
@@ -1125,7 +1123,6 @@ mod tests {
         );
         assert!(read_pack_entry(&dir, &empty).unwrap().is_empty());
         assert!(read_pack_entry(&dir, "no-reference").is_err());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1159,7 +1156,6 @@ mod tests {
         // a second run finds nothing more; a missing root is not an error
         assert!(prune(&root, "labdb", 5).unwrap().is_empty());
         assert!(prune(&root.join("absent"), "labdb", 5).unwrap().is_empty());
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1172,6 +1168,5 @@ mod tests {
         let removed = prune(&root, "db", 1).unwrap();
         assert_eq!(removed.len(), 2);
         assert!(newest.exists() && !old_a.exists() && !old_b.exists());
-        let _ = fs::remove_dir_all(&root);
     }
 }

@@ -476,6 +476,7 @@ mod tests {
     #[test]
     fn rename_skips_files_that_are_not_utf8() {
         let dir = std::env::temp_dir().join(format!("ibcmd-rename-tree-{}", std::process::id()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("Ext/Help")).unwrap();
         // windows-1251 "ссылка DataProcessor.Ввод" — upstream writes such pages through unchanged

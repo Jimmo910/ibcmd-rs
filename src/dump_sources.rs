@@ -811,6 +811,7 @@ mod tests {
             "ibcmd-rs-settings-test-{}.json",
             std::process::id()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&path);
         fs::write(
             &path,
             r#"{"vrunner":{"dbms-type":"MSSQLServer","dbms-server":"localhost","dbms-base":"OstrovokEmpty","dbms-user":"test-sql-user","dbms-pwd":"dummy-value-for-settings-test"}}"#,
@@ -826,8 +827,6 @@ mod tests {
             settings_value(&settings, "dbms-pwd"),
             Some("dummy-value-for-settings-test".to_string())
         );
-
-        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -938,6 +937,7 @@ mod tests {
             "ibcmd-rs-native-runtime-hostile-marker-{}.json",
             uuid::Uuid::new_v4().simple()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&journal_path);
         persist_runtime_journal(Some(&journal_path), &runtime_call).unwrap();
         let persisted = fs::read_to_string(&journal_path).unwrap();
         assert!(!serialized.contains(raw_password));
@@ -956,7 +956,6 @@ mod tests {
         let mut child_output = format!("command echoed password={raw_password}");
         redact_runtime_output(&mut child_output, &[raw_password]);
         assert!(!child_output.contains(raw_password));
-        let _ = fs::remove_file(journal_path);
     }
 
     #[test]
@@ -965,6 +964,7 @@ mod tests {
             "ibcmd-rs-native-runtime-failure-{}.json",
             uuid::Uuid::new_v4().simple()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&journal_path);
         let mut call = SanitizedRuntimeCall {
             executable: PathBuf::from("ibcmd-rs-command-that-does-not-exist"),
             arguments: vec![
@@ -996,6 +996,5 @@ mod tests {
         assert_eq!(journal["runtime_call"]["status"], "failed");
         assert!(journal["runtime_call"]["ended_unix_ms"].as_u64().is_some());
         assert!(journal["runtime_call"]["exception"].is_string());
-        let _ = fs::remove_file(journal_path);
     }
 }

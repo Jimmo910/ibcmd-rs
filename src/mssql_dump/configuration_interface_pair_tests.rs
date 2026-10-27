@@ -50,6 +50,7 @@ fn fixture_on_compatibility(
             .as_nanos(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     std::fs::create_dir(&root).unwrap();
     let path = root.join("Configuration.xml");
     std::fs::write(&path, &source).unwrap();

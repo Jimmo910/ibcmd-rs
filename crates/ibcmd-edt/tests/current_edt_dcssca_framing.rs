@@ -104,12 +104,13 @@ fn pipeline_carries_sidecar_framing_independently_and_empty_items_emit_no_sideca
     use morph1c_pipeline::{Format, attach_form_body, write_form_bodies};
     for minor in [20, 21] {
         let version = FormatVersion::new(2, minor);
-        // Always retained: no permanent fixture teardown, including failed tests.
+        // Removed with `root`, also after a failure, unless IBCMD_TEST_KEEP_FIXTURES=1.
         let root = tempfile::Builder::new()
             .prefix("ibcmd-dcssca-framing-")
+            .disable_cleanup(keep_fixtures())
             .tempdir()
-            .unwrap()
-            .keep();
+            .unwrap();
+        let root = root.path().to_path_buf();
         let anchor = root.join("Case/Case.mdo");
         let mut object =
             MetadataObject::new(ObjectKind::new("CommonForm"), "Case", Uuid([0x35; 16]));
@@ -182,4 +183,9 @@ fn pipeline_carries_sidecar_framing_independently_and_empty_items_emit_no_sideca
                 .exists()
         );
     }
+}
+
+/// Whether the fixtures are kept for debugging: `IBCMD_TEST_KEEP_FIXTURES=1`.
+fn keep_fixtures() -> bool {
+    std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1")
 }

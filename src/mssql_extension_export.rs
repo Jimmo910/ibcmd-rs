@@ -513,6 +513,7 @@ mod tests {
             "ibcmd-rs-extension-publish-test-{}",
             Uuid::new_v4()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let output = root.join("output");
         let staging = root.join("staging");
         fs::create_dir_all(&output).unwrap();
@@ -524,6 +525,5 @@ mod tests {
 
         assert!(!output.join("stale.txt").exists());
         assert_eq!(fs::read(output.join("fresh.txt")).unwrap(), b"fresh");
-        fs::remove_dir_all(root).unwrap();
     }
 }

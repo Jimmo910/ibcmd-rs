@@ -4,17 +4,24 @@ use morph1c_core::ir::{
     FormBody, MetadataObject, NamedFormBody, ObjectKind, PropertyValue, Token, Uuid,
 };
 use morph1c_pipeline::{Format, attach_form_body, write_form_bodies};
-use std::{fs, path::PathBuf};
+use std::fs;
 
 const EDT: &str = include_str!("fixtures/form-module-scaffold/edt-lf.bsl");
 const NATIVE: &[u8] = include_bytes!("fixtures/form-module-scaffold/native-crlf.bsl");
 
-fn retained() -> PathBuf {
+/// A scratch directory, removed with the value (also when the test fails)
+/// unless `IBCMD_TEST_KEEP_FIXTURES=1`.
+fn scratch() -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix("ibcmd-module-scaffold-")
+        .disable_cleanup(keep_fixtures())
         .tempdir()
         .unwrap()
-        .keep()
+}
+
+/// Whether the fixtures are kept for debugging: `IBCMD_TEST_KEEP_FIXTURES=1`.
+fn keep_fixtures() -> bool {
+    std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1")
 }
 fn object() -> MetadataObject {
     let mut object =
@@ -72,7 +79,8 @@ fn native_bytes(text: &str) -> Vec<u8> {
 
 #[test]
 fn module_scaffold_current_witness_and_current_region_edits_are_framed_exactly() {
-    let root = retained();
+    let root = scratch();
+    let root = root.path().to_path_buf();
     let mut parsed = read_edt(EDT, &root);
     assert!(parsed.form_bodies[0].body.source_module_scaffold_edt_lf);
     let semantic = serde_json::to_vec(&parsed).unwrap();
@@ -128,7 +136,8 @@ fn module_scaffold_current_non_scaffold_edits_revoke_projection_without_losing_t
     .into_iter()
     .enumerate()
     {
-        let root = retained();
+        let root = scratch();
+        let root = root.path().to_path_buf();
         let mut parsed = read_edt(EDT, &root);
         assert!(parsed.form_bodies[0].body.source_module_scaffold_edt_lf);
         parsed.form_bodies[0].module = Some(edited.clone());
@@ -149,7 +158,8 @@ fn module_scaffold_current_non_scaffold_edits_revoke_projection_without_losing_t
 
 #[test]
 fn module_scaffold_native_origin_and_default_writer_keep_all_module_newlines() {
-    let root = retained();
+    let root = scratch();
+    let root = root.path().to_path_buf();
     let original = authored(EDT);
     assert_eq!(
         emit(&original, &root, "native-source", Format::Designer),

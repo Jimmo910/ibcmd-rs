@@ -1,9 +1,10 @@
-//! Retained tiny fixtures; work budgets are counts, never wall-clock assertions.
+//! Tiny fixtures, removed with their case; work budgets are counts, never
+//! wall-clock assertions.
 use super::*;
 use std::io::Read;
 
 struct Case {
-    root: PathBuf,
+    root: crate::test_scratch::TestScratch,
     db: PathBuf,
     source: PathBuf,
     stage: PathBuf,
@@ -21,8 +22,9 @@ fn unpack(path: &Path) -> Vec<u8> {
     bytes
 }
 fn case() -> Case {
-    let root =
-        std::env::temp_dir().join(format!("editor-export-read-scope-{}", uuid::Uuid::new_v4()));
+    let root = crate::test_scratch::TestScratch::adopt(
+        std::env::temp_dir().join(format!("editor-export-read-scope-{}", uuid::Uuid::new_v4())),
+    );
     fs::create_dir_all(root.join("db")).unwrap();
     let db = root.join("db/1Cv8.1CD");
     fs::write(&db, unpack(&fixture("tiny.1CD.gz"))).unwrap();

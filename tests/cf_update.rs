@@ -6,7 +6,7 @@ use crate::common;
 
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Output},
 };
 
@@ -84,12 +84,11 @@ fn load(tree: &Path, output: &Path, base: &Path) {
 }
 
 /// A newer version of `base`: `edit` applied to an export of it, loaded.
-fn newer(base: &Path, tag: &str, edit: impl FnOnce(&Path)) -> PathBuf {
+fn newer(base: &Path, tag: &str, edit: impl FnOnce(&Path)) -> common::Scratch {
     let tree = common::temp_dir(&format!("{tag}-edit"));
     assert!(common::export(base, &tree).status.success());
     edit(&tree);
-    let output = common::temp_dir(&format!("{tag}-newer")).with_extension("bin");
-    let _ = fs::remove_file(&output);
+    let output = common::temp_file(&format!("{tag}-newer"), "bin");
     load(&tree, &output, base);
     output
 }

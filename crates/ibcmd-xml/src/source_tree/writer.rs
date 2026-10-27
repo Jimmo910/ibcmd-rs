@@ -134,12 +134,21 @@ impl Drop for Temp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Removes `root` with the guard, also when the test fails, unless
+    /// `IBCMD_TEST_KEEP_FIXTURES=1` keeps it for debugging.
+    fn scratch(root: &Path) -> Temp {
+        Temp {
+            path: root.to_path_buf(),
+            keep: std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1"),
+        }
+    }
     #[test]
     fn exclusive_publication_moves_complete_directory_to_absent_destination() {
         let root = std::env::temp_dir().join(format!(
             "ibcmd-directory-publish-success-{}",
             std::process::id()
         ));
+        let _scratch = scratch(&root);
         fs::create_dir(&root).unwrap();
         let staged = root.join("stage");
         let destination = root.join("output");
@@ -157,7 +166,6 @@ mod tests {
             fs::read(destination.join("nested/body.bin")).unwrap(),
             b"complete body"
         );
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -166,6 +174,7 @@ mod tests {
             "ibcmd-directory-publish-collision-{}",
             std::process::id()
         ));
+        let _scratch = scratch(&root);
         fs::create_dir(&root).unwrap();
         let staged = root.join("stage");
         let destination = root.join("output");
@@ -184,7 +193,6 @@ mod tests {
         assert!(rename_directory_new(&staged, &file).is_err());
         assert_eq!(fs::read(&file).unwrap(), b"original file");
         assert_eq!(fs::read(staged.join("new.bin")).unwrap(), b"new payload");
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -193,6 +201,7 @@ mod tests {
             "ibcmd-directory-publish-race-{}",
             std::process::id()
         ));
+        let _scratch = scratch(&root);
         fs::create_dir(&root).unwrap();
         let staged = root.join("stage");
         let destination = root.join("output");
@@ -204,6 +213,5 @@ mod tests {
         assert!(rename_directory_new(&staged, &destination).is_err());
         assert!(staged.join("new.bin").exists());
         assert!(!destination.join("new.bin").exists());
-        fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -1781,9 +1781,12 @@ pub fn require_database(source: &ConfigSource, what: &str) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn immutable_snapshot_after_rebinding() -> (StoredConfiguration, PathBuf) {
+    fn immutable_snapshot_after_rebinding()
+    -> (StoredConfiguration, crate::test_scratch::TestScratch) {
         use std::io::Read;
-        let root = std::env::temp_dir().join(format!("derived-snapshot-{}", uuid::Uuid::new_v4()));
+        let root = crate::test_scratch::TestScratch::adopt(
+            std::env::temp_dir().join(format!("derived-snapshot-{}", uuid::Uuid::new_v4())),
+        );
         let db = root.join("db");
         fs::create_dir_all(&db).unwrap();
         let fixture =
@@ -1997,9 +2000,6 @@ mod tests {
             fs::read(root.join("db/1Cv8.1CD")).unwrap(),
             b"replacement must never be opened"
         );
-        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
-            fs::remove_dir_all(root).unwrap();
-        }
     }
 
     #[test]
@@ -2042,9 +2042,6 @@ mod tests {
             fs::read(root.join("db/1Cv8.1CD")).unwrap(),
             b"replacement must never be opened"
         );
-        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
-            fs::remove_dir_all(root).unwrap();
-        }
     }
 
     #[test]
@@ -2068,6 +2065,7 @@ mod tests {
         }
         use std::io::{Read, Write};
         let root = std::env::temp_dir().join(format!("main-view-cache-{}", uuid::Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let db = root.join("db");
         let rows_dir = root.join("rows");
         fs::create_dir_all(&db).unwrap();
