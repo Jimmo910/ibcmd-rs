@@ -77,7 +77,9 @@ pub mod stored_objects;
 pub mod templates;
 pub mod trace;
 pub mod update;
-pub(crate) mod v8_container;
+// The anyhow wrapper over `ibcmd-v8`'s format-15 reader and writer, moved to
+// the module blob codec's crate; callers keep `crate::v8_container::…`.
+pub(crate) use ibcmd_module_blob::v8_container;
 
 pub mod mssql_live_continue;
 

@@ -26,8 +26,14 @@ layout of its Form Attributes tail and the braced-record text primitives both
 read, formerly in `src/module_blob.rs`; and the upgrade of an older platform's
 root-`42` form body the reader applies first, formerly
 `src/module_blob/form_root_42.rs`, which was outside the slice and joined it
-with its 22 record tags) and `crates/ibcmd-moxel/src/root_helpers/`.  Code that
-leaves the slice for a crate takes the slice with it: its directory is listed
+with its 22 record tags), `crates/ibcmd-module-blob/src/` (the module blob
+codec, the raw deflate helpers and digests, the raw-deflated packer and the
+versions-blob patcher, formerly in `src/module_blob.rs`; the raw inflater,
+formerly in `crates/ibcmd-1c-vocab/src/support.rs`; and the anyhow wrapper of
+the V8 container, formerly `src/v8_container.rs`, which was outside the slice
+and joined it with no occurrence) and
+`crates/ibcmd-moxel/src/root_helpers/`.  Code that leaves the slice for a
+crate takes the slice with it: its directory is listed
 there and its baseline entries move to the new path in the same change, never
 dropped.  Every `*.rs` file below a listed directory is scanned, so a file added
 there is in the slice at once and fails as unbaselined until its record is
