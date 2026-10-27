@@ -1264,7 +1264,7 @@ impl MetadataSourceContext {
     /// that does not parse contributes nothing rather than failing the scan.
     pub(crate) fn dcs_style_items(&self) -> &BTreeMap<String, String> {
         self.style_items
-            .get_or_init(|| crate::mssql::style_reference_types_from_source_root(&self.source_root))
+            .get_or_init(|| style_reference_types_from_source_root(&self.source_root))
     }
 
     /// One metadata object of the source tree, by `"<Class>.<Name>"`.
@@ -1830,6 +1830,74 @@ fn is_not_found(error: &anyhow::Error) -> bool {
             .downcast_ref::<std::io::Error>()
             .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
     })
+}
+
+/// Scans `source_root/StyleItems/*.xml` for a uuid -> semantic-name map,
+/// the same fact a `DataCompositionSchema` custom-`StyleItem` style-color
+/// reference needs to compile base-free (see
+/// `compiler::bodies::dcs::compile_dcs_with_references`). Each object's
+/// name comes from its own file name -- the same `StyleItems/<Name>.xml`
+/// convention `source::infer_object_hint` already treats as this family's
+/// object identity -- paired with the root `<StyleItem uuid="...">`
+/// attribute read directly from that same file. A missing `StyleItems`
+/// directory, or any individual file that fails to parse or carries no
+/// `uuid` attribute, is skipped rather than treated as an error: this map
+/// is best-effort evidence gathering for one optional compile-direction
+/// coordinate, not a required precondition for the rest of the bootstrap
+/// scan.
+pub(crate) fn style_reference_types_from_source_root(
+    source_root: &Path,
+) -> BTreeMap<String, String> {
+    let mut style_reference_types = BTreeMap::new();
+    let Ok(entries) = fs::read_dir(source_root.join("StyleItems")) else {
+        return style_reference_types;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("xml") {
+            continue;
+        }
+        let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let Ok(xml) = fs::read(&path) else {
+            continue;
+        };
+        if let Some(uuid) = parse_style_item_root_uuid(&xml) {
+            style_reference_types.insert(uuid, name.to_string());
+        }
+    }
+    style_reference_types
+}
+
+/// Reads the `uuid` attribute off a `StyleItems/<Name>.xml` object's root
+/// `<StyleItem>` element, canonicalized to the lowercase-hyphenated form
+/// (matching the `compile_dcs_with_references` resolver contract). Returns
+/// `None` for anything else (malformed XML, a different root element, a
+/// missing or non-UUID `uuid` attribute) -- the caller treats that as "this
+/// file contributes nothing," never as a hard error.
+fn parse_style_item_root_uuid(xml: &[u8]) -> Option<String> {
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer).ok()? {
+            Event::Start(event) | Event::Empty(event) => {
+                if event.local_name().as_ref() != b"StyleItem" {
+                    continue;
+                }
+                let uuid = xml_attr_value(&event, "uuid")?;
+                return Some(
+                    uuid::Uuid::parse_str(uuid.trim())
+                        .ok()?
+                        .hyphenated()
+                        .to_string(),
+                );
+            }
+            Event::Eof => return None,
+            _ => {}
+        }
+        buffer.clear();
+    }
 }
 
 pub fn pack_module_blob(args: &ModuleBlobPackArgs) -> Result<ModuleBlobPackReport> {
