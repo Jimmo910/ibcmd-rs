@@ -54,12 +54,13 @@ use quick_xml::Reader;
 use quick_xml::escape::resolve_xml_entity;
 use quick_xml::events::Event;
 
-use crate::mssql_dump::{
-    CONFIGURATION_MODE_RIGHT_NAMES, ROLE_RIGHTS_EXT_DIMENSION_FAMILY,
-    ROLE_RIGHTS_EXT_DIMENSION_TYPE_FAMILY, ROLE_RIGHTS_STANDARD_ATTRIBUTE_FAMILY,
-    ROLE_RIGHTS_STANDARD_TABULAR_SECTION_FAMILY, role_right_uuid, role_standard_attribute_slot,
-    role_standard_tabular_section_attribute_slot, role_standard_tabular_section_slot,
+use ibcmd_1c_vocab::{
+    ROLE_RIGHTS_EXT_DIMENSION_FAMILY, ROLE_RIGHTS_EXT_DIMENSION_TYPE_FAMILY,
+    ROLE_RIGHTS_STANDARD_ATTRIBUTE_FAMILY, ROLE_RIGHTS_STANDARD_TABULAR_SECTION_FAMILY,
+    role_right_uuid, role_standard_attribute_slot, role_standard_tabular_section_attribute_slot,
+    role_standard_tabular_section_slot,
 };
+use ibcmd_schema::configuration_rights::CONFIGURATION_MODE_RIGHT_NAMES;
 
 /// Why a role was not written. `class` is a stable key an audit can count
 /// by; `detail` names the object or the construct.

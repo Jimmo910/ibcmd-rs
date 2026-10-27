@@ -11,7 +11,8 @@ directories that hold code moved out of them (`$GuardedCrateDirectories`):
 formerly in `src/mssql_dump/mod.rs`, `source_assets.rs` and `refs.rs`),
 `crates/ibcmd-1c-vocab/src/` (the platform-type, standard-attribute, style and
 command vocabularies, formerly in `src/mssql_dump/mod.rs`, `source_assets.rs`
-and `command_interface.rs`, and the standard-picture table, formerly
+and `command_interface.rs`; the role-right vocabulary, formerly in
+`src/mssql_dump/role_rights.rs`; and the standard-picture table, formerly
 `src/metadata_model/standard_pictures.rs`, which was outside the slice and
 joined it with its 221 identifiers, and the compiler's built-in type table,
 formerly in `src/metadata_model/types.rs`, which was outside the slice and

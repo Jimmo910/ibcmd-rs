@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -55,7 +55,7 @@ pub(super) use ibcmd_1c_vocab::{
 use ibcmd_1c_vocab::{
     DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE, ShortcutModifierStyle,
     format_form_metadata_types_xml, format_form_metadata_types_xml_with_indent,
-    parse_common_command_shortcut_value_with_style,
+    parse_common_command_shortcut_value_with_style, role_right_name, role_right_uuid,
 };
 use ibcmd_cf::archive::PackedCfArchive;
 use ibcmd_cf::export::{StorageExportEntryReport, StorageExportPlan, StorageExportReport};
@@ -1076,13 +1076,7 @@ mod offline_rows;
 mod output_writer;
 mod refs;
 mod role_rights;
-pub(crate) use role_rights::{
-    CONFIGURATION_MODE_RIGHT_NAMES, ROLE_RIGHTS_EXT_DIMENSION_FAMILY,
-    ROLE_RIGHTS_EXT_DIMENSION_TYPE_FAMILY, ROLE_RIGHTS_STANDARD_ATTRIBUTE_FAMILY,
-    ROLE_RIGHTS_STANDARD_TABULAR_SECTION_FAMILY, role_right_name, role_right_uuid,
-    role_rights_xml_from_blob, role_standard_attribute_slot,
-    role_standard_tabular_section_attribute_slot, role_standard_tabular_section_slot,
-};
+pub(crate) use role_rights::role_rights_xml_from_blob;
 mod selected;
 mod source_asset_diagnostics;
 mod source_assets;

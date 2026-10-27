@@ -26803,7 +26803,7 @@ fn role_restriction_field_text_range(
 /// The name a right uuid stands for: the exporter's table, the one the
 /// platform's own `Rights.xml` files were measured against.
 fn role_right_name(uuid: &str) -> Option<&'static str> {
-    crate::mssql_dump::role_right_name(uuid)
+    ibcmd_1c_vocab::role_right_name(uuid)
 }
 
 fn parse_role_rights_xml(xml: &[u8]) -> Result<RoleRightsXml> {
