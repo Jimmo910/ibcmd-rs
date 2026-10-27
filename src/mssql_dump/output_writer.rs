@@ -629,10 +629,17 @@ mod tests {
         crate::test_scratch::TestScratch::adopt(root)
     }
 
-    fn retained_module_root() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("ibcmd-native-bsl-{}", uuid::Uuid::new_v4()));
-        fs::create_dir(&root).unwrap();
-        root // Deliberately retained lab evidence; no teardown/deletion.
+    fn retained_module_root() -> crate::test_scratch::TestScratch {
+        crate::test_scratch::TestScratch::new("ibcmd-native-bsl")
+    }
+
+    #[test]
+    fn native_bsl_scratch_obeys_retention_policy() {
+        let root = retained_module_root();
+        let path = root.to_path_buf();
+        assert!(path.is_dir());
+        drop(root);
+        assert_eq!(path.exists(), crate::test_scratch::keep_fixtures());
     }
 
     #[test]
