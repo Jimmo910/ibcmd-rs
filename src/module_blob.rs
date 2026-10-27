@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
-use ibcmd_1c_text::{crlf_line_breaks, format_1c_string, is_uuid_like_ascii};
+use ibcmd_1c_text::{
+    crlf_line_breaks, format_1c_string, is_uuid_like_ascii, sanitize_source_path_segment,
+};
 use ibcmd_1c_vocab::is_svg_content;
 use ibcmd_core::dcs::{DcsConditionalAppearance, DcsFilter, DcsOrder};
 use ibcmd_form_native::{
@@ -46,7 +48,6 @@ use uuid::Uuid;
 
 use crate::cli::{ModuleBlobPackArgs, VersionsBlobPatchArgs};
 use crate::compiler::bodies::role_rights_writer::SourceTreeRoleRightsSource;
-use crate::mssql_dump::sanitize_source_path_segment;
 
 // The rest of the root reaches these by their `module_blob` paths.
 pub(crate) use ibcmd_1c_text::decode_base64_mime_lenient as decode_base64_mime;

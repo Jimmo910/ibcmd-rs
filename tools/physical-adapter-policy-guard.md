@@ -8,7 +8,8 @@ The guarded production slice is `src/module_blob.rs` plus non-test Rust modules
 under `src/mssql_dump/`, plus the non-test Rust modules under the `crates/`
 directories that hold code moved out of them (`$GuardedCrateDirectories`):
 `crates/ibcmd-1c-text/src/` (the 1C braced-text primitives and scalar fields,
-formerly in `src/mssql_dump/mod.rs`, `source_assets.rs` and `refs.rs`),
+and the source tree's file-name segment, formerly in `src/mssql_dump/mod.rs`,
+`source_assets.rs` and `refs.rs`),
 `crates/ibcmd-1c-vocab/src/` (the platform-type, standard-attribute, style and
 command vocabularies, formerly in `src/mssql_dump/mod.rs`, `source_assets.rs`
 and `command_interface.rs`; the role-right vocabulary, formerly in

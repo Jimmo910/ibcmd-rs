@@ -44567,21 +44567,9 @@ fn return_values_reuse_xml(value: ReturnValuesReuseValue) -> &'static str {
     }
 }
 
-pub(crate) fn sanitize_source_path_segment(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
-            output.push('_');
-        } else {
-            output.push(ch);
-        }
-    }
-    if output.trim().is_empty() {
-        "Unnamed".to_string()
-    } else {
-        output
-    }
-}
+// The file-name segment the source tree writes for a name is
+// `ibcmd-1c-text`'s; the root reaches it by this path.
+pub(crate) use ibcmd_1c_text::sanitize_source_path_segment;
 
 fn selected_file_names_from_args(
     file_names: &[String],

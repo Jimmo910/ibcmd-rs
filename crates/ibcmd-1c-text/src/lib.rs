@@ -26,6 +26,7 @@
 
 mod braced;
 mod fields;
+mod paths;
 mod strings;
 mod xml;
 
@@ -41,6 +42,7 @@ pub use fields::{
     parse_non_zero_uuid, parse_uuid_field, platform_base64_token, uuid_like_values,
     uuid_like_values_in_text_order,
 };
+pub use paths::sanitize_source_path_segment;
 pub use strings::{
     crlf_line_breaks, format_1c_string, parse_1c_quoted_string, parse_1c_quoted_string_with_len,
     parse_1c_string, parse_1c_synonyms,
