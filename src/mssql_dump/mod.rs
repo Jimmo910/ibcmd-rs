@@ -29,6 +29,7 @@ use ibcmd_1c_text::{
 // are wrappers further down (`parse_metadata_type_pattern_element_with_builtin`,
 // and `parse_form_metadata_type_pattern`, kept for tests: the form reader
 // passes the state it was built with).
+pub(crate) use ibcmd_1c_vocab::style_web_color_name;
 use ibcmd_1c_vocab::{
     ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES,
     ACCUMULATION_REGISTER_TURNOVERS_STANDARD_ATTRIBUTES,
@@ -56,7 +57,6 @@ use ibcmd_1c_vocab::{
     format_form_metadata_types_xml, format_form_metadata_types_xml_with_indent,
     parse_common_command_shortcut_value_with_style,
 };
-pub(crate) use ibcmd_1c_vocab::{standard_style_item_code_for_name, style_web_color_name};
 use ibcmd_cf::archive::PackedCfArchive;
 use ibcmd_cf::export::{StorageExportEntryReport, StorageExportPlan, StorageExportReport};
 use ibcmd_core::artifact::ProfileId;
@@ -1165,17 +1165,6 @@ pub(crate) use source_assets::{
     help_link_marker_is_anchor, help_standard_picture_negative_index, rewrite_help_links,
 };
 
-pub(crate) fn resolve_form_item_picture_owner(
-    text: &str,
-    marker_start: usize,
-) -> Option<(String, &'static str)> {
-    form_body::form_item_picture_owner_at(text, marker_start)
-}
-
-pub(crate) use form_body::form_dynamic_list_std_attribute_pairs;
-/// The one table that names a form standard command uuid, shared with the
-/// source compiler so both directions read the same fact.
-pub(crate) use form_body::form_standard_command_suffix;
 pub(crate) use form_body::{FormItemSchemaTraceEvent, FormItemTraceEvent, FormItemTraceSink};
 /// The exporter's reading of a chart attribute's member 14, which the form
 /// writer's chart codec checks every value it builds against.

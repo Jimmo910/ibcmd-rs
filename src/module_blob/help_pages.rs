@@ -130,7 +130,7 @@ fn storage_attribute_value(
         if let Some(index) = crate::mssql_dump::help_standard_picture_negative_index(value) {
             return Ok(Some(format!("../../mdpicture/idn-{index}")));
         }
-        let uuid = crate::mssql_dump::standard_picture_uuid(value)
+        let uuid = ibcmd_1c_vocab::standard_picture_uuid(value)
             .ok_or_else(|| anyhow!("help picture `{value}` names no known standard picture"))?;
         return Ok(Some(format!(
             "../../mdpicture/id{uuid}/{PICTURE_VARIANT_ID}"
