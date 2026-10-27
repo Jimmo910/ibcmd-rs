@@ -8,7 +8,8 @@
 //! Everything here moved from the root crate's `mssql_dump` (`mod.rs`, the
 //! picture-payload helpers from `source_assets.rs` and the standard command
 //! of a metadata kind from `command_interface.rs`), and the standard
-//! pictures from its `metadata_model::standard_pictures`; `inflate_raw_deflate`
+//! pictures and the compiler's built-in type table (`builtin_type_id`,
+//! `builtin_type_qname`) from its `metadata_model`; `inflate_raw_deflate`
 //! names in its context the raw inflater of `ibcmd-module-blob` (formerly
 //! `module_blob`'s, then this crate's), and `module_blob`'s SVG check is
 //! `is_svg_content`. The root still
@@ -19,12 +20,13 @@
 //! which stays in the root.
 //!
 //! The code came from the physical-adapter guard's slice (the standard
-//! pictures joined it here), so the guard scans every non-test `*.rs` file
-//! under this crate's `src/`
+//! pictures and the built-in type table joined it here), so the guard scans
+//! every non-test `*.rs` file under this crate's `src/`
 //! (`$GuardedCrateDirectories` in `tools/validate-physical-adapter-policy.ps1`)
 //! and their literals stay in the guard's baseline. A file added here is in
 //! the slice at once and fails the guard until its record is reviewed.
 
+mod builtin_type_ids;
 mod commands;
 mod patterns;
 mod pictures;
@@ -35,6 +37,7 @@ mod type_xml;
 mod types;
 mod values;
 
+pub use builtin_type_ids::{FIXED_ARRAY_TYPE, builtin_type_id, builtin_type_qname};
 pub use commands::{
     ShortcutModifierStyle, command_interface_standard_command, parse_common_command_picture_value,
     parse_common_command_shortcut_value, parse_common_command_shortcut_value_with_style,

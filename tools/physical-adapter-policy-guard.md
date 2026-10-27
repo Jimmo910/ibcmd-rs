@@ -13,7 +13,10 @@ formerly in `src/mssql_dump/mod.rs`, `source_assets.rs` and `refs.rs`),
 command vocabularies, formerly in `src/mssql_dump/mod.rs`, `source_assets.rs`
 and `command_interface.rs`, and the standard-picture table, formerly
 `src/metadata_model/standard_pictures.rs`, which was outside the slice and
-joined it with its 221 identifiers), `crates/ibcmd-form-body/src/` (the form
+joined it with its 221 identifiers, and the compiler's built-in type table,
+formerly in `src/metadata_model/types.rs`, which was outside the slice and
+joined it with its 103 identifiers and one prefix check),
+`crates/ibcmd-form-body/src/` (the form
 body reader `form_body.rs`, formerly `src/mssql_dump/form_body.rs`; the
 indexes, compatibility rules and timing report it is given, formerly in
 `src/mssql_dump/mod.rs`, `refs.rs`, `dcs.rs`, `source_assets.rs`, `timing.rs`
