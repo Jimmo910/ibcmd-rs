@@ -785,6 +785,7 @@ mod tests {
             "ibcmd-rs-source-scan-prefix-test-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("Catalogs/Products/Forms/List/Ext")).unwrap();
         std::fs::create_dir_all(root.join("Catalogs/Other/Ext")).unwrap();
         std::fs::write(
@@ -822,8 +823,6 @@ mod tests {
         assert!(paths.contains(&"Catalogs/Products/Forms/List/Ext/Form.xml"));
         assert!(!paths.contains(&"Catalogs/Other.xml"));
         assert!(!paths.contains(&"Catalogs/Other/Ext/ObjectModule.bsl"));
-
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -832,6 +831,7 @@ mod tests {
             "ibcmd-rs-scan-lazy-xml-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("Catalogs")).unwrap();
         std::fs::write(
             root.join("Catalogs/Invalid.xml"),
@@ -1017,6 +1017,7 @@ mod tests {
             "ibcmd-rs-source-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("Tasks/ЗадачаИсполнителя/Commands/ВсеЗадачи/Ext"))
             .unwrap();
         std::fs::create_dir_all(root.join("Tasks/ЗадачаИсполнителя/Ext")).unwrap();
@@ -1362,6 +1363,7 @@ mod tests {
             "ibcmd-rs-registers-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("AccumulationRegisters/Продажи/Forms/ФормаСписка"))
             .unwrap();
         std::fs::create_dir_all(root.join("AccountingRegisters/Хозрасчеты/Commands/Печать/Ext"))
@@ -1512,6 +1514,7 @@ mod tests {
             "ibcmd-rs-chart-of-accounts-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("ChartsOfAccounts/ПланСчетов/Ext")).unwrap();
         std::fs::create_dir_all(root.join("ChartsOfAccounts/ПланСчетов/Forms/ФормаСписка"))
             .unwrap();
@@ -1582,6 +1585,7 @@ mod tests {
             "ibcmd-rs-charts-of-calculation-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(
             root.join("ChartsOfCalculationTypes/ВидыРасчета/Forms/ФормаСписка"),
         )
@@ -1679,6 +1683,7 @@ mod tests {
             "ibcmd-rs-source-lab-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("CommonForms")).unwrap();
         std::fs::create_dir_all(root.join("CommonTemplates")).unwrap();
         std::fs::create_dir_all(root.join("CommonForms/АвтономнаяРабота/Ext/Form")).unwrap();
@@ -1832,6 +1837,7 @@ mod tests {
             "ibcmd-rs-source-chart-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join(
             "ChartsOfCharacteristicTypes/ОбъектыАдресацииЗадач/Forms/ФормаЭлемента/Ext/Form",
         ))
@@ -2150,6 +2156,7 @@ mod tests {
             "ibcmd-rs-source-docjournal-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(
             root.join("DocumentJournals/Взаимодействия/Forms/ФормаСписка/Ext/Form"),
         )
@@ -2310,6 +2317,7 @@ mod tests {
             "ibcmd-rs-source-subsystem-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(
             root.join("Subsystems/СтандартныеПодсистемы/Subsystems/УправлениеДоступом/Ext/Help"),
         )
@@ -2394,6 +2402,7 @@ mod tests {
             "ibcmd-rs-source-task-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("Tasks/ЗадачаИсполнителя/Forms/ФормаЗадачи/Ext"))
             .unwrap();
         std::fs::create_dir_all(root.join("Tasks/ЗадачаИсполнителя/Forms/ФормаЗадачи/Ext/Form"))
@@ -2494,6 +2503,7 @@ mod tests {
             "ibcmd-rs-source-data-processor-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(
             root.join("DataProcessors/ВыгрузкаЗагрузкаEnterpriseData/Commands/ЗагрузкаДанныхEnterpriseData/Ext"),
         )
@@ -2720,6 +2730,7 @@ mod tests {
             "ibcmd-rs-source-report-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("Reports/БизнесПроцессы/Ext/Help")).unwrap();
         std::fs::create_dir_all(root.join("Reports/БизнесПроцессы/Templates/Макет/Ext")).unwrap();
 
@@ -2824,6 +2835,7 @@ mod tests {
             "ibcmd-rs-source-exchange-plan-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("ExchangePlans/ОбновлениеИнформационнойБазы/Ext"))
             .unwrap();
 
@@ -2898,6 +2910,7 @@ mod tests {
             "ibcmd-rs-source-enum-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("Enums/ВариантыОтображенияМеток/Ext")).unwrap();
 
         std::fs::copy(
@@ -2951,6 +2964,7 @@ mod tests {
             "ibcmd-rs-source-catalog-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("Catalogs/Валюты/Ext/Help")).unwrap();
         std::fs::create_dir_all(root.join("Catalogs/Валюты/Forms/ФормаСписка/Ext/Form")).unwrap();
         std::fs::create_dir_all(root.join("Catalogs/Валюты/Forms/ФормаЭлемента/Ext/Form")).unwrap();
@@ -3117,6 +3131,7 @@ mod tests {
             "ibcmd-rs-source-information-register-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("InformationRegisters/ВерсииОбъектов/Ext")).unwrap();
         std::fs::create_dir_all(
             root.join("InformationRegisters/ВерсииОбъектов/Forms/ВыборРеквизитовОбъекта/Ext/Form"),
@@ -3309,6 +3324,7 @@ mod tests {
             "ibcmd-rs-source-common-attribute-session-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("CommonAttributes")).unwrap();
         std::fs::create_dir_all(root.join("SessionParameters")).unwrap();
 
@@ -3363,6 +3379,7 @@ mod tests {
             "ibcmd-rs-source-common-command-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("CommonCommands/АвтономнаяРабота/Ext")).unwrap();
         std::fs::create_dir_all(root.join("CommonCommands/ЗагрузитьКурсыВалют/Ext")).unwrap();
         std::fs::create_dir_all(root.join("CommonCommands/АвтономнаяРабота/Ext/CommandInterface"))
@@ -3461,6 +3478,7 @@ mod tests {
             "ibcmd-rs-source-business-process-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("BusinessProcesses/Задание/Ext/Help")).unwrap();
         std::fs::create_dir_all(
             root.join("BusinessProcesses/Задание/Forms/ФормаБизнесПроцесса/Ext/Form"),
@@ -3588,6 +3606,7 @@ mod tests {
             "ibcmd-rs-source-xdto-package-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("XDTOPackages/Адрес/Ext")).unwrap();
 
         std::fs::copy(
@@ -3641,6 +3660,7 @@ mod tests {
             "ibcmd-rs-source-xdto-variant-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(
             root.join("XDTOPackages/ApplicationExtensionsManagement_1_0_1_1/Ext"),
         )
@@ -3697,6 +3717,7 @@ mod tests {
             "ibcmd-rs-source-role-job-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("Roles/АдминистраторСистемы/Ext")).unwrap();
         std::fs::create_dir_all(root.join("ScheduledJobs/ЗагрузкаКурсовВалют/Ext")).unwrap();
 
@@ -3771,6 +3792,7 @@ mod tests {
             "ibcmd-rs-source-settings-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("CommonAttributes")).unwrap();
         std::fs::create_dir_all(root.join("Languages")).unwrap();
         std::fs::create_dir_all(root.join("SettingsStorages")).unwrap();
@@ -3857,6 +3879,7 @@ mod tests {
             "ibcmd-rs-source-functional-options-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("FunctionalOptionsParameters")).unwrap();
 
         std::fs::copy(
@@ -3910,6 +3933,7 @@ mod tests {
             "ibcmd-rs-source-services-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("EventSubscriptions")).unwrap();
         std::fs::create_dir_all(root.join("HTTPServices/exchange_dsl_1_0_0_1/Ext")).unwrap();
         std::fs::create_dir_all(root.join("WebServices/EnterpriseDataExchange_1_0_1_1/Ext"))
@@ -4288,6 +4312,7 @@ mod tests {
             "ibcmd-rs-source-new-sfc-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("Bots/ОповещенияПользователейОСобытиях/Ext")).unwrap();
         std::fs::create_dir_all(root.join("DocumentNumerators")).unwrap();
         std::fs::create_dir_all(root.join("IntegrationServices/ОбменСообщениями/Ext")).unwrap();
@@ -4449,6 +4474,7 @@ mod tests {
             "ibcmd-rs-source-event-subscriptions-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("EventSubscriptions")).unwrap();
 
         std::fs::copy(
@@ -4502,6 +4528,7 @@ mod tests {
             "ibcmd-rs-source-filter-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("FilterCriteria")).unwrap();
 
         std::fs::copy(
@@ -4545,6 +4572,7 @@ mod tests {
             "ibcmd-rs-source-picture-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         std::fs::create_dir_all(root.join("CommonPictures/Адрес/Ext/Picture")).unwrap();
         std::fs::create_dir_all(root.join("CommonPictures/Взаимодействия/Ext/Picture")).unwrap();
         std::fs::create_dir_all(root.join("CommonPictures/ТранспортHTTP/Ext/Picture")).unwrap();

@@ -1186,6 +1186,7 @@ mod tests {
             "ibcmd-rs-interface-writer-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         metadata(
             &root,
             "Catalogs/Товары.xml",
@@ -1276,6 +1277,5 @@ mod tests {
             interface_asset_plaintext(InterfaceAssetSource::CommandInterface, xml.as_bytes(), None)
                 .is_err()
         );
-        let _ = fs::remove_dir_all(root);
     }
 }

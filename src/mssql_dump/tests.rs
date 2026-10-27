@@ -539,6 +539,7 @@ fn source_asset_discovery_fails_closed_for_recognized_family_decoder_misses() {
         "ibcmd-rs-source-completeness-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let catalog_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let role_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -601,8 +602,6 @@ fn source_asset_discovery_fails_closed_for_recognized_family_decoder_misses() {
         dumped.source_assets.emitted + dumped.source_assets.opaque + dumped.source_assets.missing
     );
     assert!(dumped.source_assets.ensure_complete(true).is_err());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -4633,6 +4632,7 @@ fn metadata_inventory_is_empty_when_xml_extraction_is_disabled() {
         "ibcmd-rs-metadata-inventory-disabled-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     let payload = b"opaque";
     let dumped = dump_table_rows_with_options(
         &root,
@@ -4655,7 +4655,6 @@ fn metadata_inventory_is_empty_when_xml_extraction_is_disabled() {
         dumped.metadata_root_inventory,
         RootMetadataInventoryReport::default()
     );
-    fs::remove_dir_all(root).unwrap();
 }
 
 fn owner_metadata_collection_for_test(marker: &str, items: &[&str]) -> String {
@@ -4782,6 +4781,7 @@ fn writes_document_additional_indexes_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let document_metadata =
@@ -4846,8 +4846,6 @@ xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" version=\"2.20\">\r\n\
         row.source_asset_path.as_deref(),
         Some("Documents/Order/Ext/AdditionalIndexes.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -4861,6 +4859,7 @@ fn extracts_module_text_from_dumped_rows() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let text = b"Procedure Run()\r\nEndProcedure\r\n";
     let packed = pack_module_blob_bytes(text, None, None).unwrap();
@@ -4877,8 +4876,6 @@ fn extracts_module_text_from_dumped_rows() {
     let module_text_path = dumped.rows[0].module_text_path.as_ref().unwrap();
     let written = fs::read(root.join(module_text_path)).unwrap();
     assert_eq!(written, text);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -4887,6 +4884,7 @@ fn dumps_table_rows_preserve_input_order() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let rows = vec![
         ConfigRow {
@@ -4920,8 +4918,6 @@ fn dumps_table_rows_preserve_input_order() {
         vec!["third", "first", "second"]
     );
     assert_eq!(dumped.binary_bytes, 6);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -5008,6 +5004,7 @@ fn writes_common_module_text_to_source_layout_when_metadata_is_present() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let metadata = deflate_for_test(
@@ -5050,8 +5047,6 @@ fn writes_common_module_text_to_source_layout_when_metadata_is_present() {
         Some("CommonModules/TestModule/Ext/Module.bsl")
     );
     assert_eq!(fs::read(root.join(expected)).unwrap(), text);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -5069,6 +5064,7 @@ fn writes_binary_common_module_body_to_source_layout() {
             "ibcmd-rs-mssql-dump-test-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(&root).unwrap();
         let uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
         let metadata = deflate_for_test(
@@ -5110,8 +5106,6 @@ fn writes_binary_common_module_body_to_source_layout() {
             Some("CommonModules/BinaryModule/Ext/Module.bin")
         );
         assert!(body_row.module_text_path.is_none());
-
-        let _ = fs::remove_dir_all(root);
     }
 }
 
@@ -5121,6 +5115,7 @@ fn writes_binary_data_processor_object_module_body_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let metadata = deflate_for_test(
@@ -5163,8 +5158,6 @@ fn writes_binary_data_processor_object_module_body_to_source_layout() {
         Some("DataProcessors/BinaryProcessor/Ext/ObjectModule.bin")
     );
     assert!(body_row.module_text_path.is_none());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -5213,6 +5206,7 @@ fn writes_configuration_module_text_to_source_layout_without_metadata_row() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let ordinary_text = b"Procedure OnStart()\r\nEndProcedure\r\n";
@@ -5512,8 +5506,6 @@ fn writes_configuration_module_text_to_source_layout_without_metadata_row() {
             .as_deref(),
         Some("Ext/StandaloneConfigurationContent.bin")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -6208,6 +6200,7 @@ fn source_asset_only_dump_resolves_standalone_content_refs() {
         "ibcmd-rs-standalone-content-source-only-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let configuration_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let role_uuid = "0014cc2a-b5ed-427d-8ac6-116e92aaa9a4";
@@ -6244,8 +6237,6 @@ fn source_asset_only_dump_resolves_standalone_content_refs() {
     assert!(xml.contains("<Metadata>Role.TargetMetrics</Metadata>"));
     assert!(!xml.contains(role_uuid));
     assert!(!root.join("ConfigDumpInfo.xml").exists());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -6278,6 +6269,7 @@ fn writes_service_module_text_to_source_layout_when_metadata_is_present() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let http_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let http_metadata = deflate_for_test(
@@ -6345,8 +6337,6 @@ fn writes_service_module_text_to_source_layout_when_metadata_is_present() {
         web_row.module_text_path.as_deref(),
         Some("WebServices/Exchange/Ext/Module.bsl")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -6355,6 +6345,7 @@ fn writes_common_command_module_text_to_source_layout_when_metadata_is_present()
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let metadata = deflate_for_test(
@@ -6394,8 +6385,6 @@ fn writes_common_command_module_text_to_source_layout_when_metadata_is_present()
         body_row.module_text_path.as_deref(),
         Some("CommonCommands/OpenSettings/Ext/CommandModule.bsl")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -6404,6 +6393,7 @@ fn writes_nested_command_module_text_to_source_layout_when_owner_metadata_is_pre
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let owner_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let command_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -6456,8 +6446,6 @@ fn writes_nested_command_module_text_to_source_layout_when_owner_metadata_is_pre
         body_row.module_text_path.as_deref(),
         Some("DataProcessors/Scanning/Commands/ScanSheet/Ext/CommandModule.bsl")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -6466,6 +6454,7 @@ fn writes_constant_module_text_to_source_layout_when_metadata_is_present() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "dddddddd-dddd-4ddd-dddd-dddddddddddd";
     let metadata = deflate_for_test(
@@ -6530,8 +6519,6 @@ fn writes_constant_module_text_to_source_layout_when_metadata_is_present() {
         manager_row.module_text_path.as_deref(),
         Some("Constants/UseFeature/Ext/ManagerModule.bsl")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -6540,6 +6527,7 @@ fn writes_object_family_module_text_to_source_layout_when_metadata_is_present() 
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let catalog_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let catalog_metadata = deflate_for_test(
@@ -6618,8 +6606,6 @@ fn writes_object_family_module_text_to_source_layout_when_metadata_is_present() 
         root.join("Reports/LateTasks/Ext/ManagerModule.bsl")
             .exists()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -6666,6 +6652,7 @@ fn writes_form_metadata_xml_to_owner_or_common_form_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let catalog_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let second_catalog_uuid = "dddddddd-dddd-4ddd-dddd-dddddddddddd";
@@ -6766,8 +6753,6 @@ fn writes_form_metadata_xml_to_owner_or_common_form_layout() {
         owned_row.metadata_xml_path.as_deref(),
         Some("Catalogs/Products/Forms/ListForm.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -6996,6 +6981,7 @@ fn writes_code4_common_form_to_common_forms_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let form_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let form_metadata = deflate_for_test(
@@ -7050,8 +7036,6 @@ fn writes_code4_common_form_to_common_forms_layout() {
         body_row.source_asset_path.as_deref(),
         Some("CommonForms/SharedCode4/Ext/Form.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -7060,6 +7044,7 @@ fn malformed_form_source_asset_remains_fatal() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let form_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let form_metadata = deflate_for_test(
@@ -7096,8 +7081,6 @@ fn malformed_form_source_asset_remains_fatal() {
         "{error:#}"
     );
     assert!(!root.join("CommonForms/BrokenForm/Ext/Form.xml").exists());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -7106,6 +7089,7 @@ fn writes_form_module_text_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let catalog_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let form_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -7174,8 +7158,6 @@ fn writes_form_module_text_to_source_layout() {
         body_row.source_asset_path.as_deref(),
         Some("Catalogs/Products/Forms/ListForm/Ext/Form.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -7184,6 +7166,7 @@ fn keeps_form_module_but_suppresses_opaque_choice_list_asset() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let catalog_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let form_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -7280,8 +7263,6 @@ fn keeps_form_module_but_suppresses_opaque_choice_list_asset() {
     );
     let report_json = serde_json::to_string(report).unwrap();
     assert!(!report_json.contains(opaque_raw));
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -7290,6 +7271,7 @@ fn opaque_choice_list_does_not_recover_malformed_list_settings_source_asset() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let form_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let form_metadata = deflate_for_test(
@@ -7339,8 +7321,6 @@ fn opaque_choice_list_does_not_recover_malformed_list_settings_source_asset() {
             .join("CommonForms/BrokenListSettings/Ext/Form.xml")
             .exists()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 fn common_form_metadata_for_source_asset_diagnostic_test(form_uuid: &str, name: &str) -> Vec<u8> {
@@ -7380,6 +7360,7 @@ fn collect_all_records_multiple_diagnosed_rejections_and_writes_later_form() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let first_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa1";
     let second_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa2";
@@ -7436,8 +7417,6 @@ fn collect_all_records_multiple_diagnosed_rejections_and_writes_later_form() {
     );
     assert!(dumped.source_assets.ensure_complete(false).is_ok());
     assert!(dumped.source_assets.ensure_complete(true).is_err());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 /// Three-document DCS envelope: header version, settings count, one length per
@@ -7500,6 +7479,7 @@ fn collect_all_records_data_composition_refusal_and_writes_later_form() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let catalog_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaab1";
     let template_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaab2";
@@ -7575,8 +7555,6 @@ fn collect_all_records_data_composition_refusal_and_writes_later_form() {
     assert_eq!(entry.source_row_id, format!("{template_uuid}.0"));
     assert_eq!(entry.raw_length, template_body.len());
     assert_eq!(entry.raw_sha256.len(), 64);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -7585,6 +7563,7 @@ fn default_mode_keeps_data_composition_refusal_fatal() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let catalog_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaab4";
     let template_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaab5";
@@ -7626,8 +7605,6 @@ fn default_mode_keeps_data_composition_refusal_fatal() {
         format!("{error:#}").contains("data-composition source asset"),
         "{error:#}"
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -7636,6 +7613,7 @@ fn collect_all_keeps_rejection_without_structured_diagnostics_fatal() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let form_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa4";
     let metadata =
@@ -7670,8 +7648,6 @@ fn collect_all_keeps_rejection_without_structured_diagnostics_fatal() {
             .join("CommonForms/UndiagnosedFailure/Ext/Form.xml")
             .exists()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -7680,6 +7656,7 @@ fn writes_direct_code14_form_to_owned_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let owner_uuid = "11111111-1111-4111-8111-111111111111";
     let form_uuid = "44444444-4444-4444-8444-444444444441";
@@ -7753,8 +7730,6 @@ fn writes_direct_code14_form_to_owned_source_layout() {
         .unwrap();
     assert_eq!(body_row.source_asset_path.as_deref(), Some(source_path));
     assert_eq!(body_row.module_text_path.as_deref(), Some(module_path));
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -10251,6 +10226,7 @@ fn writes_form_item_pictures_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let catalog_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let form_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -10315,8 +10291,6 @@ fn writes_form_item_pictures_to_source_layout() {
         )
         .exists()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -11325,6 +11299,7 @@ fn writes_command_group_metadata_xml_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let group_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let picture_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -11377,8 +11352,6 @@ fn writes_command_group_metadata_xml_to_source_layout() {
         group_row.metadata_xml_path.as_deref(),
         Some("CommandGroups/Admin.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -11734,6 +11707,7 @@ fn writes_style_item_metadata_xml_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let color_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let font_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -11789,8 +11763,6 @@ fn writes_style_item_metadata_xml_to_source_layout() {
         color_row.metadata_xml_path.as_deref(),
         Some("StyleItems/DoneColor.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -11799,6 +11771,7 @@ fn writes_common_picture_xml_and_asset_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let text_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -11928,8 +11901,6 @@ fn writes_common_picture_xml_and_asset_to_source_layout() {
         picture_row.source_asset_path.as_deref(),
         Some("CommonPictures/Address/Ext/Picture.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -11949,6 +11920,7 @@ fn writes_common_picture_xml_for_pre_layout_upgrade_code3_record() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "4bca6ec8-858d-4fc3-9b44-7aac1a1d6c94";
     let metadata = deflate_for_test(
@@ -11999,8 +11971,6 @@ fn writes_common_picture_xml_for_pre_layout_upgrade_code3_record() {
         fs::read(root.join("CommonPictures/AppStore/Ext/Picture/Picture.zip")).unwrap(),
         zip
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -12018,6 +11988,7 @@ fn writes_scheduled_job_schedule_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let metadata = deflate_for_test(
@@ -12082,8 +12053,6 @@ fn writes_scheduled_job_schedule_to_source_layout() {
         schedule_row.source_asset_path.as_deref(),
         Some("ScheduledJobs/LoadRates/Ext/Schedule.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -12408,6 +12377,7 @@ fn writes_help_xml_and_html_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let metadata = deflate_for_test(
@@ -12468,8 +12438,6 @@ fn writes_help_xml_and_html_to_source_layout() {
         help_row.source_asset_path.as_deref(),
         Some("Catalogs/Products/Ext/Help.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -12478,6 +12446,7 @@ fn prefers_new_object_help_suffix_when_legacy_help_blob_remains() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let metadata = deflate_for_test(
@@ -12535,8 +12504,6 @@ fn prefers_new_object_help_suffix_when_legacy_help_blob_remains() {
             .as_deref(),
         Some("Catalogs/Products/Ext/Help.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -12545,6 +12512,7 @@ fn writes_predefined_data_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let catalog_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let type_uuid = "ae135932-4f94-44df-92c1-c91f15a92848";
@@ -12598,8 +12566,6 @@ fn writes_predefined_data_to_source_layout() {
         predefined_row.source_asset_path.as_deref(),
         Some("Catalogs/Products/Ext/Predefined.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -12608,10 +12574,12 @@ fn non_streamed_information_register_resolves_predefined_design_time_refs() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     let baseline_root = std::env::temp_dir().join(format!(
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&baseline_root);
     fs::create_dir_all(&root).unwrap();
     fs::create_dir_all(&baseline_root).unwrap();
 
@@ -12727,7 +12695,6 @@ fn non_streamed_information_register_resolves_predefined_design_time_refs() {
     );
 
     let _ = fs::remove_dir_all(root);
-    let _ = fs::remove_dir_all(baseline_root);
 }
 
 /// The chart's descriptor is the platform-proven `CorpusCharacteristics` row
@@ -12744,6 +12711,7 @@ fn writes_chart_of_characteristic_types_predefined_data_with_types() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let chart_uuid = "d003f1f8-d632-4f80-adad-af1583998864";
     let ref_type_uuid = "9ede7dd8-7963-4f8c-a2fe-d486fa9931f0";
@@ -12814,8 +12782,6 @@ fn writes_chart_of_characteristic_types_predefined_data_with_types() {
         predefined_row.source_asset_path.as_deref(),
         Some("ChartsOfCharacteristicTypes/CorpusCharacteristics/Ext/Predefined.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -12824,6 +12790,7 @@ fn writes_form_help_xml_and_html_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let catalog_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let form_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -12881,8 +12848,6 @@ fn writes_form_help_xml_and_html_to_source_layout() {
         help_row.source_asset_path.as_deref(),
         Some("Catalogs/Products/Forms/ItemForm/Ext/Help.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -12891,6 +12856,7 @@ fn writes_template_metadata_xml_to_owner_or_common_template_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let catalog_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let owned_template_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -13034,8 +13000,6 @@ fn writes_template_metadata_xml_to_owner_or_common_template_layout() {
         spreadsheet_body_row.source_asset_path.as_deref(),
         Some("Catalogs/Products/Templates/Print/Ext/Template.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 /// End-to-end regression for the `extra` Template.txt defect (`output-
@@ -13052,6 +13016,7 @@ fn writes_graphical_scheme_template_body_to_ext_template_xml() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let catalog_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let template_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -13129,8 +13094,6 @@ fn writes_graphical_scheme_template_body_to_ext_template_xml() {
         body_row.source_asset_path.as_deref(),
         Some("Catalogs/Products/Templates/Scheme/Ext/Template.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -20677,6 +20640,7 @@ fn writes_xdto_package_body_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let metadata = deflate_for_test(
@@ -20719,8 +20683,6 @@ fn writes_xdto_package_body_to_source_layout() {
         body_row.source_asset_path.as_deref(),
         Some("XDTOPackages/Exchange/Ext/Package.bin")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -20729,6 +20691,7 @@ fn writes_role_rights_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let role_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let catalog_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -20904,8 +20867,6 @@ fn writes_role_rights_to_source_layout() {
         body_row.source_asset_path.as_deref(),
         Some("Roles/Editor/Ext/Rights.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -22089,6 +22050,7 @@ fn role_rights_blob_resolves_common_form_refs_from_index() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let role_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let form_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -22135,8 +22097,6 @@ fn role_rights_blob_resolves_common_form_refs_from_index() {
     let xml = fs::read_to_string(root.join("Roles/FormReader/Ext/Rights.xml")).unwrap();
     assert!(xml.contains("<name>CommonForm.SharedRightsForm</name>"));
     assert!(xml.contains("<name>View</name>"));
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -22324,6 +22284,7 @@ fn writes_subsystem_command_interface_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let subsystem_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let catalog_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -22414,8 +22375,6 @@ fn writes_subsystem_command_interface_to_source_layout() {
         body_row.source_asset_path.as_deref(),
         Some("Subsystems/Admin/Ext/CommandInterface.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -22424,6 +22383,7 @@ fn writes_subsystem_command_interface_order_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let subsystem_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let catalog_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -22509,8 +22469,6 @@ fn writes_subsystem_command_interface_order_to_source_layout() {
         body_row.source_asset_path.as_deref(),
         Some("Subsystems/Sales/Ext/CommandInterface.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -22519,6 +22477,7 @@ fn writes_exchange_plan_content_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let configuration_uuid = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
     let configuration_header_uuid = "ffffffff-ffff-4fff-8fff-ffffffffffff";
@@ -22639,8 +22598,6 @@ fn writes_exchange_plan_content_to_source_layout() {
         content_row.source_asset_path.as_deref(),
         Some("ExchangePlans/Sync/Ext/Content.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -22649,6 +22606,7 @@ fn writes_exchange_plan_content_without_metadata_xml_indexes() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let plan_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let catalog_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -22708,8 +22666,6 @@ fn writes_exchange_plan_content_without_metadata_xml_indexes() {
     assert!(xml.contains("<Metadata>cfg:CatalogObject.Customers</Metadata>"));
     assert!(xml.contains("<AutoRecord>Auto</AutoRecord>"));
     assert!(!root.join("ConfigDumpInfo.xml").exists());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -22780,6 +22736,7 @@ fn skips_config_dump_info_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let versions = deflate_for_test(
             b"{1,2,\"\",aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,\"bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb\",cccccccc-cccc-4ccc-cccc-cccccccccccc}",
@@ -22801,8 +22758,6 @@ fn skips_config_dump_info_source_layout() {
         .find(|row| row.file_name == "versions")
         .unwrap();
     assert_eq!(versions_row.source_asset_path.as_deref(), None);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -22811,6 +22766,7 @@ fn writes_business_process_flowchart_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let process_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let start_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -22889,8 +22845,6 @@ fn writes_business_process_flowchart_to_source_layout() {
         flowchart_row.source_asset_path.as_deref(),
         Some("BusinessProcesses/Approval/Ext/Flowchart.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 /// The `ChoiceParameters` slot of a standard attribute, as the platform
@@ -23223,6 +23177,7 @@ fn writes_nested_subsystem_metadata_and_help_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let parent_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let child_uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -23307,8 +23262,6 @@ fn writes_nested_subsystem_metadata_and_help_to_source_layout() {
         help_row.source_asset_path.as_deref(),
         Some("Subsystems/StandardSubsystems/Subsystems/Users/Ext/Help.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -38447,6 +38400,7 @@ fn writes_ws_reference_body_asset_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let ws_uuid = "88888888-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let ws_metadata = deflate_for_test(
@@ -38498,8 +38452,6 @@ fn writes_ws_reference_body_asset_to_source_layout() {
         fs::read(root.join("WSReferences/UpdateFiles/Ext/1.xsd")).unwrap(),
         b"<xs:schema/>".to_vec()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -38508,6 +38460,7 @@ fn writes_style_body_xml_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let style_uuid = "99999999-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let color_uuid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -38601,8 +38554,6 @@ fn writes_style_body_xml_to_source_layout() {
         body_row.source_asset_path.as_deref(),
         Some("Styles/Main/Ext/Style.xml")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -38655,6 +38606,7 @@ fn resolves_defined_type_reference_from_dumped_document_type_index() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let document_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let document_ref_type_id = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
@@ -38699,8 +38651,6 @@ fn resolves_defined_type_reference_from_dumped_document_type_index() {
     );
     let xml = fs::read_to_string(root.join("DefinedTypes").join("InvoiceOwner.xml")).unwrap();
     assert!(xml.contains("<v8:Type>cfg:DocumentRef.Invoice</v8:Type>"));
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -39085,6 +39035,7 @@ fn resolves_chart_of_calculation_types_generated_types_in_defined_types() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let chart_uuid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let object_type_id = "11111111-1111-4111-8111-000000000101";
@@ -39142,8 +39093,6 @@ fn resolves_chart_of_calculation_types_generated_types_in_defined_types() {
     assert!(
         object_xml.contains("<v8:Type>cfg:ChartOfCalculationTypesObject.PayrollTypes</v8:Type>")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -45949,6 +45898,7 @@ fn writes_extracted_metadata_xml_to_source_layout() {
         "ibcmd-rs-mssql-dump-test-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let uuid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
     let blob = deflate_for_test(document_metadata_text_for_test(uuid, "Invoice").as_bytes());
@@ -45970,8 +45920,6 @@ fn writes_extracted_metadata_xml_to_source_layout() {
     let properties = parse_simple_metadata_xml_properties(&written).unwrap();
     assert_eq!(properties.kind, "Document");
     assert_eq!(properties.uuid, uuid);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 fn encode_hex_for_test(bytes: &[u8]) -> String {
@@ -54841,6 +54789,7 @@ fn adopted_form_validation_does_not_leave_a_module() {
         "ibcmd-adopted-row-cleanup-{}",
         uuid::Uuid::new_v4()
     ));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&root);
     fs::create_dir_all(&root).unwrap();
     let form_uuid = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
     let event_id = "9f2e5ddb-3492-4f5d-8f0d-416b8d1d5c5b";
@@ -54904,7 +54853,6 @@ fn adopted_form_validation_does_not_leave_a_module() {
             .exists(),
         "failed row left its module in output"
     );
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

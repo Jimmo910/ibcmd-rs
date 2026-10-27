@@ -879,6 +879,7 @@ mod tests {
     #[test]
     fn the_uuid_of_an_object_is_read_from_the_head_of_its_file() {
         let dir = std::env::temp_dir().join(format!("ibcmd-delta-head-{}", std::process::id()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&dir);
         fs::create_dir_all(&dir).unwrap();
         let file = dir.join("X.xml");
         fs::write(
@@ -892,7 +893,6 @@ mod tests {
         );
         fs::write(&file, "<Other/>").unwrap();
         assert_eq!(object_uuid(&file), None);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

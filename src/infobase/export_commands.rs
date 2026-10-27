@@ -253,16 +253,17 @@ mod publication_tests {
         io::{self, Write},
     };
 
-    fn root() -> PathBuf {
+    fn root() -> crate::test_scratch::TestScratch {
         let root = std::env::temp_dir().join(format!("export-write-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        fs::canonicalize(root).unwrap()
+        crate::test_scratch::TestScratch::adopt(fs::canonicalize(root).unwrap())
     }
 
     #[test]
     fn empty_object_output_is_refused_before_connection_resolution() {
         use std::ffi::OsString;
         let db = std::env::temp_dir().join(format!("missing-db-{}", uuid::Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&db);
         let words = vec![
             "config".into(),
             "export".into(),
@@ -294,7 +295,7 @@ mod publication_tests {
         fs::write(&first, b"original").unwrap();
         let blocked = root.join("z.txt");
         fs::create_dir(&blocked).unwrap();
-        let sink = ObjectSink::new(root.clone()).unwrap();
+        let sink = ObjectSink::new(root.to_path_buf()).unwrap();
         let staging = sink.staging.clone();
         sink.accept(&first, b"replacement").unwrap();
         sink.accept(&blocked, b"replacement").unwrap();

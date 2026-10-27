@@ -64,6 +64,34 @@ its own in `Cargo.toml` and runs with `--test <suite>`. The manifest sets `autot
 `every_suite_file_is_built` fails when a `tests/<suite>.rs` file is built by
 no target or by two.
 
+## Temporary directories
+
+A test removes every directory and file it creates under the system temporary
+directory, on success and on failure: it holds the path in a guard whose
+`Drop` removes it. A `remove_dir_all` at the end of a test does not count,
+since a failing assertion skips it. The guards are `common::Scratch`
+(`common::temp_dir`, `common::temp_file`) in `tests/`,
+`test_scratch::TestScratch` in the root library, and `tempfile::TempDir` or a
+guard of the crate's own in `crates/`. Names are unique per run (a UUID, or the
+process id with a counter or a timestamp), so the runs of two worktrees on one
+machine share no directory but the two kept corpora below.
+
+`IBCMD_TEST_KEEP_FIXTURES=1` keeps the fixtures for debugging; no other value
+does, and no gate sets it for the Rust tests.
+
+A run leaves three names on purpose. Two are the editor-server corpora that
+the VS Code tests read by name: `ibcmd-external-editor-server-protocol`
+(`IBCMD_TEST_ROWS`, `editors/vscode/README.md`) and
+`ibcmd-external-editor-server-export`. The third is the empty `ibcmd-rs`,
+the parent that the engine's own scratch folders share.
+
+The offline matrix runs its tests with `TEMP`, `TMP` and `TMPDIR` set to an
+empty directory and fails when anything else is left there. `cargo xtask ci`
+does the same: its cargo test steps get a directory of their own,
+`ibcmd-ci-<hash of the worktree path>` in the system temporary directory
+(a Unix socket path the tests bind must stay short), which it checks
+afterwards and then removes.
+
 ## Research corpus suite
 
 Tests behind `research-corpus-tests` are opt-in manual probes. Most depend on

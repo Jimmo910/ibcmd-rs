@@ -1005,7 +1005,6 @@ mod tests {
             &compiled.rows[key],
             &module_text(&root, path).unwrap(),
         );
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1046,15 +1045,14 @@ mod tests {
             .resolve_needs_base(&target, entry.logical_key(), &entry)
             .unwrap();
         assert_module_context_preserved(&base, &packed, &module_text(&root, path).unwrap());
-        fs::remove_dir_all(root).unwrap();
     }
 
-    fn tmp(tag: &str) -> std::path::PathBuf {
+    fn tmp(tag: &str) -> crate::test_scratch::TestScratch {
         let dir =
             std::env::temp_dir().join(format!("ibcmd-load-unit-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        dir
+        crate::test_scratch::TestScratch::adopt(dir)
     }
 
     fn write(root: &std::path::Path, rel: &str, text: &str) {
@@ -1177,6 +1175,7 @@ mod tests {
     #[test]
     fn the_scratch_export_is_removed_even_when_the_load_panics() {
         let dir = std::env::temp_dir().join(format!("ibcmd-scratch-test-{}", std::process::id()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&dir);
         fs::create_dir_all(dir.join("a")).unwrap();
         let guarded = dir.clone();
         let outcome = std::panic::catch_unwind(move || {
@@ -1219,7 +1218,6 @@ mod tests {
         let error = module_text(&root, "М/Ext/Module.bsl").unwrap_err();
         assert!(error.contains("М/Ext/Module.bsl"), "{error}");
         assert!(error.contains("UTF-8"), "{error}");
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1231,8 +1229,6 @@ mod tests {
         write(&b, ".vscode/settings.json", "{}");
         write(&a, ".complete", "");
         assert_eq!(diff_trees(&a, &b).unwrap(), TreeDiff::default());
-        let _ = fs::remove_dir_all(&a);
-        let _ = fs::remove_dir_all(&b);
     }
 
     #[test]

@@ -3361,6 +3361,7 @@ mod tests {
             "ibcmd-rs-audit-spreadsheet-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(root.join("CommonTemplates/Good/Ext"))?;
         fs::create_dir_all(root.join("CommonTemplates/Broken/Ext"))?;
         fs::write(
@@ -3435,6 +3436,7 @@ mod tests {
             "ibcmd-rs-audit-spreadsheet-roundtrip-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(root.join("CommonTemplates/Good/Ext"))?;
         fs::write(
             root.join("CommonTemplates/Good.xml"),
@@ -3590,6 +3592,7 @@ mod tests {
             "ibcmd-rs-audit-forms-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(root.join("Catalogs/Products/Forms/ListForm/Ext/Form/Items/Icon"))?;
         fs::create_dir_all(root.join("CommonForms/Broken/Ext"))?;
         fs::write(
@@ -3789,6 +3792,7 @@ mod tests {
             "ibcmd-rs-audit-load-coverage-{}",
             uuid::Uuid::new_v4().hyphenated()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(root.join("Catalogs/Products/Forms/ListForm/Ext/Form/Items/Icon"))?;
         fs::create_dir_all(root.join("Catalogs/Products/Ext"))?;
         fs::create_dir_all(root.join("CommonModules/Foo/Ext"))?;

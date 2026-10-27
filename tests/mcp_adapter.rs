@@ -7,8 +7,10 @@ use std::{fs, path::PathBuf, process::Stdio};
 fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/external")
 }
-fn corpus() -> (PathBuf, PathBuf, PathBuf) {
-    let root = std::env::temp_dir().join(format!("ibcmd-mcp-{}", uuid::Uuid::new_v4()));
+fn corpus() -> (crate::common::Scratch, PathBuf, PathBuf) {
+    let root = crate::common::Scratch::adopt(
+        std::env::temp_dir().join(format!("ibcmd-mcp-{}", uuid::Uuid::new_v4())),
+    );
     fs::create_dir_all(root.join("rows")).unwrap();
     fs::create_dir_all(root.join("source")).unwrap();
     let cf = fixture_root().join("home_page/one_column/input.cf");
@@ -361,6 +363,7 @@ async fn legacy_initialize_and_modern_discover_are_supported() {
 async fn real_mcp_client_reads_disposable_filedb_without_mutation() {
     use std::io::Read;
     let root = std::env::temp_dir().join(format!("ibcmd-mcp-filedb-{}", uuid::Uuid::new_v4()));
+    let _scratch = crate::common::Scratch::adopt(&root);
     let db = root.join("db");
     fs::create_dir_all(&db).unwrap();
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/file-infobase");
@@ -453,9 +456,11 @@ async fn real_mcp_client_reads_disposable_filedb_without_mutation() {
     client.cancel().await.unwrap();
 }
 
-fn writable_corpus(opt_in: Option<bool>) -> (PathBuf, PathBuf, PathBuf) {
+fn writable_corpus(opt_in: Option<bool>) -> (crate::common::Scratch, PathBuf, PathBuf) {
     use std::io::Read;
-    let root = std::env::temp_dir().join(format!("ibcmd-mcp-write-{}", uuid::Uuid::new_v4()));
+    let root = crate::common::Scratch::adopt(
+        std::env::temp_dir().join(format!("ibcmd-mcp-write-{}", uuid::Uuid::new_v4())),
+    );
     let db = root.join("db");
     let source = root.join("source");
     fs::create_dir_all(&db).unwrap();
@@ -559,7 +564,7 @@ async fn source_tools_consistently_refuse_hidden_files_directories_and_links() {
     }
     for kind in ["file", "directory", "symlink"] {
         let (root, db, settings) = writable_corpus(Some(true));
-        let _scratch = Scratch(root.clone());
+        let _scratch = Scratch(root.to_path_buf());
         let source = root.join("source");
         let module = source.join(WRITE_MODULE);
         fs::write(

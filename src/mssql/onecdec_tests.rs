@@ -34,8 +34,7 @@ fn compiles_every_stored_home_page_work_area() {
                 &format!("<Form>{uuid}</Form>"),
             );
         }
-        let root = std::env::temp_dir().join(format!("ibcmd-rs-home-page-{case}"));
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::test_scratch::TestScratch::new(&format!("ibcmd-rs-home-page-{case}"));
         let body_path = root.join("Ext").join("HomePageWorkArea.xml");
         fs::create_dir_all(body_path.parent().unwrap()).unwrap();
         fs::write(&body_path, xml).unwrap();
@@ -64,6 +63,5 @@ fn compiles_every_stored_home_page_work_area() {
             String::from_utf8_lossy(&stored),
             String::from_utf8_lossy(&compiled)
         );
-        let _ = fs::remove_dir_all(&root);
     }
 }

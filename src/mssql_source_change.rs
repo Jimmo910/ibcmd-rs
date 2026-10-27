@@ -1688,7 +1688,7 @@ mod tests {
         struct Scratch(PathBuf);
         impl Drop for Scratch {
             fn drop(&mut self) {
-                if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+                if !crate::test_scratch::keep_fixtures() {
                     let _ = fs::remove_dir_all(&self.0);
                 }
             }
@@ -1732,6 +1732,7 @@ mod tests {
 
         let root =
             std::env::temp_dir().join(format!("ibcmd-rs-held-root-{}", uuid::Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         let first = root.join("Выгрузка");
         let second = root.join("ВЫГРУЗКА-target");
         fs::create_dir_all(first.join("sources")).unwrap();
@@ -1764,11 +1765,8 @@ mod tests {
             Err(SourceChangeError::HeldRootChanged)
         ));
         drop(held);
-        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+        if !crate::test_scratch::keep_fixtures() {
             fs::remove_file(&first).unwrap();
-        }
-        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
-            fs::remove_dir_all(root).unwrap();
         }
     }
 
@@ -2610,6 +2608,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(root.join("CommonModules/Work/Ext")).unwrap();
         fs::write(root.join("Configuration.xml"), "root").unwrap();
         fs::write(root.join("CommonModules/Work.xml"), "metadata").unwrap();
@@ -2633,9 +2632,6 @@ mod tests {
         fs::write(root.join("CommonModules/Work/Ext/Module.bsl"), "bad").unwrap();
         assert_eq!(verified.bytes(), b"new");
         drop(held);
-        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
-            fs::remove_dir_all(root).unwrap();
-        }
     }
 
     #[test]
@@ -2648,6 +2644,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&base);
         let root = base.join("root");
         fs::create_dir_all(&root).unwrap();
         fs::write(base.join("outside.bsl"), "outside").unwrap();
@@ -2662,9 +2659,6 @@ mod tests {
                 | Err(SourceChangeError::PathEscapesRoot(_))
         ));
         drop(held);
-        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
-            fs::remove_dir_all(base).unwrap();
-        }
     }
 
     #[test]
@@ -2705,6 +2699,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("Configuration.xml"), "root").unwrap();
         let error = HeldSourceRoot::open(
@@ -2717,9 +2712,6 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(error, SourceChangeError::InventoryLimit(_)));
-        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
-            fs::remove_dir_all(root).unwrap();
-        }
     }
 
     #[cfg(windows)]
@@ -2735,6 +2727,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&base);
         let real = base.join("real");
         fs::create_dir_all(&real).unwrap();
         fs::write(real.join("Configuration.xml"), "root").unwrap();
@@ -2755,15 +2748,12 @@ mod tests {
                 HeldSourceRoot::open(&real, SourceInventoryLimits::default()),
                 Err(SourceChangeError::LinkOrReparsePoint(_))
             ));
-            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            if !crate::test_scratch::keep_fixtures() {
                 fs::remove_file(&entry_link).unwrap();
             }
         }
-        if root_link.exists() && std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+        if root_link.exists() && !crate::test_scratch::keep_fixtures() {
             fs::remove_dir(&root_link).unwrap();
-        }
-        if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
-            fs::remove_dir_all(base).unwrap();
         }
     }
 }
@@ -2834,7 +2824,7 @@ mod traversal_budget_tests {
     }
     impl Drop for Scratch {
         fn drop(&mut self) {
-            if std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_none() {
+            if !crate::test_scratch::keep_fixtures() {
                 let _ = fs::remove_dir_all(&self.0);
             }
         }
@@ -2852,6 +2842,7 @@ mod traversal_budget_tests {
     fn after_timestamp_tick(path: &Path) {
         let stamped = fs::metadata(path).unwrap().modified().unwrap();
         let probe = std::env::temp_dir().join(format!("held-source-tick-{}", uuid::Uuid::new_v4()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&probe);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         for round in 0u64.. {
             // Changing bytes: some file systems keep the time of a rewrite

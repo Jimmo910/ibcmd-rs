@@ -201,14 +201,14 @@ fn public_unchanged_return_preserves_module_bytes_and_forged_edit_rejects() {
 fn form_module_preserves_double_prefix_and_all_body_whitespace() {
     use morph1c_core::ir::{FormBody, NamedFormBody};
     use morph1c_pipeline::{attach_form_body, write_form_bodies};
-    // This focused regression retains its fixture even after an assertion fails.
-    struct Retained(std::path::PathBuf);
-    impl Retained {
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-    let dir = Retained(tempfile::tempdir().unwrap().keep());
+    // The fixture is removed with `dir`, also after an assertion fails, unless
+    // IBCMD_TEST_KEEP_FIXTURES=1 keeps it for debugging.
+    let dir = tempfile::Builder::new()
+        .disable_cleanup(
+            std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1"),
+        )
+        .tempdir()
+        .unwrap();
     for (i, format) in [Format::Designer, Format::Edt].into_iter().enumerate() {
         for (j, text) in [
             "",

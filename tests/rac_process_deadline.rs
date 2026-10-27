@@ -2,6 +2,7 @@
 //! Every unknown scenario has a fresh test process. Finite inherited-pipe
 //! holders expire naturally; tests never signal or adopt a descendant by PID.
 
+mod common;
 #[path = "../src/profile_process.rs"]
 mod profile_process;
 #[path = "../src/rac_process.rs"]
@@ -21,11 +22,11 @@ fn main() {
         Some("helper") => helper(&arguments[2..]),
         Some("scenario") => scenario(&arguments[2], Path::new(&arguments[3])),
         None => {
-            let directory = std::env::temp_dir().join(format!(
+            let directory = common::Scratch::adopt(std::env::temp_dir().join(format!(
                 "ibcmd-rac-deadline-{}-{}",
                 std::process::id(),
                 uuid::Uuid::new_v4()
-            ));
+            )));
             std::fs::create_dir(&directory).unwrap();
             // Wire the same private production profile owner into this source
             // harness too. The ten existing RAC scenario handlers stay intact.
@@ -56,7 +57,9 @@ fn main() {
                 assert_eq!(std::fs::read(marker).unwrap(), b"PASS");
             }
             println!("10 actual original-process/BOTH scenarios PASS");
-            // Evidence files stay available; no recursive deletion or signals.
+            // No signals: the finite holders expire on their own. A helper the
+            // collector abandoned may still write its marker for a few seconds.
+            directory.remove_within(Duration::from_secs(10));
         }
         _ => panic!("unrecognized test role"),
     }

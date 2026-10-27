@@ -257,6 +257,7 @@ mod tests {
             .unwrap();
         let path =
             std::env::temp_dir().join(format!("filedb-next-registry-{}.1CD", std::process::id()));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&path);
         fs::write(&path, bytes).unwrap();
         let mut db = crate::FileDb::open(&path).unwrap();
         let mut next = db.tables["_EXTENSIONSINFO"].clone();
@@ -266,7 +267,6 @@ mod tests {
             matches!(db.extension_registry(),Err(Error::Unsupported(message)) if message.contains("next-generation"))
         );
         drop(db);
-        fs::remove_file(path).unwrap();
     }
     fn table() -> Table {
         Table {

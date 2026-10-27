@@ -1,11 +1,14 @@
 """Synthetic negative controls only: no installed EDT acceptance is claimed.
 
-Fixtures are retained; the lab runner sets TMPDIR to the external disk.
+Each fixture is removed after its test, also when it fails, unless
+IBCMD_TEST_KEEP_FIXTURES=1 keeps it for debugging; the lab runner sets TMPDIR
+to the external disk.
 """
 import importlib.util
 import json
 import os
 from pathlib import Path, PureWindowsPath
+import shutil
 import sys
 import tempfile
 import subprocess
@@ -42,6 +45,8 @@ class Controls(unittest.TestCase):
 
     def fixture(self):
         root = Path(tempfile.mkdtemp(prefix="issue357-control-"))
+        if os.environ.get("IBCMD_TEST_KEEP_FIXTURES") != "1":
+            self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         native, run = root / "native", root / "run"
         write(native / "Configuration.xml", b"original XML bytes")
         write(native / "ConfigDumpInfo.xml", b"original dump bytes")

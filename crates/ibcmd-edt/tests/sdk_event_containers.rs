@@ -127,7 +127,10 @@ fn field_native_interleaving_is_lexical_and_handlers_are_current() {
         let reordered = reordered[..at].to_owned() + &row + &reordered[at..];
         let mut native = read(reordered.as_bytes(), FormDialect::Designer, minor);
         let generated = write(&native, FormDialect::Designer, minor);
-        if generated != reordered.as_bytes() {
+        // Both sides of a mismatch, for debugging with IBCMD_TEST_KEEP_FIXTURES=1.
+        if generated != reordered.as_bytes()
+            && std::env::var_os("IBCMD_TEST_KEEP_FIXTURES").is_some_and(|value| value == "1")
+        {
             std::fs::write(
                 std::env::temp_dir().join("event-order-source.xml"),
                 reordered.as_bytes(),

@@ -679,6 +679,7 @@ fn typed_postcommit_refusal_enters_same_retention_and_cannot_signal_or_undo() {
 fn public_fresh_commands_refuse_tail_before_files_credentials_or_creation() {
     let missing =
         std::env::temp_dir().join(format!("managed-cli-tail-refusal-{}", uuid::Uuid::new_v4()));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&missing);
     assert!(!missing.exists());
     let mut source = source();
     let mut activation = activation();
@@ -921,6 +922,7 @@ fn complete_group_and_empty_group_select_only_their_original_routes() {
 fn complete_programmatic_group_cannot_adopt_any_legacy_target_field() {
     let missing =
         std::env::temp_dir().join(format!("managed-cli-adoption-{}", uuid::Uuid::new_v4()));
+    let _scratch = crate::test_scratch::TestScratch::adopt(&missing);
     assert!(!missing.exists());
     for index in 0..6 {
         let mut source = source();

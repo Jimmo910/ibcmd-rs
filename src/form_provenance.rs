@@ -707,8 +707,9 @@ fn correlate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn temp(xml: &str) -> PathBuf {
+    fn temp(xml: &str) -> crate::test_scratch::TestScratch {
         let p = std::env::temp_dir().join(format!("ibcmd-provenance-{}.xml", uuid::Uuid::new_v4()));
+        let p = crate::test_scratch::TestScratch::adopt(p);
         fs::write(&p, xml).unwrap();
         p
     }
@@ -790,7 +791,6 @@ mod tests {
         let empty = x.iter().find(|item| item.id == "3").unwrap();
         assert_eq!(empty.tag, "Button");
         assert_eq!(empty.owner_chain, vec!["Table:1"]);
-        let _ = fs::remove_file(p);
     }
     #[test]
     fn correlation_is_fail_closed_and_states_are_explicit() {
@@ -922,7 +922,6 @@ mod tests {
         assert_eq!(e[0].message, "bad");
         let malformed = temp("<Form><Table id=\"1\" name=\"T\"></Form>");
         assert!(parse_xml_items(&malformed, &[]).is_err());
-        let _ = fs::remove_file(malformed);
         assert_eq!(e[0].stage, "raw_trace");
     }
     #[test]

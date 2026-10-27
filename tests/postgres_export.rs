@@ -44,6 +44,7 @@ fn the_export_of_a_postgresql_infobase_is_the_platforms() {
     let user = std::env::var("IBCMD_RS_PG_USER").unwrap_or_else(|_| "postgres".to_string());
     let out: PathBuf =
         std::env::temp_dir().join(format!("ibcmd-rs-pg-export-{}", std::process::id()));
+    let _scratch = crate::common::Scratch::adopt(&out);
     let _ = fs::remove_dir_all(&out);
     let mut command = Command::new(env!("CARGO_BIN_EXE_ibcmd-rs"));
     command
@@ -72,5 +73,4 @@ fn the_export_of_a_postgresql_infobase_is_the_platforms() {
         "{} files differ: {differ:?}",
         differ.len()
     );
-    let _ = fs::remove_dir_all(&out);
 }
