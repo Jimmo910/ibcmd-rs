@@ -46,17 +46,11 @@ pub mod storage;
 pub mod xdto;
 
 #[cfg(test)]
-mod tests_corpus;
-#[cfg(test)]
 mod tests_create;
-#[cfg(test)]
-mod tests_entry;
 #[cfg(test)]
 mod tests_plan;
 #[cfg(test)]
 mod tests_s1;
-#[cfg(test)]
-mod tests_schema;
 #[cfg(test)]
 mod tests_sections;
 #[cfg(test)]
@@ -64,6 +58,10 @@ mod tests_size_guard;
 
 #[cfg(test)]
 #[path = "../../tests/support/restructure_corpus.rs"]
+#[expect(
+    dead_code,
+    reason = "Shared snapshot helpers have additional consumers in the engine crate"
+)]
 mod test_corpus_support;
 #[cfg(test)]
 #[path = "../../tests/support/restructure_create.rs"]

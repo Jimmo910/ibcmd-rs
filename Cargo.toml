@@ -23,6 +23,7 @@ members = [
     "crates/ibcmd-moxel",
     "crates/ibcmd-1c-text",
     "crates/ibcmd-restructure",
+    "crates/ibcmd-restructure-engine",
     "crates/ibcmd-1c-vocab",
     "crates/ibcmd-form-body",
     "crates/ibcmd-module-blob",
@@ -64,6 +65,7 @@ ibcmd-form-native = { path = "crates/ibcmd-form-native" }
 ibcmd-moxel = { path = "crates/ibcmd-moxel" }
 ibcmd-1c-text = { path = "crates/ibcmd-1c-text" }
 ibcmd-restructure = { path = "crates/ibcmd-restructure" }
+ibcmd-restructure-engine = { path = "crates/ibcmd-restructure-engine" }
 ibcmd-1c-vocab = { path = "crates/ibcmd-1c-vocab" }
 ibcmd-form-body = { path = "crates/ibcmd-form-body" }
 ibcmd-module-blob = { path = "crates/ibcmd-module-blob" }

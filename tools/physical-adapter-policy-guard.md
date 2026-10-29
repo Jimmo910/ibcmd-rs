@@ -103,6 +103,22 @@ existing fingerprint records unchanged. The feature-gated live test module
 stays excluded by its test-only declaration. All earlier records, including
 the two stale records, remain unchanged.
 
+`crates/ibcmd-restructure-engine/src/` and the existing portable model crate's
+new `crates/ibcmd-restructure/src/descriptor/` directory also belong to the
+slice. The engine holds the native restructuring planner, caches, database
+execution and search-information records formerly under `src/restructure/`
+and `src/mssql_config_apply/si.rs`, plus the apply model's text primitives.
+The descriptor directory holds the shared object layouts and adoption
+identity formerly under `src/metadata_model/objects*.rs` and
+`src/mssql_dump/extension/mod.rs`. The portable model crate's earlier source
+stays outside this slice, as the earlier MOXCEL decoder does. All 132 earlier
+file records, including stale records, remain unchanged. Thirty-eight new
+production file records join with their 300 existing fingerprint records.
+The two public descriptor UUID constants retain their values and counts;
+their fingerprints change only because `pub(crate)` becomes `pub`. The exact
+before/after records are listed in the extraction's evidence. No baseline
+refresh is used. Root CLI/settings/apply adapters remain in the root.
+
 The guard tokenizes logical Rust statements outside comments and provably
 test-only items, including multiline, raw-string, escaped-string and char forms.
 It conservatively inventories immediate XML sink fragments and literal

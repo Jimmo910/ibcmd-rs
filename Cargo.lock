@@ -836,6 +836,22 @@ dependencies = [
  "anyhow",
  "flate2",
  "ibcmd-schema",
+ "serde",
+]
+
+[[package]]
+name = "ibcmd-restructure-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ibcmd-1c-text",
+ "ibcmd-compiler-families",
+ "ibcmd-restructure",
+ "ibcmd-sql",
+ "serde",
+ "serde_json",
+ "sha2",
+ "uuid",
 ]
 
 [[package]]
@@ -860,6 +876,7 @@ dependencies = [
  "ibcmd-moxel",
  "ibcmd-postgres",
  "ibcmd-restructure",
+ "ibcmd-restructure-engine",
  "ibcmd-schema",
  "ibcmd-sql",
  "ibcmd-v8",

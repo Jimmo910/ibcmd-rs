@@ -1,3 +1,3 @@
-//! Compatibility re-export of the portable names model.
+//! Compatibility re-export of the native restructuring engine.
 
-pub use ibcmd_restructure::names::*;
+pub use ibcmd_restructure_engine::restructure::names::*;
