@@ -1209,6 +1209,7 @@ impl std::ops::Deref for SourceBytes {
 }
 
 impl SourceBytes {
+    #[doc(hidden)]
     pub fn into_vec(self) -> Vec<u8> {
         match self {
             Self::Shared(bytes) => bytes.as_ref().clone(),
@@ -1261,6 +1262,7 @@ impl MetadataSourceContext {
         }
     }
 
+    #[doc(hidden)]
     pub fn with_original_source(source: Arc<dyn OriginalSourceTree>) -> Self {
         Self {
             original_source: Some(source.clone()),
@@ -1268,6 +1270,7 @@ impl MetadataSourceContext {
         }
     }
 
+    #[doc(hidden)]
     pub fn require_original_unchanged(&self) -> anyhow::Result<()> {
         if let Some(source) = &self.original_source {
             source.require_unchanged()?;
@@ -1278,6 +1281,7 @@ impl MetadataSourceContext {
     /// The bytes of a source file: shared from memory when preloaded, else
     /// read. (The resolvers ask for ERP УХ's metadata XMLs some 150 000 times;
     /// a copy each time cost a large-block allocation each.)
+    #[doc(hidden)]
     pub fn read_source(&self, path: &Path) -> std::io::Result<SourceBytes> {
         if let Some(source) = &self.original_source {
             return source
@@ -1292,6 +1296,7 @@ impl MetadataSourceContext {
     }
 
     /// The uuid `Configuration.xml` declares for the configuration itself.
+    #[doc(hidden)]
     pub fn configuration_uuid(&self) -> Option<String> {
         self.configuration_uuid
             .get_or_init(|| {
@@ -1313,6 +1318,7 @@ impl MetadataSourceContext {
     /// data-composition schema names it (`CatalogRef.X`, `Characteristic.X`),
     /// read from the owning object's `InternalInfo`. `None` when the tree has
     /// no such object or type.
+    #[doc(hidden)]
     pub fn dcs_generated_type_id(&self, name: &str) -> Option<String> {
         if let Ok(cache) = self.generated_type_ids.lock()
             && let Some(found) = cache.get(name)
@@ -1332,6 +1338,7 @@ impl MetadataSourceContext {
 
     /// The tree's configuration style items: lowercase uuid -> name. A file
     /// that does not parse contributes nothing rather than failing the scan.
+    #[doc(hidden)]
     pub fn dcs_style_items(&self) -> &BTreeMap<String, String> {
         self.style_items
             .get_or_init(|| style_reference_types_from_source_root(&self.source_root))
@@ -1409,6 +1416,7 @@ impl MetadataSourceContext {
         Ok(())
     }
 
+    #[doc(hidden)]
     pub fn resolve_common_picture_uuid(&self, reference: &str) -> Result<String> {
         let name = reference
             .trim()
@@ -1496,6 +1504,7 @@ impl MetadataSourceContext {
         Ok(properties.uuid)
     }
 
+    #[doc(hidden)]
     pub fn resolve_style_item_uuid(&self, reference: &str) -> Result<String> {
         let name = reference
             .trim()
@@ -1614,6 +1623,7 @@ impl MetadataSourceContext {
         Ok(dimensions)
     }
 
+    #[doc(hidden)]
     pub fn resolve_metadata_type_id(&self, reference: &str) -> Result<String> {
         let generated_type_name = reference
             .trim()
