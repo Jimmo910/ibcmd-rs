@@ -51,6 +51,19 @@ pub fn interface_asset_plaintext(
     xml: &[u8],
     source: Option<&MetadataSourceContext>,
 ) -> Result<Vec<u8>> {
+    plaintext_through(
+        kind,
+        xml,
+        source.map(|source| source as &dyn MetadataSource),
+    )
+}
+
+/// [`interface_asset_plaintext`], with the names read through any source.
+fn plaintext_through(
+    kind: InterfaceAssetSource,
+    xml: &[u8],
+    source: Option<&dyn MetadataSource>,
+) -> Result<Vec<u8>> {
     let resolver = Resolver { source };
     let root = parse_document(xml)?;
     match kind {
@@ -351,11 +364,11 @@ fn parse_visibility(node: &Node, resolver: &Resolver<'_>) -> Result<(bool, Vec<V
 // ---------------------------------------------------------------------------
 
 struct Resolver<'a> {
-    source: Option<&'a MetadataSourceContext>,
+    source: Option<&'a dyn MetadataSource>,
 }
 
 impl Resolver<'_> {
-    fn source(&self, name: &str) -> Result<&MetadataSourceContext> {
+    fn source(&self, name: &str) -> Result<&dyn MetadataSource> {
         self.source.ok_or_else(|| {
             anyhow!("`{name}` names an object, and no source tree was given to resolve it")
         })
@@ -363,14 +376,14 @@ impl Resolver<'_> {
 
     /// `(class, uuid)` of the metadata file at `path`, read up to its first
     /// element.
-    fn header(&self, source: &MetadataSourceContext, path: &Path) -> Option<(String, String)> {
-        if let Ok(memo) = source.interface_memo.lock()
+    fn header(&self, source: &dyn MetadataSource, path: &Path) -> Option<(String, String)> {
+        if let Ok(memo) = source.interface_memo().lock()
             && let Some(found) = memo.headers.get(path)
         {
             return found.clone();
         }
         let found = read_metadata_file_header(source, path);
-        if let Ok(mut memo) = source.interface_memo.lock() {
+        if let Ok(mut memo) = source.interface_memo().lock() {
             memo.headers.insert(path.to_path_buf(), found.clone());
         }
         found
@@ -399,7 +412,7 @@ impl Resolver<'_> {
                 "`{name}` is not a subsystem path"
             );
             let names = parts.iter().skip(1).step_by(2).collect::<Vec<_>>();
-            let mut path = source.source_root.join("Subsystems");
+            let mut path = source.source_root().join("Subsystems");
             for (index, part) in names.iter().enumerate() {
                 path = if index + 1 == names.len() {
                     path.join(format!("{part}.xml"))
@@ -418,7 +431,7 @@ impl Resolver<'_> {
         self.file_uuid(
             name,
             &source
-                .source_root
+                .source_root()
                 .join(folder)
                 .join(format!("{object}.xml")),
             class,
@@ -441,7 +454,7 @@ impl Resolver<'_> {
         self.file_uuid(
             name,
             &source
-                .source_root
+                .source_root()
                 .join(folder)
                 .join(owner)
                 .join(directory)
@@ -461,9 +474,12 @@ impl Resolver<'_> {
         let source = self.source(name)?;
         let (_, folder) = metadata_reference_source_folder(&format!("{class}.{owner}"))
             .ok_or_else(|| anyhow!("the writer has no source folder for `{class}` objects"))?;
-        let path = source.source_root.join(folder).join(format!("{owner}.xml"));
+        let path = source
+            .source_root()
+            .join(folder)
+            .join(format!("{owner}.xml"));
         let cached = source
-            .interface_memo
+            .interface_memo()
             .lock()
             .ok()
             .and_then(|memo| memo.commands.get(&path).cloned());
@@ -475,7 +491,7 @@ impl Resolver<'_> {
                     .ok()
                     .and_then(|xml| read_declared_commands(&xml).ok())
                     .map(Arc::new);
-                if let Ok(mut memo) = source.interface_memo.lock() {
+                if let Ok(mut memo) = source.interface_memo().lock() {
                     memo.commands.insert(path.clone(), commands.clone());
                 }
                 commands
@@ -665,10 +681,7 @@ fn standard_command_code(class: &str, standard: &str) -> Result<u32> {
 
 /// `(class, uuid)` of a metadata file: the first element under
 /// `<MetaDataObject>`, which is all a reference needs.
-fn read_metadata_file_header(
-    source: &MetadataSourceContext,
-    path: &Path,
-) -> Option<(String, String)> {
+fn read_metadata_file_header(source: &dyn MetadataSource, path: &Path) -> Option<(String, String)> {
     let xml = source.read_source(path).ok()?;
     let mut reader = Reader::from_reader(&xml[..]);
     let mut buffer = Vec::new();

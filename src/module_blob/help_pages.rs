@@ -64,6 +64,7 @@ pub fn html_page_storage_bytes(
     owner: HtmlPageOwner,
     source: Option<&MetadataSourceContext>,
 ) -> Result<Vec<u8>> {
+    let source = source.map(|source| source as &dyn MetadataSource);
     let Ok(text) = std::str::from_utf8(page) else {
         return Ok(page.to_vec());
     };
@@ -118,7 +119,7 @@ fn storage_attribute_value(
     value_start: usize,
     value: &str,
     owner: HtmlPageOwner,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     names: &mut BTreeMap<String, String>,
 ) -> Result<Option<String>> {
     if let Some(rest) = value.strip_prefix("_files/") {
@@ -200,7 +201,7 @@ fn is_stored_link_anchor(text: &str, value_start: usize) -> bool {
 }
 
 fn help_reference(
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     reference: &str,
     what: &str,
 ) -> Result<HelpReference> {

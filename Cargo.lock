@@ -866,6 +866,7 @@ dependencies = [
  "ibcmd-form-native",
  "ibcmd-form-schema",
  "ibcmd-metadata-blob",
+ "ibcmd-metadata-source",
  "ibcmd-module-blob",
  "ibcmd-moxel",
  "ibcmd-postgres",

@@ -146,6 +146,7 @@ pub fn pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint(
     source: Option<&MetadataSourceContext>,
     _number_format_hint: Option<&SpreadsheetNumberFormatHint>,
 ) -> Result<PackedRawDeflatedBlob> {
+    let source = source.map(|source| source as &dyn MetadataSource);
     let body = crate::compiler::bodies::mxl_native::write_native_moxel_body(xml, source)?;
     let plain = format!("MOXCEL\0\u{8}\0\u{1}\0\u{c}\0\u{feff}{body}");
     let blob = deflate_raw(plain.as_bytes())?;

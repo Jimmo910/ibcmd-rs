@@ -36,7 +36,7 @@ use quick_xml::Reader;
 use quick_xml::escape::{resolve_xml_entity, unescape};
 use quick_xml::events::{BytesStart, Event};
 
-use crate::module_blob::MetadataSourceContext;
+use ibcmd_metadata_source::MetadataSource;
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 const CELL_LINE_KIND: &str = "f527dc88-1d39-40b3-bcbb-d98b690ead68";
@@ -56,7 +56,7 @@ const SYSTEM_FONTS_NS: &str = "http://v8.1c.ru/8.1/data/ui/fonts/system";
 /// a `}` that closes right behind another).
 pub(crate) fn write_native_moxel_body(
     xml: &[u8],
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     // Element spans index the text behind the byte-order mark.
     let xml = xml.strip_prefix(b"\xef\xbb\xbf").unwrap_or(xml);
@@ -679,7 +679,7 @@ impl ContentPool {
 
 struct BodyWriter<'a, 'd> {
     document: &'a Document<'d>,
-    source: Option<&'a MetadataSourceContext>,
+    source: Option<&'a dyn MetadataSource>,
     formats: IdentityPool,
     fonts: IdentityPool,
     lines: IdentityPool,
@@ -696,7 +696,7 @@ struct BodyWriter<'a, 'd> {
 }
 
 impl<'a, 'd> BodyWriter<'a, 'd> {
-    fn new(document: &'a Document<'d>, source: Option<&'a MetadataSourceContext>) -> Self {
+    fn new(document: &'a Document<'d>, source: Option<&'a dyn MetadataSource>) -> Self {
         Self {
             document,
             source,

@@ -71,6 +71,7 @@ ibcmd-form-body = { path = "crates/ibcmd-form-body" }
 ibcmd-module-blob = { path = "crates/ibcmd-module-blob" }
 ibcmd-compiler-families = { path = "crates/ibcmd-compiler-families" }
 ibcmd-metadata-blob = { path = "crates/ibcmd-metadata-blob" }
+ibcmd-metadata-source = { path = "crates/ibcmd-metadata-source" }
 # The process allocator, installed in main.rs.
 mimalloc = "0.1.52"
 quick-xml = "0.38"
