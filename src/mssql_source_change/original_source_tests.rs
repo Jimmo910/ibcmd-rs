@@ -1,6 +1,6 @@
 //! Production-owned original-source controls; no SQL or native platform.
 use super::*;
-use crate::module_blob::{MetadataSourceContext, SourceBytes};
+use crate::module_blob::{MetadataSource, MetadataSourceContext, SourceBytes};
 use std::io::Write;
 
 struct Fixture {

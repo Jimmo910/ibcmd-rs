@@ -30,7 +30,7 @@ use super::layout_8_5_1::Node;
 use super::xml_2_21_writer::{
     FIELD_TAGS, GROUPING, TRI_STATE, XmlEdits, child_text, element_name, simple_text,
 };
-use crate::module_blob::MetadataSourceContext;
+use crate::module_blob::{MetadataSource, MetadataSourceContext};
 use crate::platform::FormLayout;
 
 const FORM_ITEM_CLASS_UUID: &str = "02023637-7868-4a5f-8576-835a76e0c9ba";

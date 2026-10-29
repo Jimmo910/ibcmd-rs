@@ -45,7 +45,7 @@ use crate::cli::MssqlStageSourceObjectsArgs;
 use crate::metadata_model::brace::{Brace, parse_row, serialize_row};
 use crate::metadata_model::compile_descriptor;
 use crate::module_blob::{
-    deflate_raw, hex_sha256, inflate_raw, parse_simple_metadata_xml_properties,
+    MetadataSource, deflate_raw, hex_sha256, inflate_raw, parse_simple_metadata_xml_properties,
 };
 use crate::source_listing;
 use crate::sql::SqlExec;

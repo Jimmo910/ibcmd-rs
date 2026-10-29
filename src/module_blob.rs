@@ -532,7 +532,7 @@ pub fn patch_versions_blob(args: &VersionsBlobPatchArgs) -> Result<VersionsBlobP
 
 #[cfg(test)]
 mod tests {
-    use super::{MetadataSourceContext, deflate_raw, inflate_raw};
+    use super::{MetadataSource, MetadataSourceContext, deflate_raw, inflate_raw};
 
     /// One `Form.xml` carrying every part of an attribute this change reads:
     /// a value table with three columns, a value list with an element type,
