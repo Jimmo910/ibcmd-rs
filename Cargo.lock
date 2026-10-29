@@ -900,6 +900,7 @@ dependencies = [
  "anyhow",
  "futures-util",
  "ibcmd-postgres",
+ "serde_json",
  "tiberius",
  "tokio",
  "tokio-util",
