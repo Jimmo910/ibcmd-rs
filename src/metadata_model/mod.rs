@@ -12,7 +12,9 @@ pub mod audit;
 pub mod brace;
 pub mod export;
 pub mod index;
-pub mod xml;
+// The metadata XML element tree is `ibcmd-metadata-blob`'s, beside the
+// packers that read the same XML.
+pub use ibcmd_metadata_blob::xml;
 
 // Shared encoders owned by the simple-objects track: type descriptions,
 // typed values and the attribute body every "attribute-like" object shares.
