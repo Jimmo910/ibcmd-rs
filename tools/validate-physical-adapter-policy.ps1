@@ -25,6 +25,7 @@ $GuardedCrateDirectories = @(
     'crates/ibcmd-1c-vocab/src',
     'crates/ibcmd-form-body/src',
     'crates/ibcmd-compiler-families/src',
+    'crates/ibcmd-metadata-blob/src',
     'crates/ibcmd-module-blob/src',
     'crates/ibcmd-moxel/src/root_helpers'
 )
