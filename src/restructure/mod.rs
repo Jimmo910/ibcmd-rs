@@ -61,3 +61,16 @@ mod tests_schema;
 mod tests_sections;
 #[cfg(test)]
 mod tests_size_guard;
+
+#[cfg(test)]
+#[path = "../../tests/support/restructure_corpus.rs"]
+mod test_corpus_support;
+#[cfg(test)]
+#[path = "../../tests/support/restructure_create.rs"]
+mod test_create_support;
+#[cfg(test)]
+#[path = "../../tests/support/restructure_plan.rs"]
+mod test_plan_support;
+#[cfg(test)]
+#[path = "../../tests/support/restructure_sections.rs"]
+mod test_sections_support;
