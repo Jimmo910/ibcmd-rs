@@ -690,6 +690,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-compiler-families"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "ibcmd-1c-text",
+ "ibcmd-cf",
+ "ibcmd-core",
+ "ibcmd-module-blob",
+ "ibcmd-schema",
+ "ibcmd-xml",
+ "sha2",
+]
+
+[[package]]
 name = "ibcmd-core"
 version = "0.1.0"
 dependencies = [
@@ -813,6 +828,7 @@ dependencies = [
  "ibcmd-1c-text",
  "ibcmd-1c-vocab",
  "ibcmd-cf",
+ "ibcmd-compiler-families",
  "ibcmd-core",
  "ibcmd-edt",
  "ibcmd-filedb",
