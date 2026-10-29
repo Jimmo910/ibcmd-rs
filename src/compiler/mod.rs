@@ -897,10 +897,17 @@ mod tests {
         }
 
         let source = format!(
-            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
             production(include_str!("mod.rs")),
-            production(include_str!("identity.rs")),
-            production(include_str!("graph.rs")),
+            production(include_str!(
+                "../../crates/ibcmd-compiler-families/src/compiler/axes.rs"
+            )),
+            production(include_str!(
+                "../../crates/ibcmd-compiler-families/src/compiler/identity.rs"
+            )),
+            production(include_str!(
+                "../../crates/ibcmd-compiler-families/src/compiler/graph.rs"
+            )),
             production(include_str!("overlay.rs")),
             production(include_str!("readiness.rs")),
             production(include_str!("root.rs")),
