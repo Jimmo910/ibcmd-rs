@@ -31,7 +31,15 @@ layout of its Form Attributes tail and the braced-record text primitives both
 read, formerly in `src/module_blob.rs`; and the upgrade of an older platform's
 root-`42` form body the reader applies first, formerly
 `src/module_blob/form_root_42.rs`, which was outside the slice and joined it
-with its 22 record tags), `crates/ibcmd-module-blob/src/` (the module blob
+with its 22 record tags), `crates/ibcmd-metadata-blob/src/` (the packers of
+a configuration's stored bodies from their XML sources, with the source
+context they read, formerly `src/module_blob.rs`, which keeps the
+command-line wrappers and the entry points that read the rest of the root
+and stays in the slice; and the dynamic-list, chart, planner and
+role-rights writers, formerly in `src/compiler/bodies/`, and the metadata
+XML element tree, formerly `src/metadata_model/xml.rs`, which were outside
+the slice and joined it with their 277 records),
+`crates/ibcmd-module-blob/src/` (the module blob
 codec, the raw deflate helpers and digests, the raw-deflated packer and the
 versions-blob patcher, formerly in `src/module_blob.rs`; the raw inflater,
 formerly in `crates/ibcmd-1c-vocab/src/support.rs`; and the anyhow wrapper of
