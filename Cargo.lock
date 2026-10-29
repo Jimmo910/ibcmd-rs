@@ -773,6 +773,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-metadata-blob"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ibcmd-1c-text",
+ "ibcmd-1c-vocab",
+ "ibcmd-core",
+ "ibcmd-form-body",
+ "ibcmd-form-native",
+ "ibcmd-form-schema",
+ "ibcmd-module-blob",
+ "ibcmd-restructure",
+ "ibcmd-schema",
+ "ibcmd-xml",
+ "quick-xml 0.38.4",
+ "serde",
+ "sha2",
+ "uuid",
+]
+
+[[package]]
 name = "ibcmd-module-blob"
 version = "0.1.0"
 dependencies = [
@@ -834,6 +855,7 @@ dependencies = [
  "ibcmd-form-body",
  "ibcmd-form-native",
  "ibcmd-form-schema",
+ "ibcmd-metadata-blob",
  "ibcmd-module-blob",
  "ibcmd-moxel",
  "ibcmd-postgres",
