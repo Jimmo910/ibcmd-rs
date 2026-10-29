@@ -94,6 +94,8 @@ pub(crate) use ibcmd_module_blob::{deflate_raw, inflate_raw};
 // The source bytes and the two answers the source context memoises are the
 // `ibcmd-metadata-source` crate's; the packers and the root name them here.
 pub use ibcmd_metadata_source::{HelpReference, InterfaceResolutionMemo, SourceBytes};
+// The seam a writer reads the source tree through; the context implements it.
+pub use ibcmd_metadata_source::MetadataSource;
 
 // Platform-level 1C standard pictures and form type IDs, not database metadata UUIDs.
 const STD_PICTURE_USER_UUID: &str = "6ff3ddbd-56e3-4ddf-a5bf-048c1e2dfb2f";
@@ -1757,6 +1759,68 @@ impl MetadataSourceContext {
             }
         }
         Err(anyhow!("no form uuid in {}", path.display()))
+    }
+}
+
+/// The source the tools build. Each method is the context's own of the same
+/// name (`MetadataSourceContext::name` is the inherent method, never this
+/// trait's), so a writer that reads the tree through the trait gets the very
+/// answers, errors and memoised values a call on the context gives.
+impl MetadataSource for MetadataSourceContext {
+    fn source_root(&self) -> &Path {
+        &self.source_root
+    }
+
+    fn read_source(&self, path: &Path) -> std::io::Result<SourceBytes> {
+        MetadataSourceContext::read_source(self, path)
+    }
+
+    fn configuration_uuid(&self) -> Option<String> {
+        MetadataSourceContext::configuration_uuid(self)
+    }
+
+    fn configuration_object(&self, key: &str) -> Option<Arc<ConfigurationObject>> {
+        MetadataSourceContext::configuration_object(self, key)
+    }
+
+    fn resolve_metadata_type_id(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_metadata_type_id(self, reference)
+    }
+
+    fn resolve_metadata_reference_uuid(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_metadata_reference_uuid(self, reference)
+    }
+
+    fn resolve_style_item_uuid(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_style_item_uuid(self, reference)
+    }
+
+    fn resolve_common_picture_uuid(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_common_picture_uuid(self, reference)
+    }
+
+    fn resolve_command_group_uuid(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_command_group_uuid(self, reference)
+    }
+
+    fn dcs_generated_type_id(&self, name: &str) -> Option<String> {
+        MetadataSourceContext::dcs_generated_type_id(self, name)
+    }
+
+    fn dcs_style_items(&self) -> &BTreeMap<String, String> {
+        MetadataSourceContext::dcs_style_items(self)
+    }
+
+    fn moxel_object_refs(&self) -> Result<BTreeMap<String, String>> {
+        MetadataSourceContext::moxel_object_refs(self)
+    }
+
+    fn help_reference(&self, reference: &str) -> Result<HelpReference> {
+        MetadataSourceContext::help_reference(self, reference)
+    }
+
+    fn interface_memo(&self) -> &Mutex<InterfaceResolutionMemo> {
+        &self.interface_memo
     }
 }
 
