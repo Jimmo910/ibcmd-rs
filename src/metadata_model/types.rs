@@ -32,7 +32,7 @@ use anyhow::{Result, anyhow, bail};
 use super::brace::{Brace, NIL_UUID};
 use super::xml::{Element, parse_element_tree};
 use super::{DescriptorContext, native_text};
-use crate::brace_list;
+use ibcmd_restructure::brace_list;
 
 #[path = "types_export.rs"]
 pub(crate) mod export;
@@ -844,7 +844,7 @@ pub(crate) mod tests {
     use super::super::index::{ConfigIndex, GeneratedType};
     use super::super::xml::parse_element_tree;
     use super::*;
-    use crate::module_blob::MetadataSourceContext;
+    use ibcmd_metadata_blob::MetadataSourceContext;
 
     pub(crate) const VALUTA_TYPE: &str = "41dbb66b-ff77-4b8f-aaf8-0ca2012d3a6f";
     pub(crate) const ENUM_TYPE: &str = "31af3c5b-3472-4ad9-86b2-453cc31d397e";

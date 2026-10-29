@@ -125,3 +125,11 @@ It conservatively inventories immediate XML sink fragments and literal
 concatenations.  It remains lexical inventory governance, not a full Rust parser
 or general data-flow analysis, and cannot replace migration of XML policy into
 schema-owned writers.
+
+The standard common-command-group table in
+`crates/ibcmd-1c-vocab/src/command_groups.rs`, formerly
+`src/mssql_dump/mod.rs::COMMON_COMMAND_GROUPS`, is part of the same guarded
+vocabulary directory. Its eleven existing UUID fingerprints and occurrence
+counts move unchanged, record by record. The root retains its crate-visible
+alias. All other existing file records, including stale records, remain
+unchanged; neither the scope nor the baseline is regenerated.

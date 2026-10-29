@@ -32,7 +32,7 @@ use super::bodies_value_table::{
 use super::brace::{Brace, NIL_UUID};
 use super::types::{predefined_item_id, type_pattern};
 use super::xml::{Element, parse_element_tree};
-use crate::brace_list;
+use ibcmd_restructure::brace_list;
 
 /// `{"#",<this>,{1,<uuid>}}`: a reference to a predefined item.
 pub const PREDEFINED_REF_TYPE: &str = "ae135932-4f94-44df-92c1-c91f15a92848";

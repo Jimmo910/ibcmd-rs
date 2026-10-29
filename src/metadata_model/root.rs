@@ -29,7 +29,7 @@ use ibcmd_schema::configuration_mobile::FUNCTIONALITIES;
 use super::brace::{Brace, serialize_row};
 use super::xml::{Element, MetadataXml};
 use super::{DescriptorContext, ObjectXml, localized, md_base, not_yet, parse_bool};
-use crate::brace_list;
+use ibcmd_restructure::brace_list;
 
 pub fn compile(object: &ObjectXml<'_>, context: &DescriptorContext) -> Result<Brace> {
     match object.kind {
@@ -1261,7 +1261,7 @@ mod tests {
         let context = DescriptorContext {
             root: root.clone(),
             index: super::super::index::ConfigIndex::default(),
-            source: crate::module_blob::MetadataSourceContext::new(root),
+            source: ibcmd_metadata_blob::MetadataSourceContext::new(root),
             version: "2.21".to_owned(),
         };
         let tuple = |properties: &str, shape| {

@@ -17,10 +17,6 @@ use super::{
     RETURN_VALUES_REUSE, REUSE_SESSIONS, STD_PICTURE_CODES, TEMPLATE_TYPES, TRANSFER_DIRECTIONS,
     WEB_OPERATIONS, WEB_PARAMETERS, standard_namespace,
 };
-use crate::compiler::bodies::form_native::{
-    PALETTE_COLORS_8_5_1, PLATFORM_STYLE_COLOR_CODES, PLATFORM_STYLE_FONT_CODES, WEB_COLOR_CODES,
-    WINDOWS_COLOR_CODES,
-};
 use crate::metadata_model::brace::Brace;
 use crate::metadata_model::export::values::{
     Header, bool_text, code_text, header, header_elements, localized_element, type_element,
@@ -30,6 +26,10 @@ use crate::metadata_model::export::{
     number, short, string, xml_text,
 };
 use crate::metadata_model::xml::Element;
+use ibcmd_form_native::{
+    PALETTE_COLORS_8_5_1, PLATFORM_STYLE_COLOR_CODES, PLATFORM_STYLE_FONT_CODES, WEB_COLOR_CODES,
+    WINDOWS_COLOR_CODES,
+};
 
 /// Decodes one stored row of a common kind into the object's element.
 pub(crate) fn decode(kind: &str, row: &Brace, context: &ExportContext) -> Result<Element> {
@@ -471,7 +471,7 @@ fn picture(node: &Brace, names: &NameIndex) -> Result<Element> {
         }
         [zero, uuid] if atom(zero)? == "0" => {
             let uuid = atom(uuid)?;
-            match crate::mssql_dump::standard_picture_name(uuid) {
+            match ibcmd_1c_vocab::standard_picture_name(uuid) {
                 Some(name) => name.to_string(),
                 None => match names.name(uuid) {
                     Some(name) => name.to_string(),
@@ -514,7 +514,7 @@ fn command_group(payload: &Brace, names: &NameIndex) -> Result<Element> {
 /// or `0:<uuid>`: the inverse of `common::command_group_uuid`.
 fn command_group_text(node: &Brace, names: &NameIndex) -> Result<String> {
     let uuid = atom(item(list(node)?, 1)?)?;
-    if let Some((_, name)) = crate::mssql_dump::COMMON_COMMAND_GROUPS
+    if let Some((_, name)) = ibcmd_1c_vocab::COMMON_COMMAND_GROUPS
         .iter()
         .find(|(candidate, _)| *candidate == uuid)
     {

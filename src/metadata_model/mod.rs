@@ -55,8 +55,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use self::brace::{Brace, serialize_row};
 use self::index::ConfigIndex;
 use self::xml::{Element, MetadataXml};
-use crate::brace_list;
-use crate::module_blob::MetadataSourceContext;
+use ibcmd_metadata_blob::MetadataSourceContext;
+use ibcmd_restructure::brace_list;
 
 /// What a kind compiler may read besides its own XML.
 pub struct DescriptorContext {
