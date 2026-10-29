@@ -28,6 +28,7 @@ members = [
     "crates/ibcmd-module-blob",
     "crates/ibcmd-compiler-families",
     "crates/ibcmd-metadata-blob",
+    "crates/ibcmd-metadata-source",
 ]
 resolver = "3"
 exclude = ["crates/ibcmd-edt/vendor/morph1c"]

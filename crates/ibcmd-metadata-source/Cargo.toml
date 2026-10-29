@@ -1,0 +1,12 @@
+[package]
+name = "ibcmd-metadata-source"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "What the packers of a 1C configuration's stored bodies read of its XML source tree: a source file's bytes and the answers the source context memoises"
+
+[dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"

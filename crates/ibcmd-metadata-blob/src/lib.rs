@@ -91,6 +91,9 @@ pub use ibcmd_module_blob::{
     raw_deflated_plain_sha256, unpack_module_blob_text, versions_base_free_blockers,
 };
 pub(crate) use ibcmd_module_blob::{deflate_raw, inflate_raw};
+// The source bytes and the two answers the source context memoises are the
+// `ibcmd-metadata-source` crate's; the packers and the root name them here.
+pub use ibcmd_metadata_source::{HelpReference, InterfaceResolutionMemo, SourceBytes};
 
 // Platform-level 1C standard pictures and form type IDs, not database metadata UUIDs.
 const STD_PICTURE_USER_UUID: &str = "6ff3ddbd-56e3-4ddf-a5bf-048c1e2dfb2f";
@@ -1190,34 +1193,6 @@ pub struct MetadataSourceContext {
     original_source: Option<Arc<dyn OriginalSourceTree>>,
 }
 
-/// A source file's bytes: shared with the preloaded store, or read for the
-/// caller.
-pub enum SourceBytes {
-    Shared(Arc<Vec<u8>>),
-    Owned(Vec<u8>),
-}
-
-impl std::ops::Deref for SourceBytes {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        match self {
-            Self::Shared(bytes) => bytes,
-            Self::Owned(bytes) => bytes,
-        }
-    }
-}
-
-impl SourceBytes {
-    #[doc(hidden)]
-    pub fn into_vec(self) -> Vec<u8> {
-        match self {
-            Self::Shared(bytes) => bytes.as_ref().clone(),
-            Self::Owned(bytes) => bytes,
-        }
-    }
-}
-
 /// Source files read into memory, by path: shared, and printed as a count.
 #[derive(Clone, Default)]
 pub(crate) struct PreloadedSourceFiles(pub(crate) Arc<HashMap<PathBuf, Arc<Vec<u8>>>>);
@@ -1783,27 +1758,6 @@ impl MetadataSourceContext {
         }
         Err(anyhow!("no form uuid in {}", path.display()))
     }
-}
-
-/// What resolving names reads more than once, kept for the life of the
-/// source context: the class and uuid of a metadata file, and the commands an
-/// owner declares.
-#[derive(Debug, Default)]
-#[doc(hidden)]
-pub struct InterfaceResolutionMemo {
-    #[doc(hidden)]
-    pub headers: BTreeMap<PathBuf, Option<(String, String)>>,
-    #[doc(hidden)]
-    pub commands: BTreeMap<PathBuf, Option<Arc<BTreeMap<String, String>>>>,
-}
-
-/// What a readable reference names in the source tree.
-#[derive(Clone, Debug)]
-#[doc(hidden)]
-pub enum HelpReference {
-    Resolved(String),
-    /// No file of the tree declares it: the configuration has no such object.
-    Absent,
 }
 
 impl MetadataSourceContext {

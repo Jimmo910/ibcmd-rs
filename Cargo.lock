@@ -783,6 +783,7 @@ dependencies = [
  "ibcmd-form-body",
  "ibcmd-form-native",
  "ibcmd-form-schema",
+ "ibcmd-metadata-source",
  "ibcmd-module-blob",
  "ibcmd-restructure",
  "ibcmd-schema",
@@ -792,6 +793,10 @@ dependencies = [
  "sha2",
  "uuid",
 ]
+
+[[package]]
+name = "ibcmd-metadata-source"
+version = "0.1.0"
 
 [[package]]
 name = "ibcmd-module-blob"
