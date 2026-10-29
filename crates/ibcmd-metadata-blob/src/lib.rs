@@ -75,15 +75,14 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::cli::{ModuleBlobPackArgs, VersionsBlobPatchArgs};
-use crate::compiler::bodies::role_rights_writer::SourceTreeRoleRightsSource;
+use crate::role_rights_writer::SourceTreeRoleRightsSource;
 
-// The rest of the root reaches these by their `module_blob` paths.
+// The base64 helpers, by the names the packers call them.
 pub(crate) use ibcmd_1c_text::decode_base64_mime_lenient as decode_base64_mime;
 pub(crate) use ibcmd_1c_text::{encode_base64, platform_base64_token};
 // The module blob codec, the raw deflate helpers and digests, the
 // raw-deflated packer and the versions-blob patcher are the
-// `ibcmd-module-blob` crate's; the root reaches them by these paths.
+// `ibcmd-module-blob` crate's; the packers call them by these names.
 pub use ibcmd_module_blob::{
     PackedModuleBlob, PackedRawDeflatedBlob, PatchedVersionsBlob, VersionReplacement, hex_sha256,
     module_blob_text_sha256, pack_module_blob_bytes, pack_module_blob_bytes_base_free,
@@ -91,9 +90,7 @@ pub use ibcmd_module_blob::{
     patch_versions_blob_bytes_allowing_additions, raw_deflated_first_base64_payload_sha256,
     raw_deflated_plain_sha256, unpack_module_blob_text, versions_base_free_blockers,
 };
-pub(crate) use ibcmd_module_blob::{
-    deflate_raw, inflate_raw, unpack_module_container_text, unpack_plain_text_module_body,
-};
+pub(crate) use ibcmd_module_blob::{deflate_raw, inflate_raw};
 
 // Platform-level 1C standard pictures and form type IDs, not database metadata UUIDs.
 const STD_PICTURE_USER_UUID: &str = "6ff3ddbd-56e3-4ddf-a5bf-048c1e2dfb2f";
@@ -101,7 +98,8 @@ const STD_PICTURE_INFORMATION_REGISTER_UUID: &str = "5b87ad1b-d8cc-43c1-b5c4-dc4
 const STD_PICTURE_INFORMATION_UUID: &str = "4b54770b-d069-4c0e-9b17-5cc2a01134d9";
 const STD_PICTURE_SAVE_FILE_UUID: &str = "818ab7d0-4654-4542-bd5e-fd9d1352b5a1";
 const STD_PICTURE_LOAD_REPORT_SETTINGS_UUID: &str = "283ecabd-aaed-41d1-ad46-6cca91c29120";
-const FORM_DYNAMIC_LIST_TYPE_UUID: &str = "65abad24-838b-4987-8b35-ed9e2bd4d9c8";
+#[doc(hidden)]
+pub const FORM_DYNAMIC_LIST_TYPE_UUID: &str = "65abad24-838b-4987-8b35-ed9e2bd4d9c8";
 const FORM_UPDATE_ON_DATA_CHANGE_UUID: &str = "eac7bfa0-10b4-4369-996c-d258871ad519";
 const FORM_STANDARD_PERIOD_UUID: &str = "2fdc88ec-7c9b-43cd-8ba5-873f043bdd88";
 
@@ -147,7 +145,8 @@ use ibcmd_form_body::{
 };
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-struct FormXmlBodyProperties {
+#[doc(hidden)]
+pub struct FormXmlBodyProperties {
     /// Every scalar child of `<Form>` by element name, as the XML spells it.
     root_scalars: BTreeMap<String, String>,
     /// The form-wide `<ConditionalAppearance>` subtree exactly as Form.xml
@@ -195,7 +194,8 @@ struct FormXmlBodyProperties {
     events: Vec<FormXmlEvent>,
     auto_command_bar: Option<FormXmlAutoCommandBar>,
     attributes_present: bool,
-    attributes: Vec<FormXmlAttribute>,
+    #[doc(hidden)]
+    pub attributes: Vec<FormXmlAttribute>,
     attributes_conditional_appearance: Option<DcsConditionalAppearance>,
     parameters_present: bool,
     parameters: Vec<FormXmlParameter>,
@@ -313,7 +313,8 @@ struct FormXmlCommand {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct FormXmlAttribute {
+#[doc(hidden)]
+pub struct FormXmlAttribute {
     /// `<View>` and `<Edit>`, members 6 and 7 of the record.
     view: Option<FormXmlRights>,
     edit: Option<FormXmlRights>,
@@ -337,7 +338,8 @@ struct FormXmlAttribute {
     number_allowed_sign: Option<String>,
     date_fractions: Option<String>,
     main_attribute: Option<bool>,
-    settings: Option<FormXmlDynamicListSettings>,
+    #[doc(hidden)]
+    pub settings: Option<FormXmlDynamicListSettings>,
     /// `<Settings xsi:type="v8:TypeDescription">`: the element type of a
     /// `v8:ValueListType`, which is not a dynamic list's settings and does
     /// not refuse the form.
@@ -440,13 +442,15 @@ struct FormXmlParameter {
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-struct FormXmlDynamicListSettings {
+#[doc(hidden)]
+pub struct FormXmlDynamicListSettings {
     manual_query: Option<bool>,
     dynamic_data_read: Option<bool>,
     query_text: Option<String>,
     main_table: Option<String>,
     fields: Vec<FormXmlDynamicListField>,
-    list_settings: FormXmlListSettings,
+    #[doc(hidden)]
+    pub list_settings: FormXmlListSettings,
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -456,9 +460,11 @@ struct FormXmlDynamicListField {
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-struct FormXmlListSettings {
+#[doc(hidden)]
+pub struct FormXmlListSettings {
     filter: Option<FormXmlListSettingsFilter>,
-    order: Option<FormXmlListSettingsOrder>,
+    #[doc(hidden)]
+    pub order: Option<FormXmlListSettingsOrder>,
     conditional_appearance: Option<DcsConditionalAppearance>,
     items_view_mode: Option<String>,
     items_user_setting_id: Option<String>,
@@ -470,8 +476,10 @@ struct FormXmlListSettingsFilter {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct FormXmlListSettingsOrder {
-    canonical: DcsOrder,
+#[doc(hidden)]
+pub struct FormXmlListSettingsOrder {
+    #[doc(hidden)]
+    pub canonical: DcsOrder,
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -1020,18 +1028,25 @@ pub struct PackedHelpBlob {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct RoleRightsXml {
+#[doc(hidden)]
+pub struct RoleRightsXml {
     set_for_new_objects: bool,
-    set_for_attributes_by_default: Option<bool>,
-    independent_rights_of_child_objects: Option<bool>,
-    objects: Vec<RoleObjectRightsXml>,
-    restriction_templates: Vec<RoleRestrictionTemplateXml>,
+    #[doc(hidden)]
+    pub set_for_attributes_by_default: Option<bool>,
+    #[doc(hidden)]
+    pub independent_rights_of_child_objects: Option<bool>,
+    #[doc(hidden)]
+    pub objects: Vec<RoleObjectRightsXml>,
+    #[doc(hidden)]
+    pub restriction_templates: Vec<RoleRestrictionTemplateXml>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct RoleObjectRightsXml {
+#[doc(hidden)]
+pub struct RoleObjectRightsXml {
     name: String,
-    rights: Vec<RoleRightXml>,
+    #[doc(hidden)]
+    pub rights: Vec<RoleRightXml>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -1042,28 +1057,35 @@ struct RoleObjectRefKey {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct RoleRightXml {
+#[doc(hidden)]
+pub struct RoleRightXml {
     name: String,
-    value: bool,
-    restriction_by_condition: Option<RoleRightRestrictionXml>,
+    #[doc(hidden)]
+    pub value: bool,
+    #[doc(hidden)]
+    pub restriction_by_condition: Option<RoleRightRestrictionXml>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct RoleRightRestrictionXml {
+#[doc(hidden)]
+pub struct RoleRightRestrictionXml {
     field: Option<String>,
     condition: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct RoleRestrictionTemplateXml {
+#[doc(hidden)]
+pub struct RoleRestrictionTemplateXml {
     name: String,
     condition: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct CommandInterfaceXmlEntry {
+#[doc(hidden)]
+pub struct CommandInterfaceXmlEntry {
     name: String,
-    common: bool,
+    #[doc(hidden)]
+    pub common: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -1112,7 +1134,7 @@ struct FlowchartXmlItem {
 /// through it and never from the file system. The root's
 /// `mssql_source_change::HeldSourceRoot` is the one implementation; the
 /// methods are its own, by the same names.
-pub(crate) trait OriginalSourceTree: std::fmt::Debug + Send + Sync {
+pub trait OriginalSourceTree: std::fmt::Debug + Send + Sync {
     /// The canonical root the tree was opened at.
     fn canonical_root(&self) -> &Path;
     /// The captured bytes of `path`, a path under the root, or why there are
@@ -1126,7 +1148,8 @@ pub(crate) trait OriginalSourceTree: std::fmt::Debug + Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct MetadataSourceContext {
-    source_root: PathBuf,
+    #[doc(hidden)]
+    pub source_root: PathBuf,
     /// Every metadata object a `<DataPath>` has asked for, parsed once.
     ///
     /// A field id is the field's own `uuid=`, so placing a dotted data path
@@ -1140,7 +1163,8 @@ pub struct MetadataSourceContext {
     role_rights_source: Arc<SourceTreeRoleRightsSource>,
     /// What the interface writers resolve more than once: a metadata file's
     /// class and uuid, an owner's declared commands.
-    interface_memo: Arc<Mutex<InterfaceResolutionMemo>>,
+    #[doc(hidden)]
+    pub interface_memo: Arc<Mutex<InterfaceResolutionMemo>>,
     /// Generated-type `TypeId`s a data-composition schema asked for, by type
     /// name, memoised hit and miss alike: a report names the same catalog
     /// from many fields and a tree has many reports.
@@ -1168,7 +1192,7 @@ pub struct MetadataSourceContext {
 
 /// A source file's bytes: shared with the preloaded store, or read for the
 /// caller.
-pub(crate) enum SourceBytes {
+pub enum SourceBytes {
     Shared(Arc<Vec<u8>>),
     Owned(Vec<u8>),
 }
@@ -1185,7 +1209,7 @@ impl std::ops::Deref for SourceBytes {
 }
 
 impl SourceBytes {
-    pub(crate) fn into_vec(self) -> Vec<u8> {
+    pub fn into_vec(self) -> Vec<u8> {
         match self {
             Self::Shared(bytes) => bytes.as_ref().clone(),
             Self::Owned(bytes) => bytes,
@@ -1237,14 +1261,14 @@ impl MetadataSourceContext {
         }
     }
 
-    pub(crate) fn with_original_source(source: Arc<dyn OriginalSourceTree>) -> Self {
+    pub fn with_original_source(source: Arc<dyn OriginalSourceTree>) -> Self {
         Self {
             original_source: Some(source.clone()),
             ..Self::new(source.canonical_root().to_owned())
         }
     }
 
-    pub(crate) fn require_original_unchanged(&self) -> anyhow::Result<()> {
+    pub fn require_original_unchanged(&self) -> anyhow::Result<()> {
         if let Some(source) = &self.original_source {
             source.require_unchanged()?;
         }
@@ -1254,7 +1278,7 @@ impl MetadataSourceContext {
     /// The bytes of a source file: shared from memory when preloaded, else
     /// read. (The resolvers ask for ERP УХ's metadata XMLs some 150 000 times;
     /// a copy each time cost a large-block allocation each.)
-    pub(crate) fn read_source(&self, path: &Path) -> std::io::Result<SourceBytes> {
+    pub fn read_source(&self, path: &Path) -> std::io::Result<SourceBytes> {
         if let Some(source) = &self.original_source {
             return source
                 .read_original_path(path)
@@ -1268,7 +1292,7 @@ impl MetadataSourceContext {
     }
 
     /// The uuid `Configuration.xml` declares for the configuration itself.
-    pub(crate) fn configuration_uuid(&self) -> Option<String> {
+    pub fn configuration_uuid(&self) -> Option<String> {
         self.configuration_uuid
             .get_or_init(|| {
                 let xml = self
@@ -1289,7 +1313,7 @@ impl MetadataSourceContext {
     /// data-composition schema names it (`CatalogRef.X`, `Characteristic.X`),
     /// read from the owning object's `InternalInfo`. `None` when the tree has
     /// no such object or type.
-    pub(crate) fn dcs_generated_type_id(&self, name: &str) -> Option<String> {
+    pub fn dcs_generated_type_id(&self, name: &str) -> Option<String> {
         if let Ok(cache) = self.generated_type_ids.lock()
             && let Some(found) = cache.get(name)
         {
@@ -1308,7 +1332,7 @@ impl MetadataSourceContext {
 
     /// The tree's configuration style items: lowercase uuid -> name. A file
     /// that does not parse contributes nothing rather than failing the scan.
-    pub(crate) fn dcs_style_items(&self) -> &BTreeMap<String, String> {
+    pub fn dcs_style_items(&self) -> &BTreeMap<String, String> {
         self.style_items
             .get_or_init(|| style_reference_types_from_source_root(&self.source_root))
     }
@@ -1319,7 +1343,8 @@ impl MetadataSourceContext {
     /// alike. A file that will not parse, or that holds a different class than
     /// the key names, is a miss: the caller then refuses the data path rather
     /// than writing a binding from a guess.
-    fn configuration_object(&self, key: &str) -> Option<Arc<ConfigurationObject>> {
+    #[doc(hidden)]
+    pub fn configuration_object(&self, key: &str) -> Option<Arc<ConfigurationObject>> {
         if let Ok(cache) = self.configuration_objects.lock()
             && let Some(found) = cache.get(key)
         {
@@ -1384,7 +1409,7 @@ impl MetadataSourceContext {
         Ok(())
     }
 
-    pub(crate) fn resolve_common_picture_uuid(&self, reference: &str) -> Result<String> {
+    pub fn resolve_common_picture_uuid(&self, reference: &str) -> Result<String> {
         let name = reference
             .trim()
             .strip_prefix("CommonPicture.")
@@ -1447,7 +1472,8 @@ impl MetadataSourceContext {
             .with_context(|| format!("failed to resolve TypeId from {}", path.display()))
     }
 
-    fn resolve_command_group_uuid(&self, reference: &str) -> Result<String> {
+    #[doc(hidden)]
+    pub fn resolve_command_group_uuid(&self, reference: &str) -> Result<String> {
         let name = reference
             .trim()
             .strip_prefix("CommandGroup.")
@@ -1470,7 +1496,7 @@ impl MetadataSourceContext {
         Ok(properties.uuid)
     }
 
-    pub(crate) fn resolve_style_item_uuid(&self, reference: &str) -> Result<String> {
+    pub fn resolve_style_item_uuid(&self, reference: &str) -> Result<String> {
         let name = reference
             .trim()
             .strip_prefix("StyleItem.")
@@ -1588,7 +1614,7 @@ impl MetadataSourceContext {
         Ok(dimensions)
     }
 
-    pub(crate) fn resolve_metadata_type_id(&self, reference: &str) -> Result<String> {
+    pub fn resolve_metadata_type_id(&self, reference: &str) -> Result<String> {
         let generated_type_name = reference
             .trim()
             .strip_prefix("cfg:")
@@ -1622,7 +1648,8 @@ impl MetadataSourceContext {
             .with_context(|| format!("failed to resolve TypeId from {}", path.display()))
     }
 
-    fn resolve_metadata_reference_uuid(&self, reference: &str) -> Result<String> {
+    #[doc(hidden)]
+    pub fn resolve_metadata_reference_uuid(&self, reference: &str) -> Result<String> {
         let reference = reference.trim();
         // Objects that live in a file of their own below their owner: a
         // nested subsystem (`Subsystems/A/Subsystems/B.xml`) and a
@@ -1752,14 +1779,18 @@ impl MetadataSourceContext {
 /// source context: the class and uuid of a metadata file, and the commands an
 /// owner declares.
 #[derive(Debug, Default)]
-struct InterfaceResolutionMemo {
-    headers: BTreeMap<PathBuf, Option<(String, String)>>,
-    commands: BTreeMap<PathBuf, Option<Arc<BTreeMap<String, String>>>>,
+#[doc(hidden)]
+pub struct InterfaceResolutionMemo {
+    #[doc(hidden)]
+    pub headers: BTreeMap<PathBuf, Option<(String, String)>>,
+    #[doc(hidden)]
+    pub commands: BTreeMap<PathBuf, Option<Arc<BTreeMap<String, String>>>>,
 }
 
 /// What a readable reference names in the source tree.
 #[derive(Clone, Debug)]
-enum HelpReference {
+#[doc(hidden)]
+pub enum HelpReference {
     Resolved(String),
     /// No file of the tree declares it: the configuration has no such object.
     Absent,
@@ -1774,7 +1805,8 @@ impl MetadataSourceContext {
     /// A reference whose file -- or whose owner's file -- the tree does not
     /// have is [`HelpReference::Absent`]; a file that is there and declares
     /// something else, or does not parse, is an error.
-    fn help_reference(&self, reference: &str) -> Result<HelpReference> {
+    #[doc(hidden)]
+    pub fn help_reference(&self, reference: &str) -> Result<HelpReference> {
         if let Ok(cache) = self.help_references.lock()
             && let Some(found) = cache.get(reference)
         {
@@ -1891,9 +1923,7 @@ fn is_not_found(error: &anyhow::Error) -> bool {
 /// is best-effort evidence gathering for one optional compile-direction
 /// coordinate, not a required precondition for the rest of the bootstrap
 /// scan.
-pub(crate) fn style_reference_types_from_source_root(
-    source_root: &Path,
-) -> BTreeMap<String, String> {
+pub fn style_reference_types_from_source_root(source_root: &Path) -> BTreeMap<String, String> {
     let mut style_reference_types = BTreeMap::new();
     let Ok(entries) = fs::read_dir(source_root.join("StyleItems")) else {
         return style_reference_types;
@@ -3292,7 +3322,7 @@ pub fn pack_form_body_blob_from_form_xml_with_source_and_assets(
 /// writer picks the self-closed one -- what a newly created form carries --
 /// and the round trip closes on the second export rather than on the original
 /// database. See evidence/body-frame-20260921.md.
-pub(crate) const NATIVE_EMPTY_SETTINGS: &str = "{#base64:77u/PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4NCjxTZXR0aW5ncyB4bWxucz0iaHR0cDovL3Y4LjFjLnJ1LzguMS9kYXRhLWNvbXBvc2l0aW9uLXN5c3RlbS9zZXR0aW5ncyIgeG1sbnM6ZGNzY29yPSJodHRwOi8vdjguMWMucnUvOC4xL2RhdGEtY29tcG9zaXRpb24tc3lzdGVtL2NvcmUiIHhtbG5zOnN0eWxlPSJodHRwOi8vdjguMWMucnUvOC4xL2RhdGEvdWkvc3R5bGUiIHhtbG5zOnN5cz0iaHR0cDovL3Y4LjFjLnJ1LzguMS9kYXRhL3VpL2ZvbnRzL3N5c3RlbSIgeG1sbnM6djg9Imh0dHA6Ly92OC4xYy5ydS84LjEvZGF0YS9jb3JlIiB4bWxuczp2OHVpPSJodHRwOi8vdjguMWMucnUvOC4xL2RhdGEvdWkiIHhtbG5zOndlYj0iaHR0cDovL3Y4LjFjLnJ1LzguMS9kYXRhL3VpL2NvbG9ycy93ZWIiIHhtbG5zOndpbj0iaHR0cDovL3Y4LjFjLnJ1LzguMS9kYXRhL3VpL2NvbG9ycy93aW5kb3dzIiB4bWxuczp4cz0iaHR0cDovL3d3dy53My5vcmcvMjAwMS9YTUxTY2hlbWEiIHhtbG5zOnhzaT0iaHR0cDovL3d3dy53My5vcmcvMjAwMS9YTUxTY2hlbWEtaW5zdGFuY2UiLz4=}";
+pub const NATIVE_EMPTY_SETTINGS: &str = "{#base64:77u/PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4NCjxTZXR0aW5ncyB4bWxucz0iaHR0cDovL3Y4LjFjLnJ1LzguMS9kYXRhLWNvbXBvc2l0aW9uLXN5c3RlbS9zZXR0aW5ncyIgeG1sbnM6ZGNzY29yPSJodHRwOi8vdjguMWMucnUvOC4xL2RhdGEtY29tcG9zaXRpb24tc3lzdGVtL2NvcmUiIHhtbG5zOnN0eWxlPSJodHRwOi8vdjguMWMucnUvOC4xL2RhdGEvdWkvc3R5bGUiIHhtbG5zOnN5cz0iaHR0cDovL3Y4LjFjLnJ1LzguMS9kYXRhL3VpL2ZvbnRzL3N5c3RlbSIgeG1sbnM6djg9Imh0dHA6Ly92OC4xYy5ydS84LjEvZGF0YS9jb3JlIiB4bWxuczp2OHVpPSJodHRwOi8vdjguMWMucnUvOC4xL2RhdGEvdWkiIHhtbG5zOndlYj0iaHR0cDovL3Y4LjFjLnJ1LzguMS9kYXRhL3VpL2NvbG9ycy93ZWIiIHhtbG5zOndpbj0iaHR0cDovL3Y4LjFjLnJ1LzguMS9kYXRhL3VpL2NvbG9ycy93aW5kb3dzIiB4bWxuczp4cz0iaHR0cDovL3d3dy53My5vcmcvMjAwMS9YTUxTY2hlbWEiIHhtbG5zOnhzaT0iaHR0cDovL3d3dy53My5vcmcvMjAwMS9YTUxTY2hlbWEtaW5zdGFuY2UiLz4=}";
 
 /// The `{22,…}` kind uuid a child of this tag is filed under.
 fn native_child_kind_uuid(tag: &str) -> Option<&'static str> {
@@ -3339,10 +3369,7 @@ impl NativeDataPaths<'_> {
 /// The form's own half of the data-path tables, read off `Form.xml`.
 fn native_data_path_form(
     properties: &FormXmlBodyProperties,
-    dynamic_lists: &BTreeMap<
-        String,
-        (crate::compiler::bodies::dynamic_list::FieldMap, Vec<String>),
-    >,
+    dynamic_lists: &BTreeMap<String, (crate::dynamic_list::FieldMap, Vec<String>)>,
 ) -> DataPathForm {
     let mut form = DataPathForm::default();
     for attribute in &properties.attributes {
@@ -3427,8 +3454,8 @@ fn native_data_path_form(
 fn native_dynamic_list_references(
     properties: &FormXmlBodyProperties,
     list: &str,
-) -> Vec<(bool, crate::compiler::bodies::dynamic_list::ListPath)> {
-    use crate::compiler::bodies::dynamic_list::parse_list_path;
+) -> Vec<(bool, crate::dynamic_list::ListPath)> {
+    use crate::dynamic_list::parse_list_path;
     let mut tables = Vec::new();
     let mut stack = properties
         .child_items
@@ -3528,11 +3555,11 @@ fn native_dynamic_list_references(
 fn native_dynamic_list_bag(
     form_text: &str,
     attribute: &str,
-    map: &crate::compiler::bodies::dynamic_list::FieldMap,
+    map: &crate::dynamic_list::FieldMap,
     required: &[String],
     source: Option<&MetadataSourceContext>,
 ) -> Result<String> {
-    use crate::compiler::bodies::dynamic_list::{ListConfiguration, dynamic_list_bag};
+    use crate::dynamic_list::{ListConfiguration, dynamic_list_bag};
     let type_id = |name: &str, _is_set: bool| -> Result<String> {
         let source = source.ok_or_else(|| {
             anyhow!("a dynamic list names cfg:{name} and no configuration is on hand")
@@ -3565,8 +3592,8 @@ fn native_dynamic_list_bag(
 
 fn native_dynamic_list_field_maps(
     properties: &FormXmlBodyProperties,
-) -> Result<BTreeMap<String, (crate::compiler::bodies::dynamic_list::FieldMap, Vec<String>)>> {
-    use crate::compiler::bodies::dynamic_list::FieldMap;
+) -> Result<BTreeMap<String, (crate::dynamic_list::FieldMap, Vec<String>)>> {
+    use crate::dynamic_list::FieldMap;
     let mut maps = BTreeMap::new();
     for attribute in &properties.attributes {
         if attribute.types.first().map(|value| value.trim()) != Some("cfg:DynamicList") {
@@ -3888,16 +3915,14 @@ static ALWAYS_USED_CONSTANTS_CLEAR: std::sync::atomic::AtomicBool =
 /// Compiles constants sets against clear always-used flags (an empty
 /// infobase); returns whether `IBCMD_RS_ALWAYS_USED_CONSTANTS` is set and so
 /// ignored.
-pub(crate) fn clear_always_used_constants() -> bool {
+pub fn clear_always_used_constants() -> bool {
     ALWAYS_USED_CONSTANTS_CLEAR.store(true, std::sync::atomic::Ordering::Relaxed);
     std::env::var_os("IBCMD_RS_ALWAYS_USED_CONSTANTS").is_some()
 }
 
 /// Installs the reader of the target's always-used constants; called once,
 /// before any form is compiled, and asked only when a constants set needs it.
-pub(crate) fn set_always_used_constants_source(
-    source: impl Fn() -> Vec<String> + Send + Sync + 'static,
-) {
+pub fn set_always_used_constants_source(source: impl Fn() -> Vec<String> + Send + Sync + 'static) {
     let _ = ALWAYS_USED_CONSTANTS_SOURCE.set(Box::new(source));
 }
 
@@ -5958,7 +5983,7 @@ const fn native_fixing_in_table_spelling(fixing: FormFixingInTable) -> &'static 
 
 /// A colour the way every native payload writes one, with the configuration's
 /// own style items resolved when the caller can reach them.
-pub(crate) fn native_item_color(
+pub fn native_item_color(
     value: Option<&str>,
     source: Option<&MetadataSourceContext>,
 ) -> Option<String> {
@@ -7172,7 +7197,8 @@ fn native_item_control_border(item: &FormXmlChildItem) -> Result<String> {
 /// source declares it and the value has to come from a table. Measured over
 /// both corpora; every name each corpus knows takes one value, and the two
 /// agree on every name they share.
-const STD_PICTURE_VALUES: &[(&str, &str)] = &[
+#[doc(hidden)]
+pub const STD_PICTURE_VALUES: &[(&str, &str)] = &[
     (
         "AccumulationRegister",
         "{0,70f51581-87b6-41cb-a21b-c9dcdcc7fa93}",
@@ -7717,7 +7743,7 @@ fn native_item_picture(
 
 /// A `<Picture>` read element by element, for the 2.21 form loader.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn native_picture_from_parts(
+pub fn native_picture_from_parts(
     holder: &str,
     item_name: &str,
     abs: Option<String>,
@@ -8302,9 +8328,9 @@ fn native_embedded_chart(
     let settings = native_chart_style_colours(&block[open..close], source);
     let settings = settings.as_str();
     if gantt {
-        crate::compiler::bodies::form_chart::format_form_embedded_gantt_chart(settings)
+        crate::form_chart::format_form_embedded_gantt_chart(settings)
     } else {
-        crate::compiler::bodies::form_chart::format_form_embedded_chart(settings)
+        crate::form_chart::format_form_embedded_chart(settings)
     }
 }
 
@@ -9192,9 +9218,7 @@ fn format_native_form_body(
             Some(native_embedded_settings(
                 text,
                 &attribute.name,
-                |settings| {
-                    crate::compiler::bodies::form_chart::format_form_embedded_flowchart(settings)
-                },
+                |settings| crate::form_chart::format_form_embedded_flowchart(settings),
             )?)
         } else if attribute.settings.is_some()
             && let Some(gantt) = native_embedded_chart_kind(attribute)
@@ -9208,9 +9232,7 @@ fn format_native_form_body(
             Some(native_embedded_settings(
                 text,
                 &attribute.name,
-                |settings| {
-                    crate::compiler::bodies::form_planner::format_form_embedded_planner(settings)
-                },
+                |settings| crate::form_planner::format_form_embedded_planner(settings),
             )?)
         } else {
             None
@@ -9397,11 +9419,11 @@ fn format_native_form_body(
 /// in the 8.3.27 layouts, as every form and spreadsheet of the ERP УХ 8.5
 /// clone (`Version8_3_27`) is. The layouts follow `CompatibilityMode`, not
 /// the XML dialect; a load onto a database leaves this off.
-pub(crate) static XML_2_21_TREE_IN_LAYOUT_8_3: std::sync::atomic::AtomicBool =
+pub static XML_2_21_TREE_IN_LAYOUT_8_3: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// The 8.3.27 (dialect 2.20) native form writer.
-pub(crate) fn compile_native_form_body_8_3(
+pub fn compile_native_form_body_8_3(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
     source: Option<&MetadataSourceContext>,
@@ -9454,7 +9476,8 @@ pub fn pack_form_body_blob_from_form_xml_base_free(
     Ok(packed)
 }
 
-fn validate_form_xml_document(xml: &[u8]) -> Result<()> {
+#[doc(hidden)]
+pub fn validate_form_xml_document(xml: &[u8]) -> Result<()> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut root_seen = false;
@@ -9512,7 +9535,8 @@ fn validate_form_xml_document(xml: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn form_base_free_model_blockers(
+#[doc(hidden)]
+pub fn form_base_free_model_blockers(
     properties: &FormXmlBodyProperties,
     has_source: bool,
 ) -> Vec<String> {
@@ -9997,7 +10021,8 @@ fn form_item_asset_extension(content: &[u8]) -> &'static str {
     }
 }
 
-fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
+#[doc(hidden)]
+pub fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
     // The typed DCS reading serves the dynamic lists' settings; the form-wide
     // conditional appearance is transcribed and does not need it. A form
     // whose DCS children do not read is refused only when a dynamic list
@@ -25461,7 +25486,8 @@ pub fn pack_role_rights_blob_from_xml_with_source(
     })
 }
 
-fn validate_command_interface_xml_document(xml: &[u8]) -> Result<()> {
+#[doc(hidden)]
+pub fn validate_command_interface_xml_document(xml: &[u8]) -> Result<()> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut root_seen = false;
@@ -26660,7 +26686,8 @@ fn role_right_name(uuid: &str) -> Option<&'static str> {
     ibcmd_1c_vocab::role_right_name(uuid)
 }
 
-fn parse_role_rights_xml(xml: &[u8]) -> Result<RoleRightsXml> {
+#[doc(hidden)]
+pub fn parse_role_rights_xml(xml: &[u8]) -> Result<RoleRightsXml> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut path = Vec::<String>::new();
@@ -26974,7 +27001,8 @@ fn parse_role_rights_xml(xml: &[u8]) -> Result<RoleRightsXml> {
     })
 }
 
-fn parse_command_interface_xml(xml: &[u8]) -> Result<Vec<CommandInterfaceXmlEntry>> {
+#[doc(hidden)]
+pub fn parse_command_interface_xml(xml: &[u8]) -> Result<Vec<CommandInterfaceXmlEntry>> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut path = Vec::<String>::new();
@@ -29599,7 +29627,7 @@ fn patch_configuration_source_metadata(
     properties: &SimpleMetadataXmlProperties,
     xml: &[u8],
 ) -> Result<String> {
-    use crate::metadata_model::xml::MetadataXml;
+    use crate::xml::MetadataXml;
     use ibcmd_restructure::brace::{self, Brace};
     let patched = patch_configuration_metadata_text(text, properties)?;
     let document = MetadataXml::parse(xml)?;
@@ -29874,7 +29902,8 @@ fn patch_command_group_metadata_text(
     Ok(text)
 }
 
-fn replace_1c_value_if_different(text: &mut String, range: Range<usize>, replacement: &str) {
+#[doc(hidden)]
+pub fn replace_1c_value_if_different(text: &mut String, range: Range<usize>, replacement: &str) {
     if !one_c_values_equal_ignoring_ws(&text[range.clone()], replacement) {
         text.replace_range(range, replacement);
     }
@@ -31257,7 +31286,8 @@ fn configuration_object_source_folder(class: &str) -> Option<&'static str> {
 }
 
 /// The tags a metadata object declares its fields with.
-fn is_configuration_field_tag(local: &str) -> bool {
+#[doc(hidden)]
+pub fn is_configuration_field_tag(local: &str) -> bool {
     matches!(
         local,
         "Attribute"
@@ -31541,7 +31571,8 @@ fn metadata_type_source_folder(generated_type_name: &str) -> Option<&'static str
     }
 }
 
-fn metadata_reference_source_folder(reference: &str) -> Option<(&'static str, &'static str)> {
+#[doc(hidden)]
+pub fn metadata_reference_source_folder(reference: &str) -> Option<(&'static str, &'static str)> {
     let prefix = reference.split_once('.')?.0;
     match prefix {
         "AccumulationRegister" => Some(("AccumulationRegister", "AccumulationRegisters")),
@@ -31662,7 +31693,8 @@ fn parse_generated_type_type_id(xml: &[u8], expected_generated_name: &str) -> Re
     normalize_uuid_text(&type_id)
 }
 
-fn normalize_uuid_text(value: &str) -> Result<String> {
+#[doc(hidden)]
+pub fn normalize_uuid_text(value: &str) -> Result<String> {
     Ok(Uuid::parse_str(value.trim())?.hyphenated().to_string())
 }
 
@@ -31883,7 +31915,8 @@ fn parse_form_attribute_column_xml(
     }))
 }
 
-fn xml_attr_value(event: &BytesStart<'_>, name: &str) -> Option<String> {
+#[doc(hidden)]
+pub fn xml_attr_value(event: &BytesStart<'_>, name: &str) -> Option<String> {
     event
         .attributes()
         .filter_map(Result::ok)
@@ -31891,15 +31924,16 @@ fn xml_attr_value(event: &BytesStart<'_>, name: &str) -> Option<String> {
         .map(|attr| String::from_utf8_lossy(attr.value.as_ref()).to_string())
 }
 
-fn xml_local_name(name: &[u8]) -> String {
+#[doc(hidden)]
+pub fn xml_local_name(name: &[u8]) -> String {
     String::from_utf8_lossy(name).to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CommonCommandRepresentation, MetadataSourceContext, common_command_representation_code,
-        deflate_raw, inflate_raw, parse_common_command_representation,
+        CommonCommandRepresentation, common_command_representation_code, deflate_raw, inflate_raw,
+        parse_common_command_representation,
     };
 
     /// Every `<ExcludedCommand>` name the compiler accepts must be the name the
@@ -35111,14 +35145,14 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
     fn conditional_appearance_fixture_drives_form_storage_in_both_directions() -> anyhow::Result<()>
     {
         let embedded = decode_base64_for_test(include_str!(
-            "../tests/fixtures/native-evidence/8.3.27.2214/dcs-conditional-appearance/form-embedded-conditional-appearance.xml.b64"
+            "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-conditional-appearance/form-embedded-conditional-appearance.xml.b64"
         ))?;
         let embedded = String::from_utf8(embedded)?;
         let form = format!(
             r#"<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:dcscor="http://v8.1c.ru/8.1/data-composition-system/core" xmlns:dcsset="http://v8.1c.ru/8.1/data-composition-system/settings" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="2.20"><Attributes><Attribute name="List" id="1"><Type><v8:Type>cfg:DynamicList</v8:Type></Type><Settings xsi:type="DynamicList"><ListSettings>{embedded}</ListSettings></Settings></Attribute></Attributes></Form>"#
         );
         let storage = decode_base64_for_test(include_str!(
-            "../tests/fixtures/native-evidence/8.3.27.2214/dcs-conditional-appearance/form-storage-conditional-appearance.xml.b64"
+            "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-conditional-appearance/form-storage-conditional-appearance.xml.b64"
         ))?;
         let parsed = super::parse_form_xml_body_properties(form.as_bytes())?;
         let value = parsed
@@ -35148,7 +35182,7 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
     fn form_attributes_conditional_appearance_tail_is_added_preserved_and_removed()
     -> anyhow::Result<()> {
         let form = decode_base64_for_test(include_str!(
-            "../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-attributes-conditional-appearance/native-form.xml.b64"
+            "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-attributes-conditional-appearance/native-form.xml.b64"
         ))?;
         let properties = super::parse_form_xml_body_properties(&form)?;
         assert!(properties.attributes_conditional_appearance.is_some());
@@ -35159,10 +35193,10 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
             anyhow::bail!("Form Attributes fixture value was not parsed");
         };
         let storage = decode_base64_for_test(include_str!(
-            "../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-attributes-conditional-appearance/form-attributes-storage-settings.xml.b64"
+            "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-attributes-conditional-appearance/form-attributes-storage-settings.xml.b64"
         ))?;
         let empty_storage = decode_base64_for_test(include_str!(
-            "../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-attributes-conditional-appearance/form-attributes-empty-storage-settings.xml.b64"
+            "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-attributes-conditional-appearance/form-attributes-empty-storage-settings.xml.b64"
         ))?;
         let inactive = format!(
             "{{4,0,0,0,{{#base64:{}}}}}",

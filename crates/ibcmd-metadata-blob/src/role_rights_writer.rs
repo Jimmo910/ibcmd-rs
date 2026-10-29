@@ -1021,7 +1021,7 @@ pub struct SourceTreeRoleRightsSource {
     root: PathBuf,
     files: Mutex<HashMap<PathBuf, Option<Arc<UuidNode>>>>,
     /// Files already in memory (`MetadataSourceContext::with_preloaded`).
-    preloaded: crate::module_blob::PreloadedSourceFiles,
+    preloaded: crate::PreloadedSourceFiles,
 }
 
 #[derive(Debug)]
@@ -1035,13 +1035,13 @@ struct UuidNode {
 
 impl SourceTreeRoleRightsSource {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self::with_preloaded(root, crate::module_blob::PreloadedSourceFiles::default())
+        Self::with_preloaded(root, crate::PreloadedSourceFiles::default())
     }
 
     /// Resolves names from `preloaded` where it holds the file, else from disk.
     pub(crate) fn with_preloaded(
         root: impl Into<PathBuf>,
-        preloaded: crate::module_blob::PreloadedSourceFiles,
+        preloaded: crate::PreloadedSourceFiles,
     ) -> Self {
         Self {
             root: root.into(),

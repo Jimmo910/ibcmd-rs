@@ -4,7 +4,8 @@
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::compiler::bodies::role_rights_writer::*;
+    use ibcmd_schema::configuration_rights::CONFIGURATION_MODE_RIGHT_NAMES;
 
     struct Fixed;
 

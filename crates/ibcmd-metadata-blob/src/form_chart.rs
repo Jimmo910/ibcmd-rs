@@ -83,7 +83,7 @@ const UNTOUCHED_LAYOUT: [&str; 12] = ["0", "0", "0", "0", "0", "0", "1", "1", "0
 /// drawing stores the same serialization as a form attribute, except for the
 /// members the module docs name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ChartHost {
+pub enum ChartHost {
     FormAttribute,
     SpreadsheetTemplate,
 }
@@ -174,7 +174,7 @@ pub(crate) fn format_form_embedded_flowchart(settings_xml: &str) -> Result<Strin
 /// The chart value `format_form_embedded_chart` returns, before the form
 /// exporter's check: a spreadsheet template carries the same serialization
 /// and checks it against its own exporter instead.
-pub(crate) fn chart_value(settings_xml: &str, host: ChartHost) -> Result<String> {
+pub fn chart_value(settings_xml: &str, host: ChartHost) -> Result<String> {
     let root = parse_settings(settings_xml, "d4p1:Chart")?;
     let record = chart_record(&root, host)?;
     Ok(format!(
@@ -183,7 +183,7 @@ pub(crate) fn chart_value(settings_xml: &str, host: ChartHost) -> Result<String>
 }
 
 /// The Gantt chart's counterpart to `chart_value`.
-pub(crate) fn gantt_chart_value(settings_xml: &str, host: ChartHost) -> Result<String> {
+pub fn gantt_chart_value(settings_xml: &str, host: ChartHost) -> Result<String> {
     let root = parse_settings(settings_xml, "d4p1:GanttChart")?;
     let wrapper = gantt_wrapper(&root, host)?;
     Ok(format!(
