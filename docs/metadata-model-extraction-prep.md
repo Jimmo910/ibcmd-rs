@@ -33,8 +33,8 @@ The helper imports these external items:
 - `profile_registry::load_bundled_profile_registry`.
 
 Its `metadata_model::brace::parse_row` access stays inside the target model.
-Graph, identity, version and profile loading already have portable owners;
-`compiler::root` remains root-owned. The generated-configuration integration
+Graph, identity and profile loading already have portable owners;
+`compiler::root` and `compiler::version::SpecialEntryProfile` remain root-owned. The generated-configuration integration
 helper therefore cannot be copied into a future model crate unchanged or
 made a reverse dev-dependency on the root. Keep that cross-component test in
 the root adapter, or split the helper before moving its pure model assertions.
@@ -66,6 +66,7 @@ This prep leaves its code, fixture paths and assertions unchanged.
 - `src/metadata_model/objects.rs`: `crate::test_scratch::TestScratch::adopt`
 - `src/metadata_model/objects_parts.rs`: `crate::brace_list`, `crate::mssql_dump::standard_picture_uuid`
 - `src/metadata_model/registers.rs`: `crate::brace_list`, `crate::module_blob::MetadataSourceContext`
+- `src/metadata_model/registers_export.rs`: qualified macro `crate::brace_list!`
 - `src/metadata_model/registers_parts.rs`: `crate::brace_list`, `crate::mssql_dump::standard_picture_uuid`
 - `src/metadata_model/root.rs`: `crate::brace_list`, `crate::module_blob::MetadataSourceContext::new`, `crate::platform::FEATURE_PALETTE_COLORS`, `crate::platform::feature_uuid`
 - `src/metadata_model/root_export.rs`: `crate::test_scratch::TestScratch::adopt`
