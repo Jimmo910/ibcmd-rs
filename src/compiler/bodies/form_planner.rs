@@ -92,7 +92,7 @@ pub(crate) fn format_form_embedded_planner(settings_xml: &str) -> Result<String>
     verify_round_trip(
         settings_xml,
         &value,
-        crate::mssql_dump::render_form_planner_settings_value,
+        ibcmd_form_body::form_body::render_form_planner_settings_value,
     )?;
     Ok(value)
 }

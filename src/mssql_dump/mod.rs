@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -29,6 +29,7 @@ use ibcmd_1c_text::{
 // are wrappers further down (`parse_metadata_type_pattern_element_with_builtin`,
 // and `parse_form_metadata_type_pattern`, kept for tests: the form reader
 // passes the state it was built with).
+pub(crate) use ibcmd_1c_vocab::style_web_color_name;
 use ibcmd_1c_vocab::{
     ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES,
     ACCUMULATION_REGISTER_TURNOVERS_STANDARD_ATTRIBUTES,
@@ -54,9 +55,8 @@ pub(super) use ibcmd_1c_vocab::{
 use ibcmd_1c_vocab::{
     DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE, ShortcutModifierStyle,
     format_form_metadata_types_xml, format_form_metadata_types_xml_with_indent,
-    parse_common_command_shortcut_value_with_style,
+    parse_common_command_shortcut_value_with_style, role_right_name, role_right_uuid,
 };
-pub(crate) use ibcmd_1c_vocab::{standard_style_item_code_for_name, style_web_color_name};
 use ibcmd_cf::archive::PackedCfArchive;
 use ibcmd_cf::export::{StorageExportEntryReport, StorageExportPlan, StorageExportReport};
 use ibcmd_core::artifact::ProfileId;
@@ -1076,13 +1076,7 @@ mod offline_rows;
 mod output_writer;
 mod refs;
 mod role_rights;
-pub(crate) use role_rights::{
-    CONFIGURATION_MODE_RIGHT_NAMES, ROLE_RIGHTS_EXT_DIMENSION_FAMILY,
-    ROLE_RIGHTS_EXT_DIMENSION_TYPE_FAMILY, ROLE_RIGHTS_STANDARD_ATTRIBUTE_FAMILY,
-    ROLE_RIGHTS_STANDARD_TABULAR_SECTION_FAMILY, role_right_name, role_right_uuid,
-    role_rights_xml_from_blob, role_standard_attribute_slot,
-    role_standard_tabular_section_attribute_slot, role_standard_tabular_section_slot,
-};
+pub(crate) use role_rights::role_rights_xml_from_blob;
 mod selected;
 mod source_asset_diagnostics;
 mod source_assets;
@@ -1165,24 +1159,7 @@ pub(crate) use source_assets::{
     help_link_marker_is_anchor, help_standard_picture_negative_index, rewrite_help_links,
 };
 
-pub(crate) fn resolve_form_item_picture_owner(
-    text: &str,
-    marker_start: usize,
-) -> Option<(String, &'static str)> {
-    form_body::form_item_picture_owner_at(text, marker_start)
-}
-
-pub(crate) use form_body::form_dynamic_list_std_attribute_pairs;
-/// The one table that names a form standard command uuid, shared with the
-/// source compiler so both directions read the same fact.
-pub(crate) use form_body::form_standard_command_suffix;
 pub(crate) use form_body::{FormItemSchemaTraceEvent, FormItemTraceEvent, FormItemTraceSink};
-/// The exporter's reading of a chart attribute's member 14, which the form
-/// writer's chart codec checks every value it builds against.
-pub(crate) use form_body::{
-    render_form_chart_settings_value, render_form_flowchart_settings_value,
-    render_form_gantt_chart_settings_value, render_form_planner_settings_value,
-};
 #[cfg(test)]
 pub(crate) use form_body_entry::render_form_body_xml_offline;
 pub(crate) use form_body_entry::trace_form_body_with_context;
@@ -44584,21 +44561,9 @@ fn return_values_reuse_xml(value: ReturnValuesReuseValue) -> &'static str {
     }
 }
 
-pub(crate) fn sanitize_source_path_segment(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
-            output.push('_');
-        } else {
-            output.push(ch);
-        }
-    }
-    if output.trim().is_empty() {
-        "Unnamed".to_string()
-    } else {
-        output
-    }
-}
+// The file-name segment the source tree writes for a name is
+// `ibcmd-1c-text`'s; the root reaches it by this path.
+pub(crate) use ibcmd_1c_text::sanitize_source_path_segment;
 
 fn selected_file_names_from_args(
     file_names: &[String],

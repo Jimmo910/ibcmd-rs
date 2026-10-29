@@ -4,11 +4,28 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::form_schema::form_text_document_context_menu_child_is_valid;
 use anyhow::{Context, Result, anyhow};
-use ibcmd_1c_text::{crlf_line_breaks, format_1c_string, is_uuid_like_ascii};
+use ibcmd_1c_text::{
+    crlf_line_breaks, format_1c_string, is_uuid_like_ascii, sanitize_source_path_segment,
+};
 use ibcmd_1c_vocab::is_svg_content;
 use ibcmd_core::dcs::{DcsConditionalAppearance, DcsFilter, DcsOrder};
+use ibcmd_form_native::{
+    ConfigurationField, ConfigurationObject, ConfigurationObjects, DataPathAttribute,
+    DataPathColumn, DataPathForm, DataPathItem,
+};
+use ibcmd_form_schema::{
+    FormCheckBoxFieldSchema, FormColumnGroupSchema, FormConditionalTableSchema,
+    FormControlBorderSchema, FormControlBorderStyle, FormFieldGroupHorizontalAlign,
+    FormFieldSchema, FormFieldVerticalAlign, FormFixingInTable,
+    FormInputFieldExtendedOptionSlot as InputFieldSlot, FormPictureDecorationSchema,
+    FormRootVerticalAlign, FormRootVerticalAlignSchema, FormTableCurrentRowUse,
+    FormTableHorizontalScrollBar, FormTableInitialListView, FormTablePropertyBagKey as TableBagKey,
+    FormTableSchema, FormTableSearchOnInput, FormTooltipRepresentation,
+    FormWarningOnEditRepresentation, encode_form_table_command_bar_location,
+    form_text_document_context_menu_child_is_valid, form_tooltip_representation_schema,
+    form_tooltip_representation_supports_xml_tag, normalize_form_table_command_bar_location_xml,
+};
 use ibcmd_schema::{
     FormTextDocumentContextMenuMultiplicity, bundled_dcs_conditional_appearance_policy,
     bundled_dcs_filter_policy, bundled_dcs_form_attributes_conditional_appearance_policy,
@@ -30,24 +47,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::cli::{ModuleBlobPackArgs, VersionsBlobPatchArgs};
-use crate::compiler::bodies::form_native::{
-    ConfigurationField, ConfigurationObject, ConfigurationObjects, DataPathAttribute,
-    DataPathColumn, DataPathForm, DataPathItem,
-};
 use crate::compiler::bodies::role_rights_writer::SourceTreeRoleRightsSource;
-use crate::form_schema::{
-    FormCheckBoxFieldSchema, FormColumnGroupSchema, FormConditionalTableSchema,
-    FormControlBorderSchema, FormControlBorderStyle, FormFieldGroupHorizontalAlign,
-    FormFieldSchema, FormFieldVerticalAlign, FormFixingInTable,
-    FormInputFieldExtendedOptionSlot as InputFieldSlot, FormPictureDecorationSchema,
-    FormRootVerticalAlign, FormRootVerticalAlignSchema, FormTableCurrentRowUse,
-    FormTableHorizontalScrollBar, FormTableInitialListView, FormTablePropertyBagKey as TableBagKey,
-    FormTableSchema, FormTableSearchOnInput, FormTooltipRepresentation,
-    FormWarningOnEditRepresentation, encode_form_table_command_bar_location,
-    form_tooltip_representation_schema, form_tooltip_representation_supports_xml_tag,
-    normalize_form_table_command_bar_location_xml,
-};
-use crate::mssql_dump::sanitize_source_path_segment;
 
 // The rest of the root reaches these by their `module_blob` paths.
 pub(crate) use ibcmd_1c_text::decode_base64_mime_lenient as decode_base64_mime;
@@ -850,6 +850,10 @@ enum FormXmlButtonRepresentation {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[allow(
+    clippy::enum_variant_names,
+    reason = "the variants are the values Form.xml spells, prefix and all"
+)]
 enum FormXmlButtonLocationInCommandBar {
     InAdditionalSubmenu,
     InCommandBar,
@@ -873,6 +877,10 @@ enum FormXmlEditMode {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[allow(
+    clippy::enum_variant_names,
+    reason = "the variants are the values Form.xml spells, prefix and all"
+)]
 enum FormXmlChoiceButtonRepresentation {
     ShowInDropList,
     ShowInDropListAndInInputField,
@@ -1076,6 +1084,25 @@ pub use interface_assets::{
     InterfaceAssetSource, interface_asset_plaintext, pack_interface_asset_blob,
 };
 
+/// The original source tree one operation holds open: the files it reads
+/// are the copies captured when the tree was opened, and the tree is checked
+/// for change before anything is published. A context built on one
+/// (`MetadataSourceContext::with_original_source`) reads every source file
+/// through it and never from the file system. The root's
+/// `mssql_source_change::HeldSourceRoot` is the one implementation; the
+/// methods are its own, by the same names.
+pub(crate) trait OriginalSourceTree: std::fmt::Debug + Send + Sync {
+    /// The canonical root the tree was opened at.
+    fn canonical_root(&self) -> &Path;
+    /// The captured bytes of `path`, a path under the root, or why there are
+    /// none: the path is outside the root or the census, or the file changed
+    /// while it was read.
+    fn read_original_path(&self, path: &Path) -> Result<Arc<Vec<u8>>>;
+    /// Fails when a file read so far, or the tree's census, changed since
+    /// the tree was opened.
+    fn require_unchanged(&self) -> Result<()>;
+}
+
 #[derive(Debug, Clone)]
 pub struct MetadataSourceContext {
     source_root: PathBuf,
@@ -1092,7 +1119,7 @@ pub struct MetadataSourceContext {
     role_rights_source: Arc<SourceTreeRoleRightsSource>,
     /// What the interface writers resolve more than once: a metadata file's
     /// class and uuid, an owner's declared commands.
-    interface_memo: Arc<Mutex<interface_assets::InterfaceResolutionMemo>>,
+    interface_memo: Arc<Mutex<InterfaceResolutionMemo>>,
     /// Generated-type `TypeId`s a data-composition schema asked for, by type
     /// name, memoised hit and miss alike: a report names the same catalog
     /// from many fields and a tree has many reports.
@@ -1101,7 +1128,7 @@ pub struct MetadataSourceContext {
     style_items: Arc<std::sync::OnceLock<BTreeMap<String, String>>>,
     /// The uuid each readable name of a help page resolves to, or why it does
     /// not: pages of one tree link the same objects over and over.
-    help_references: Arc<Mutex<BTreeMap<String, Result<help_pages::HelpReference, String>>>>,
+    help_references: Arc<Mutex<BTreeMap<String, Result<HelpReference, String>>>>,
     /// `Configuration.xml`'s own uuid, read once (`None` when it cannot be).
     configuration_uuid: Arc<std::sync::OnceLock<Option<String>>>,
     /// `moxel_object_refs`, read once: every chart of a spreadsheet template
@@ -1115,7 +1142,7 @@ pub struct MetadataSourceContext {
     /// ERP УХ's stage re-read metadata XMLs 150 000 times, about 20 ms each.
     preloaded: PreloadedSourceFiles,
     /// Explicit operation-local original census, never a path-cache fallback.
-    original_source: Option<Arc<crate::mssql_source_change::HeldSourceRoot>>,
+    original_source: Option<Arc<dyn OriginalSourceTree>>,
 }
 
 /// A source file's bytes: shared with the preloaded store, or read for the
@@ -1161,9 +1188,7 @@ impl MetadataSourceContext {
             role_rights_source: Arc::new(SourceTreeRoleRightsSource::new(source_root.clone())),
             source_root,
             configuration_objects: Arc::new(Mutex::new(BTreeMap::new())),
-            interface_memo: Arc::new(Mutex::new(
-                interface_assets::InterfaceResolutionMemo::default(),
-            )),
+            interface_memo: Arc::new(Mutex::new(InterfaceResolutionMemo::default())),
             generated_type_ids: Arc::new(Mutex::new(BTreeMap::new())),
             style_items: Arc::new(std::sync::OnceLock::new()),
             help_references: Arc::new(Mutex::new(BTreeMap::new())),
@@ -1191,9 +1216,7 @@ impl MetadataSourceContext {
         }
     }
 
-    pub(crate) fn with_original_source(
-        source: Arc<crate::mssql_source_change::HeldSourceRoot>,
-    ) -> Self {
+    pub(crate) fn with_original_source(source: Arc<dyn OriginalSourceTree>) -> Self {
         Self {
             original_source: Some(source.clone()),
             ..Self::new(source.canonical_root().to_owned())
@@ -1266,7 +1289,7 @@ impl MetadataSourceContext {
     /// that does not parse contributes nothing rather than failing the scan.
     pub(crate) fn dcs_style_items(&self) -> &BTreeMap<String, String> {
         self.style_items
-            .get_or_init(|| crate::mssql::style_reference_types_from_source_root(&self.source_root))
+            .get_or_init(|| style_reference_types_from_source_root(&self.source_root))
     }
 
     /// One metadata object of the source tree, by `"<Class>.<Name>"`.
@@ -1704,6 +1727,204 @@ impl MetadataSourceContext {
     }
 }
 
+/// What resolving names reads more than once, kept for the life of the
+/// source context: the class and uuid of a metadata file, and the commands an
+/// owner declares.
+#[derive(Debug, Default)]
+struct InterfaceResolutionMemo {
+    headers: BTreeMap<PathBuf, Option<(String, String)>>,
+    commands: BTreeMap<PathBuf, Option<Arc<BTreeMap<String, String>>>>,
+}
+
+/// What a readable reference names in the source tree.
+#[derive(Clone, Debug)]
+enum HelpReference {
+    Resolved(String),
+    /// No file of the tree declares it: the configuration has no such object.
+    Absent,
+}
+
+impl MetadataSourceContext {
+    /// The uuid a readable help reference names, read from the source tree
+    /// and memoised: an object, a nested subsystem, a form, a template, a
+    /// recalculation, a command, a common picture or the configuration itself
+    /// -- every name the exporter's help index holds.
+    ///
+    /// A reference whose file -- or whose owner's file -- the tree does not
+    /// have is [`HelpReference::Absent`]; a file that is there and declares
+    /// something else, or does not parse, is an error.
+    fn help_reference(&self, reference: &str) -> Result<HelpReference> {
+        if let Ok(cache) = self.help_references.lock()
+            && let Some(found) = cache.get(reference)
+        {
+            return found.clone().map_err(|error| anyhow!(error));
+        }
+        let resolved = match self.read_help_reference_uuid(reference) {
+            Ok(uuid) => Ok(HelpReference::Resolved(uuid)),
+            Err(error) if is_not_found(&error) => Ok(HelpReference::Absent),
+            Err(error) => Err(format!("{error:#}")),
+        };
+        if let Ok(mut cache) = self.help_references.lock() {
+            cache.insert(reference.to_string(), resolved.clone());
+        }
+        resolved.map_err(|error| anyhow!(error))
+    }
+
+    fn read_help_reference_uuid(&self, reference: &str) -> Result<String> {
+        let parts = reference.split('.').collect::<Vec<_>>();
+        let (path, kind) = match parts.as_slice() {
+            ["Configuration", _] => return self.resolve_configuration_uuid(reference),
+            [_, _, "Command", _] => return self.resolve_command_reference_uuid(reference),
+            [class, name] => {
+                let (prefix, folder) = metadata_reference_source_folder(reference)
+                    .ok_or_else(|| anyhow!("unsupported reference class `{class}`"))?;
+                (
+                    self.source_root.join(folder).join(format!("{name}.xml")),
+                    prefix,
+                )
+            }
+            ["Subsystem", ..] if parts.iter().step_by(2).all(|class| *class == "Subsystem") => {
+                let mut path = self.source_root.join("Subsystems");
+                let names = parts.iter().skip(1).step_by(2).collect::<Vec<_>>();
+                for (index, name) in names.iter().enumerate() {
+                    path = if index + 1 == names.len() {
+                        path.join(format!("{name}.xml"))
+                    } else {
+                        path.join(name).join("Subsystems")
+                    };
+                }
+                (path, "Subsystem")
+            }
+            [
+                owner_class,
+                owner,
+                child_class @ ("Form" | "Template" | "Recalculation"),
+                child,
+            ] => {
+                let owner_reference = format!("{owner_class}.{owner}");
+                let (_, folder) = metadata_reference_source_folder(&owner_reference)
+                    .ok_or_else(|| anyhow!("unsupported owner class `{owner_class}`"))?;
+                let child_folder = match *child_class {
+                    "Form" => "Forms",
+                    "Template" => "Templates",
+                    _ => "Recalculations",
+                };
+                (
+                    self.source_root
+                        .join(folder)
+                        .join(owner)
+                        .join(child_folder)
+                        .join(format!("{child}.xml")),
+                    *child_class,
+                )
+            }
+            [owner_class, owner, child_class, child] => {
+                return self.resolve_metadata_child_uuid(
+                    &format!("{owner_class}.{owner}"),
+                    child_class,
+                    child,
+                );
+            }
+            _ => return Err(anyhow!("unsupported reference shape")),
+        };
+        let xml = self
+            .read_source(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let properties = parse_simple_metadata_xml_properties(&xml)
+            .with_context(|| format!("failed to parse {}", path.display()))?;
+        let name = parts.last().copied().unwrap_or_default();
+        // The tree is read on a case-insensitive file system, where
+        // `Catalog.x` finds `Catalogs/X.xml`: the file must declare the very
+        // class and name the reference spells.
+        if properties.kind != kind || properties.name != name {
+            return Err(anyhow!(
+                "{} declares {}.{}",
+                path.display(),
+                properties.kind,
+                properties.name
+            ));
+        }
+        Ok(properties.uuid)
+    }
+}
+
+/// Whether reading the tree failed because a file or a folder is not there.
+fn is_not_found(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+    })
+}
+
+/// Scans `source_root/StyleItems/*.xml` for a uuid -> semantic-name map,
+/// the same fact a `DataCompositionSchema` custom-`StyleItem` style-color
+/// reference needs to compile base-free (see
+/// `compiler::bodies::dcs::compile_dcs_with_references`). Each object's
+/// name comes from its own file name -- the same `StyleItems/<Name>.xml`
+/// convention `source::infer_object_hint` already treats as this family's
+/// object identity -- paired with the root `<StyleItem uuid="...">`
+/// attribute read directly from that same file. A missing `StyleItems`
+/// directory, or any individual file that fails to parse or carries no
+/// `uuid` attribute, is skipped rather than treated as an error: this map
+/// is best-effort evidence gathering for one optional compile-direction
+/// coordinate, not a required precondition for the rest of the bootstrap
+/// scan.
+pub(crate) fn style_reference_types_from_source_root(
+    source_root: &Path,
+) -> BTreeMap<String, String> {
+    let mut style_reference_types = BTreeMap::new();
+    let Ok(entries) = fs::read_dir(source_root.join("StyleItems")) else {
+        return style_reference_types;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("xml") {
+            continue;
+        }
+        let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let Ok(xml) = fs::read(&path) else {
+            continue;
+        };
+        if let Some(uuid) = parse_style_item_root_uuid(&xml) {
+            style_reference_types.insert(uuid, name.to_string());
+        }
+    }
+    style_reference_types
+}
+
+/// Reads the `uuid` attribute off a `StyleItems/<Name>.xml` object's root
+/// `<StyleItem>` element, canonicalized to the lowercase-hyphenated form
+/// (matching the `compile_dcs_with_references` resolver contract). Returns
+/// `None` for anything else (malformed XML, a different root element, a
+/// missing or non-UUID `uuid` attribute) -- the caller treats that as "this
+/// file contributes nothing," never as a hard error.
+fn parse_style_item_root_uuid(xml: &[u8]) -> Option<String> {
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer).ok()? {
+            Event::Start(event) | Event::Empty(event) => {
+                if event.local_name().as_ref() != b"StyleItem" {
+                    continue;
+                }
+                let uuid = xml_attr_value(&event, "uuid")?;
+                return Some(
+                    uuid::Uuid::parse_str(uuid.trim())
+                        .ok()?
+                        .hyphenated()
+                        .to_string(),
+                );
+            }
+            Event::Eof => return None,
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
 pub fn pack_module_blob(args: &ModuleBlobPackArgs) -> Result<ModuleBlobPackReport> {
     let text = fs::read(&args.text)
         .with_context(|| format!("failed to read BSL text {}", args.text.display()))?;
@@ -1917,7 +2138,7 @@ pub fn pack_style_body_blob_from_xml_with_base(
         } else if brand.is_some() {
             anyhow::bail!("base Style body has no 8.5 brand-colour trailer");
         }
-        replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
+        replacements.sort_by_key(|b| std::cmp::Reverse(b.0.start));
         for (range, replacement) in replacements {
             replace_1c_value_if_different(&mut plain, range, &replacement);
         }
@@ -2121,7 +2342,7 @@ fn style_body_color_node(value: &str, source: Option<&MetadataSourceContext>) ->
         )
     } else if value.starts_with("web:") {
         let code = (-1..=512)
-            .find(|code| crate::mssql_dump::style_web_color_name(*code) == Some(value))
+            .find(|code| ibcmd_1c_vocab::style_web_color_name(*code) == Some(value))
             .ok_or_else(|| anyhow!("unsupported Style web color: {value}"))?;
         (
             "2",
@@ -2703,7 +2924,7 @@ fn bool_code(value: bool) -> u8 {
 }
 
 fn style_body_standard_code_for_name(name: &str) -> Option<i32> {
-    crate::mssql_dump::standard_style_item_code_for_name(name)
+    ibcmd_1c_vocab::standard_style_item_code_for_name(name)
 }
 
 fn style_body_web_color_code(name: &str) -> Option<i32> {
@@ -3121,7 +3342,7 @@ pub(crate) const NATIVE_EMPTY_SETTINGS: &str = "{#base64:77u/PD94bWwgdmVyc2lvbj0
 
 /// The `{22,…}` kind uuid a child of this tag is filed under.
 fn native_child_kind_uuid(tag: &str) -> Option<&'static str> {
-    use crate::compiler::bodies::form_native::child_kind_uuid;
+    use ibcmd_form_native::child_kind_uuid;
     Some(match tag {
         "UsualGroup" | "Pages" | "Page" | "ButtonGroup" | "CommandBar" | "ContextMenu"
         | "Popup" | "ColumnGroup" => child_kind_uuid(22)?,
@@ -3152,7 +3373,7 @@ impl NativeDataPaths<'_> {
     /// Member 11 of the record, or `None` when the path names something the
     /// measured rule cannot place -- which refuses the form.
     fn resolve(&self, data_path: &str) -> Option<String> {
-        crate::compiler::bodies::form_native::resolve_form_data_path(
+        ibcmd_form_native::resolve_form_data_path(
             &self.form,
             self.source
                 .map(|source| source as &dyn ConfigurationObjects),
@@ -3411,7 +3632,7 @@ fn native_dynamic_list_field_maps(
         let mut twins = BTreeMap::<String, String>::new();
         match kind
             .as_deref()
-            .and_then(crate::mssql_dump::form_dynamic_list_std_attribute_pairs)
+            .and_then(ibcmd_form_body::form_body::form_dynamic_list_std_attribute_pairs)
         {
             Some(pairs) => {
                 for (russian, english) in pairs {
@@ -3437,7 +3658,7 @@ fn native_dynamic_list_field_maps(
                     "DocumentJournal",
                 ] {
                     for (russian, english) in
-                        crate::mssql_dump::form_dynamic_list_std_attribute_pairs(kind)
+                        ibcmd_form_body::form_body::form_dynamic_list_std_attribute_pairs(kind)
                             .unwrap_or(&[])
                     {
                         union
@@ -3567,11 +3788,9 @@ fn native_mobile_device_command_bar_content(
             }
         }
     }
-    Ok(
-        crate::compiler::bodies::form_native::format_mobile_device_command_bar_content(
-            &ids.iter().map(String::as_str).collect::<Vec<_>>(),
-        ),
-    )
+    Ok(ibcmd_form_native::format_mobile_device_command_bar_content(
+        &ids.iter().map(String::as_str).collect::<Vec<_>>(),
+    ))
 }
 
 /// Member 9 of a form attribute's record: its `<Save>`.
@@ -3591,6 +3810,7 @@ fn native_mobile_device_command_bar_content(
 ///   inside that type's own field list rather than a name-to-number table --
 ///   `Variant` is `2` under one type and `0` under another -- so 88 ERP УХ
 ///   entries and 0 BSP entries stay outside this writer.
+///
 /// Member 8, `<UseAlways>`, in the same `{0,<n>,<path>×n}` shape as member 9.
 ///
 /// The list is written in full. A coverage filter lived here for a day on the
@@ -3617,9 +3837,7 @@ fn native_form_attribute_use_always(
                 .map(|uuid| format!("{{1,{{0,{uuid}}}}}"))
                 .collect::<Vec<_>>();
             if !paths.is_empty() {
-                return Ok(
-                    crate::compiler::bodies::form_native::format_form_attribute_save(&paths),
-                );
+                return Ok(ibcmd_form_native::format_form_attribute_save(&paths));
             }
         }
         return Ok("{0,0}".to_string());
@@ -3696,7 +3914,7 @@ fn native_form_attribute_use_always(
             return Ok("{0,0}".to_string());
         }
     }
-    Ok(crate::compiler::bodies::form_native::format_form_attribute_save(&paths))
+    Ok(ibcmd_form_native::format_form_attribute_save(&paths))
 }
 
 /// Where a load onto a database reads its target's always-used constants
@@ -3855,7 +4073,7 @@ fn native_form_attribute_save(
             .collect::<Vec<_>>();
         paths.push(format!("{{{},{}}}", segments.len(), segments.join(",")));
     }
-    Ok(crate::compiler::bodies::form_native::format_form_attribute_save(&paths))
+    Ok(ibcmd_form_native::format_form_attribute_save(&paths))
 }
 
 /// The uuid of a resolved `<Save>` segment, when it is the `{0,<uuid>}` the
@@ -3892,14 +4110,12 @@ fn native_context_menu(
             items_root,
         )?);
     }
-    Ok(
-        crate::compiler::bodies::form_native::format_field_context_menu(
-            &menu.id,
-            &menu.name,
-            menu.autofill,
-            &children,
-        ),
-    )
+    Ok(ibcmd_form_native::format_field_context_menu(
+        &menu.id,
+        &menu.name,
+        menu.autofill,
+        &children,
+    ))
 }
 
 /// One child item, as the `(kind uuid, record)` pair its parent files it under.
@@ -3916,7 +4132,7 @@ fn format_native_child_item(
     source: Option<&MetadataSourceContext>,
     items_root: Option<&Path>,
 ) -> Result<(&'static str, String)> {
-    use crate::compiler::bodies::form_native as native;
+    use ibcmd_form_native as native;
 
     let kind_uuid = native_child_kind_uuid(&item.tag)
         .ok_or_else(|| anyhow!("no kind uuid for <{}>", item.tag))?;
@@ -4001,7 +4217,6 @@ fn format_native_child_item(
             display_importance,
             functional_options: native_user_visible(item, source)?.as_deref(),
             shortcut: &native_item_shortcut(item)?,
-            ..native::NativeGroupItem::default()
         })
         .ok_or_else(|| anyhow!("<{}> names something the writer cannot place", item.tag))?;
         return Ok((kind_uuid, record));
@@ -4318,7 +4533,6 @@ fn format_native_child_item(
             shortcut: &native_item_shortcut(item)?,
             parameter: &native_button_parameter(item, source)?,
             command_uniqueness: native_scalar_flag(item, "CommandUniqueness", true),
-            ..native::NativeButtonItem::default()
         })
         .ok_or_else(|| anyhow!("<Button> names something the writer cannot place"))?;
         return Ok((kind_uuid, record));
@@ -4384,7 +4598,6 @@ fn format_native_child_item(
             display_importance,
             functional_options: native_user_visible(item, source)?.as_deref(),
             shortcut: &native_item_shortcut(item)?,
-            ..native::NativeDecorationItem::default()
         })
         .ok_or_else(|| anyhow!("<{}> names something the writer cannot place", item.tag))?;
         return Ok((kind_uuid, record));
@@ -4509,7 +4722,7 @@ fn format_native_table_record(
     items_root: Option<&Path>,
     nested_in_gantt_chart: bool,
 ) -> Result<String> {
-    use crate::compiler::bodies::form_native as native;
+    use ibcmd_form_native as native;
 
     if item.picture_present {
         return Err(anyhow!("a table names a picture"));
@@ -4723,7 +4936,6 @@ fn format_native_table_record(
         ],
         shortcut: &table_shortcut,
         functional_options: table_user_visible.as_deref(),
-        ..native::NativeTableHead::default()
     })
     .ok_or_else(|| anyhow!("<Table> names a spelling the head writer cannot place"))?;
 
@@ -4806,7 +5018,6 @@ fn format_native_table_record(
             .group_vertical_align
             .map(native_vertical_align_spelling),
         display_importance: table_display_importance,
-        ..native::NativeTableTail::default()
     })
     .ok_or_else(|| anyhow!("<Table> names a spelling the tail writer cannot place"))?;
 
@@ -5157,7 +5368,7 @@ fn native_table_addition(
     items_root: Option<&Path>,
     served_table_id: Option<&str>,
 ) -> Result<String> {
-    use crate::compiler::bodies::form_native as native;
+    use ibcmd_form_native as native;
 
     let mut context_menu = None;
     let mut child_records = Vec::new();
@@ -5445,7 +5656,7 @@ fn native_container_payload(
     source: Option<&MetadataSourceContext>,
     items_root: Option<&Path>,
 ) -> Result<String> {
-    use crate::compiler::bodies::form_native as native;
+    use ibcmd_form_native as native;
     match item.tag.as_str() {
         "UsualGroup" => {
             let format = native_localized(item, "Format");
@@ -5503,7 +5714,6 @@ fn native_container_payload(
                 collapsed_representation_title: &collapsed_title,
                 format: &format,
                 associated_table_element_id: &associated,
-                ..native::NativeUsualGroupPayload::plain()
             })
             .ok_or_else(|| anyhow!("<UsualGroup> names a spelling the writer cannot place"))
         }
@@ -5561,7 +5771,6 @@ fn native_container_payload(
                 shape_representation: item.shape_representation.as_deref(),
                 back_color: &back_color,
                 border_color: &border_color,
-                ..native::NativePopupPayload::plain()
             })
             .ok_or_else(|| anyhow!("<Popup> names a spelling the writer cannot place"))
         }
@@ -5580,7 +5789,6 @@ fn native_container_payload(
                 title_back_color: &title_back_color,
                 fixing_in_table: item.fixing_in_table.map(native_fixing_in_table_spelling),
                 picture: &header_picture,
-                ..native::NativeColumnGroupPayload::plain()
             })
             .ok_or_else(|| anyhow!("<ColumnGroup> names a spelling the writer cannot place"))
         }
@@ -5632,7 +5840,7 @@ fn native_button_command(
     main_attribute_class: &str,
     source: Option<&MetadataSourceContext>,
 ) -> Result<String> {
-    use crate::compiler::bodies::form_native as native;
+    use ibcmd_form_native as native;
     let Some(path) = item.command_name.as_deref() else {
         return Ok("{0}".to_string());
     };
@@ -5800,7 +6008,7 @@ pub(crate) fn native_item_color(
     value: Option<&str>,
     source: Option<&MetadataSourceContext>,
 ) -> Option<String> {
-    crate::compiler::bodies::form_native::format_native_color(value, |name| {
+    ibcmd_form_native::format_native_color(value, |name| {
         source?
             .resolve_style_item_uuid(&format!("StyleItem.{name}"))
             .ok()
@@ -5840,7 +6048,7 @@ fn native_font_of(
     source: Option<&MetadataSourceContext>,
 ) -> Result<String> {
     let empty = BTreeMap::new();
-    crate::compiler::bodies::form_native::format_native_font(attributes.unwrap_or(&empty), |name| {
+    ibcmd_form_native::format_native_font(attributes.unwrap_or(&empty), |name| {
         source?
             .resolve_style_item_uuid(&format!("StyleItem.{name}"))
             .ok()
@@ -5876,7 +6084,7 @@ fn native_choice_list(
     for choice in choices {
         values.push(native_choice_list_value(choice, source)?);
     }
-    Ok(crate::compiler::bodies::form_native::format_native_choice_list(&values))
+    Ok(ibcmd_form_native::format_native_choice_list(&values))
 }
 
 /// Payload members 55 to 60 of an input field, measured over both corpora:
@@ -5944,13 +6152,12 @@ fn native_button_parameter(
 /// A `<Shortcut>` of an item, `{0,0,0}` when it names none.
 fn native_item_shortcut(item: &FormXmlChildItem) -> Result<String> {
     match item.scalars.get("Shortcut") {
-        Some(text) => crate::compiler::bodies::form_native::format_native_shortcut(text)
-            .ok_or_else(|| {
-                anyhow!(
-                    "<{}> names the shortcut {text}, which is not measured",
-                    item.tag
-                )
-            }),
+        Some(text) => ibcmd_form_native::format_native_shortcut(text).ok_or_else(|| {
+            anyhow!(
+                "<{}> names the shortcut {text}, which is not measured",
+                item.tag
+            )
+        }),
         None => Ok("{0,0,0}".to_string()),
     }
 }
@@ -5999,7 +6206,7 @@ fn native_choice_list_value(
     choice: &FormXmlChoiceListItem,
     source: Option<&MetadataSourceContext>,
 ) -> Result<String> {
-    use crate::compiler::bodies::form_native as native;
+    use ibcmd_form_native as native;
     if let Some(part) = choice.unwritable.first() {
         return Err(anyhow!("a <ChoiceList> item names <{part}>"));
     }
@@ -6294,7 +6501,7 @@ fn native_field_payload(
     source: Option<&MetadataSourceContext>,
     items_root: Option<&Path>,
 ) -> Result<String> {
-    use crate::compiler::bodies::form_native as native;
+    use ibcmd_form_native as native;
     let events = native_item_events_where(item, main_attribute_class, |name| name != "OnChange")?;
     match native::native_field_kind(&item.tag) {
         Some(1) => Ok(native::format_label_payload(&native::NativeLabelPayload {
@@ -6318,7 +6525,6 @@ fn native_field_payload(
             password_mode: native_scalar_tristate(item, "PasswordMode")?,
             border: &native_item_control_border(item)?,
             border_color: &native_scalar_color(item, "BorderColor", source)?,
-            ..native::NativeLabelPayload::plain(false)
         })),
         Some(2) => {
             let choice_parameter_links = native_choice_parameter_links(item, data_paths)?;
@@ -6410,7 +6616,6 @@ fn native_field_payload(
                 choice_parameter_links: &choice_parameter_links.0,
                 choice_parameter_links_again: &choice_parameter_links.1,
                 type_link: &native_type_link(item, data_paths)?,
-                ..native::NativeInputPayload::plain()
             })
             .ok_or_else(|| anyhow!("the input field names something the writer cannot place"))
         }
@@ -6439,7 +6644,6 @@ fn native_field_payload(
                 equal_items_width: item.scalars.get("EqualItemsWidth").map(String::as_str),
                 format: &format,
                 font: &font,
-                ..native::NativeCheckBoxPayload::plain()
             })
             .ok_or_else(|| anyhow!("<CheckBoxField> names a spelling the writer cannot place"))
         }
@@ -6650,7 +6854,6 @@ fn native_field_payload(
                 item_title_height: native_scalar(item, "ItemTitleHeight"),
                 item_width: native_scalar(item, "ItemWidth"),
                 equal_columns_width: item.scalars.get("EqualColumnsWidth").map(String::as_str),
-                ..native::NativeRadioButtonPayload::plain()
             })
             .ok_or_else(|| anyhow!("<RadioButtonField> names a spelling the writer cannot place"))
         }
@@ -6685,7 +6888,6 @@ fn native_field_payload(
                     .scalars
                     .get("DrawingSelectionShowMode")
                     .map(String::as_str),
-                ..native::NativeSpreadsheetPayload::plain()
             })
             .ok_or_else(|| {
                 anyhow!("<SpreadSheetDocumentField> names a spelling the writer cannot place")
@@ -6749,7 +6951,7 @@ fn native_field_payload(
                 hstretch = u8::from(item.horizontal_stretch.unwrap_or(true)),
                 vstretch = u8::from(item.vertical_stretch.unwrap_or(true)),
                 max_height = item.max_height.as_deref().unwrap_or("0"),
-                selection = crate::form_schema::form_calendar_selection_mode_code(
+                selection = ibcmd_form_schema::form_calendar_selection_mode_code(
                     item.scalars.get("SelectionMode").map(String::as_str),
                 )
                 .ok_or_else(|| anyhow!("a calendar's selection mode is not measured"))?,
@@ -6772,7 +6974,7 @@ fn native_field_payload(
         }
         // A track bar's `{2,…}` payload, 18 members over 13 records.
         Some(10) => {
-            let marking = crate::form_schema::form_track_bar_marking_appearance_code(
+            let marking = ibcmd_form_schema::form_track_bar_marking_appearance_code(
                 item.scalars.get("MarkingAppearance").map(String::as_str),
             )
             .ok_or_else(|| anyhow!("a track bar's marking appearance is not measured"))?;
@@ -6833,7 +7035,6 @@ fn native_field_payload(
                 border: &border,
                 font: &font,
                 title: &nonselected_picture_text,
-                ..native::NativePicturePayload::default()
             })
             .ok_or_else(|| anyhow!("<PictureField> names a spelling the writer cannot place"))
         }
@@ -6871,7 +7072,7 @@ fn native_decoration_payload(
     source: Option<&MetadataSourceContext>,
     items_root: Option<&Path>,
 ) -> Result<String> {
-    use crate::compiler::bodies::form_native as native;
+    use ibcmd_form_native as native;
     let border = native_item_control_border(item)?;
     let border_color = native_scalar_color(item, "BorderColor", source)?;
     let events = native_item_events(item, main_attribute_class)?;
@@ -6921,7 +7122,6 @@ fn native_decoration_payload(
                 file_drag_mode,
                 image_scale: Some(native_decoration_number(item, "ImageScale", "100")?),
                 nonselected_picture_text: &nonselected_picture_text,
-                ..native::NativePictureDecorationPayload::default()
             },
         )
         .ok_or_else(|| {
@@ -6981,7 +7181,7 @@ fn native_decoration_number<'a>(
 /// shape.
 fn native_item_control_border(item: &FormXmlChildItem) -> Result<String> {
     if !item.control_border_seen {
-        return crate::compiler::bodies::form_native::format_native_control_border(None, "1")
+        return ibcmd_form_native::format_native_control_border(None, "1")
             .ok_or_else(|| anyhow!("<{}> cannot place its default border", item.tag));
     }
     let border = item
@@ -6995,16 +7195,13 @@ fn native_item_control_border(item: &FormXmlChildItem) -> Result<String> {
     let style = border
         .style
         .ok_or_else(|| anyhow!("<{}> names a <Border> with no style", item.tag))?;
-    crate::compiler::bodies::form_native::format_native_control_border(
-        Some(style.xml_value()),
-        &border.width,
-    )
-    .ok_or_else(|| {
-        anyhow!(
-            "<{}> names a border style the writer cannot place",
-            item.tag
-        )
-    })
+    ibcmd_form_native::format_native_control_border(Some(style.xml_value()), &border.width)
+        .ok_or_else(|| {
+            anyhow!(
+                "<{}> names a border style the writer cannot place",
+                item.tag
+            )
+        })
 }
 
 /// The `{4,…}` picture reference an item's `<Picture>` stores.
@@ -7597,7 +7794,7 @@ fn native_picture_of(
     source: Option<&MetadataSourceContext>,
     items_root: Option<&Path>,
 ) -> Result<String> {
-    use crate::compiler::bodies::form_native as native;
+    use ibcmd_form_native as native;
     let Some(picture) = picture else {
         if picture_present {
             return Err(anyhow!("<{holder}> names a <Picture> the parser lost"));
@@ -7651,8 +7848,7 @@ fn native_picture_of(
             .iter()
             .find_map(|(candidate, value)| (*candidate == name).then(|| (*value).to_owned()))
             .or_else(|| {
-                crate::mssql_dump::standard_picture_uuid(reference)
-                    .map(|uuid| format!("{{0,{uuid}}}"))
+                ibcmd_1c_vocab::standard_picture_uuid(reference).map(|uuid| format!("{{0,{uuid}}}"))
             })
             .ok_or_else(|| anyhow!("no measured value for StdPicture.{name}"))?;
         return Ok(native::format_native_std_picture(
@@ -7743,17 +7939,13 @@ fn native_item_events_where(
         .events
         .iter()
         .filter(|event| keep(event.name.as_str()))
-        .map(|event| crate::compiler::bodies::form_native::NativeEvent {
+        .map(|event| ibcmd_form_native::NativeEvent {
             name: &event.name,
             handler: &event.handler,
         })
         .collect::<Vec<_>>();
-    crate::compiler::bodies::form_native::format_native_events(
-        &item.tag,
-        &main_attribute_class,
-        &events,
-    )
-    .ok_or_else(|| anyhow!("<{}> names an event the writer cannot place", item.tag))
+    ibcmd_form_native::format_native_events(&item.tag, main_attribute_class, &events)
+        .ok_or_else(|| anyhow!("<{}> names an event the writer cannot place", item.tag))
 }
 
 /// One scalar property of an item, or `"0"` when it names none -- what every
@@ -7807,7 +7999,7 @@ fn native_item_extended_tooltip(
     source: Option<&MetadataSourceContext>,
     items_root: Option<&Path>,
 ) -> Result<Option<String>> {
-    use crate::compiler::bodies::form_native as native;
+    use ibcmd_form_native as native;
     let Some(tooltip) = item.extended_tooltip.as_ref() else {
         return Ok(None);
     };
@@ -8414,18 +8606,16 @@ fn native_input_drop_list_settings(
     {
         return Ok("{0}".to_string());
     }
-    Ok(
-        crate::compiler::bodies::form_native::format_input_drop_list_settings(
-            allow_empty.unwrap_or(false),
-            check,
-            value_path.as_deref().unwrap_or("{0}"),
-            picture_path.as_deref().unwrap_or("{0}"),
-            present_path.as_deref().unwrap_or("{0}"),
-            hyperlink,
-            &font,
-            &back_color,
-        ),
-    )
+    Ok(ibcmd_form_native::format_input_drop_list_settings(
+        allow_empty.unwrap_or(false),
+        check,
+        value_path.as_deref().unwrap_or("{0}"),
+        picture_path.as_deref().unwrap_or("{0}"),
+        present_path.as_deref().unwrap_or("{0}"),
+        hyperlink,
+        &font,
+        &back_color,
+    ))
 }
 
 /// `<MinValue>` or `<MaxValue>` as a typed value: `{"N",n}` for a number and
@@ -8615,7 +8805,7 @@ fn native_conditional_appearance_settings(
         let (before, after) = rest.split_at(at);
         out.push_str(before);
         let name_len = after["style:".len()..]
-            .find(|c: char| c == '<' || c == '"')
+            .find(['<', '"'])
             .ok_or_else(|| anyhow!("a conditional appearance style reference does not end"))?;
         let name = &after["style:".len().."style:".len() + name_len];
         let declared = source.and_then(|source| {
@@ -8678,45 +8868,43 @@ fn format_native_form_body(
         }
         None => None,
     };
-    let root_head = crate::compiler::bodies::form_native::format_root_head(
-        &crate::compiler::bodies::form_native::NativeRootHead {
-            window_opening_mode: properties.window_opening_mode.map(|mode| match mode {
-                FormXmlWindowOpeningMode::DontBlock => "DontUse",
-                FormXmlWindowOpeningMode::LockOwner => "LockOwnerWindow",
-                FormXmlWindowOpeningMode::LockWholeInterface => "LockWholeInterface",
+    let root_head = ibcmd_form_native::format_root_head(&ibcmd_form_native::NativeRootHead {
+        window_opening_mode: properties.window_opening_mode.map(|mode| match mode {
+            FormXmlWindowOpeningMode::DontBlock => "DontUse",
+            FormXmlWindowOpeningMode::LockOwner => "LockOwnerWindow",
+            FormXmlWindowOpeningMode::LockWholeInterface => "LockWholeInterface",
+        }),
+        width: properties.width.as_deref(),
+        height: properties.height.as_deref(),
+        enter_key_behavior: properties.enter_key_behavior.map(|_| "DefaultButton"),
+        save_data_in_settings: properties.save_data_in_settings.map(|_| "UseList"),
+        auto_save_data_in_settings: properties.auto_save_data_in_settings.map(|_| "Use"),
+        settings_storage: settings_storage.as_deref(),
+        auto_title: properties.auto_title.unwrap_or(true),
+        read_only: properties.read_only.unwrap_or(false),
+        title: &title,
+        group: properties.group.map(|_| "Vertical"),
+        child_items_width: properties
+            .root_scalars
+            .get("ChildItemsWidth")
+            .map(String::as_str),
+        auto_fill_check: properties.auto_fill_check.unwrap_or(true),
+        customizable: properties.customizable.unwrap_or(true),
+        enabled: properties.root_scalars.get("Enabled").map(String::as_str) != Some("false"),
+        command_bar_location: properties
+            .command_bar_location
+            .map(|location| match location {
+                FormXmlCommandBarLocation::None => "None",
+                FormXmlCommandBarLocation::Top => "Top",
+                FormXmlCommandBarLocation::Bottom => "Bottom",
             }),
-            width: properties.width.as_deref(),
-            height: properties.height.as_deref(),
-            enter_key_behavior: properties.enter_key_behavior.map(|_| "DefaultButton"),
-            save_data_in_settings: properties.save_data_in_settings.map(|_| "UseList"),
-            auto_save_data_in_settings: properties.auto_save_data_in_settings.map(|_| "Use"),
-            settings_storage: settings_storage.as_deref(),
-            auto_title: properties.auto_title.unwrap_or(true),
-            read_only: properties.read_only.unwrap_or(false),
-            title: &title,
-            group: properties.group.map(|_| "Vertical"),
-            child_items_width: properties
-                .root_scalars
-                .get("ChildItemsWidth")
-                .map(String::as_str),
-            auto_fill_check: properties.auto_fill_check.unwrap_or(true),
-            customizable: properties.customizable.unwrap_or(true),
-            enabled: properties.root_scalars.get("Enabled").map(String::as_str) != Some("false"),
-            command_bar_location: properties
-                .command_bar_location
-                .map(|location| match location {
-                    FormXmlCommandBarLocation::None => "None",
-                    FormXmlCommandBarLocation::Top => "Top",
-                    FormXmlCommandBarLocation::Bottom => "Bottom",
-                }),
-        },
-    )
+    })
     .ok_or_else(|| anyhow!("the form's head names something the writer cannot place"))?;
 
     let events = properties
         .events
         .iter()
-        .map(|event| crate::compiler::bodies::form_native::NativeEvent {
+        .map(|event| ibcmd_form_native::NativeEvent {
             name: &event.name,
             handler: &event.handler,
         })
@@ -8726,7 +8914,7 @@ fn format_native_form_body(
     // the item and table sites already pass. With a literal empty class here the
     // lookup fell through to the class-open rows, which hold neither name, and
     // every form naming one was refused.
-    let events = crate::compiler::bodies::form_native::format_native_events(
+    let events = ibcmd_form_native::format_native_events(
         "Form",
         &form_main_attribute_class(properties),
         &events,
@@ -8820,23 +9008,20 @@ fn format_native_form_body(
     let command_bar = match &properties.auto_command_bar {
         Some(bar) => {
             let payload = native_command_bar_payload(bar.horizontal_align, bar.autofill)?;
-            crate::compiler::bodies::form_native::format_group_item(
-                &crate::compiler::bodies::form_native::NativeGroupItem {
-                    id: &bar.id,
-                    kind: 9,
-                    name: &bar.name,
-                    children: &bar_children,
-                    payload: &payload,
-                    display_importance:
-                        crate::compiler::bodies::form_native::native_display_importance(
-                            bar.display_importance.as_deref(),
-                        )
-                        .ok_or_else(|| {
-                            anyhow!("the auto command bar names an unmeasured DisplayImportance")
-                        })?,
-                    ..crate::compiler::bodies::form_native::NativeGroupItem::default()
-                },
-            )
+            ibcmd_form_native::format_group_item(&ibcmd_form_native::NativeGroupItem {
+                id: &bar.id,
+                kind: 9,
+                name: &bar.name,
+                children: &bar_children,
+                payload: &payload,
+                display_importance: ibcmd_form_native::native_display_importance(
+                    bar.display_importance.as_deref(),
+                )
+                .ok_or_else(|| {
+                    anyhow!("the auto command bar names an unmeasured DisplayImportance")
+                })?,
+                ..ibcmd_form_native::NativeGroupItem::default()
+            })
             .ok_or_else(|| anyhow!("the auto command bar names something unplaceable"))?
         }
         None => return Err(anyhow!("a form with no auto command bar is not measured")),
@@ -8844,64 +9029,62 @@ fn format_native_form_body(
 
     let mobile_device_command_bar_content =
         native_mobile_device_command_bar_content(properties, &data_paths.form.items)?;
-    let tail = crate::compiler::bodies::form_native::format_root_tail(
-        &crate::compiler::bodies::form_native::NativeRootTail {
-            scale: properties.root_scalars.get("Scale").map(String::as_str),
-            auto_url: properties.auto_url.unwrap_or(true),
-            vertical_scroll: properties.vertical_scroll.map(|scroll| match scroll {
-                FormXmlVerticalScroll::UseIfNecessary => "useIfNecessary",
-                FormXmlVerticalScroll::UseWithoutStretch => "useWithoutStretch",
-            }),
-            scaling_mode: properties.scaling_mode.map(|mode| match mode {
-                FormXmlScalingMode::Normal => "Normal",
-                FormXmlScalingMode::Compact => "Compact",
-            }),
-            horizontal_spacing: properties
-                .root_scalars
-                .get("HorizontalSpacing")
-                .map(String::as_str),
-            vertical_spacing: properties
-                .root_scalars
-                .get("VerticalSpacing")
-                .map(String::as_str),
-            horizontal_align: properties.horizontal_align.map(|align| match align {
-                FormXmlHorizontalAlign::Left => "Left",
-                FormXmlHorizontalAlign::Center => "Center",
-                FormXmlHorizontalAlign::Right => "Right",
-                FormXmlHorizontalAlign::Auto => "Auto",
-            }),
-            vertical_align: properties.vertical_align.map(|align| match align {
-                FormRootVerticalAlign::Top => "Top",
-                FormRootVerticalAlign::Center => "Center",
-                FormRootVerticalAlign::Bottom => "Bottom",
-            }),
-            children_align: properties
-                .root_scalars
-                .get("ChildrenAlign")
-                .map(String::as_str),
-            group: properties.group.map(|group| match group {
-                FormXmlGroup::Vertical => "Vertical",
-                FormXmlGroup::Horizontal => "Horizontal",
-                FormXmlGroup::AlwaysHorizontal => "AlwaysHorizontal",
-                FormXmlGroup::HorizontalIfPossible => "HorizontalIfPossible",
-                FormXmlGroup::InCell => "InCell",
-            }),
-            show_title: properties.show_title.unwrap_or(true),
-            show_close_button: properties.show_close_button.unwrap_or(true),
-            conversations_representation: properties
-                .root_scalars
-                .get("ConversationsRepresentation")
-                .map(String::as_str)
-                .or(properties.conversations_representation.map(|_| "Show")),
-            collapse_items_by_importance: properties
-                .root_scalars
-                .get("CollapseItemsByImportanceVariant")
-                .map(String::as_str),
-            save_window_settings: properties.save_window_settings.unwrap_or(true),
-            navigator: None,
-            mobile_device_command_bar_content: &mobile_device_command_bar_content,
-        },
-    )
+    let tail = ibcmd_form_native::format_root_tail(&ibcmd_form_native::NativeRootTail {
+        scale: properties.root_scalars.get("Scale").map(String::as_str),
+        auto_url: properties.auto_url.unwrap_or(true),
+        vertical_scroll: properties.vertical_scroll.map(|scroll| match scroll {
+            FormXmlVerticalScroll::UseIfNecessary => "useIfNecessary",
+            FormXmlVerticalScroll::UseWithoutStretch => "useWithoutStretch",
+        }),
+        scaling_mode: properties.scaling_mode.map(|mode| match mode {
+            FormXmlScalingMode::Normal => "Normal",
+            FormXmlScalingMode::Compact => "Compact",
+        }),
+        horizontal_spacing: properties
+            .root_scalars
+            .get("HorizontalSpacing")
+            .map(String::as_str),
+        vertical_spacing: properties
+            .root_scalars
+            .get("VerticalSpacing")
+            .map(String::as_str),
+        horizontal_align: properties.horizontal_align.map(|align| match align {
+            FormXmlHorizontalAlign::Left => "Left",
+            FormXmlHorizontalAlign::Center => "Center",
+            FormXmlHorizontalAlign::Right => "Right",
+            FormXmlHorizontalAlign::Auto => "Auto",
+        }),
+        vertical_align: properties.vertical_align.map(|align| match align {
+            FormRootVerticalAlign::Top => "Top",
+            FormRootVerticalAlign::Center => "Center",
+            FormRootVerticalAlign::Bottom => "Bottom",
+        }),
+        children_align: properties
+            .root_scalars
+            .get("ChildrenAlign")
+            .map(String::as_str),
+        group: properties.group.map(|group| match group {
+            FormXmlGroup::Vertical => "Vertical",
+            FormXmlGroup::Horizontal => "Horizontal",
+            FormXmlGroup::AlwaysHorizontal => "AlwaysHorizontal",
+            FormXmlGroup::HorizontalIfPossible => "HorizontalIfPossible",
+            FormXmlGroup::InCell => "InCell",
+        }),
+        show_title: properties.show_title.unwrap_or(true),
+        show_close_button: properties.show_close_button.unwrap_or(true),
+        conversations_representation: properties
+            .root_scalars
+            .get("ConversationsRepresentation")
+            .map(String::as_str)
+            .or(properties.conversations_representation.map(|_| "Show")),
+        collapse_items_by_importance: properties
+            .root_scalars
+            .get("CollapseItemsByImportanceVariant")
+            .map(String::as_str),
+        save_window_settings: properties.save_window_settings.unwrap_or(true),
+        navigator: None,
+        mobile_device_command_bar_content: &mobile_device_command_bar_content,
+    })
     .ok_or_else(|| anyhow!("the form's tail names something the writer cannot place"))?;
 
     // The form's own children, each written by the record writer for its kind.
@@ -8923,20 +9106,18 @@ fn format_native_form_body(
         .collect::<Vec<_>>();
 
     let root_bag = native_root_property_bag(properties, &items, &main_attribute_class)?;
-    let root = crate::compiler::bodies::form_native::format_root_layout(
-        &crate::compiler::bodies::form_native::NativeRootLayout {
-            head: &root_head,
-            properties: &root_bag
-                .iter()
-                .map(|(key, value)| (*key, value.clone()))
-                .collect::<Vec<_>>(),
-            events: &events,
-            command_set: &command_set,
-            command_bar: &command_bar,
-            children: &children,
-            tail: &tail,
-        },
-    );
+    let root = ibcmd_form_native::format_root_layout(&ibcmd_form_native::NativeRootLayout {
+        head: &root_head,
+        properties: &root_bag
+            .iter()
+            .map(|(key, value)| (*key, value.clone()))
+            .collect::<Vec<_>>(),
+        events: &events,
+        command_set: &command_set,
+        command_bar: &command_bar,
+        children: &children,
+        tail: &tail,
+    });
 
     // `<FunctionalOptions>` is one `{0,N,<option uuid>×N}` collection in three
     // holders: the last member of an attribute's `{9,…}` record, member 12 of
@@ -8991,20 +9172,17 @@ fn format_native_form_body(
                 format_form_type_spec_pattern("Form Attribute Column", &column.spec, source)?;
             let column_options = functional_options(&column.functional_options)?;
             let (column_view, column_edit) = native_column_rights(column, source)?;
-            columns.push(
-                crate::compiler::bodies::form_native::format_form_attribute_column(
-                    &crate::compiler::bodies::form_native::NativeFormAttributeColumn {
-                        id: &column.id,
-                        name: &column.name,
-                        title: &column_title,
-                        type_pattern: &column_pattern,
-                        functional_options: &column_options,
-                        fill_check: column.fill_check.as_deref() == Some("ShowError"),
-                        restrictions: [&column_view, &column_edit],
-                        ..crate::compiler::bodies::form_native::NativeFormAttributeColumn::default()
-                    },
-                ),
-            );
+            columns.push(ibcmd_form_native::format_form_attribute_column(
+                &ibcmd_form_native::NativeFormAttributeColumn {
+                    id: &column.id,
+                    name: &column.name,
+                    title: &column_title,
+                    type_pattern: &column_pattern,
+                    functional_options: &column_options,
+                    fill_check: column.fill_check.as_deref() == Some("ShowError"),
+                    restrictions: [&column_view, &column_edit],
+                },
+            ));
         }
         // trailing[0] is a value list's element type and `{0,0}` for every
         // other kind of attribute; trailing[1] is `<FunctionalOptions>`.
@@ -9017,20 +9195,17 @@ fn format_native_form_body(
                 let column_options = functional_options(&column.functional_options)?;
                 let (column_view, column_edit) = native_column_rights(column, source)?;
                 records.push(',');
-                records.push_str(
-                    &crate::compiler::bodies::form_native::format_form_attribute_column(
-                        &crate::compiler::bodies::form_native::NativeFormAttributeColumn {
-                            id: &column.id,
-                            name: &column.name,
-                            title: &column_title,
-                            type_pattern: &column_pattern,
-                            functional_options: &column_options,
-                            fill_check: column.fill_check.as_deref() == Some("ShowError"),
-                            restrictions: [&column_view, &column_edit],
-                            ..crate::compiler::bodies::form_native::NativeFormAttributeColumn::default()
-                        },
-                    ),
-                );
+                records.push_str(&ibcmd_form_native::format_form_attribute_column(
+                    &ibcmd_form_native::NativeFormAttributeColumn {
+                        id: &column.id,
+                        name: &column.name,
+                        title: &column_title,
+                        type_pattern: &column_pattern,
+                        functional_options: &column_options,
+                        fill_check: column.fill_check.as_deref() == Some("ShowError"),
+                        restrictions: [&column_view, &column_edit],
+                    },
+                ));
             }
             let path = data_paths.resolve(&block.table).ok_or_else(|| {
                 anyhow!(
@@ -9046,13 +9221,8 @@ fn format_native_form_body(
             .element_type
             .as_ref()
             .map(|spec| {
-                format_form_type_spec_pattern("Form Attribute ElementType", spec, source).map(
-                    |pattern| {
-                        crate::compiler::bodies::form_native::format_form_value_list_element_type(
-                            &pattern,
-                        )
-                    },
-                )
+                format_form_type_spec_pattern("Form Attribute ElementType", spec, source)
+                    .map(|pattern| ibcmd_form_native::format_form_value_list_element_type(&pattern))
             })
             .transpose()?;
         let save = native_form_attribute_save(attribute, &data_paths)?;
@@ -9116,33 +9286,30 @@ fn format_native_form_body(
         let use_always = native_form_attribute_use_always(attribute, &data_paths)?;
         let attribute_options = functional_options(&attribute.functional_options)?;
         attributes.push(',');
-        attributes.push_str(
-            &crate::compiler::bodies::form_native::format_form_attribute(
-                &crate::compiler::bodies::form_native::NativeFormAttribute {
-                    id: &attribute.id,
-                    name: &attribute.name,
-                    title: &title,
-                    type_pattern: &pattern,
-                    use_always: &use_always,
-                    save: &save,
-                    view: &attribute_view,
-                    edit: &attribute_edit,
-                    main_attribute: attribute.main_attribute.unwrap_or(false),
-                    saved_data: attribute.saved_data.unwrap_or(false),
-                    fill_check: attribute.fill_check.as_deref() == Some("ShowError"),
-                    columns: &columns,
-                    trailing: [
-                        dynamic_list_bag
-                            .as_deref()
-                            .or(embedded.as_deref())
-                            .or(element_type.as_deref())
-                            .unwrap_or("{0,0}"),
-                        &attribute_options,
-                    ],
-                    ..crate::compiler::bodies::form_native::NativeFormAttribute::default()
-                },
-            ),
-        );
+        attributes.push_str(&ibcmd_form_native::format_form_attribute(
+            &ibcmd_form_native::NativeFormAttribute {
+                id: &attribute.id,
+                name: &attribute.name,
+                title: &title,
+                type_pattern: &pattern,
+                use_always: &use_always,
+                save: &save,
+                view: &attribute_view,
+                edit: &attribute_edit,
+                main_attribute: attribute.main_attribute.unwrap_or(false),
+                saved_data: attribute.saved_data.unwrap_or(false),
+                fill_check: attribute.fill_check.as_deref() == Some("ShowError"),
+                columns: &columns,
+                trailing: [
+                    dynamic_list_bag
+                        .as_deref()
+                        .or(embedded.as_deref())
+                        .or(element_type.as_deref())
+                        .unwrap_or("{0,0}"),
+                    &attribute_options,
+                ],
+            },
+        ));
     }
 
     // The parameters and the commands, each a `{0,<count>,<record> x count}`
@@ -9151,13 +9318,11 @@ fn format_native_form_body(
     for parameter in &properties.parameters {
         let pattern = format_form_parameter_type_pattern(parameter, source)?;
         parameters.push(',');
-        parameters.push_str(
-            &crate::compiler::bodies::form_native::format_form_parameter(
-                &parameter.name,
-                &pattern,
-                parameter.key_parameter.unwrap_or(false),
-            ),
-        );
+        parameters.push_str(&ibcmd_form_native::format_form_parameter(
+            &parameter.name,
+            &pattern,
+            parameter.key_parameter.unwrap_or(false),
+        ));
     }
     let mut commands = String::new();
     for command in &properties.commands {
@@ -9171,10 +9336,9 @@ fn format_native_form_body(
             None => "{0,{0,{\"B\",1},0}}".to_string(),
         };
         let command_shortcut = match command.shortcut.as_deref() {
-            Some(text) => crate::compiler::bodies::form_native::format_native_shortcut(text)
-                .ok_or_else(|| {
-                    anyhow!("a command names the shortcut {text}, which is not measured")
-                })?,
+            Some(text) => ibcmd_form_native::format_native_shortcut(text).ok_or_else(|| {
+                anyhow!("a command names the shortcut {text}, which is not measured")
+            })?,
             None => "{0,0,0}".to_string(),
         };
         let command_associated = match command.associated_table_element_id.as_deref() {
@@ -9214,27 +9378,24 @@ fn format_native_form_body(
         )?;
         commands.push(',');
         commands.push_str(
-            &crate::compiler::bodies::form_native::format_form_command(
-                &crate::compiler::bodies::form_native::NativeFormCommand {
-                    id: &command.id,
-                    name: &command.name,
-                    title: &title,
-                    tooltip: &tooltip,
-                    action: command.action.as_deref().unwrap_or(""),
-                    representation: command.representation.as_deref(),
-                    picture: &command_picture,
-                    functional_options: &command_options,
-                    modifies_saved_data: command.modifies_saved_data.unwrap_or(false),
-                    current_row_use: command.current_row_use.map(|value| match value {
-                        FormXmlCommandCurrentRowUse::DontUse => "DontUse",
-                        FormXmlCommandCurrentRowUse::Use => "Use",
-                    }),
-                    use_always: &command_use,
-                    picture_index: &command_shortcut,
-                    fourteenth: &command_associated,
-                    ..crate::compiler::bodies::form_native::NativeFormCommand::default()
-                },
-            )
+            &ibcmd_form_native::format_form_command(&ibcmd_form_native::NativeFormCommand {
+                id: &command.id,
+                name: &command.name,
+                title: &title,
+                tooltip: &tooltip,
+                action: command.action.as_deref().unwrap_or(""),
+                representation: command.representation.as_deref(),
+                picture: &command_picture,
+                functional_options: &command_options,
+                modifies_saved_data: command.modifies_saved_data.unwrap_or(false),
+                current_row_use: command.current_row_use.map(|value| match value {
+                    FormXmlCommandCurrentRowUse::DontUse => "DontUse",
+                    FormXmlCommandCurrentRowUse::Use => "Use",
+                }),
+                use_always: &command_use,
+                picture_index: &command_shortcut,
+                fourteenth: &command_associated,
+            })
             .ok_or_else(|| anyhow!("a command names something the writer cannot place"))?,
         );
     }
@@ -9937,7 +10098,7 @@ fn patch_form_item_picture_assets_with_source(
         if let Some(current_content) = decode_base64_mime(&plain[payload_start..payload_end])
             && is_form_item_picture_asset_content(&current_content)
             && let Some((item_name, property_name)) =
-                crate::mssql_dump::resolve_form_item_picture_owner(plain, marker_start)
+                ibcmd_form_body::form_body::form_item_picture_owner_at(plain, marker_start)
         {
             let file_name = form_item_asset_file_name(property_name, &current_content);
             if let Some(path) = resolve_form_item_asset_path(assets_root, &item_name, &file_name) {
@@ -10638,11 +10799,9 @@ fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
                     current_localized_section = Some(local.clone());
                 } else if local == "Title" && path_ends_with(&path, &["Form"]) {
                     current_localized_section = Some("FormTitle".to_string());
-                } else if local == "item" && path_ends_with(&path, &["Form", "Title"]) {
-                    current_localized_lang = None;
-                    current_localized_content = None;
                 } else if local == "item"
-                    && (path_ends_with(&path, &["Form", "Commands", "Command", "Title"])
+                    && (path_ends_with(&path, &["Form", "Title"])
+                        || path_ends_with(&path, &["Form", "Commands", "Command", "Title"])
                         || path_ends_with(&path, &["Form", "Commands", "Command", "ToolTip"]))
                 {
                     current_localized_lang = None;
@@ -11098,13 +11257,12 @@ fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
                 // from it falls back to a default without saying so: the label
                 // decorations of 2 897 forms carried a `<TextColor>` that never
                 // reached the body.
-                if path.len() >= 2
+                if (path.len() >= 2
                     && current_child_items
                         .last()
-                        .is_some_and(|item| path[path.len() - 2] == item.tag)
+                        .is_some_and(|item| path[path.len() - 2] == item.tag))
+                    || (path.len() == 2 && path[0] == "Form" && current_child_items.is_empty())
                 {
-                    child_text.push_str(text.xml_content()?.as_ref());
-                } else if path.len() == 2 && path[0] == "Form" && current_child_items.is_empty() {
                     child_text.push_str(text.xml_content()?.as_ref());
                 }
                 if path_ends_with(&path, &["Form", "WindowOpeningMode"])
@@ -12680,6 +12838,10 @@ fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
                         properties.use_for_folders_and_items =
                             Some(parse_form_use_for_folders_and_items_xml(text_value.trim())?);
                     }
+                    #[allow(
+                        clippy::collapsible_match,
+                        reason = "in the guard, an empty `GroupList` would fall through to the child-item arms below"
+                    )]
                     "GroupList" if path_ends_with(&path, &["Form", "GroupList"]) => {
                         if !text_value.trim().is_empty() {
                             properties.group_list = Some(text_value.trim().to_string());
@@ -15001,10 +15163,9 @@ fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
                             if let Some(parent) = current_child_items.last_mut() {
                                 parent.child_items.push(item.clone());
                             } else if path_ends_with_root_auto_command_bar_child_item(&path, &item)
+                                && let Some(command_bar) = properties.auto_command_bar.as_mut()
                             {
-                                if let Some(command_bar) = properties.auto_command_bar.as_mut() {
-                                    command_bar.child_items.push(item.clone());
-                                }
+                                command_bar.child_items.push(item.clone());
                             }
                             if !path_ends_with_root_auto_command_bar_child_item(&path, &item) {
                                 properties.child_items.push(item);
@@ -16308,14 +16469,11 @@ fn native_command_interface_command(
         return Ok(format!("{{{id},{FORM_COMMANDS}}}"));
     }
     if let Some(name) = reference.strip_prefix("Form.StandardCommand.") {
-        let uuid = crate::compiler::bodies::form_native::form_standard_command_uuid(
-            main_attribute_class,
-            name,
-        )
-        .or_else(|| crate::compiler::bodies::form_native::form_standard_command_uuid("", name))
-        .ok_or_else(|| {
-            anyhow!("a command interface item names {reference}, which the writer cannot place")
-        })?;
+        let uuid = ibcmd_form_native::form_standard_command_uuid(main_attribute_class, name)
+            .or_else(|| ibcmd_form_native::form_standard_command_uuid("", name))
+            .ok_or_else(|| {
+                anyhow!("a command interface item names {reference}, which the writer cannot place")
+            })?;
         return Ok(format!("{{0,{uuid}}}"));
     }
     // `<Kind>.<Object>.StandardCommand.<Name>` stores an ordinal enumerating
@@ -17242,7 +17400,7 @@ fn parse_form_excluded_command_xml(value: &str) -> Result<FormXmlExcludedCommand
     // Fail-closed: a name neither table knows is refused here, so a body is
     // never written with a command the export would read back as another one.
     if form_standard_excluded_command_uuid(value).is_none()
-        && !crate::compiler::bodies::form_native::is_form_standard_command(value)
+        && !ibcmd_form_native::is_form_standard_command(value)
     {
         return Err(anyhow!("unsupported Form ExcludedCommand: {value}"));
     }
@@ -17720,10 +17878,6 @@ const FORM_REPORT_RESULT_VIEW_MODE_UUID: &str = "b9311bea-b26b-4ae0-8b5d-7b64048
 const FORM_VIEW_MODE_APPLICATION_ON_SET_REPORT_RESULT_UUID: &str =
     "874260df-7e23-4f02-9e10-5794914b5adf";
 const FORM_REPORT_ATTRIBUTE_REF_UUID: &str = "11cfd3e0-86f8-4480-aaa5-dc6a6ccac689";
-const FORM_COMMAND_CHANGE_UUID: &str = "6886601d-276c-4d3f-af0a-05c586025608";
-const FORM_COMMAND_COPY_UUID: &str = "342c531d-dc73-458a-8ac4-6a746916a33b";
-const FORM_COMMAND_CREATE_UUID: &str = "4f834c38-add1-45e4-a9f3-cefe3efac5c9";
-const FORM_COMMAND_CUSTOMIZE_FORM_UUID: &str = "198ea630-fda2-4cda-8a23-f999f4c67ee6";
 
 fn replace_form_auto_url(layout: &mut String, value: bool) -> Result<()> {
     let fields = scan_braced_fields(layout, 0)?;
@@ -17944,10 +18098,9 @@ fn replace_form_customizable(layout: &mut String, value: bool) -> Result<()> {
     if fields
         .get(11)
         .is_some_and(|range| layout[range.clone()].trim() == "0")
+        && let Some(range) = fields.get(14)
     {
-        if let Some(range) = fields.get(14) {
-            layout.replace_range(range.clone(), if value { "1" } else { "0" });
-        }
+        layout.replace_range(range.clone(), if value { "1" } else { "0" });
     }
     Ok(())
 }
@@ -18475,7 +18628,7 @@ fn form_excluded_command_uuid<'a>(
     main_table_kind: Option<&str>,
 ) -> Result<&'a str> {
     if main_attribute_class == "cfg:DynamicList" && command.0 == "Delete" {
-        return crate::compiler::bodies::form_native::dynamic_list_delete_command_uuid(
+        return ibcmd_form_native::dynamic_list_delete_command_uuid(
             main_table_kind,
         )
         .ok_or_else(|| {
@@ -18488,8 +18641,8 @@ fn form_excluded_command_uuid<'a>(
     if let Some(uuid) = form_standard_excluded_command_uuid(&command.0) {
         return Ok(uuid);
     }
-    crate::compiler::bodies::form_native::form_standard_command_uuid(
-        &main_attribute_class,
+    ibcmd_form_native::form_standard_command_uuid(
+        main_attribute_class,
         &command.0,
     )
     .ok_or_else(|| {
@@ -18533,7 +18686,7 @@ fn form_main_attribute_class(properties: &FormXmlBodyProperties) -> String {
 /// [`form_standard_excluded_command_uuid`] cannot spell is still no guess:
 /// such a form is refused before it reaches the template.
 fn is_form_standard_command_uuid(uuid: &str) -> bool {
-    crate::mssql_dump::form_standard_command_suffix(uuid).is_some()
+    ibcmd_form_body::form_body::form_standard_command_suffix(uuid).is_some()
 }
 
 fn form_conversations_representation_code(
@@ -19012,6 +19165,10 @@ fn retain_form_layout_top_level_child_items(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn patch_form_layout_child_item(
     text: &mut String,
     item: &FormXmlChildItem,
@@ -19061,6 +19218,10 @@ fn patch_form_layout_child_item(
     Ok(false)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn append_form_layout_top_level_child_item(
     text: &mut String,
     item: &FormXmlChildItem,
@@ -19193,6 +19354,10 @@ fn form_child_item_strict_properties_require_existing_layout(item: &FormXmlChild
         || (item.tag == "ColumnGroup" && item.fixing_in_table.is_some())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_top_level_item(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -19256,6 +19421,10 @@ fn format_form_layout_new_top_level_item(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_child_item(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -19880,6 +20049,10 @@ fn format_form_layout_new_search_addition_item(
     text
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_table_item(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -19986,6 +20159,10 @@ fn format_form_layout_new_table_item_with_data_path(
     text
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_group_item(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -20098,6 +20275,10 @@ fn format_form_layout_new_group_item(
     Ok(text)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_extended_pages_item(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -20122,6 +20303,10 @@ fn format_form_layout_new_extended_pages_item(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_extended_page_item(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -20182,6 +20367,10 @@ fn format_form_layout_new_extended_page_item(
     Ok(text)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_extended_group_with_child_span(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -20979,6 +21168,10 @@ fn form_layout_table_file_drag_mode_replacement(
     Some((range, code.to_string()))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn patch_form_layout_child_item_entry(
     text: &mut String,
     fields: &[Range<usize>],
@@ -22330,18 +22523,14 @@ fn form_layout_direct_child_items_span(
 ) -> Option<FormLayoutDirectChildItemsSpan> {
     let wrapper = fields.first().map(|range| text[range.clone()].trim())?;
     let item_type = fields.get(5).map(|range| text[range.clone()].trim());
-    let (count_index, first_uuid_index) = if wrapper == "22"
-        && form_layout_usual_group_extended_options_range(text, fields).is_some()
-    {
-        (21, 22)
-    } else if wrapper == "22"
-        && item_type == Some("9")
-        && form_layout_direct_child_items_span_at(text, fields, 21, 22).is_some()
-    {
-        (21, 22)
-    } else if wrapper == "22"
-        && matches!(item_type, Some("3" | "4"))
-        && form_layout_direct_child_items_span_at(text, fields, 21, 22).is_some()
+    let (count_index, first_uuid_index) = if (wrapper == "22"
+        && form_layout_usual_group_extended_options_range(text, fields).is_some())
+        || (wrapper == "22"
+            && item_type == Some("9")
+            && form_layout_direct_child_items_span_at(text, fields, 21, 22).is_some())
+        || (wrapper == "22"
+            && matches!(item_type, Some("3" | "4"))
+            && form_layout_direct_child_items_span_at(text, fields, 21, 22).is_some())
     {
         (21, 22)
     } else if matches!(wrapper, "22" | "73") {
@@ -22380,6 +22569,10 @@ fn form_layout_direct_child_items_span_at(
     })
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn patch_form_layout_direct_child_items(
     text: &mut String,
     item: &FormXmlChildItem,
@@ -22419,6 +22612,10 @@ fn patch_form_layout_direct_child_items(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn patch_form_layout_single_child_items(
     text: &mut String,
     item: &FormXmlChildItem,
@@ -22556,6 +22753,10 @@ fn retain_form_layout_single_child_items(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn patch_or_append_form_layout_single_child_item(
     text: &mut String,
     child: &FormXmlChildItem,
@@ -22695,6 +22896,10 @@ fn retain_form_layout_direct_child_items(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn patch_or_append_form_layout_direct_child_item(
     text: &mut String,
     child: &FormXmlChildItem,
@@ -23157,9 +23362,9 @@ fn form_standard_command_uuid(command_name: &str) -> Option<&'static str> {
     }
 }
 
-fn form_layout_child_item_tag<'a>(
+fn form_layout_child_item_tag(
     wrapper: &str,
-    text: &'a str,
+    text: &str,
     fields: &[Range<usize>],
 ) -> Option<&'static str> {
     match wrapper {
@@ -24359,19 +24564,18 @@ fn format_form_dynamic_list_settings_new(
     if let Some(manual_query) = settings.manual_query {
         pairs.push(("ManualQuery", format_form_setting_bool(manual_query)));
     }
-    if let Some(filter) = &settings.list_settings.filter {
-        if let Some(value) = format_form_setting_dcs_filter(filter)? {
-            pairs.push(("Filter", value));
-        }
+    if let Some(filter) = &settings.list_settings.filter
+        && let Some(value) = format_form_setting_dcs_filter(filter)?
+    {
+        pairs.push(("Filter", value));
     }
     if let Some(order) = &settings.list_settings.order {
         pairs.push(("Order", format_form_setting_dcs_order(order, "", "Order")?));
     }
-    if let Some(conditional_appearance) = &settings.list_settings.conditional_appearance {
-        if let Some(value) = format_form_setting_dcs_conditional_appearance(conditional_appearance)?
-        {
-            pairs.push((conditional_appearance_policy.storage_property_name(), value));
-        }
+    if let Some(conditional_appearance) = &settings.list_settings.conditional_appearance
+        && let Some(value) = format_form_setting_dcs_conditional_appearance(conditional_appearance)?
+    {
+        pairs.push((conditional_appearance_policy.storage_property_name(), value));
     }
     if let Some(items_view_mode) = &settings.list_settings.items_view_mode {
         pairs.push(("ItemsViewMode", format_form_setting_string(items_view_mode)));
@@ -25432,7 +25636,7 @@ pub fn pack_role_rights_blob_from_xml_with_source(
     {
         replacements.push((range.clone(), if value { "1" } else { "0" }.to_string()));
     }
-    replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
+    replacements.sort_by_key(|b| std::cmp::Reverse(b.0.start));
     for (range, replacement) in replacements {
         plain.replace_range(range, &replacement);
     }
@@ -25606,7 +25810,7 @@ pub fn pack_command_interface_blob_from_xml(
         let common = if entry.common { "1" } else { "0" };
         replacements.push((common_range, format!("{{0,{{0,{{\"B\",{common}}},0}}}}")));
     }
-    replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
+    replacements.sort_by_key(|b| std::cmp::Reverse(b.0.start));
     for (range, replacement) in replacements {
         replace_1c_value_if_different(&mut plain, range, &replacement);
     }
@@ -25884,7 +26088,7 @@ fn patch_predefined_data(
         .cloned()
         .collect::<Vec<_>>();
 
-    replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
+    replacements.sort_by_key(|b| std::cmp::Reverse(b.0.start));
     for (range, replacement) in replacements {
         plain.replace_range(range, &replacement);
     }
@@ -25997,7 +26201,7 @@ pub fn pack_business_process_flowchart_blob_from_xml(
         ));
     }
 
-    replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
+    replacements.sort_by_key(|b| std::cmp::Reverse(b.0.start));
     for (range, replacement) in replacements {
         plain.replace_range(range, &replacement);
     }
@@ -26091,7 +26295,7 @@ fn role_right_value_replacements(
     for object_index in 0..base_count {
         let entry_range = object_fields[object_index + 1].clone();
         let entry_fields = scan_braced_fields(plain, entry_range.start)?;
-        let object_ref_range = entry_fields.get(0).ok_or_else(|| {
+        let object_ref_range = entry_fields.first().ok_or_else(|| {
             anyhow!("base Role object rights entry {object_index} has no object reference")
         })?;
         validate_role_object_ref(plain, object_ref_range.clone())
@@ -26849,7 +27053,7 @@ fn role_restriction_field_text_range(
 /// The name a right uuid stands for: the exporter's table, the one the
 /// platform's own `Rights.xml` files were measured against.
 fn role_right_name(uuid: &str) -> Option<&'static str> {
-    crate::mssql_dump::role_right_name(uuid)
+    ibcmd_1c_vocab::role_right_name(uuid)
 }
 
 fn parse_role_rights_xml(xml: &[u8]) -> Result<RoleRightsXml> {
@@ -28068,10 +28272,10 @@ fn parse_flowchart_xml(xml: &[u8]) -> Result<Vec<FlowchartXmlItem>> {
                         _ => {}
                     }
                 }
-                if is_flowchart_item_tag(&local) {
-                    if let Some(item) = current.take() {
-                        items.push(item);
-                    }
+                if is_flowchart_item_tag(&local)
+                    && let Some(item) = current.take()
+                {
+                    items.push(item);
                 }
                 let _ = path.pop();
                 if local == "Event" || is_flowchart_text_property(&local) {
@@ -29579,10 +29783,10 @@ pub fn parse_common_module_xml_properties(xml: &[u8]) -> Result<CommonModuleXmlP
         match reader.read_event_into(&mut buffer) {
             Ok(Event::Start(event)) => {
                 let local = xml_local_name(event.local_name().as_ref());
-                if local == "CommonModule" {
-                    if let Some(value) = xml_attr_value(&event, "uuid") {
-                        uuid = Some(normalize_uuid_text(&value)?);
-                    }
+                if local == "CommonModule"
+                    && let Some(value) = xml_attr_value(&event, "uuid")
+                {
+                    uuid = Some(normalize_uuid_text(&value)?);
                 }
                 if path_ends_with(&path, &["CommonModule", "Properties"]) {
                     if local == "Name" {
@@ -29813,10 +30017,8 @@ fn patch_configuration_source_metadata(
     properties: &SimpleMetadataXmlProperties,
     xml: &[u8],
 ) -> Result<String> {
-    use crate::metadata_model::{
-        brace::{self, Brace},
-        xml::MetadataXml,
-    };
+    use crate::metadata_model::xml::MetadataXml;
+    use ibcmd_restructure::brace::{self, Brace};
     let patched = patch_configuration_metadata_text(text, properties)?;
     let document = MetadataXml::parse(xml)?;
     let Some(version) = document.object()?.path(&["Properties", "Version"]) else {
@@ -30168,6 +30370,10 @@ fn format_common_module_flags(properties: &CommonModuleXmlProperties) -> String 
     .join(",")
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn parse_constant_value_type(
     types: &[String],
     string_length: Option<String>,
@@ -30441,7 +30647,7 @@ fn builtin_v8_type_id(type_name: &str) -> Option<&'static str> {
         "cfg:BusinessProcessRef" => Some("214fa4d8-6ba4-4748-a5e1-6332b5887780"),
         // Every other platform type the metadata descriptors already name
         // (`cfg:BusinessProcessRoutePointRef` and the rest of that table).
-        other => crate::metadata_model::types::builtin_type_id(other),
+        other => ibcmd_1c_vocab::builtin_type_id(other),
     }
 }
 
@@ -30997,6 +31203,10 @@ fn return_values_reuse_flag(value: ReturnValuesReuse) -> String {
     .to_string()
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn append_common_module_xml_text(
     path: &[String],
     value: &str,
@@ -31091,6 +31301,10 @@ fn append_simple_metadata_xml_text(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn append_constant_xml_text(
     path: &[String],
     value: &str,
@@ -31128,6 +31342,10 @@ fn append_constant_xml_text(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn append_metadata_type_xml_text(
     kind: &str,
     path: &[String],
@@ -31212,6 +31430,10 @@ fn append_metadata_type_xml_text(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn append_common_command_xml_text(
     path: &[String],
     value: &str,
@@ -31295,6 +31517,10 @@ fn append_common_command_xml_text(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn append_command_group_xml_text(
     path: &[String],
     value: &str,
@@ -32007,10 +32233,8 @@ fn apply_form_type_spec_part(spec: &mut FormXmlTypeSpec, part: &str, value: &str
     match part {
         // A type set is one entry of the pattern like any other, and pushing
         // it here is what keeps the list in XML order.
-        "Type" | "TypeSet" => {
-            if !value.is_empty() {
-                spec.types.push(value.to_string());
-            }
+        "Type" | "TypeSet" if !value.is_empty() => {
+            spec.types.push(value.to_string());
         }
         "Length" => spec.string_length = Some(value.to_string()),
         "AllowedLength" => spec.string_allowed_length = Some(value.to_string()),
@@ -32107,7 +32331,7 @@ mod tests {
         let mut names_by_uuid = BTreeMap::<&str, &str>::new();
         for (name, uuid) in super::FORM_STANDARD_EXCLUDED_COMMAND_UUIDS {
             assert_eq!(
-                crate::mssql_dump::form_standard_command_suffix(uuid),
+                ibcmd_form_body::form_body::form_standard_command_suffix(uuid),
                 Some(*name),
                 "the export names {uuid} differently from the compiler's {name}"
             );
@@ -32854,7 +33078,7 @@ mod tests {
                 name
             };
             assert_eq!(
-                crate::mssql_dump::form_standard_command_suffix(uuid),
+                ibcmd_form_body::form_body::form_standard_command_suffix(uuid),
                 Some(expected),
                 "{class} {name} does not read back through the export's table"
             );
@@ -35131,7 +35355,7 @@ aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb,dddddd
         while let Some(relative_start) = text[offset..].find(prefix) {
             let marker_start = offset + relative_start;
             if let Some(owner) =
-                crate::mssql_dump::resolve_form_item_picture_owner(text, marker_start)
+                ibcmd_form_body::form_body::form_item_picture_owner_at(text, marker_start)
             {
                 owners.push(owner);
             }

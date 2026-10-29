@@ -2,13 +2,16 @@
 //! platform type identifiers and the XML names they are written as, the
 //! stored type patterns (`{"Pattern",...}`) and the `<Type>` blocks written
 //! from them, standard attributes, style codes, command shortcuts, pictures
-//! and standard commands, the standard pictures and a few small property
-//! values, with the payload helpers the form reader uses beside them.
+//! and standard commands, the standard pictures, role rights and a few small
+//! property values, with the payload helpers the form reader uses beside
+//! them.
 //!
 //! Everything here moved from the root crate's `mssql_dump` (`mod.rs`, the
-//! picture-payload helpers from `source_assets.rs` and the standard command
-//! of a metadata kind from `command_interface.rs`), and the standard
-//! pictures from its `metadata_model::standard_pictures`; `inflate_raw_deflate`
+//! picture-payload helpers from `source_assets.rs`, the standard command
+//! of a metadata kind from `command_interface.rs` and the role-right
+//! vocabulary from `role_rights.rs`), and the standard
+//! pictures and the compiler's built-in type table (`builtin_type_id`,
+//! `builtin_type_qname`) from its `metadata_model`; `inflate_raw_deflate`
 //! names in its context the raw inflater of `ibcmd-module-blob` (formerly
 //! `module_blob`'s, then this crate's), and `module_blob`'s SVG check is
 //! `is_svg_content`. The root still
@@ -19,15 +22,17 @@
 //! which stays in the root.
 //!
 //! The code came from the physical-adapter guard's slice (the standard
-//! pictures joined it here), so the guard scans every non-test `*.rs` file
-//! under this crate's `src/`
+//! pictures and the built-in type table joined it here), so the guard scans
+//! every non-test `*.rs` file under this crate's `src/`
 //! (`$GuardedCrateDirectories` in `tools/validate-physical-adapter-policy.ps1`)
 //! and their literals stay in the guard's baseline. A file added here is in
 //! the slice at once and fails the guard until its record is reviewed.
 
+mod builtin_type_ids;
 mod commands;
 mod patterns;
 mod pictures;
+mod role_rights;
 mod standard_attributes;
 mod style;
 mod support;
@@ -35,6 +40,7 @@ mod type_xml;
 mod types;
 mod values;
 
+pub use builtin_type_ids::{FIXED_ARRAY_TYPE, builtin_type_id, builtin_type_qname};
 pub use commands::{
     ShortcutModifierStyle, command_interface_standard_command, parse_common_command_picture_value,
     parse_common_command_shortcut_value, parse_common_command_shortcut_value_with_style,
@@ -44,6 +50,14 @@ pub use patterns::{
     parse_metadata_type_pattern_element_with_builtin,
 };
 pub use pictures::{standard_picture_name, standard_picture_uuid};
+pub use role_rights::{
+    ROLE_RIGHTS_EXT_DIMENSION_FAMILY, ROLE_RIGHTS_EXT_DIMENSION_TYPE_FAMILY,
+    ROLE_RIGHTS_STANDARD_ATTRIBUTE_FAMILY, ROLE_RIGHTS_STANDARD_TABULAR_SECTION_FAMILY,
+    role_right_name, role_right_uuid, role_standard_attribute_descriptor,
+    role_standard_attribute_slot, role_standard_tabular_section,
+    role_standard_tabular_section_attribute, role_standard_tabular_section_attribute_slot,
+    role_standard_tabular_section_slot,
+};
 pub use standard_attributes::{
     ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES,
     ACCUMULATION_REGISTER_TURNOVERS_STANDARD_ATTRIBUTES,

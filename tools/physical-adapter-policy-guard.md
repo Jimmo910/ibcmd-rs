@@ -8,12 +8,17 @@ The guarded production slice is `src/module_blob.rs` plus non-test Rust modules
 under `src/mssql_dump/`, plus the non-test Rust modules under the `crates/`
 directories that hold code moved out of them (`$GuardedCrateDirectories`):
 `crates/ibcmd-1c-text/src/` (the 1C braced-text primitives and scalar fields,
-formerly in `src/mssql_dump/mod.rs`, `source_assets.rs` and `refs.rs`),
+and the source tree's file-name segment, formerly in `src/mssql_dump/mod.rs`,
+`source_assets.rs` and `refs.rs`),
 `crates/ibcmd-1c-vocab/src/` (the platform-type, standard-attribute, style and
 command vocabularies, formerly in `src/mssql_dump/mod.rs`, `source_assets.rs`
-and `command_interface.rs`, and the standard-picture table, formerly
+and `command_interface.rs`; the role-right vocabulary, formerly in
+`src/mssql_dump/role_rights.rs`; and the standard-picture table, formerly
 `src/metadata_model/standard_pictures.rs`, which was outside the slice and
-joined it with its 221 identifiers), `crates/ibcmd-form-body/src/` (the form
+joined it with its 221 identifiers, and the compiler's built-in type table,
+formerly in `src/metadata_model/types.rs`, which was outside the slice and
+joined it with its 103 identifiers and one prefix check),
+`crates/ibcmd-form-body/src/` (the form
 body reader `form_body.rs`, formerly `src/mssql_dump/form_body.rs`; the
 indexes, compatibility rules and timing report it is given, formerly in
 `src/mssql_dump/mod.rs`, `refs.rs`, `dcs.rs`, `source_assets.rs`, `timing.rs`
