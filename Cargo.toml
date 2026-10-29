@@ -26,6 +26,7 @@ members = [
     "crates/ibcmd-1c-vocab",
     "crates/ibcmd-form-body",
     "crates/ibcmd-module-blob",
+    "crates/ibcmd-compiler-families",
 ]
 resolver = "3"
 exclude = ["crates/ibcmd-edt/vendor/morph1c"]
@@ -66,6 +67,7 @@ ibcmd-restructure = { path = "crates/ibcmd-restructure" }
 ibcmd-1c-vocab = { path = "crates/ibcmd-1c-vocab" }
 ibcmd-form-body = { path = "crates/ibcmd-form-body" }
 ibcmd-module-blob = { path = "crates/ibcmd-module-blob" }
+ibcmd-compiler-families = { path = "crates/ibcmd-compiler-families" }
 # The process allocator, installed in main.rs.
 mimalloc = "0.1.52"
 quick-xml = "0.38"

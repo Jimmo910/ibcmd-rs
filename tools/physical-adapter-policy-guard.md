@@ -74,6 +74,15 @@ change fingerprints without changing its literals: a `const` made `pub`, or a
 edits the baseline record by record, lists every changed fingerprint, and keeps
 the records of files it does not touch, stale ones included.
 
+`crates/ibcmd-compiler-families/src/` also belongs to the guarded slice. It
+contains the native family compilers, their bootstrap artifact/graph/identity
+types, compiler axes and profile loader, formerly outside the slice under
+`src/compiler/` and `src/profile_registry.rs`. All 798 existing production
+fingerprint records join the slice unchanged; the move changes no fingerprint
+or occurrence count. The earlier baseline records, including stale records,
+remain untouched. The loader still embeds the canonical workspace `profiles/`
+documents, with adjusted relative include paths and unchanged provenance names.
+
 The guard tokenizes logical Rust statements outside comments and provably
 test-only items, including multiline, raw-string, escaped-string and char forms.
 It conservatively inventories immediate XML sink fragments and literal

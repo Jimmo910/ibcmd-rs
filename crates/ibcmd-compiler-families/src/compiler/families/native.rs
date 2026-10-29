@@ -42,7 +42,7 @@ fn node_bound(input: &[u8]) -> usize {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum NativeValue {
+pub enum NativeValue {
     Token(String),
     Text(String),
     List {
@@ -54,21 +54,21 @@ pub(crate) enum NativeValue {
 }
 
 impl NativeValue {
-    pub(crate) fn as_token(&self) -> Option<&str> {
+    pub fn as_token(&self) -> Option<&str> {
         match self {
             Self::Token(value) => Some(value),
             _ => None,
         }
     }
 
-    pub(crate) fn as_text(&self) -> Option<&str> {
+    pub fn as_text(&self) -> Option<&str> {
         match self {
             Self::Text(value) => Some(value),
             _ => None,
         }
     }
 
-    pub(crate) fn as_list(&self) -> Option<&[NativeValue]> {
+    pub fn as_list(&self) -> Option<&[NativeValue]> {
         match self {
             Self::List { values, .. } => Some(values),
             _ => None,
@@ -76,16 +76,16 @@ impl NativeValue {
     }
 }
 
-pub(crate) fn token(value: impl Into<String>) -> NativeValue {
+pub fn token(value: impl Into<String>) -> NativeValue {
     NativeValue::Token(value.into())
 }
 
-pub(crate) fn text(value: impl Into<String>) -> NativeValue {
+pub fn text(value: impl Into<String>) -> NativeValue {
     NativeValue::Text(value.into())
 }
 
 #[cfg(test)]
-pub(crate) fn list(values: Vec<NativeValue>) -> NativeValue {
+pub fn list(values: Vec<NativeValue>) -> NativeValue {
     let line_breaks = (1..values.len()).collect();
     NativeValue::List {
         values,
@@ -95,7 +95,7 @@ pub(crate) fn list(values: Vec<NativeValue>) -> NativeValue {
     }
 }
 
-pub(crate) fn inline_list(values: Vec<NativeValue>) -> NativeValue {
+pub fn inline_list(values: Vec<NativeValue>) -> NativeValue {
     NativeValue::List {
         values,
         leading_break: false,
@@ -104,7 +104,7 @@ pub(crate) fn inline_list(values: Vec<NativeValue>) -> NativeValue {
     }
 }
 
-pub(crate) fn styled_list(values: Vec<NativeValue>, line_breaks: Vec<usize>) -> NativeValue {
+pub fn styled_list(values: Vec<NativeValue>, line_breaks: Vec<usize>) -> NativeValue {
     NativeValue::List {
         values,
         leading_break: false,
@@ -113,10 +113,7 @@ pub(crate) fn styled_list(values: Vec<NativeValue>, line_breaks: Vec<usize>) -> 
     }
 }
 
-pub(crate) fn styled_list_with_tail(
-    values: Vec<NativeValue>,
-    line_breaks: Vec<usize>,
-) -> NativeValue {
+pub fn styled_list_with_tail(values: Vec<NativeValue>, line_breaks: Vec<usize>) -> NativeValue {
     NativeValue::List {
         values,
         leading_break: false,
@@ -131,7 +128,7 @@ pub(crate) fn styled_list_with_tail(
 ///
 /// Read off the stored command-interface, home-page, client-interface and
 /// standalone-content rows of БСП and ERP УХ, where it holds for every list.
-pub(crate) fn platform_list(values: Vec<NativeValue>) -> NativeValue {
+pub fn platform_list(values: Vec<NativeValue>) -> NativeValue {
     let line_breaks = values
         .iter()
         .enumerate()
@@ -148,7 +145,7 @@ pub(crate) fn platform_list(values: Vec<NativeValue>) -> NativeValue {
     }
 }
 
-pub(crate) fn formatted_list(
+pub fn formatted_list(
     values: Vec<NativeValue>,
     leading_break: bool,
     line_breaks: Vec<usize>,
@@ -163,14 +160,14 @@ pub(crate) fn formatted_list(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct NativeMetadataHeader {
-    pub(crate) uuid: ObjectUuid,
-    pub(crate) name: String,
-    pub(crate) synonyms: Vec<(String, String)>,
-    pub(crate) comment: String,
+pub struct NativeMetadataHeader {
+    pub uuid: ObjectUuid,
+    pub name: String,
+    pub synonyms: Vec<(String, String)>,
+    pub comment: String,
 }
 
-pub(crate) fn metadata_header(value: &NativeMetadataHeader) -> NativeValue {
+pub fn metadata_header(value: &NativeMetadataHeader) -> NativeValue {
     styled_list(
         vec![
             token("3"),
@@ -187,7 +184,7 @@ pub(crate) fn metadata_header(value: &NativeMetadataHeader) -> NativeValue {
     )
 }
 
-pub(crate) fn localized(values: &[(String, String)]) -> NativeValue {
+pub fn localized(values: &[(String, String)]) -> NativeValue {
     let mut fields = Vec::with_capacity(values.len() * 2 + 1);
     fields.push(token(values.len().to_string()));
     for (language, content) in values {
@@ -197,9 +194,7 @@ pub(crate) fn localized(values: &[(String, String)]) -> NativeValue {
     inline_list(fields)
 }
 
-pub(crate) fn parse_metadata_header(
-    value: &NativeValue,
-) -> Result<NativeMetadataHeader, NativeError> {
+pub fn parse_metadata_header(value: &NativeValue) -> Result<NativeMetadataHeader, NativeError> {
     let fields = exact_list(value, 9, "metadata header")?;
     exact_token(&fields[0], "3", "metadata header marker")?;
     let identity = exact_list(&fields[1], 3, "metadata identity")?;
@@ -225,7 +220,7 @@ pub(crate) fn parse_metadata_header(
     })
 }
 
-pub(crate) fn parse_localized(value: &NativeValue) -> Result<Vec<(String, String)>, NativeError> {
+pub fn parse_localized(value: &NativeValue) -> Result<Vec<(String, String)>, NativeError> {
     let fields = required_list(value, "localized value")?;
     let count = required_token(
         fields.first().ok_or(NativeError::Shape {
@@ -256,14 +251,14 @@ pub(crate) fn parse_localized(value: &NativeValue) -> Result<Vec<(String, String
     Ok(values)
 }
 
-pub(crate) fn required_list<'a>(
+pub fn required_list<'a>(
     value: &'a NativeValue,
     field: &'static str,
 ) -> Result<&'a [NativeValue], NativeError> {
     value.as_list().ok_or(NativeError::Shape { field })
 }
 
-pub(crate) fn exact_list<'a>(
+pub fn exact_list<'a>(
     value: &'a NativeValue,
     length: usize,
     field: &'static str,
@@ -275,21 +270,21 @@ pub(crate) fn exact_list<'a>(
     Ok(values)
 }
 
-pub(crate) fn required_token<'a>(
+pub fn required_token<'a>(
     value: &'a NativeValue,
     field: &'static str,
 ) -> Result<&'a str, NativeError> {
     value.as_token().ok_or(NativeError::Shape { field })
 }
 
-pub(crate) fn required_text<'a>(
+pub fn required_text<'a>(
     value: &'a NativeValue,
     field: &'static str,
 ) -> Result<&'a str, NativeError> {
     value.as_text().ok_or(NativeError::Shape { field })
 }
 
-pub(crate) fn exact_token(
+pub fn exact_token(
     value: &NativeValue,
     expected: &str,
     field: &'static str,
@@ -300,10 +295,7 @@ pub(crate) fn exact_token(
     Ok(())
 }
 
-pub(crate) fn parse_bool_token(
-    value: &NativeValue,
-    field: &'static str,
-) -> Result<bool, NativeError> {
+pub fn parse_bool_token(value: &NativeValue, field: &'static str) -> Result<bool, NativeError> {
     match required_token(value, field)? {
         "0" => Ok(false),
         "1" => Ok(true),
@@ -311,25 +303,25 @@ pub(crate) fn parse_bool_token(
     }
 }
 
-pub(crate) fn serialize(value: &NativeValue) -> Result<Vec<u8>, NativeError> {
+pub fn serialize(value: &NativeValue) -> Result<Vec<u8>, NativeError> {
     let mut output = Vec::new();
     output.extend_from_slice(UTF8_BOM);
     write_value(value, &mut output, 0)?;
     Ok(output)
 }
 
-pub(crate) fn serialize_without_bom(value: &NativeValue) -> Result<Vec<u8>, NativeError> {
+pub fn serialize_without_bom(value: &NativeValue) -> Result<Vec<u8>, NativeError> {
     let bytes = serialize(value)?;
     Ok(bytes[UTF8_BOM.len()..].to_vec())
 }
 
-pub(crate) fn parse(input: &[u8]) -> Result<NativeValue, NativeError> {
+pub fn parse(input: &[u8]) -> Result<NativeValue, NativeError> {
     NativeParser::new(input).parse()
 }
 
 /// A body the platform may store with or without the UTF-8 BOM (HTML
 /// templates carry it, as help rows do).
-pub(crate) fn parse_optional_bom(input: &[u8]) -> Result<NativeValue, NativeError> {
+pub fn parse_optional_bom(input: &[u8]) -> Result<NativeValue, NativeError> {
     if input.starts_with(UTF8_BOM) {
         parse(input)
     } else {
@@ -340,7 +332,7 @@ pub(crate) fn parse_optional_bom(input: &[u8]) -> Result<NativeValue, NativeErro
 /// Validate a complete source row against a family-proved nesting shape before
 /// materializing its tree. Uses the canonical lexical scanner, retains no body,
 /// and imposes no plaintext-byte ceiling. Default/cohort APIs stay unchanged.
-pub(crate) fn validate_descriptor_layout(
+pub fn validate_descriptor_layout(
     input: &[u8],
     maximum_value_depth: usize,
 ) -> Result<(), NativeError> {
@@ -369,7 +361,7 @@ pub(crate) fn validate_descriptor_layout(
 /// retains three field shapes per open list; every frame/node owns an input
 /// byte, so the input itself bounds work and retained structural state.
 /// Existing cohort parsers and their resource limits are unchanged.
-pub(crate) fn descriptor_own_uuid(input: &[u8]) -> Result<Option<&str>, NativeError> {
+pub fn descriptor_own_uuid(input: &[u8]) -> Result<Option<&str>, NativeError> {
     #[derive(Clone, Copy)]
     enum Field<'a> {
         Token(&'a str),
@@ -508,7 +500,7 @@ pub(crate) fn descriptor_own_uuid(input: &[u8]) -> Result<Option<&str>, NativeEr
     }
 }
 
-pub(crate) fn parse_without_bom(input: &[u8]) -> Result<NativeValue, NativeError> {
+pub fn parse_without_bom(input: &[u8]) -> Result<NativeValue, NativeError> {
     let total =
         input
             .len()
@@ -529,25 +521,25 @@ pub(crate) fn parse_without_bom(input: &[u8]) -> Result<NativeValue, NativeError
     parse(&bytes)
 }
 
-pub(crate) fn raw_deflate(value: &NativeValue) -> Result<Vec<u8>, NativeError> {
+pub fn raw_deflate(value: &NativeValue) -> Result<Vec<u8>, NativeError> {
     let plain = serialize(value)?;
     encode_payload(PayloadEncoding::RawDeflate, &plain, payload_limits())
         .map_err(|error| NativeError::Payload(error.to_string()))
 }
 
-pub(crate) fn inflate_and_parse(blob: &[u8]) -> Result<NativeValue, NativeError> {
+pub fn inflate_and_parse(blob: &[u8]) -> Result<NativeValue, NativeError> {
     let plain = decode_payload(PayloadEncoding::RawDeflate, blob, payload_limits())
         .map_err(|error| NativeError::Payload(error.to_string()))?;
     parse(plain.bytes())
 }
 
-pub(crate) fn inflate(blob: &[u8]) -> Result<Vec<u8>, NativeError> {
+pub fn inflate(blob: &[u8]) -> Result<Vec<u8>, NativeError> {
     decode_payload(PayloadEncoding::RawDeflate, blob, payload_limits())
         .map(|payload| payload.into_bytes())
         .map_err(|error| NativeError::Payload(error.to_string()))
 }
 
-pub(crate) fn deflate_bytes(bytes: &[u8]) -> Result<Vec<u8>, NativeError> {
+pub fn deflate_bytes(bytes: &[u8]) -> Result<Vec<u8>, NativeError> {
     encode_payload(PayloadEncoding::RawDeflate, bytes, payload_limits())
         .map_err(|error| NativeError::Payload(error.to_string()))
 }
@@ -895,23 +887,19 @@ impl<'a> NativeParser<'a> {
 /// nodes, and allocating and freeing them was a quarter of the time its
 /// conversion to XML took.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct NativeRootOutline {
+pub struct NativeRootOutline {
     /// The number of values of the root list; `None` when the root is not a
     /// list.
-    pub(crate) len: Option<usize>,
+    pub len: Option<usize>,
     /// The root list's leading values, at most as many as were asked for.
-    pub(crate) head: Vec<NativeValue>,
+    pub head: Vec<NativeValue>,
     /// The root list's trailing values in order, at most as many as were
     /// asked for.
-    pub(crate) tail: Vec<NativeValue>,
+    pub tail: Vec<NativeValue>,
 }
 
 /// [`parse`]'s outline: the same acceptance and the same errors.
-pub(crate) fn outline(
-    input: &[u8],
-    head: usize,
-    tail: usize,
-) -> Result<NativeRootOutline, NativeError> {
+pub fn outline(input: &[u8], head: usize, tail: usize) -> Result<NativeRootOutline, NativeError> {
     if input.len() > MAX_PLAIN_BYTES {
         return Err(NativeError::PlainPayloadTooLarge {
             maximum: MAX_PLAIN_BYTES,
@@ -929,7 +917,7 @@ pub(crate) fn outline(
 /// [`parse_without_bom`]'s outline. The body is read in place: the parser
 /// never looks back at the BOM that version prepends, so only the node bound
 /// has to count it.
-pub(crate) fn outline_without_bom(
+pub fn outline_without_bom(
     input: &[u8],
     head: usize,
     tail: usize,
@@ -1205,7 +1193,7 @@ fn is_line_wrapped_base64_token(value: &[u8]) -> bool {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum NativeError {
+pub enum NativeError {
     MissingBom,
     UnexpectedEnd,
     TrailingBytes,

@@ -24,7 +24,7 @@ use super::native::{
     NativeValue, deflate_bytes, exact_list, exact_token, inflate, inline_list, parse_without_bom,
     required_list, required_text, required_token, serialize_without_bom, text, token,
 };
-use crate::module_blob::{pack_module_blob_bytes_base_free, unpack_module_container_text};
+use ibcmd_module_blob::{pack_module_blob_bytes_base_free, unpack_module_container_text};
 
 const SUPPORTED_STORAGE_PROFILE: &str = "storage:mssql-config-configsave";
 
