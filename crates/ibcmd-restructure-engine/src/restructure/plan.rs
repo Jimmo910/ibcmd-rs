@@ -1282,7 +1282,7 @@ pub fn plan(inputs: &Inputs, options: &PlanOptions) -> Result<Plan> {
         })
         .collect();
     let mut rows: Vec<RowText> = Vec::new();
-    if !with_sections.is_empty() && !(options.skip_xdto && options.skip_registry) {
+    if !(with_sections.is_empty() || options.skip_xdto && options.skip_registry) {
         // A tabular section reaches a third row (the index of the generated types) and the row types of the
         // XDTO model; with both the XDTO model and the registry left alone the index goes with them.
         let subset: Vec<&Prepared> = with_sections
@@ -1505,7 +1505,7 @@ fn plan_object(
             continue;
         }
         let indexing = match attribute.indexing {
-            Some(mode @ (0 | 1 | 2)) => mode,
+            Some(mode @ 0..=2) => mode,
             other => bail!(
                 "attribute {} has the indexing {other:?}: not one of the three modes",
                 attribute.name

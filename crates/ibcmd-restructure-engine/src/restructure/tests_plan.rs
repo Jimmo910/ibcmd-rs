@@ -337,14 +337,7 @@ fn the_deleted_row_of_a_removal_names_the_removed_attribute() {
     back.staged.deleted = Some(deflate(list.as_bytes()).unwrap());
     assert!(plan(&back, &options()).is_ok());
     // Uppercase ids, several parts of the list, the same result; another id is refused.
-    back.staged.deleted = Some(
-        deflate(
-            list.to_uppercase()
-                .replace("\u{feff}", "\u{feff}")
-                .as_bytes(),
-        )
-        .unwrap(),
-    );
+    back.staged.deleted = Some(deflate(list.to_uppercase().as_bytes()).unwrap());
     assert!(plan(&back, &options()).is_ok());
     back.staged.deleted =
         Some(deflate("\u{feff}1,\"c60cdc87-198a-4f6e-8f17-76bcb1b1914c\",1".as_bytes()).unwrap());

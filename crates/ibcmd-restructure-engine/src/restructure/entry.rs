@@ -12,8 +12,8 @@
 //!
 //! **Fields** of a catalog: `ID`, `Version`, `Marked`, `PredefinedID`, [`OwnerID`: a typed reference for one owner,
 //! `E` and an untyped reference for several], [`ParentID`, and `Folder` for a hierarchy of folders and items],
-//! [`Code`], [`Description`], the attributes, the common attributes that apply. Of a document: `ID`, `Version`,
-//! `Marked`, `Date_Time`, [`NumberPrefix`], `Number`, `Posted`, the attributes, the common attributes.
+//! `Code`, `Description`, the attributes, the common attributes that apply. Of a document: `ID`, `Version`,
+//! `Marked`, `Date_Time`, `NumberPrefix`, `Number`, `Posted`, the attributes, the common attributes.
 //!
 //! **Declared indexes** of a catalog, in this order: `ByPredefinedIDNotUniq`; `OwnerCode`, `OwnerDescr`;
 //! `ParentCode`, `ParentDescr`; `Code`, `Descr`; then for each attribute and each common attribute that is

@@ -28,7 +28,7 @@ pub(super) fn collection<'a>(root: &'a mut Brace, class: &str) -> &'a mut Vec<Br
         .unwrap()
 }
 
-pub(super) fn recount(items: &mut Vec<Brace>) {
+pub(super) fn recount(items: &mut [Brace]) {
     items[1] = Brace::num(items.len() as i64 - 2);
 }
 

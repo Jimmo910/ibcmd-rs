@@ -50,7 +50,7 @@ pub fn new_descriptor_names(image: &StagedImage) -> BTreeSet<String> {
 }
 
 /// The uuids of the descriptors a created object's plan reads, from the configuration's descriptor: the
-/// objects of the four root collections in [`CONTEXT_CLASSES`].
+/// objects of the four root collections in `CONTEXT_CLASSES`.
 pub fn context_uuids(configuration_row: &[u8]) -> Result<Vec<String>> {
     let text = inflate(configuration_row).unwrap_or_else(|_| configuration_row.to_vec());
     let root = parse_row(&text).context("the configuration's descriptor is not brace text")?;

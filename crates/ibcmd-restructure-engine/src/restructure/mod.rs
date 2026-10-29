@@ -19,7 +19,7 @@
 //!   restructure, and the proof that a restructure leaves their state as it was;
 //! - [`script`] -- the same plan as T-SQL text with assertions, to run inside another transaction (the
 //!   own apply's);
-//! - [`s1`] -- the structural gate of the own apply: which reasons of the restructuring check are S1
+//! - the root `s1` adapter -- the structural gate of the own apply: which reasons of the restructuring check are S1
 //!   operations, and the structure phase the apply runs in its transaction.
 //!
 //! The brace text is `metadata_model::brace`, shared with the model export. Findings and measurements:
