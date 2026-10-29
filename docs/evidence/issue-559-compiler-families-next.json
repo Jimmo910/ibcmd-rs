@@ -6,13 +6,13 @@
       "files": 50,
       "lines": 22200,
       "explicit_root_modules": 13,
-      "root_reference_count": 93,
+      "root_reference_count": 95,
       "root_modules": {
         "apply_check": 4,
         "brace_list": 2,
         "cli": 1,
         "compiler": 1,
-        "metadata_model": 51,
+        "metadata_model": 53,
         "module_blob": 2,
         "mssql_config_apply": 14,
         "mssql_dump": 2,
@@ -30,9 +30,9 @@
       "files": 37,
       "lines": 27024,
       "explicit_root_modules": 7,
-      "root_reference_count": 55,
+      "root_reference_count": 56,
       "root_modules": {
-        "brace_list": 17,
+        "brace_list": 18,
         "compiler": 4,
         "module_blob": 8,
         "mssql_dump": 9,
@@ -40,18 +40,19 @@
         "platform": 7,
         "test_scratch": 5
       },
-      "parent_references_to_resolve": 253,
+      "parent_references_to_resolve": 264,
       "method": "Lexical direct crate:: references after removing comments and strings, excluding self references for whole modules; includes tests. Parent aliases and transitive dependencies require name analysis before extraction."
     },
     {
       "candidate": "src/mssql_dump/source_assets.rs",
       "files": 1,
       "lines": 6108,
-      "explicit_root_modules": 2,
-      "root_reference_count": 43,
+      "explicit_root_modules": 3,
+      "root_reference_count": 44,
       "root_modules": {
         "compiler": 37,
-        "mssql_dump": 6
+        "mssql_dump": 6,
+        "v8_container": 1
       },
       "parent_references_to_resolve": 19,
       "method": "Lexical direct crate:: references after removing comments and strings, excluding self references for whole modules; includes tests. Parent aliases and transitive dependencies require name analysis before extraction."

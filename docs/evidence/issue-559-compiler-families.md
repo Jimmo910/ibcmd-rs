@@ -60,13 +60,13 @@ The base root library reports 81 warnings. The extraction leaves one additional 
 
 ## Next independent candidates
 
-These are direct lexical root references after excluding comments, strings and whole-module self references; tests are included. They are not a transitive dependency closure. `super` aliases and wildcard imports require name analysis before another extraction.
+These are direct lexical root references after excluding comments, strings, char/byte-char literals and whole-module self references; tests are included. Counts and module-name maps agree with an independent scan using the physical-policy guard's Rust tokenizer. They are not a transitive dependency closure. `super` aliases and wildcard imports require name analysis before another extraction.
 
 | Candidate | Lines | External root modules | Direct references | Parent references to resolve |
 | --- | ---: | ---: | ---: | ---: |
-| `src/restructure` | 22200 | 13 | 93 | 15 |
-| `src/metadata_model` | 27024 | 7 | 55 | 253 |
-| `src/mssql_dump/source_assets.rs` | 6108 | 2 | 43 | 19 |
+| `src/restructure` | 22200 | 13 | 95 | 15 |
+| `src/metadata_model` | 27024 | 7 | 56 | 264 |
+| `src/mssql_dump/source_assets.rs` | 6108 | 3 | 44 | 19 |
 | `src/mssql_dump/refs.rs` | 5550 | 2 | 8 | 13 |
 | `src/mssql_dump/dcs.rs` | 1353 | 1 | 54 | 2 |
 | `src/sql` | 2530 | 0 | 0 | 10 |
