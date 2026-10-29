@@ -36076,9 +36076,12 @@ fn parse_command_group_picture_value(
 
 /// The platform's standard pictures, named and stored through the one table
 /// of the crate (`metadata_model::standard_pictures`).
-pub(crate) use crate::metadata_model::standard_pictures::{
-    standard_picture_name, standard_picture_uuid,
-};
+pub(crate) use crate::metadata_model::standard_pictures::standard_picture_name;
+#[expect(
+    unused_imports,
+    reason = "Retain the original crate-internal standard-picture compatibility path"
+)]
+pub(crate) use crate::metadata_model::standard_pictures::standard_picture_uuid;
 
 fn parse_common_command_group_value(
     value: &str,

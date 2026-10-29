@@ -15,6 +15,31 @@ The model has 25,692 Rust lines in 36 files. Direct root paths, including tests 
 | platform | 7 | Public DescriptorContext::platform and ExportContext::platform return the root PlatformSpec; includes FormLayout and the palette-color feature lookup |
 | test_scratch | 5 | Existing root-owned cleanup guards in unit tests; keep cleanup behavior when splitting test ownership |
 
+## Included test helper and complete owner counts
+
+`external_data_source.rs` imports the current crate as `product` and includes
+`tests/common/eds_generated.rs`. The literal `crate::` metric excludes this
+alias. Counting this compiled include once adds two qualified root-path
+occurrences and the `profile_registry` owner: **8 modules / 58 references
+before, 6 / 20 after**. The direct 7/56 and 4/18 numbers above remain the
+literal-path metric, not the complete closure.
+
+The helper imports these external items:
+
+- `compiler::graph::{ObjectStorageRoute, build_bootstrap_graph}`;
+- `compiler::identity::collect_bootstrap_identities`;
+- `compiler::root::{ConfigurationBodyProperties, compile_configuration_body}`;
+- `compiler::version::SpecialEntryProfile`;
+- `profile_registry::load_bundled_profile_registry`.
+
+Its `metadata_model::brace::parse_row` access stays inside the target model.
+Graph, identity, version and profile loading already have portable owners;
+`compiler::root` remains root-owned. The generated-configuration integration
+helper therefore cannot be copied into a future model crate unchanged or
+made a reverse dev-dependency on the root. Keep that cross-component test in
+the root adapter, or split the helper before moving its pure model assertions.
+This prep leaves its code, fixture paths and assertions unchanged.
+
 ## Exact imported root items before preparation
 
 - `src/metadata_model/attribute.rs`: `crate::brace_list`, `crate::parallel`
