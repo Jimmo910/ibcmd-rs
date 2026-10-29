@@ -574,8 +574,12 @@ pub fn compiled_sources() -> CompiledSources {
         helper: hash(include_bytes!("cache_insertion_trace.rs")),
         comparison: hash(include_bytes!("cache_insertion_comparison.rs")),
         tests: hash(include_bytes!("../cache_insertion_trace.rs")),
-        order: hash(include_bytes!("../../src/restructure/caches/order.rs")),
-        renderer: hash(include_bytes!("../../src/restructure/caches/help_props.rs")),
+        order: hash(include_bytes!(
+            "../../crates/ibcmd-restructure-engine/src/restructure/caches/order.rs"
+        )),
+        renderer: hash(include_bytes!(
+            "../../crates/ibcmd-restructure-engine/src/restructure/caches/help_props.rs"
+        )),
     }
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]

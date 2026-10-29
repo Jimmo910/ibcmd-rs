@@ -1011,25 +1011,7 @@ fn normalize_row(packed: &[u8]) -> Result<Option<NormalizedRow>> {
     }))
 }
 
-/// One object an extension adopts, as its descriptor row says.
-///
-/// The platform pairs an adopted object with the object it extends by identity
-/// (the kind and the name), and only in the other cases names the base object
-/// in the header: 67 of the 84 adopted headers of the БСП extension
-/// `_ДемоРасширение` carry the nil uuid there, and the object has a uuid of its
-/// own (`Catalog._ДемоПартнеры` is `3014d9c1-...` in the extension and
-/// `5eab8a1b-...` in the configuration).
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
-pub struct AdoptedObject {
-    /// The descriptor row that holds the object (a bare uuid).
-    pub row: String,
-    /// The object's own uuid in the extension.
-    pub uuid: String,
-    /// The object's name.
-    pub name: String,
-    /// The uuid of the object it extends, when the header names it.
-    pub extends: Option<String>,
-}
+pub use ibcmd_restructure::descriptor::AdoptedObject;
 
 /// The objects an extension image adopts: for every descriptor row named by the
 /// uuid of its own first header, that header, when it is an adopted one.

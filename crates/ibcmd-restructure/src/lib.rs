@@ -7,3 +7,5 @@ pub mod schema;
 pub mod extension;
 
 pub mod scheduled_jobs;
+
+pub mod descriptor;

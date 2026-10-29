@@ -4,14 +4,14 @@
 use crate::restructure::schema::*;
 
 const STAGED: &[u8] = include_bytes!(
-    "../../tests/fixtures/native-evidence/restructure/dbschema-a2-staged-excerpt.txt"
+    "../../../../tests/fixtures/native-evidence/restructure/dbschema-a2-staged-excerpt.txt"
 );
 const NATIVE: &[u8] = include_bytes!(
-    "../../tests/fixtures/native-evidence/restructure/dbschema-a2-native-excerpt.txt"
+    "../../../../tests/fixtures/native-evidence/restructure/dbschema-a2-native-excerpt.txt"
 );
 /// The statements of the native apply of case a2, verbatim.
 const STATEMENTS: &str =
-    include_str!("../../docs/apply/evidence/restructuring/a2-structure-statements.sql");
+    include_str!("../../../../docs/apply/evidence/restructuring/a2-structure-statements.sql");
 
 fn lf(text: &str) -> String {
     text.replace("\r\n", "\n")

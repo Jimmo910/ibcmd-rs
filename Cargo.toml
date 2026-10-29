@@ -23,10 +23,12 @@ members = [
     "crates/ibcmd-moxel",
     "crates/ibcmd-1c-text",
     "crates/ibcmd-restructure",
+    "crates/ibcmd-restructure-engine",
     "crates/ibcmd-1c-vocab",
     "crates/ibcmd-form-body",
     "crates/ibcmd-module-blob",
     "crates/ibcmd-compiler-families",
+    "crates/ibcmd-sql",
     "crates/ibcmd-metadata-blob",
 ]
 resolver = "3"
@@ -37,7 +39,7 @@ default = []
 # Research-only integrations that locate or execute an installed 1C platform.
 # This feature is intentionally excluded from default and release builds.
 platform-oracle = []
-mssql-live-tests = []
+mssql-live-tests = ["ibcmd-sql/mssql-live-tests"]
 research-corpus-tests = []
 
 [dependencies]
@@ -45,13 +47,11 @@ rmcp = { version = "=3.6.0", default-features = false, features = ["server", "tr
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 flate2 = "1.1"
-# The SQL Server client (src/sql): TDS in-process instead of sqlcmd.exe and
-# bcp.exe. TLS through rustls, so no OpenSSL and no Microsoft driver; SQL
-# Browser lookups for `host\instance`. Windows logins (SSPI) are added below.
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# SQL error classification still names tiberius directly; the database client
+# itself lives in ibcmd-sql. Tokio also serves the root MCP adapter.
 tiberius = { version = "0.13", default-features = false, features = ["tds73", "rustls", "sql-browser-tokio"] }
 tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "sync", "macros", "rt-multi-thread"] }
-tokio-util = { version = "0.7", default-features = false, features = ["compat"] }
+ibcmd-sql = { path = "crates/ibcmd-sql" }
 ibcmd-core = { path = "crates/ibcmd-core" }
 ibcmd-cf = { path = "crates/ibcmd-cf" }
 ibcmd-schema = { path = "crates/ibcmd-schema" }
@@ -65,6 +65,7 @@ ibcmd-form-native = { path = "crates/ibcmd-form-native" }
 ibcmd-moxel = { path = "crates/ibcmd-moxel" }
 ibcmd-1c-text = { path = "crates/ibcmd-1c-text" }
 ibcmd-restructure = { path = "crates/ibcmd-restructure" }
+ibcmd-restructure-engine = { path = "crates/ibcmd-restructure-engine" }
 ibcmd-1c-vocab = { path = "crates/ibcmd-1c-vocab" }
 ibcmd-form-body = { path = "crates/ibcmd-form-body" }
 ibcmd-module-blob = { path = "crates/ibcmd-module-blob" }

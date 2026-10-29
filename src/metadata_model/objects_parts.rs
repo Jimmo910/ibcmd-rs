@@ -110,135 +110,14 @@ pub(crate) fn compatibility(context: &DescriptorContext) -> Compat {
     value
 }
 
-/// How a family wraps a tabular section record `{11,...}`.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum TsWrapper {
-    /// `{v,<ts>}`
-    Bare(i64),
-    /// `{v,<ts>,<Use>}`
-    Use(i64),
-    /// `{v,<ts>,<LineNumberLength>}`
-    Length(i64),
-    /// `{v,<ts>,<Use>,<LineNumberLength>}`
-    UseAndLength(i64),
-}
-
-/// How a family wraps an attribute body `{27,...}`.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum AttributeWrapper {
-    /// `{0,<body>}` (reports, data processors).
-    Bare,
-    /// `{v,<body>,<Indexing>,<FullTextSearch>,<DataHistory>}`
-    Plain(i64),
-    /// `Plain` plus the constant tail `0,{1,<nil>}` of compatibility 8.3.27.
-    PlainModern(i64),
-    /// `{v,<body>,<Indexing>,<Use>,<FullTextSearch>,<DataHistory>}`
-    Hierarchical(i64),
-    HierarchicalModern(i64),
-    /// A tabular-section attribute: `{8,<body>,<Indexing>,<FullTextSearch>,<DataHistory>}`.
-    TabularSection,
-    /// A task addressing attribute:
-    /// `{v,<body>,<Indexing>,<dimension>,<FullTextSearch>,<DataHistory>}`.
-    Addressing(i64),
-    /// An accounting flag: `{v,<body>,<DataHistory>}`.
-    Flag(i64),
-}
-
-/// How a family wraps an owned command record.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum CommandWrapper {
-    /// `{{0,{0,0,0,<command>}},0}`
-    Owner,
-    /// `{{0,<command>},0}` (reports, data processors).
-    Bare,
-}
-
-/// A code table: XML spelling -> stored number.
-pub(crate) type Codes = &'static [(&'static str, i64)];
-
-/// The charts' predefined tabular sections: name, marker, attribute markers.
-pub(crate) type StandardSections = &'static [(&'static str, i64, Codes)];
-
-/// One slot of an owner record, named by the XML property it carries. A
-/// kind's record is a list of slots, so the same table reads a row back.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Slot {
-    /// The record version: before 8.3.27, from 8.3.27, from 8.5.1.
-    Tag(i64, i64, i64),
-    /// Two slots: TypeId and ValueId of the generated type of a category.
-    Generated(&'static str),
-    /// `<md base>`
-    Header,
-    /// `{0,<md base>}`
-    WrappedHeader,
-    /// `true`/`false` -> 1/0.
-    Flag(&'static str),
-    /// A number as written.
-    Number(&'static str),
-    /// An enumeration through its code table.
-    Code(&'static str, Codes),
-    /// A string as written (`CodeMask`).
-    Text(&'static str),
-    /// `{N,"lang","text",...}`
-    Localized(&'static str),
-    /// One metadata object (a form, a register, a storage...): uuid or nil.
-    Reference(&'static str),
-    /// `{0,N,<metadata ref>...}` of an item list.
-    References(&'static str),
-    /// `{1,{0,N,<field ref>...}}` of a field list.
-    Fields(&'static str),
-    /// `{<search>,<full-text>,<data get>}` of input by string.
-    InputModes,
-    /// A type description property.
-    TypePattern(&'static str),
-    /// The root standard attributes with the family's markers.
-    StandardAttributes(Codes),
-    /// The charts' predefined tabular sections: name, marker, attribute markers.
-    StandardTabularSections(StandardSections),
-    Characteristics,
-    /// An exchange plan's `<InternalInfo><ThisNode>`.
-    ThisNode,
-    /// A constant no XML property varies.
-    Const(i64),
-    /// A nil uuid no XML property fills.
-    Nil,
-    /// A slot only compatibility 8.3.27 and later stores.
-    Modern(&'static Slot),
-    /// A slot only compatibility 8.5.1 and later stores.
-    Since8_5_1(&'static Slot),
-}
-
-/// A record wrapper that changed with compatibility 8.3.27.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Versioned<T> {
-    pub old: T,
-    pub modern: T,
-}
-
-/// What one collection of the root holds.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Coll {
-    Templates,
-    Forms,
-    Commands(CommandWrapper),
-    /// Attribute-like children of an XML tag (`Attribute`, `AccountingFlag`...).
-    Children(&'static str, Versioned<AttributeWrapper>),
-    TabularSections {
-        wrapper: Versioned<TsWrapper>,
-        attribute_class: &'static str,
-        attribute: AttributeWrapper,
-    },
-    EnumValues,
-    /// A collection no XML fills.
-    Empty,
-}
-
-/// A kind's row: owner record slots, then the collections by class uuid in
-/// uuid order.
-pub(crate) struct Layout {
-    pub slots: &'static [Slot],
-    pub collections: &'static [(&'static str, Coll)],
-}
+#[expect(
+    unused_imports,
+    reason = "Retain the existing crate-internal descriptor type path"
+)]
+pub(crate) use ibcmd_restructure::descriptor::Codes;
+pub(crate) use ibcmd_restructure::descriptor::{
+    AttributeWrapper, Coll, CommandWrapper, Layout, Slot, StandardSections, TsWrapper, Versioned,
+};
 
 /// One object being compiled, with the readers every slot uses.
 pub(crate) struct Obj<'a> {
