@@ -89,6 +89,12 @@ fingerprint changes from
 `a1eb8c22ec2bfbf1d9159e97d2da8911a0a0d134b01e0e3abca8a2a4dc644539`,
 with category and occurrence count (one) unchanged.
 
+`crates/ibcmd-sql/src/` contains the database clients formerly in `src/sql/`,
+which were outside the slice. Eight production files join it with their four
+existing fingerprint records unchanged. The feature-gated live test module
+stays excluded by its test-only declaration. All earlier records, including
+the two stale records, remain unchanged.
+
 The guard tokenizes logical Rust statements outside comments and provably
 test-only items, including multiline, raw-string, escaped-string and char forms.
 It conservatively inventories immediate XML sink fragments and literal

@@ -71,7 +71,7 @@ pub mod source;
 pub mod source_audit;
 pub(crate) mod source_listing;
 pub mod source_oracle;
-pub mod sql;
+pub use ibcmd_sql::sql;
 pub mod storage_map;
 pub mod stored_objects;
 pub mod templates;

@@ -824,7 +824,6 @@ dependencies = [
  "anyhow",
  "clap",
  "flate2",
- "futures-util",
  "ibcmd-1c-text",
  "ibcmd-1c-vocab",
  "ibcmd-cf",
@@ -840,6 +839,7 @@ dependencies = [
  "ibcmd-postgres",
  "ibcmd-restructure",
  "ibcmd-schema",
+ "ibcmd-sql",
  "ibcmd-v8",
  "ibcmd-xml",
  "memchr",
@@ -854,7 +854,6 @@ dependencies = [
  "sha2",
  "tiberius",
  "tokio",
- "tokio-util",
  "toml",
  "uuid",
  "walkdir",
@@ -870,6 +869,18 @@ dependencies = [
  "serde_json",
  "sha2",
  "uuid",
+]
+
+[[package]]
+name = "ibcmd-sql"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "ibcmd-postgres",
+ "tiberius",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
