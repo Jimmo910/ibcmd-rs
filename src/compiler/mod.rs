@@ -8,14 +8,12 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
-use ibcmd_core::artifact::StorageProfileId;
 use ibcmd_core::family::FamilyId;
 use ibcmd_core::storage::{
     MAX_STORAGE_PAYLOAD_BYTES, MultipartIdentity, StorageBuildError, StorageKey,
     StoragePatchBuildError, StoragePatchEntry, StoragePatchOutcome, StoragePatchTarget,
     StorageProvenance,
 };
-use ibcmd_core::version::XmlDialect;
 
 use crate::module_blob::{
     command_interface_base_free_blockers, command_interface_xml_can_pack_without_base,
@@ -504,7 +502,9 @@ fn unsupported_entry(target: StoragePatchTarget, reason: &str) -> CompileResult<
 
 #[cfg(test)]
 mod tests {
+    use ibcmd_core::artifact::StorageProfileId;
     use ibcmd_core::storage::StoragePatchOutcome;
+    use ibcmd_core::version::{CompatibilityMode, ContainerRevision, PlatformBuild, XmlDialect};
 
     use super::*;
 

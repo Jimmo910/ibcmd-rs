@@ -2803,12 +2803,16 @@ mod tests {
         } else {
             String::new()
         };
-        let default_form = child_rich
-            .then_some("Report.Analysis.Form.Main")
-            .unwrap_or("");
-        let schema = child_rich
-            .then_some("Report.Analysis.Template.Schema")
-            .unwrap_or("");
+        let default_form = if child_rich {
+            "Report.Analysis.Form.Main"
+        } else {
+            ""
+        };
+        let schema = if child_rich {
+            "Report.Analysis.Template.Schema"
+        } else {
+            ""
+        };
         format!(
             "<MetaDataObject xmlns=\"http://v8.1c.ru/8.3/MDClasses\" xmlns:v8=\"http://v8.1c.ru/8.1/data/core\" xmlns:xr=\"http://v8.1c.ru/8.3/xcf/readable\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" version=\"2.20\"><Report uuid=\"{REPORT_UUID}\"><InternalInfo>{}</InternalInfo><Properties><Name>Analysis</Name><Synonym/><Comment/><UseStandardCommands>true</UseStandardCommands><DefaultForm>{default_form}</DefaultForm><AuxiliaryForm/><MainDataCompositionSchema>{schema}</MainDataCompositionSchema><DefaultSettingsForm/><AuxiliarySettingsForm/><DefaultVariantForm/><VariantsStorage/><SettingsStorage/><IncludeHelpInContents>false</IncludeHelpInContents><ExtendedPresentation/><Explanation/></Properties><ChildObjects>{children}</ChildObjects></Report></MetaDataObject>",
             root_generated(UtilityFamily::Report, "Analysis", 1_000),
@@ -2827,9 +2831,11 @@ mod tests {
         } else {
             String::new()
         };
-        let default_form = child_rich
-            .then_some("DataProcessor.Loader.Form.Main")
-            .unwrap_or("");
+        let default_form = if child_rich {
+            "DataProcessor.Loader.Form.Main"
+        } else {
+            ""
+        };
         format!(
             "<MetaDataObject xmlns=\"http://v8.1c.ru/8.3/MDClasses\" xmlns:v8=\"http://v8.1c.ru/8.1/data/core\" xmlns:xr=\"http://v8.1c.ru/8.3/xcf/readable\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" version=\"2.20\"><DataProcessor uuid=\"{PROCESSOR_UUID}\"><InternalInfo>{}</InternalInfo><Properties><Name>Loader</Name><Synonym/><Comment/><UseStandardCommands>true</UseStandardCommands><DefaultForm>{default_form}</DefaultForm><AuxiliaryForm/><IncludeHelpInContents>false</IncludeHelpInContents><ExtendedPresentation/><Explanation/></Properties><ChildObjects>{children}</ChildObjects></DataProcessor></MetaDataObject>",
             root_generated(UtilityFamily::DataProcessor, "Loader", 2_000),
@@ -2851,9 +2857,11 @@ mod tests {
 
     fn settings_xml(with_form: bool) -> Vec<u8> {
         let child = if with_form { "<Form>Main</Form>" } else { "" };
-        let default = with_form
-            .then_some("SettingsStorage.User.Form.Main")
-            .unwrap_or("");
+        let default = if with_form {
+            "SettingsStorage.User.Form.Main"
+        } else {
+            ""
+        };
         format!(
             "<MetaDataObject xmlns=\"http://v8.1c.ru/8.3/MDClasses\" xmlns:xr=\"http://v8.1c.ru/8.3/xcf/readable\" version=\"2.20\"><SettingsStorage uuid=\"{SETTINGS_UUID}\"><InternalInfo>{}</InternalInfo><Properties><Name>User</Name><Synonym/><Comment/><DefaultSaveForm>{default}</DefaultSaveForm><DefaultLoadForm>{default}</DefaultLoadForm><AuxiliarySaveForm/><AuxiliaryLoadForm/></Properties><ChildObjects>{child}</ChildObjects></SettingsStorage></MetaDataObject>",
             root_generated(UtilityFamily::SettingsStorage, "User", 4_000),

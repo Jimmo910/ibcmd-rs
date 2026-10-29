@@ -629,7 +629,7 @@ fn write_value(value: &NativeValue, output: &mut Vec<u8>, depth: usize) -> Resul
 }
 
 fn write_empty_list_atom(
-    output: &mut Vec<u8>,
+    output: &mut [u8],
     depth: usize,
     index: usize,
     list_length: usize,
@@ -859,7 +859,7 @@ impl<'a> NativeParser<'a> {
                 _ => return Err(NativeError::InvalidToken),
             }
         }
-        if payload_len == 0 || (payload_len + padding_len) % 4 != 0 {
+        if payload_len == 0 || !(payload_len + padding_len).is_multiple_of(4) {
             return Err(NativeError::InvalidToken);
         }
         let value = std::str::from_utf8(&self.input[start..self.offset])
@@ -1189,7 +1189,7 @@ fn is_line_wrapped_base64_token(value: &[u8]) -> bool {
             _ => return false,
         }
     }
-    payload_len > 0 && (payload_len + padding_len) % 4 == 0
+    payload_len > 0 && (payload_len + padding_len).is_multiple_of(4)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1404,8 +1404,10 @@ mod tests {
         const EVIDENCED_NATIVE_DEPTH: usize = 4;
         const EVIDENCED_NATIVE_NODES: usize = 564_948;
 
-        assert!(EVIDENCED_PLAIN_BYTES <= MAX_PLAIN_BYTES);
-        assert!(EVIDENCED_NATIVE_DEPTH <= MAX_NATIVE_DEPTH);
+        const {
+            assert!(EVIDENCED_PLAIN_BYTES <= MAX_PLAIN_BYTES);
+            assert!(EVIDENCED_NATIVE_DEPTH <= MAX_NATIVE_DEPTH);
+        }
         assert!(EVIDENCED_NATIVE_NODES <= node_bound(&vec![0u8; EVIDENCED_PLAIN_BYTES]));
 
         let mut parser = NativeParser::new(b"\xef\xbb\xbf0");

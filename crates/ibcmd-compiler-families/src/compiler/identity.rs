@@ -186,13 +186,13 @@ pub fn collect_bootstrap_identities(
                 kind: object.kind().as_str().to_owned(),
             });
         }
-        if object.kind().as_str() == "Configuration" {
-            if let Some(first) = configuration_uuid.replace(uuid) {
-                return Err(BootstrapIdentityError::MultipleConfigurations {
-                    first,
-                    duplicate: uuid,
-                });
-            }
+        if object.kind().as_str() == "Configuration"
+            && let Some(first) = configuration_uuid.replace(uuid)
+        {
+            return Err(BootstrapIdentityError::MultipleConfigurations {
+                first,
+                duplicate: uuid,
+            });
         }
         for generated_type in object.generated_types() {
             if is_nil(generated_type.uuid()) {

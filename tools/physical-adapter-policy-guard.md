@@ -82,6 +82,12 @@ fingerprint records join the slice unchanged; the move changes no fingerprint
 or occurrence count. The earlier baseline records, including stale records,
 remain untouched. The loader still embeds the canonical workspace `profiles/`
 documents, with adjusted relative include paths and unchanged provenance names.
+The subsequent mechanical clippy cleanup folds the identity collector's nested
+configuration check into a short-circuiting let chain. Its one name-policy
+fingerprint changes from
+`06f20cdf6d98a912cc6698719fda5b234053dbc39bd3a4a6708ba1332a9289fb` to
+`a1eb8c22ec2bfbf1d9159e97d2da8911a0a0d134b01e0e3abca8a2a4dc644539`,
+with category and occurrence count (one) unchanged.
 
 The guard tokenizes logical Rust statements outside comments and provably
 test-only items, including multiline, raw-string, escaped-string and char forms.
