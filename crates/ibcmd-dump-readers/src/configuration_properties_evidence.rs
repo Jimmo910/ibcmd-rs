@@ -30,7 +30,7 @@ use ibcmd_1c_text::{decode_base64_mime_lenient as decode_base64_mime, split_1c_b
 /// `configuration.cf.b64` (sha256 `bd64046b...`). The sole fail-closed
 /// comparison reference for the still-undecoded fields of the span.
 const EVIDENCED_DEFAULT_REFERENCE_B64: &str = include_str!(
-    "../../tests/fixtures/native-evidence/8.3.27.2214/dcs-area-style-item-uuid/config-body-unpacked.bin.b64"
+    "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-area-style-item-uuid/config-body-unpacked.bin.b64"
 );
 
 static EVIDENCED_DEFAULT_REFERENCE_TEXT: LazyLock<String> = LazyLock::new(|| {
@@ -55,23 +55,23 @@ static EVIDENCED_DEFAULT_REFERENCE_FIELDS: LazyLock<Vec<&'static str>> = LazyLoc
 
 /// The all-default reference's fields from `from` on: what an older, shorter
 /// root tuple reads as for the members it does not store.
-pub(super) fn evidenced_default_reference_fields_from(from: usize) -> &'static [&'static str] {
+pub fn evidenced_default_reference_fields_from(from: usize) -> &'static [&'static str] {
     let reference: &'static [&'static str] = EVIDENCED_DEFAULT_REFERENCE_FIELDS.as_slice();
     reference.get(from..).unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ConfigurationPropertiesEvidencedFields {
-    pub(crate) include_help_in_contents_xml: &'static str,
-    pub(crate) use_managed_form_in_ordinary_application_xml: &'static str,
-    pub(crate) use_ordinary_form_in_managed_application_xml: &'static str,
-    pub(crate) modality_use_mode_xml: &'static str,
-    pub(crate) synchronous_platform_extension_and_add_in_call_use_mode_xml: &'static str,
-    pub(crate) interface_compatibility_mode_xml: &'static str,
+pub struct ConfigurationPropertiesEvidencedFields {
+    pub include_help_in_contents_xml: &'static str,
+    pub use_managed_form_in_ordinary_application_xml: &'static str,
+    pub use_ordinary_form_in_managed_application_xml: &'static str,
+    pub modality_use_mode_xml: &'static str,
+    pub synchronous_platform_extension_and_add_in_call_use_mode_xml: &'static str,
+    pub interface_compatibility_mode_xml: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ConfigurationPropertiesEvidenceError {
+pub enum ConfigurationPropertiesEvidenceError {
     /// The tuple does not have the reference's field count at all, so none of
     /// the proven field indices mean anything here. Not my case -- the caller
     /// keeps its existing per-field behaviour.
@@ -157,7 +157,7 @@ fn typed_field(
 /// Configuration `<Properties>` tuple this module still cannot decode against
 /// the evidenced all-default reference. `fields` is that tuple already split
 /// into its declared fields (`configuration_root_property_fields`).
-pub(crate) fn parse_configuration_properties_evidenced_default_block(
+pub fn parse_configuration_properties_evidenced_default_block(
     fields: &[&str],
 ) -> Result<ConfigurationPropertiesEvidencedFields, ConfigurationPropertiesEvidenceError> {
     parse_configuration_properties_evidenced_default_block_on(fields, None)
@@ -166,7 +166,7 @@ pub(crate) fn parse_configuration_properties_evidenced_default_block(
 /// The normalized fields retain all existing default checks. A V76 caller
 /// must separately retain the typed pair from its original owner/tuple; the
 /// normalized member 38 alone cannot distinguish Taxi from Version8_5EnableTaxi.
-pub(crate) fn parse_configuration_properties_evidenced_default_block_on(
+pub fn parse_configuration_properties_evidenced_default_block_on(
     fields: &[&str],
     interface: Option<ibcmd_schema::configuration_root::V76InterfaceCompatibility>,
 ) -> Result<ConfigurationPropertiesEvidencedFields, ConfigurationPropertiesEvidenceError> {
@@ -263,16 +263,16 @@ mod tests {
     use super::*;
 
     const T1_BASE_B64: &str = include_str!(
-        "../../tests/fixtures/native-evidence/8.3.27.2214/dcs-area-style-item-uuid/config-body-unpacked.bin.b64"
+        "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-area-style-item-uuid/config-body-unpacked.bin.b64"
     );
     const T3_ENUM_GROUP_B64: &str = include_str!(
-        "../../tests/fixtures/native-evidence/8.3.27.2214/configuration-properties-enum-group/config-body-unpacked.bin.b64"
+        "../../../tests/fixtures/native-evidence/8.3.27.2214/configuration-properties-enum-group/config-body-unpacked.bin.b64"
     );
     const INCLUDE_HELP_IN_CONTENTS_B64: &str = include_str!(
-        "../../tests/fixtures/native-evidence/8.3.27.2214/configuration-property-include-help-in-contents/config-body-unpacked.bin.b64"
+        "../../../tests/fixtures/native-evidence/8.3.27.2214/configuration-property-include-help-in-contents/config-body-unpacked.bin.b64"
     );
     const MODALITY_USE_MODE_B64: &str = include_str!(
-        "../../tests/fixtures/native-evidence/8.3.27.2214/configuration-property-modality-use-mode/config-body-unpacked.bin.b64"
+        "../../../tests/fixtures/native-evidence/8.3.27.2214/configuration-property-modality-use-mode/config-body-unpacked.bin.b64"
     );
 
     fn load(b64: &str) -> Vec<u8> {
