@@ -12,11 +12,6 @@ use crate::restructure::plan::{Phase, plan};
 use crate::restructure::schema::{DbSchema, TableView};
 use crate::restructure::tests_plan::{OLD_ROW, inputs, options};
 
-/// `Indexing` of an attribute item `{{v,<body>,<Indexing>,...},0}`.
-pub(super) fn set_indexing(attribute: &mut Brace, indexing: i64) {
-    attribute.as_list_mut().unwrap()[0].as_list_mut().unwrap()[2] = Brace::num(indexing);
-}
-
 fn error_of(tree: &Brace) -> String {
     format!("{:#}", plan(&staged(tree), &options()).unwrap_err())
 }

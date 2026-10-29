@@ -39,7 +39,7 @@ impl RowSource for ClientSource<'_> {
     }
 }
 
-pub(crate) fn rows(
+pub fn rows(
     source: &mut dyn RowSource,
     query: &str,
     mut each: impl FnMut(SqlRow) -> Result<()>,

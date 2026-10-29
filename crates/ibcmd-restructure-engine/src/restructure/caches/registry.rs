@@ -246,10 +246,8 @@ pub fn names(text: &[u8]) -> Result<std::collections::BTreeMap<String, String>> 
         .collect())
 }
 
-/// Not used by the writers: the registry text of a subtree, to compare with [`object_records`].
 #[cfg(test)]
-pub(crate) fn subtree_text(text: &[u8], main: &SiMain, index: usize) -> String {
-    let end = main.subtree_end(index);
-    let bytes = &text[main.records[index].start..main.records[end - 1].end];
-    String::from_utf8_lossy(bytes).into_owned()
-}
+#[path = "../../../../../tests/support/restructure_registry.rs"]
+mod test_support;
+#[cfg(test)]
+pub(crate) use test_support::subtree_text;

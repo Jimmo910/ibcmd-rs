@@ -83,14 +83,14 @@ pub struct CatalogFacts {
 }
 
 /// The value of a slot of the owner record by property name.
-pub(crate) struct OwnerRecord<'a> {
-    pub(crate) values: &'a [Brace],
-    pub(crate) positions: HashMap<&'static str, usize>,
-    pub(crate) header: usize,
+pub struct OwnerRecord<'a> {
+    pub values: &'a [Brace],
+    pub positions: HashMap<&'static str, usize>,
+    pub header: usize,
 }
 
 impl OwnerRecord<'_> {
-    pub(crate) fn atom(&self, name: &str) -> Result<&str> {
+    pub fn atom(&self, name: &str) -> Result<&str> {
         let position = *self
             .positions
             .get(name)
@@ -101,14 +101,14 @@ impl OwnerRecord<'_> {
             .with_context(|| format!("slot {name} is not a plain value"))
     }
 
-    pub(crate) fn number(&self, name: &str) -> Result<i64> {
+    pub fn number(&self, name: &str) -> Result<i64> {
         self.atom(name)?
             .parse()
             .with_context(|| format!("slot {name} is not a number"))
     }
 
     /// The count of `{0,N,...}` (`References`).
-    pub(crate) fn reference_count(&self, name: &str) -> Result<i64> {
+    pub fn reference_count(&self, name: &str) -> Result<i64> {
         let position = *self
             .positions
             .get(name)
@@ -127,10 +127,7 @@ impl OwnerRecord<'_> {
 
 /// Walks the catalog layout for the positions of the named slots in a record
 /// of the given tag (`56` before compatibility 8.3.27, `57` from it).
-pub(crate) fn record_positions(
-    kind: &str,
-    tag: i64,
-) -> Result<(HashMap<&'static str, usize>, usize)> {
+pub fn record_positions(kind: &str, tag: i64) -> Result<(HashMap<&'static str, usize>, usize)> {
     let layout = layout(kind).with_context(|| format!("no {kind} layout"))?;
     let Some(Slot::Tag(old, new, latest)) = layout.slots.first().copied() else {
         bail!("the {kind} layout does not start with its tag");
@@ -197,7 +194,7 @@ fn walk(
 }
 
 /// `{3,{1,0,<uuid>},"Name",{<n>,"ru","text",...},...}` -> the synonyms `(language, text)`.
-pub(crate) fn md_synonyms(node: &Brace) -> Vec<(String, String)> {
+pub fn md_synonyms(node: &Brace) -> Vec<(String, String)> {
     let Some(block) = node
         .as_list()
         .and_then(|items| items.get(3))
@@ -221,7 +218,7 @@ pub(crate) fn md_synonyms(node: &Brace) -> Vec<(String, String)> {
 }
 
 /// `{3,{1,0,<uuid>},"Name",...}` -> (uuid, name).
-pub(crate) fn md_base(node: &Brace) -> Result<(String, String)> {
+pub fn md_base(node: &Brace) -> Result<(String, String)> {
     let items = node.as_list().context("an md header is not a list")?;
     let uuid = items
         .get(1)
@@ -323,7 +320,7 @@ fn catalog_attribute(item: &Brace) -> Result<AttributeFacts> {
     Ok(facts)
 }
 
-pub(crate) fn number_at(record: &[Brace], index: usize, what: &str) -> Result<i64> {
+pub fn number_at(record: &[Brace], index: usize, what: &str) -> Result<i64> {
     record
         .get(index)
         .and_then(Brace::as_atom)
@@ -332,7 +329,7 @@ pub(crate) fn number_at(record: &[Brace], index: usize, what: &str) -> Result<i6
 }
 
 /// `{27,{2,<md base>,<pattern>},...}`.
-pub(crate) fn attribute_body(body: &Brace) -> Result<AttributeFacts> {
+pub fn attribute_body(body: &Brace) -> Result<AttributeFacts> {
     let slots = body.as_list().context("an attribute body is not a list")?;
     if slots.first().and_then(Brace::as_atom) != Some("27") {
         bail!("not an attribute body");
@@ -367,7 +364,7 @@ pub(crate) fn attribute_body(body: &Brace) -> Result<AttributeFacts> {
 /// <LineNumberLength>}` of a catalog's section and `{v,<record>,<LineNumberLength>}` of a document's (the
 /// older record versions have neither the length nor, for a document, anything after the record); its own
 /// md header and every attribute below it.
-pub(crate) fn section(item: &Brace, catalog: bool) -> Result<SectionFacts> {
+pub fn section(item: &Brace, catalog: bool) -> Result<SectionFacts> {
     let mut bodies = Vec::new();
     let mut headers = Vec::new();
     collect(item, &mut bodies, &mut headers);

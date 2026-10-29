@@ -274,7 +274,7 @@ pub fn in_platform_order(created: Vec<Created>, context: &Context) -> Result<Vec
 /// Hands out the numbers of the created objects in the platform's order (traced: cases c, d, n1-n5): first the
 /// main tables of all of them (kinds in the configuration's order), then the attributes of each, then the tabular
 /// sections of each with their line number and attributes.
-pub(crate) fn allocate(running: &mut Running, created: &[Created]) -> Result<()> {
+pub fn allocate(running: &mut Running, created: &[Created]) -> Result<()> {
     for item in created {
         running.allocate(&item.uuid, entry_kind(item.kind).table_kind())?;
     }
@@ -300,7 +300,7 @@ pub(crate) fn allocate(running: &mut Running, created: &[Created]) -> Result<()>
 /// a created catalog takes one number that no entry records (`Running::reserve`): traced on N1-N7, where a catalog
 /// created before a changed one takes it before the changed one's attribute and a catalog created after takes it
 /// after. The created objects' own numbers come before the walk (`allocate`).
-pub(crate) fn walk_positions(
+pub fn walk_positions(
     context: &Context,
 ) -> Result<std::collections::HashMap<String, (ObjectKind, usize)>> {
     let all = collections(&context.configuration);
@@ -318,7 +318,7 @@ pub(crate) fn walk_positions(
 
 /// Plans one created object whose numbers [`allocate`] has handed out: its schema entry and its tables.
 /// Returns the plan of the object and the entry to put before `ConfigChngR`.
-pub(crate) fn plan_created(
+pub fn plan_created(
     running: &Running,
     schema: &DbSchema,
     inputs: &Inputs,

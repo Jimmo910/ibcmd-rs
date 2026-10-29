@@ -13,7 +13,7 @@ pub struct Collection {
     pub objects: Vec<String>,
 }
 
-pub(crate) fn is_uuid(text: &str) -> bool {
+pub fn is_uuid(text: &str) -> bool {
     text.len() == 36
         && text.char_indices().all(|(index, ch)| match index {
             8 | 13 | 18 | 23 => ch == '-',

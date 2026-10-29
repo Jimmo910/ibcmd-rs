@@ -71,4 +71,8 @@ mod test_create_support;
 mod test_plan_support;
 #[cfg(test)]
 #[path = "../../tests/support/restructure_sections.rs"]
+#[expect(
+    dead_code,
+    reason = "Shared fixture helpers retain paths also consumed by the engine tests"
+)]
 mod test_sections_support;

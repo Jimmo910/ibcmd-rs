@@ -481,7 +481,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// A stored or staged row as text: raw deflate when it is, itself otherwise.
-pub(crate) fn row_bytes(stored: &[u8]) -> Vec<u8> {
+pub fn row_bytes(stored: &[u8]) -> Vec<u8> {
     inflate(stored).unwrap_or_else(|_| stored.to_vec())
 }
 
@@ -1031,16 +1031,16 @@ struct Stored<'a> {
 }
 
 /// What the objects share while they are planned one after another.
-pub(crate) struct Running {
+pub struct Running {
     /// The next number of the counter shared with the extensions.
-    pub(crate) next: u64,
-    pub(crate) names_after: DbNames,
+    pub next: u64,
+    pub names_after: DbNames,
 }
 
 impl Running {
     /// Hands out the next number of the shared counter to `uuid` as an entry of `kind` (`Fld`, `VT`, `LineNo`,
     /// `Reference`, ...) and records the entry in the names the plan publishes.
-    pub(crate) fn allocate(&mut self, uuid: &str, kind: &str) -> Result<u64> {
+    pub fn allocate(&mut self, uuid: &str, kind: &str) -> Result<u64> {
         if self.names_after.number_of(uuid, kind).is_some() {
             bail!("{uuid} has an entry of kind {kind} in DBNames already");
         }
@@ -1052,7 +1052,7 @@ impl Running {
 
     /// Takes the next number of the shared counter and records no entry for it: the header moves to it (the
     /// platform hands one out for every catalog a stage creates, `create::allocate`).
-    pub(crate) fn reserve(&mut self) {
+    pub fn reserve(&mut self) {
         self.names_after.max = self.next;
         self.next += 1;
     }

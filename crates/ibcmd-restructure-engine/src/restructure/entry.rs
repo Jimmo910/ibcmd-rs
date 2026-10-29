@@ -601,7 +601,7 @@ pub fn main_entry(input: &EntryInput<'_>) -> Result<Brace> {
 }
 
 /// A tabular section's sub-table.
-pub(crate) fn subtable(
+pub fn subtable(
     names: &DbNames,
     refs: &RefTables,
     kind: Kind,

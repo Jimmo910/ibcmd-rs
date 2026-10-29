@@ -51,7 +51,7 @@ pub struct CacheRow {
 }
 
 /// The index of a reference object's generated types: the categories and their index.
-pub(crate) fn reference_type_slots(facts: &ObjectFacts) -> Result<Vec<TypeSlot>> {
+pub fn reference_type_slots(facts: &ObjectFacts) -> Result<Vec<TypeSlot>> {
     facts
         .generated
         .iter()

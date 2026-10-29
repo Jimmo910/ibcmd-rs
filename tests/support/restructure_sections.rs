@@ -103,3 +103,8 @@ pub(super) fn with_new_section() -> Brace {
     recount(sections);
     root
 }
+
+/// `Indexing` of an attribute item `{{v,<body>,<Indexing>,...},0}`.
+pub(super) fn set_indexing(attribute: &mut Brace, indexing: i64) {
+    attribute.as_list_mut().unwrap()[0].as_list_mut().unwrap()[2] = Brace::num(indexing);
+}
