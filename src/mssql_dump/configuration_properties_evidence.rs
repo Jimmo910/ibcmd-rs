@@ -19,8 +19,7 @@
 
 use std::sync::LazyLock;
 
-use super::split_1c_braced_fields;
-use crate::module_blob::decode_base64_mime;
+use ibcmd_1c_text::{decode_base64_mime_lenient as decode_base64_mime, split_1c_braced_fields};
 
 /// Base64 of the retained, all-default `dcs-area-style-item-uuid` config-body
 /// unpacked tuple text (sha256

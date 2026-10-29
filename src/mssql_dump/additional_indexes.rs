@@ -26,10 +26,21 @@ use anyhow::{Result, anyhow};
 use ibcmd_schema::metadata_child_storage_facts::AdditionalIndexStandardFieldFamily;
 use std::collections::BTreeMap;
 
-use super::source_assets::AdditionalIndexesOwner;
-use super::{
+use ibcmd_1c_text::{
     escape_xml_text, parse_1c_quoted_string_with_len, parse_uuid_field, split_1c_braced_fields,
 };
+
+/// Owner identity an `Ext/AdditionalIndexes.xml` body needs to be readable.
+///
+/// The stored body is a serialized 1C value whose records name their table by
+/// uuid, so the owner has to travel with the asset: only it turns that uuid into
+/// a source table name.
+#[derive(Clone)]
+pub(crate) struct AdditionalIndexesOwner {
+    pub(crate) kind: String,
+    pub(crate) name: String,
+    pub(crate) uuid: String,
+}
 
 /// Type uuid of one additional-index record.
 const INDEX_TYPE_UUID: &str = "4b3b32e1-14f6-4ce8-b4c4-1bc85a74237e";
@@ -441,7 +452,7 @@ mod tests {
 
         let owner = catalog_owner();
         let xml = format_additional_indexes_xml(indexes);
-        let blob = crate::module_blob::pack_additional_indexes_blob_from_xml(
+        let blob = ibcmd_metadata_blob::pack_additional_indexes_blob_from_xml(
             xml.as_bytes(),
             catalog_metadata_xml(declare_period).as_bytes(),
             &owner.kind,
