@@ -9218,7 +9218,7 @@ fn format_native_form_body(
             Some(native_embedded_settings(
                 text,
                 &attribute.name,
-                |settings| crate::form_chart::format_form_embedded_flowchart(settings),
+                crate::form_chart::format_form_embedded_flowchart,
             )?)
         } else if attribute.settings.is_some()
             && let Some(gantt) = native_embedded_chart_kind(attribute)
@@ -9232,7 +9232,7 @@ fn format_native_form_body(
             Some(native_embedded_settings(
                 text,
                 &attribute.name,
-                |settings| crate::form_planner::format_form_embedded_planner(settings),
+                crate::form_planner::format_form_embedded_planner,
             )?)
         } else {
             None
