@@ -63,9 +63,7 @@ pub use ibcmd_module_blob::{
     patch_versions_blob_bytes_allowing_additions, raw_deflated_first_base64_payload_sha256,
     raw_deflated_plain_sha256, unpack_module_blob_text, versions_base_free_blockers,
 };
-pub(crate) use ibcmd_module_blob::{
-    deflate_raw, inflate_raw, unpack_module_container_text, unpack_plain_text_module_body,
-};
+pub(crate) use ibcmd_module_blob::{deflate_raw, inflate_raw, unpack_plain_text_module_body};
 
 // A form body record and its container revision are the `ibcmd-form-body`
 // crate's (the form reader there reads them); this module unpacks them and
