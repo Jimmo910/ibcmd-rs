@@ -850,6 +850,10 @@ enum FormXmlButtonRepresentation {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[allow(
+    clippy::enum_variant_names,
+    reason = "the variants are the values Form.xml spells, prefix and all"
+)]
 enum FormXmlButtonLocationInCommandBar {
     InAdditionalSubmenu,
     InCommandBar,
@@ -873,6 +877,10 @@ enum FormXmlEditMode {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[allow(
+    clippy::enum_variant_names,
+    reason = "the variants are the values Form.xml spells, prefix and all"
+)]
 enum FormXmlChoiceButtonRepresentation {
     ShowInDropList,
     ShowInDropListAndInInputField,
@@ -2130,7 +2138,7 @@ pub fn pack_style_body_blob_from_xml_with_base(
         } else if brand.is_some() {
             anyhow::bail!("base Style body has no 8.5 brand-colour trailer");
         }
-        replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
+        replacements.sort_by_key(|b| std::cmp::Reverse(b.0.start));
         for (range, replacement) in replacements {
             replace_1c_value_if_different(&mut plain, range, &replacement);
         }
@@ -3802,6 +3810,7 @@ fn native_mobile_device_command_bar_content(
 ///   inside that type's own field list rather than a name-to-number table --
 ///   `Variant` is `2` under one type and `0` under another -- so 88 ERP УХ
 ///   entries and 0 BSP entries stay outside this writer.
+///
 /// Member 8, `<UseAlways>`, in the same `{0,<n>,<path>×n}` shape as member 9.
 ///
 /// The list is written in full. A coverage filter lived here for a day on the
@@ -4208,7 +4217,6 @@ fn format_native_child_item(
             display_importance,
             functional_options: native_user_visible(item, source)?.as_deref(),
             shortcut: &native_item_shortcut(item)?,
-            ..native::NativeGroupItem::default()
         })
         .ok_or_else(|| anyhow!("<{}> names something the writer cannot place", item.tag))?;
         return Ok((kind_uuid, record));
@@ -4525,7 +4533,6 @@ fn format_native_child_item(
             shortcut: &native_item_shortcut(item)?,
             parameter: &native_button_parameter(item, source)?,
             command_uniqueness: native_scalar_flag(item, "CommandUniqueness", true),
-            ..native::NativeButtonItem::default()
         })
         .ok_or_else(|| anyhow!("<Button> names something the writer cannot place"))?;
         return Ok((kind_uuid, record));
@@ -4591,7 +4598,6 @@ fn format_native_child_item(
             display_importance,
             functional_options: native_user_visible(item, source)?.as_deref(),
             shortcut: &native_item_shortcut(item)?,
-            ..native::NativeDecorationItem::default()
         })
         .ok_or_else(|| anyhow!("<{}> names something the writer cannot place", item.tag))?;
         return Ok((kind_uuid, record));
@@ -4930,7 +4936,6 @@ fn format_native_table_record(
         ],
         shortcut: &table_shortcut,
         functional_options: table_user_visible.as_deref(),
-        ..native::NativeTableHead::default()
     })
     .ok_or_else(|| anyhow!("<Table> names a spelling the head writer cannot place"))?;
 
@@ -5013,7 +5018,6 @@ fn format_native_table_record(
             .group_vertical_align
             .map(native_vertical_align_spelling),
         display_importance: table_display_importance,
-        ..native::NativeTableTail::default()
     })
     .ok_or_else(|| anyhow!("<Table> names a spelling the tail writer cannot place"))?;
 
@@ -5710,7 +5714,6 @@ fn native_container_payload(
                 collapsed_representation_title: &collapsed_title,
                 format: &format,
                 associated_table_element_id: &associated,
-                ..native::NativeUsualGroupPayload::plain()
             })
             .ok_or_else(|| anyhow!("<UsualGroup> names a spelling the writer cannot place"))
         }
@@ -5768,7 +5771,6 @@ fn native_container_payload(
                 shape_representation: item.shape_representation.as_deref(),
                 back_color: &back_color,
                 border_color: &border_color,
-                ..native::NativePopupPayload::plain()
             })
             .ok_or_else(|| anyhow!("<Popup> names a spelling the writer cannot place"))
         }
@@ -5787,7 +5789,6 @@ fn native_container_payload(
                 title_back_color: &title_back_color,
                 fixing_in_table: item.fixing_in_table.map(native_fixing_in_table_spelling),
                 picture: &header_picture,
-                ..native::NativeColumnGroupPayload::plain()
             })
             .ok_or_else(|| anyhow!("<ColumnGroup> names a spelling the writer cannot place"))
         }
@@ -6524,7 +6525,6 @@ fn native_field_payload(
             password_mode: native_scalar_tristate(item, "PasswordMode")?,
             border: &native_item_control_border(item)?,
             border_color: &native_scalar_color(item, "BorderColor", source)?,
-            ..native::NativeLabelPayload::plain(false)
         })),
         Some(2) => {
             let choice_parameter_links = native_choice_parameter_links(item, data_paths)?;
@@ -6616,7 +6616,6 @@ fn native_field_payload(
                 choice_parameter_links: &choice_parameter_links.0,
                 choice_parameter_links_again: &choice_parameter_links.1,
                 type_link: &native_type_link(item, data_paths)?,
-                ..native::NativeInputPayload::plain()
             })
             .ok_or_else(|| anyhow!("the input field names something the writer cannot place"))
         }
@@ -6645,7 +6644,6 @@ fn native_field_payload(
                 equal_items_width: item.scalars.get("EqualItemsWidth").map(String::as_str),
                 format: &format,
                 font: &font,
-                ..native::NativeCheckBoxPayload::plain()
             })
             .ok_or_else(|| anyhow!("<CheckBoxField> names a spelling the writer cannot place"))
         }
@@ -6856,7 +6854,6 @@ fn native_field_payload(
                 item_title_height: native_scalar(item, "ItemTitleHeight"),
                 item_width: native_scalar(item, "ItemWidth"),
                 equal_columns_width: item.scalars.get("EqualColumnsWidth").map(String::as_str),
-                ..native::NativeRadioButtonPayload::plain()
             })
             .ok_or_else(|| anyhow!("<RadioButtonField> names a spelling the writer cannot place"))
         }
@@ -6891,7 +6888,6 @@ fn native_field_payload(
                     .scalars
                     .get("DrawingSelectionShowMode")
                     .map(String::as_str),
-                ..native::NativeSpreadsheetPayload::plain()
             })
             .ok_or_else(|| {
                 anyhow!("<SpreadSheetDocumentField> names a spelling the writer cannot place")
@@ -7039,7 +7035,6 @@ fn native_field_payload(
                 border: &border,
                 font: &font,
                 title: &nonselected_picture_text,
-                ..native::NativePicturePayload::default()
             })
             .ok_or_else(|| anyhow!("<PictureField> names a spelling the writer cannot place"))
         }
@@ -7127,7 +7122,6 @@ fn native_decoration_payload(
                 file_drag_mode,
                 image_scale: Some(native_decoration_number(item, "ImageScale", "100")?),
                 nonselected_picture_text: &nonselected_picture_text,
-                ..native::NativePictureDecorationPayload::default()
             },
         )
         .ok_or_else(|| {
@@ -7950,7 +7944,7 @@ fn native_item_events_where(
             handler: &event.handler,
         })
         .collect::<Vec<_>>();
-    ibcmd_form_native::format_native_events(&item.tag, &main_attribute_class, &events)
+    ibcmd_form_native::format_native_events(&item.tag, main_attribute_class, &events)
         .ok_or_else(|| anyhow!("<{}> names an event the writer cannot place", item.tag))
 }
 
@@ -8811,7 +8805,7 @@ fn native_conditional_appearance_settings(
         let (before, after) = rest.split_at(at);
         out.push_str(before);
         let name_len = after["style:".len()..]
-            .find(|c: char| c == '<' || c == '"')
+            .find(['<', '"'])
             .ok_or_else(|| anyhow!("a conditional appearance style reference does not end"))?;
         let name = &after["style:".len().."style:".len() + name_len];
         let declared = source.and_then(|source| {
@@ -9187,7 +9181,6 @@ fn format_native_form_body(
                     functional_options: &column_options,
                     fill_check: column.fill_check.as_deref() == Some("ShowError"),
                     restrictions: [&column_view, &column_edit],
-                    ..ibcmd_form_native::NativeFormAttributeColumn::default()
                 },
             ));
         }
@@ -9211,7 +9204,6 @@ fn format_native_form_body(
                         functional_options: &column_options,
                         fill_check: column.fill_check.as_deref() == Some("ShowError"),
                         restrictions: [&column_view, &column_edit],
-                        ..ibcmd_form_native::NativeFormAttributeColumn::default()
                     },
                 ));
             }
@@ -9316,7 +9308,6 @@ fn format_native_form_body(
                         .unwrap_or("{0,0}"),
                     &attribute_options,
                 ],
-                ..ibcmd_form_native::NativeFormAttribute::default()
             },
         ));
     }
@@ -9404,7 +9395,6 @@ fn format_native_form_body(
                 use_always: &command_use,
                 picture_index: &command_shortcut,
                 fourteenth: &command_associated,
-                ..ibcmd_form_native::NativeFormCommand::default()
             })
             .ok_or_else(|| anyhow!("a command names something the writer cannot place"))?,
         );
@@ -10809,11 +10799,9 @@ fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
                     current_localized_section = Some(local.clone());
                 } else if local == "Title" && path_ends_with(&path, &["Form"]) {
                     current_localized_section = Some("FormTitle".to_string());
-                } else if local == "item" && path_ends_with(&path, &["Form", "Title"]) {
-                    current_localized_lang = None;
-                    current_localized_content = None;
                 } else if local == "item"
-                    && (path_ends_with(&path, &["Form", "Commands", "Command", "Title"])
+                    && (path_ends_with(&path, &["Form", "Title"])
+                        || path_ends_with(&path, &["Form", "Commands", "Command", "Title"])
                         || path_ends_with(&path, &["Form", "Commands", "Command", "ToolTip"]))
                 {
                     current_localized_lang = None;
@@ -11269,13 +11257,12 @@ fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
                 // from it falls back to a default without saying so: the label
                 // decorations of 2 897 forms carried a `<TextColor>` that never
                 // reached the body.
-                if path.len() >= 2
+                if (path.len() >= 2
                     && current_child_items
                         .last()
-                        .is_some_and(|item| path[path.len() - 2] == item.tag)
+                        .is_some_and(|item| path[path.len() - 2] == item.tag))
+                    || (path.len() == 2 && path[0] == "Form" && current_child_items.is_empty())
                 {
-                    child_text.push_str(text.xml_content()?.as_ref());
-                } else if path.len() == 2 && path[0] == "Form" && current_child_items.is_empty() {
                     child_text.push_str(text.xml_content()?.as_ref());
                 }
                 if path_ends_with(&path, &["Form", "WindowOpeningMode"])
@@ -12851,6 +12838,10 @@ fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
                         properties.use_for_folders_and_items =
                             Some(parse_form_use_for_folders_and_items_xml(text_value.trim())?);
                     }
+                    #[allow(
+                        clippy::collapsible_match,
+                        reason = "in the guard, an empty `GroupList` would fall through to the child-item arms below"
+                    )]
                     "GroupList" if path_ends_with(&path, &["Form", "GroupList"]) => {
                         if !text_value.trim().is_empty() {
                             properties.group_list = Some(text_value.trim().to_string());
@@ -15172,10 +15163,9 @@ fn parse_form_xml_body_properties(xml: &[u8]) -> Result<FormXmlBodyProperties> {
                             if let Some(parent) = current_child_items.last_mut() {
                                 parent.child_items.push(item.clone());
                             } else if path_ends_with_root_auto_command_bar_child_item(&path, &item)
+                                && let Some(command_bar) = properties.auto_command_bar.as_mut()
                             {
-                                if let Some(command_bar) = properties.auto_command_bar.as_mut() {
-                                    command_bar.child_items.push(item.clone());
-                                }
+                                command_bar.child_items.push(item.clone());
                             }
                             if !path_ends_with_root_auto_command_bar_child_item(&path, &item) {
                                 properties.child_items.push(item);
@@ -17888,10 +17878,6 @@ const FORM_REPORT_RESULT_VIEW_MODE_UUID: &str = "b9311bea-b26b-4ae0-8b5d-7b64048
 const FORM_VIEW_MODE_APPLICATION_ON_SET_REPORT_RESULT_UUID: &str =
     "874260df-7e23-4f02-9e10-5794914b5adf";
 const FORM_REPORT_ATTRIBUTE_REF_UUID: &str = "11cfd3e0-86f8-4480-aaa5-dc6a6ccac689";
-const FORM_COMMAND_CHANGE_UUID: &str = "6886601d-276c-4d3f-af0a-05c586025608";
-const FORM_COMMAND_COPY_UUID: &str = "342c531d-dc73-458a-8ac4-6a746916a33b";
-const FORM_COMMAND_CREATE_UUID: &str = "4f834c38-add1-45e4-a9f3-cefe3efac5c9";
-const FORM_COMMAND_CUSTOMIZE_FORM_UUID: &str = "198ea630-fda2-4cda-8a23-f999f4c67ee6";
 
 fn replace_form_auto_url(layout: &mut String, value: bool) -> Result<()> {
     let fields = scan_braced_fields(layout, 0)?;
@@ -18112,10 +18098,9 @@ fn replace_form_customizable(layout: &mut String, value: bool) -> Result<()> {
     if fields
         .get(11)
         .is_some_and(|range| layout[range.clone()].trim() == "0")
+        && let Some(range) = fields.get(14)
     {
-        if let Some(range) = fields.get(14) {
-            layout.replace_range(range.clone(), if value { "1" } else { "0" });
-        }
+        layout.replace_range(range.clone(), if value { "1" } else { "0" });
     }
     Ok(())
 }
@@ -18657,7 +18642,7 @@ fn form_excluded_command_uuid<'a>(
         return Ok(uuid);
     }
     ibcmd_form_native::form_standard_command_uuid(
-        &main_attribute_class,
+        main_attribute_class,
         &command.0,
     )
     .ok_or_else(|| {
@@ -19180,6 +19165,10 @@ fn retain_form_layout_top_level_child_items(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn patch_form_layout_child_item(
     text: &mut String,
     item: &FormXmlChildItem,
@@ -19229,6 +19218,10 @@ fn patch_form_layout_child_item(
     Ok(false)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn append_form_layout_top_level_child_item(
     text: &mut String,
     item: &FormXmlChildItem,
@@ -19361,6 +19354,10 @@ fn form_child_item_strict_properties_require_existing_layout(item: &FormXmlChild
         || (item.tag == "ColumnGroup" && item.fixing_in_table.is_some())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_top_level_item(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -19424,6 +19421,10 @@ fn format_form_layout_new_top_level_item(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_child_item(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -20048,6 +20049,10 @@ fn format_form_layout_new_search_addition_item(
     text
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_table_item(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -20154,6 +20159,10 @@ fn format_form_layout_new_table_item_with_data_path(
     text
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_group_item(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -20266,6 +20275,10 @@ fn format_form_layout_new_group_item(
     Ok(text)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_extended_pages_item(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -20290,6 +20303,10 @@ fn format_form_layout_new_extended_pages_item(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_extended_page_item(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -20350,6 +20367,10 @@ fn format_form_layout_new_extended_page_item(
     Ok(text)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn format_form_layout_new_extended_group_with_child_span(
     item: &FormXmlChildItem,
     item_uuid: &str,
@@ -21147,6 +21168,10 @@ fn form_layout_table_file_drag_mode_replacement(
     Some((range, code.to_string()))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn patch_form_layout_child_item_entry(
     text: &mut String,
     fields: &[Range<usize>],
@@ -22498,18 +22523,14 @@ fn form_layout_direct_child_items_span(
 ) -> Option<FormLayoutDirectChildItemsSpan> {
     let wrapper = fields.first().map(|range| text[range.clone()].trim())?;
     let item_type = fields.get(5).map(|range| text[range.clone()].trim());
-    let (count_index, first_uuid_index) = if wrapper == "22"
-        && form_layout_usual_group_extended_options_range(text, fields).is_some()
-    {
-        (21, 22)
-    } else if wrapper == "22"
-        && item_type == Some("9")
-        && form_layout_direct_child_items_span_at(text, fields, 21, 22).is_some()
-    {
-        (21, 22)
-    } else if wrapper == "22"
-        && matches!(item_type, Some("3" | "4"))
-        && form_layout_direct_child_items_span_at(text, fields, 21, 22).is_some()
+    let (count_index, first_uuid_index) = if (wrapper == "22"
+        && form_layout_usual_group_extended_options_range(text, fields).is_some())
+        || (wrapper == "22"
+            && item_type == Some("9")
+            && form_layout_direct_child_items_span_at(text, fields, 21, 22).is_some())
+        || (wrapper == "22"
+            && matches!(item_type, Some("3" | "4"))
+            && form_layout_direct_child_items_span_at(text, fields, 21, 22).is_some())
     {
         (21, 22)
     } else if matches!(wrapper, "22" | "73") {
@@ -22548,6 +22569,10 @@ fn form_layout_direct_child_items_span_at(
     })
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn patch_form_layout_direct_child_items(
     text: &mut String,
     item: &FormXmlChildItem,
@@ -22587,6 +22612,10 @@ fn patch_form_layout_direct_child_items(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn patch_form_layout_single_child_items(
     text: &mut String,
     item: &FormXmlChildItem,
@@ -22724,6 +22753,10 @@ fn retain_form_layout_single_child_items(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn patch_or_append_form_layout_single_child_item(
     text: &mut String,
     child: &FormXmlChildItem,
@@ -22863,6 +22896,10 @@ fn retain_form_layout_direct_child_items(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn patch_or_append_form_layout_direct_child_item(
     text: &mut String,
     child: &FormXmlChildItem,
@@ -23325,9 +23362,9 @@ fn form_standard_command_uuid(command_name: &str) -> Option<&'static str> {
     }
 }
 
-fn form_layout_child_item_tag<'a>(
+fn form_layout_child_item_tag(
     wrapper: &str,
-    text: &'a str,
+    text: &str,
     fields: &[Range<usize>],
 ) -> Option<&'static str> {
     match wrapper {
@@ -24527,19 +24564,18 @@ fn format_form_dynamic_list_settings_new(
     if let Some(manual_query) = settings.manual_query {
         pairs.push(("ManualQuery", format_form_setting_bool(manual_query)));
     }
-    if let Some(filter) = &settings.list_settings.filter {
-        if let Some(value) = format_form_setting_dcs_filter(filter)? {
-            pairs.push(("Filter", value));
-        }
+    if let Some(filter) = &settings.list_settings.filter
+        && let Some(value) = format_form_setting_dcs_filter(filter)?
+    {
+        pairs.push(("Filter", value));
     }
     if let Some(order) = &settings.list_settings.order {
         pairs.push(("Order", format_form_setting_dcs_order(order, "", "Order")?));
     }
-    if let Some(conditional_appearance) = &settings.list_settings.conditional_appearance {
-        if let Some(value) = format_form_setting_dcs_conditional_appearance(conditional_appearance)?
-        {
-            pairs.push((conditional_appearance_policy.storage_property_name(), value));
-        }
+    if let Some(conditional_appearance) = &settings.list_settings.conditional_appearance
+        && let Some(value) = format_form_setting_dcs_conditional_appearance(conditional_appearance)?
+    {
+        pairs.push((conditional_appearance_policy.storage_property_name(), value));
     }
     if let Some(items_view_mode) = &settings.list_settings.items_view_mode {
         pairs.push(("ItemsViewMode", format_form_setting_string(items_view_mode)));
@@ -25600,7 +25636,7 @@ pub fn pack_role_rights_blob_from_xml_with_source(
     {
         replacements.push((range.clone(), if value { "1" } else { "0" }.to_string()));
     }
-    replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
+    replacements.sort_by_key(|b| std::cmp::Reverse(b.0.start));
     for (range, replacement) in replacements {
         plain.replace_range(range, &replacement);
     }
@@ -25774,7 +25810,7 @@ pub fn pack_command_interface_blob_from_xml(
         let common = if entry.common { "1" } else { "0" };
         replacements.push((common_range, format!("{{0,{{0,{{\"B\",{common}}},0}}}}")));
     }
-    replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
+    replacements.sort_by_key(|b| std::cmp::Reverse(b.0.start));
     for (range, replacement) in replacements {
         replace_1c_value_if_different(&mut plain, range, &replacement);
     }
@@ -26052,7 +26088,7 @@ fn patch_predefined_data(
         .cloned()
         .collect::<Vec<_>>();
 
-    replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
+    replacements.sort_by_key(|b| std::cmp::Reverse(b.0.start));
     for (range, replacement) in replacements {
         plain.replace_range(range, &replacement);
     }
@@ -26165,7 +26201,7 @@ pub fn pack_business_process_flowchart_blob_from_xml(
         ));
     }
 
-    replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
+    replacements.sort_by_key(|b| std::cmp::Reverse(b.0.start));
     for (range, replacement) in replacements {
         plain.replace_range(range, &replacement);
     }
@@ -26259,7 +26295,7 @@ fn role_right_value_replacements(
     for object_index in 0..base_count {
         let entry_range = object_fields[object_index + 1].clone();
         let entry_fields = scan_braced_fields(plain, entry_range.start)?;
-        let object_ref_range = entry_fields.get(0).ok_or_else(|| {
+        let object_ref_range = entry_fields.first().ok_or_else(|| {
             anyhow!("base Role object rights entry {object_index} has no object reference")
         })?;
         validate_role_object_ref(plain, object_ref_range.clone())
@@ -28236,10 +28272,10 @@ fn parse_flowchart_xml(xml: &[u8]) -> Result<Vec<FlowchartXmlItem>> {
                         _ => {}
                     }
                 }
-                if is_flowchart_item_tag(&local) {
-                    if let Some(item) = current.take() {
-                        items.push(item);
-                    }
+                if is_flowchart_item_tag(&local)
+                    && let Some(item) = current.take()
+                {
+                    items.push(item);
                 }
                 let _ = path.pop();
                 if local == "Event" || is_flowchart_text_property(&local) {
@@ -29747,10 +29783,10 @@ pub fn parse_common_module_xml_properties(xml: &[u8]) -> Result<CommonModuleXmlP
         match reader.read_event_into(&mut buffer) {
             Ok(Event::Start(event)) => {
                 let local = xml_local_name(event.local_name().as_ref());
-                if local == "CommonModule" {
-                    if let Some(value) = xml_attr_value(&event, "uuid") {
-                        uuid = Some(normalize_uuid_text(&value)?);
-                    }
+                if local == "CommonModule"
+                    && let Some(value) = xml_attr_value(&event, "uuid")
+                {
+                    uuid = Some(normalize_uuid_text(&value)?);
                 }
                 if path_ends_with(&path, &["CommonModule", "Properties"]) {
                     if local == "Name" {
@@ -30334,6 +30370,10 @@ fn format_common_module_flags(properties: &CommonModuleXmlProperties) -> String 
     .join(",")
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn parse_constant_value_type(
     types: &[String],
     string_length: Option<String>,
@@ -31163,6 +31203,10 @@ fn return_values_reuse_flag(value: ReturnValuesReuse) -> String {
     .to_string()
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn append_common_module_xml_text(
     path: &[String],
     value: &str,
@@ -31257,6 +31301,10 @@ fn append_simple_metadata_xml_text(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn append_constant_xml_text(
     path: &[String],
     value: &str,
@@ -31294,6 +31342,10 @@ fn append_constant_xml_text(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn append_metadata_type_xml_text(
     kind: &str,
     path: &[String],
@@ -31378,6 +31430,10 @@ fn append_metadata_type_xml_text(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn append_common_command_xml_text(
     path: &[String],
     value: &str,
@@ -31461,6 +31517,10 @@ fn append_common_command_xml_text(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the record's parts one by one; bundling them changes the signature and every caller"
+)]
 fn append_command_group_xml_text(
     path: &[String],
     value: &str,
@@ -32173,10 +32233,8 @@ fn apply_form_type_spec_part(spec: &mut FormXmlTypeSpec, part: &str, value: &str
     match part {
         // A type set is one entry of the pattern like any other, and pushing
         // it here is what keeps the list in XML order.
-        "Type" | "TypeSet" => {
-            if !value.is_empty() {
-                spec.types.push(value.to_string());
-            }
+        "Type" | "TypeSet" if !value.is_empty() => {
+            spec.types.push(value.to_string());
         }
         "Length" => spec.string_length = Some(value.to_string()),
         "AllowedLength" => spec.string_allowed_length = Some(value.to_string()),

@@ -290,23 +290,6 @@ impl FieldMap {
         pairs
     }
 
-    /// The ids a reference stores after its head, one per dotted prefix.
-    pub(crate) fn chain_ids(&self, path: &ListPath) -> Option<Vec<String>> {
-        let parts = prefixes(&path.rest);
-        let mut ids = Vec::with_capacity(parts.len());
-        for (index, prefix) in parts.iter().enumerate() {
-            let last = index + 1 == parts.len();
-            let pseudo_single = parts.len() == 1 && pseudo_id(prefix).is_some();
-            let variant = if last && path.marker && !pseudo_single {
-                Some(path.twin.clone())
-            } else {
-                None
-            };
-            ids.push(self.id_of(prefix, &variant)?);
-        }
-        Some(ids)
-    }
-
     /// The id a `<UseAlways><Field>` stores in `ReqMapFieldId`.
     pub(crate) fn required_id(&self, path: &ListPath) -> Option<String> {
         if !path.rest.contains('.')

@@ -1208,10 +1208,7 @@ impl RoleRightsSource for SourceTreeRoleRightsSource {
     }
 }
 
-fn unique_child<'a>(
-    node: &'a UuidNode,
-    matches: impl Fn(&UuidNode) -> bool,
-) -> Option<&'a UuidNode> {
+fn unique_child(node: &UuidNode, matches: impl Fn(&UuidNode) -> bool) -> Option<&UuidNode> {
     let mut found = None;
     for child in &node.children {
         if matches(child) {
