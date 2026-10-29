@@ -138,9 +138,9 @@ impl ArtifactScope {
                     .context("external package requires contained identity")?;
                 let kind = match identity.intent {
                     PackageIntent::ExternalDataProcessor => {
-                        crate::external::ExternalKind::DataProcessor
+                        ibcmd_schema::external_artifact::ExternalArtifactKind::DataProcessor
                     }
-                    _ => crate::external::ExternalKind::Report,
+                    _ => ibcmd_schema::external_artifact::ExternalArtifactKind::Report,
                 };
                 if contained.class_id.to_string() != kind.class_id() {
                     bail!(

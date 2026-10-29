@@ -8,7 +8,7 @@
 //!   `.../Forms/<Name>.xml`;
 //! * `<uuid>.0` — the *body*, projected from `.../Forms/<Name>/Ext/Form.xml`
 //!   plus `.../Forms/<Name>/Ext/Form/Module.bsl` and compiled by the existing
-//!   base-free packer in [`crate::compiler::bodies::form`].
+//!   base-free packer in `ibcmd_rs::compiler::bodies::form`.
 //!
 //! That split is read straight off our own `cf export` of the retained native
 //! corpora: the JSON report maps storage key `c099c30b-…` to the single output
