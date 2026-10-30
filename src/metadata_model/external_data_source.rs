@@ -18,7 +18,7 @@ use super::export::{
 };
 use super::xml::Element;
 use super::{DescriptorContext, ObjectXml};
-use crate::brace_list;
+use ibcmd_restructure::brace_list;
 use ibcmd_schema::external_data_source_children as child_schema;
 
 #[derive(Debug)]
@@ -363,7 +363,7 @@ pub(crate) fn names(row: &Brace) -> Result<ObjectNames> {
 }
 
 pub(crate) fn parse(text: &str) -> Result<Brace> {
-    crate::compiler::families::native::validate_descriptor_layout(
+    ibcmd_compiler_families::compiler::families::native::validate_descriptor_layout(
         text.as_bytes(),
         schema::MAX_VALUE_DEPTH,
     )?;
@@ -419,7 +419,7 @@ mod tests {
     use super::super::{compile_descriptor, index::ConfigIndex};
     use super::generated as fixture;
     use super::*;
-    use crate::module_blob::MetadataSourceContext;
+    use ibcmd_metadata_blob::MetadataSourceContext;
     use std::path::{Path, PathBuf};
 
     fn context(version: &str) -> DescriptorContext {

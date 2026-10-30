@@ -638,7 +638,7 @@ mod tests {
     use super::super::{DescriptorContext, compile_descriptor};
     use super::values::{Owner, data_path_text};
     use super::*;
-    use crate::brace_list;
+    use ibcmd_restructure::brace_list;
 
     /// Lines as the platform writes them: tabs, CRLF, no final newline.
     fn native(version: &str, lines: &[&str]) -> String {

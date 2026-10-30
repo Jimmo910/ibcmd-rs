@@ -21,7 +21,7 @@ use super::bodies_predefined::PREDEFINED_REF_TYPE;
 use super::bodies_value_table::{Column, Row, bool_value, number_value, pattern, value_table};
 use super::brace::{Brace, serialize};
 use super::xml::{Element, parse_element_tree};
-use crate::brace_list;
+use ibcmd_restructure::brace_list;
 
 const USES: &[(&str, &str)] = &[("Auto", "0"), ("Always", "1")];
 

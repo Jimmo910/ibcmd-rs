@@ -9,7 +9,7 @@ use super::export::values::{header, header_elements};
 use super::export::{Build, ObjectNames, atom, el, item, leaf, list, string};
 use super::xml::Element;
 use super::{ObjectXml, parse_bool};
-use crate::brace_list;
+use ibcmd_restructure::brace_list;
 
 pub(crate) struct Interface {
     head: Header,

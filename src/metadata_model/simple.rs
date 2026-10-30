@@ -15,7 +15,7 @@ use super::brace::{Brace, NIL_UUID};
 use super::types::{form_uuid, metadata_ref, object_uuid, type_pattern};
 use super::xml::Element;
 use super::{DescriptorContext, ObjectXml, md_base, native_text, not_yet};
-use crate::brace_list;
+use ibcmd_restructure::brace_list;
 
 pub fn compile(object: &ObjectXml<'_>, context: &DescriptorContext) -> Result<Brace> {
     match object.kind {

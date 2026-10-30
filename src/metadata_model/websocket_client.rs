@@ -9,7 +9,7 @@ use super::export::values::{bool_text, header, header_elements};
 use super::export::{Build, ObjectNames, atom, el, item, leaf, list, number, string, xml_text};
 use super::xml::Element;
 use super::{ObjectXml, native_text, parse_bool};
-use crate::brace_list;
+use ibcmd_restructure::brace_list;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WebSocketClient {
