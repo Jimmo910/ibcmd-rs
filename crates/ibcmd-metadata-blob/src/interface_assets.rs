@@ -12,21 +12,21 @@
 
 use super::*;
 
-use crate::compiler::bodies::command_interface::{
+use anyhow::{bail, ensure};
+use ibcmd_1c_vocab::{
+    COMMAND_INTERFACE_PLACEMENTS, COMMON_COMMAND_GROUPS, HOME_PAGE_WORK_AREA_TEMPLATES,
+    client_application_panel_def_is_standard, command_interface_standard_command_for_code,
+};
+use ibcmd_compiler_families::compiler::bodies::command_interface::{
     CommandInterfaceModel, CommandOrder, CommandPlacement, CommandPlacementMode, CommandReference,
     CommandVisibility, SubsystemVisibility, VisibilityValue, command_interface_plaintext,
 };
-use crate::compiler::bodies::interface_assets::{
+use ibcmd_compiler_families::compiler::bodies::interface_assets::{
     ClientApplicationInterfaceModel, ClientApplicationNode, ClientApplicationPanelDef,
     HomePageWorkAreaItem, HomePageWorkAreaModel, StandaloneContentExtended, StandaloneContentModel,
     client_application_interface_plaintext, home_page_work_area_plaintext,
     standalone_content_plaintext,
 };
-use crate::mssql_dump::{
-    COMMAND_INTERFACE_PLACEMENTS, COMMON_COMMAND_GROUPS, HOME_PAGE_WORK_AREA_TEMPLATES,
-    client_application_panel_def_is_standard, command_interface_standard_command_for_code,
-};
-use anyhow::{bail, ensure};
 use ibcmd_core::identity::ObjectUuid;
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
@@ -59,7 +59,8 @@ pub fn interface_asset_plaintext(
 }
 
 /// [`interface_asset_plaintext`], with the names read through any source.
-fn plaintext_through(
+#[doc(hidden)]
+pub fn plaintext_through(
     kind: InterfaceAssetSource,
     xml: &[u8],
     source: Option<&dyn MetadataSource>,
@@ -700,12 +701,10 @@ fn read_metadata_file_header(source: &dyn MetadataSource, path: &Path) -> Option
                 }
                 depth += 1;
             }
-            Event::Empty(event) => {
-                if depth == 1 && root_is_metadata {
-                    let local = xml_local_name(event.local_name().as_ref());
-                    let uuid = normalize_uuid_text(&xml_attr_value(&event, "uuid")?).ok()?;
-                    return Some((local, uuid));
-                }
+            Event::Empty(event) if depth == 1 && root_is_metadata => {
+                let local = xml_local_name(event.local_name().as_ref());
+                let uuid = normalize_uuid_text(&xml_attr_value(&event, "uuid")?).ok()?;
+                return Some((local, uuid));
             }
             Event::End(_) => depth = depth.checked_sub(1)?,
             Event::Eof => return None,
@@ -746,10 +745,11 @@ fn read_declared_commands(xml: &[u8]) -> Result<BTreeMap<String, String>> {
                     && let Some((_, name)) = current.as_mut()
                 {
                     *name = Some(text.trim().to_string());
-                } else if local == "Command" && path.len() == 3 {
-                    if let Some((uuid, Some(name))) = current.take() {
-                        commands.insert(name, uuid);
-                    }
+                } else if local == "Command"
+                    && path.len() == 3
+                    && let Some((uuid, Some(name))) = current.take()
+                {
+                    commands.insert(name, uuid);
                 }
                 text.clear();
             }
@@ -985,7 +985,7 @@ fn client_application_interface_model(root: &Node) -> Result<ClientApplicationIn
     }
     while let Some(panel_def) = children.optional("panelDef") {
         panel_def.only_attributes(&["id"])?;
-        let representation = match &panel_def.elements()?[..] {
+        let representation = match panel_def.elements()? {
             [] => None,
             [spr] if spr.name == "spr" => Some(match spr.leaf()?.trim() {
                 "Picture" => "0",
@@ -1122,7 +1122,7 @@ fn standalone_content_model(
     // ends the file on a line break exactly when the record has no sections
     // beyond the used list.
     ensure!(
-        settings.is_some() == !unused.is_empty(),
+        settings.is_some() != unused.is_empty(),
         "<DataExchangeSettings> is present without unused items, or missing with them"
     );
     let extended = if !unused.is_empty() || !local_server_priority.is_empty() {
@@ -1158,334 +1158,36 @@ fn standalone_metadata(item: &Node, resolver: &Resolver<'_>, priority: bool) -> 
     Ok(uuid)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Packs CommandInterface XML without a source tree: only when every section
+/// spells raw references (`<code>:<uuid>` commands, bare uuids).
+///
+/// Readable names are classified as requiring a base and rejected here; the
+/// loader resolves them with [`pack_interface_asset_blob`] and a source tree.
+pub fn pack_command_interface_blob_from_xml_base_free(xml: &[u8]) -> Result<PackedRawDeflatedBlob> {
+    validate_command_interface_xml_document(xml)?;
+    pack_interface_asset_blob(InterfaceAssetSource::CommandInterface, xml, None)
+        .map_err(|error| anyhow!("CommandInterface XML requires a base entry: {error:#}"))
+}
 
-    const CATALOG: &str = "11111111-1111-4111-8111-111111111111";
-    const COMMAND: &str = "22222222-2222-4222-8222-222222222222";
-    const NESTED: &str = "33333333-3333-4333-8333-333333333333";
-    const GROUP: &str = "44444444-4444-4444-8444-444444444444";
-    const SUBSYSTEM: &str = "55555555-5555-4555-8555-555555555555";
-    const ROLE: &str = "66666666-6666-4666-8666-666666666666";
-    const CONSTANT: &str = "77777777-7777-4777-8777-777777777777";
+/// Whether the XML packs without a base and without a source tree: every
+/// section it holds is one the writer encodes, spelled with raw references.
+/// A section the writer cannot encode, or a name only a source tree resolves,
+/// is `false` -- never a body with the section dropped.
+pub fn command_interface_xml_can_pack_without_base(xml: &[u8]) -> Result<bool> {
+    validate_command_interface_xml_document(xml)?;
+    Ok(interface_asset_plaintext(InterfaceAssetSource::CommandInterface, xml, None).is_ok())
+}
 
-    fn metadata(root: &Path, relative: &str, body: &str) {
-        let path = root.join(relative);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
-            path,
-            format!(
-                "<MetaDataObject xmlns=\"http://v8.1c.ru/8.3/MDClasses\">{body}</MetaDataObject>"
-            ),
-        )
-        .unwrap();
-    }
-
-    /// Every kind of name a command interface spells, resolved against a
-    /// source tree and written in the platform's layout.
-    #[test]
-    fn writes_every_section_with_names_resolved_against_the_source() {
-        let root = std::env::temp_dir().join(format!(
-            "ibcmd-rs-interface-writer-{}",
-            uuid::Uuid::new_v4().hyphenated()
-        ));
-        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
-        metadata(
-            &root,
-            "Catalogs/Товары.xml",
-            &format!(
-                "<Catalog uuid=\"{CATALOG}\"><Properties><Name>Товары</Name></Properties><ChildObjects><Command uuid=\"{NESTED}\"><Properties><Name>Печать</Name></Properties></Command></ChildObjects></Catalog>"
-            ),
-        );
-        metadata(
-            &root,
-            "CommonCommands/Открыть.xml",
-            &format!("<CommonCommand uuid=\"{COMMAND}\"/>"),
-        );
-        metadata(
-            &root,
-            "CommandGroups/Группа.xml",
-            &format!("<CommandGroup uuid=\"{GROUP}\"/>"),
-        );
-        metadata(
-            &root,
-            "Subsystems/А/Subsystems/Б.xml",
-            &format!("<Subsystem uuid=\"{SUBSYSTEM}\"/>"),
-        );
-        metadata(&root, "Roles/Роль.xml", &format!("<Role uuid=\"{ROLE}\"/>"));
-        metadata(
-            &root,
-            "Constants/Флаг.xml",
-            &format!("<Constant uuid=\"{CONSTANT}\"/>"),
-        );
-        let xml = r#"<CommandInterface xmlns="http://v8.1c.ru/8.3/xcf/extrnprops" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.20">
-	<CommandsVisibility>
-		<Command name="Catalog.Товары.StandardCommand.CreateFolder">
-			<Visibility>
-				<xr:Common>false</xr:Common>
-				<xr:Value name="Role.Роль">true</xr:Value>
-			</Visibility>
-		</Command>
-		<Command name="0">
-			<Visibility>
-				<xr:Common>true</xr:Common>
-			</Visibility>
-		</Command>
-	</CommandsVisibility>
-	<CommandsPlacement>
-		<Command name="CommonCommand.Открыть">
-			<CommandGroup>CommandGroup.Группа</CommandGroup>
-			<Placement>Manual</Placement>
-		</Command>
-	</CommandsPlacement>
-	<CommandsOrder>
-		<Command name="Catalog.Товары.Command.Печать">
-			<CommandGroup>NavigationPanelOrdinary</CommandGroup>
-		</Command>
-		<Command name="Constant.Флаг.StandardCommand.Open">
-			<CommandGroup>NavigationPanelOrdinary</CommandGroup>
-		</Command>
-	</CommandsOrder>
-	<SubsystemsVisibility>
-		<Subsystem name="Subsystem.А.Subsystem.Б">
-			<Visibility>
-				<xr:Common>false</xr:Common>
-			</Visibility>
-		</Subsystem>
-	</SubsystemsVisibility>
-	<SubsystemsOrder>
-		<Subsystem>Subsystem.А.Subsystem.Б</Subsystem>
-		<Subsystem/>
-	</SubsystemsOrder>
-	<GroupsOrder>
-		<Group>NavigationPanelOrdinary</Group>
-	</GroupsOrder>
-</CommandInterface>"#;
-        let source = MetadataSourceContext::new(root.clone());
-        let plain = interface_asset_plaintext(
-            InterfaceAssetSource::CommandInterface,
-            xml.as_bytes(),
-            Some(&source),
-        )
-        .unwrap();
-        let ordinary = "77ea1b8f-dd79-4717-9dba-5628e7f348cf";
-        assert_eq!(
-            String::from_utf8(plain).unwrap(),
-            format!(
-                "\u{feff}{{7,1,2,\r\n{{2,{CATALOG}}},\r\n{{0,\r\n{{0,\r\n{{\"B\",0}},1,{ROLE},\r\n{{\"B\",1}}\r\n}}\r\n}},\r\n{{0}},\r\n{{0,\r\n{{0,\r\n{{\"B\",1}},0}}\r\n}},1,1,\r\n{{0,{COMMAND}}},{GROUP},1,1,2,{ordinary},\r\n{{0,{NESTED}}},{ordinary},\r\n{{100,{CONSTANT}}},1,2,{SUBSYSTEM},{NIL_UUID},1,1,{ordinary},1,1,{SUBSYSTEM},\r\n{{0,\r\n{{0,\r\n{{\"B\",0}},0}}\r\n}}\r\n}}"
-            )
-        );
-        // Without the tree only raw spellings resolve.
-        assert!(
-            interface_asset_plaintext(InterfaceAssetSource::CommandInterface, xml.as_bytes(), None)
-                .is_err()
-        );
-    }
-
-    /// A source the interface writer reads from memory: the files by path,
-    /// under a root that is not on disk. The writer reads the root, the
-    /// files and the memo; any other member would be a read the seam does
-    /// not expect.
-    #[derive(Debug)]
-    struct InMemorySource {
-        root: std::path::PathBuf,
-        files: BTreeMap<std::path::PathBuf, Vec<u8>>,
-        memo: std::sync::Mutex<InterfaceResolutionMemo>,
-    }
-
-    impl MetadataSource for InMemorySource {
-        fn source_root(&self) -> &Path {
-            &self.root
-        }
-        fn read_source(&self, path: &Path) -> std::io::Result<SourceBytes> {
-            self.files
-                .get(path)
-                .map(|bytes| SourceBytes::Owned(bytes.clone()))
-                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
-        }
-        fn interface_memo(&self) -> &std::sync::Mutex<InterfaceResolutionMemo> {
-            &self.memo
-        }
-        fn configuration_uuid(&self) -> Option<String> {
-            unreachable!("the command interface reads no configuration uuid")
-        }
-        fn configuration_object(&self, _: &str) -> Option<Arc<ConfigurationObject>> {
-            unreachable!("the command interface reads no data path")
-        }
-        fn resolve_metadata_type_id(&self, _: &str) -> Result<String> {
-            unreachable!("the command interface resolves no type")
-        }
-        fn resolve_metadata_reference_uuid(&self, _: &str) -> Result<String> {
-            unreachable!("the command interface reads its own headers")
-        }
-        fn resolve_style_item_uuid(&self, _: &str) -> Result<String> {
-            unreachable!("the command interface names no style item")
-        }
-        fn resolve_common_picture_uuid(&self, _: &str) -> Result<String> {
-            unreachable!("the command interface names no picture")
-        }
-        fn resolve_command_group_uuid(&self, _: &str) -> Result<String> {
-            unreachable!("the command interface reads its own headers")
-        }
-        fn dcs_generated_type_id(&self, _: &str) -> Option<String> {
-            unreachable!("the command interface has no data-composition schema")
-        }
-        fn dcs_style_items(&self) -> &BTreeMap<String, String> {
-            unreachable!("the command interface has no data-composition schema")
-        }
-        fn moxel_object_refs(&self) -> Result<BTreeMap<String, String>> {
-            unreachable!("the command interface has no chart")
-        }
-        fn help_reference(&self, _: &str) -> Result<HelpReference> {
-            unreachable!("the command interface has no help page")
-        }
-        fn resolve_command_reference_uuid(&self, _: &str) -> Result<String> {
-            unreachable!("the command interface names no command")
-        }
-        fn resolve_form_uuid(&self, _: &str) -> Result<String> {
-            unreachable!("the command interface names no form")
-        }
-        fn resolve_metadata_child_uuid(&self, _: &str, _: &str, _: &str) -> Result<String> {
-            unreachable!("the command interface names no child object")
-        }
-        fn resolve_predefined_item_id(&self, _: &str, _: &str) -> Result<String> {
-            unreachable!("the command interface names no predefined item")
-        }
-        fn information_register_master_dimensions(&self, _: &str) -> Result<Vec<String>> {
-            unreachable!("the command interface reads no register")
-        }
-        fn resolve_simple_metadata_uuid(
-            &self,
-            _: &str,
-            _: &str,
-            _: &str,
-            _: &str,
-        ) -> Result<String> {
-            unreachable!("the command interface names no object")
-        }
-    }
-
-    /// The writer reads names only through `MetadataSource`: the same files
-    /// in memory, under a root that does not exist, give the very plaintext
-    /// the source context gives over them on disk, and the headers it
-    /// memoises are the source's.
-    #[test]
-    fn an_in_memory_source_answers_the_writer_as_the_tree_on_disk_does() {
-        let files = [
-            (
-                "Catalogs/Товары.xml",
-                format!(
-                    "<Catalog uuid=\"{CATALOG}\"><Properties><Name>Товары</Name></Properties><ChildObjects><Command uuid=\"{NESTED}\"><Properties><Name>Печать</Name></Properties></Command></ChildObjects></Catalog>"
-                ),
-            ),
-            (
-                "CommonCommands/Открыть.xml",
-                format!("<CommonCommand uuid=\"{COMMAND}\"/>"),
-            ),
-            (
-                "CommandGroups/Группа.xml",
-                format!("<CommandGroup uuid=\"{GROUP}\"/>"),
-            ),
-            (
-                "Subsystems/А/Subsystems/Б.xml",
-                format!("<Subsystem uuid=\"{SUBSYSTEM}\"/>"),
-            ),
-            ("Roles/Роль.xml", format!("<Role uuid=\"{ROLE}\"/>")),
-        ];
-        let xml = r#"<CommandInterface xmlns="http://v8.1c.ru/8.3/xcf/extrnprops" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.20">
-	<CommandsVisibility>
-		<Command name="Catalog.Товары.StandardCommand.CreateFolder">
-			<Visibility>
-				<xr:Common>false</xr:Common>
-				<xr:Value name="Role.Роль">true</xr:Value>
-			</Visibility>
-		</Command>
-	</CommandsVisibility>
-	<CommandsPlacement>
-		<Command name="CommonCommand.Открыть">
-			<CommandGroup>CommandGroup.Группа</CommandGroup>
-			<Placement>Manual</Placement>
-		</Command>
-	</CommandsPlacement>
-	<CommandsOrder>
-		<Command name="Catalog.Товары.Command.Печать">
-			<CommandGroup>NavigationPanelOrdinary</CommandGroup>
-		</Command>
-	</CommandsOrder>
-	<SubsystemsOrder>
-		<Subsystem>Subsystem.А.Subsystem.Б</Subsystem>
-	</SubsystemsOrder>
-</CommandInterface>"#;
-
-        let disk = std::env::temp_dir().join(format!(
-            "ibcmd-rs-interface-seam-{}",
-            uuid::Uuid::new_v4().hyphenated()
-        ));
-        let _scratch = crate::test_scratch::TestScratch::adopt(&disk);
-        for (relative, body) in &files {
-            metadata(&disk, relative, body);
-        }
-        let context = MetadataSourceContext::new(disk.clone());
-        let expected = interface_asset_plaintext(
-            InterfaceAssetSource::CommandInterface,
-            xml.as_bytes(),
-            Some(&context),
-        )
-        .unwrap();
-
-        let root = std::path::PathBuf::from("in-memory-tree-that-is-not-on-disk");
-        assert!(!root.exists());
-        let memory = InMemorySource {
-            files: files
-                .iter()
-                // The very bytes the context reads from disk.
-                .map(|(relative, _)| (root.join(relative), fs::read(disk.join(relative)).unwrap()))
-                .collect(),
-            root,
-            memo: Default::default(),
-        };
-        let plain = plaintext_through(
-            InterfaceAssetSource::CommandInterface,
-            xml.as_bytes(),
-            Some(&memory),
-        )
-        .unwrap();
-        assert_eq!(plain, expected);
-        {
-            // Released before the writer runs again: it locks the memo.
-            let memo = memory.memo.lock().unwrap();
-            assert!(
-                memo.headers
-                    .contains_key(&memory.root.join("Subsystems/А/Subsystems/Б.xml")),
-                "{memo:?}"
-            );
-            assert!(
-                memo.commands
-                    .contains_key(&memory.root.join("Catalogs/Товары.xml")),
-                "{memo:?}"
-            );
-        }
-
-        // A name the source does not have refuses alike through either.
-        let missing = xml.replace("CommonCommand.Открыть", "CommonCommand.Нет");
-        let through_memory = plaintext_through(
-            InterfaceAssetSource::CommandInterface,
-            missing.as_bytes(),
-            Some(&memory),
-        )
-        .unwrap_err();
-        let through_disk = interface_asset_plaintext(
-            InterfaceAssetSource::CommandInterface,
-            missing.as_bytes(),
-            Some(&context),
-        )
-        .unwrap_err();
-        assert_eq!(format!("{through_memory:#}"), format!("{through_disk:#}"));
-        assert!(
-            format!("{through_memory:#}")
-                .contains("`CommonCommand.Нет` names no file of the source tree"),
-            "{through_memory:#}"
-        );
-    }
+/// Why the XML does not pack without a base and a source tree; empty when it
+/// does.
+pub fn command_interface_base_free_blockers(xml: &[u8]) -> Result<Vec<String>> {
+    validate_command_interface_xml_document(xml)?;
+    Ok(
+        match interface_asset_plaintext(InterfaceAssetSource::CommandInterface, xml, None) {
+            Ok(_) => Vec::new(),
+            Err(error) => vec![format!(
+                "the base-free writer refuses the file without a source tree: {error:#}"
+            )],
+        },
+    )
 }

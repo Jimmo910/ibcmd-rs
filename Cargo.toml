@@ -98,6 +98,8 @@ walkdir = "2.5"
 yaml_serde = "0.10"
 
 [dev-dependencies]
+# The body-profile fixture the root's codec tests build their profiles from.
+ibcmd-compiler-families = { path = "crates/ibcmd-compiler-families", features = ["test-fixtures"] }
 # Substring search in tests/platform_oracle_boundary.rs; already in the
 # runtime graph (tiberius, futures-util).
 memchr = "2.8"

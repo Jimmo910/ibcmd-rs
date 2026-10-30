@@ -124,40 +124,14 @@ pub(super) struct ClientApplicationInterface {
     ///
     /// Separating that record from the five needs the platform's own table of
     /// standard identifiers, and the platform prints it when asked: see
-    /// [`CLIENT_APPLICATION_STANDARD_PANEL_DEFS`]. A code-`2` record the table
+    /// [`ibcmd_1c_vocab::CLIENT_APPLICATION_STANDARD_PANEL_DEFS`]. A code-`2` record the table
     /// does not name is dropped; every code-`1` record is kept whatever it
     /// names.
     pub(super) panel_defs: Vec<ClientApplicationPanelDef>,
 }
 
-/// The panel definitions the platform owns, in the platform's own order.
-///
-/// Read off 8.3.27.2214 with nothing of ours in the input: the seed
-/// `seeds/ada-panels` is the Web_Service tree plus an
-/// `Ext/ClientApplicationInterface.xml` whose only `<panelDef/>` is a freshly
-/// generated identifier no configuration on the stand carries, placed in one
-/// `<top>` panel. Importing that tree and exporting the infobase back writes
-/// six definitions: these five, in this order, and the seed's one behind them.
-/// Not one of the five was supplied to the platform, so the list is the
-/// platform naming its own table rather than a white list read off a corpus.
-///
-/// The companion seed that classifies the codes -- import seven definitions,
-/// save, and read the stored record -- puts exactly these five under the code
-/// `2` and everything else under the code `1`, which is what makes the table
-/// usable as the code-`2` test.
-pub(crate) const CLIENT_APPLICATION_STANDARD_PANEL_DEFS: [&str; 5] = [
-    "b553047f-c9aa-4157-978d-448ecad24248",
-    "13322b22-3960-4d68-93a6-fe2dd7f28ca3",
-    "c933ac92-92cd-459d-81cc-e0c8a83ced99",
-    "cbab57f2-a0f3-4f0a-89ea-4cb19570ab75",
-    "b2735bd3-d822-4430-ba59-c9e869693b24",
-];
-
-pub(crate) fn client_application_panel_def_is_standard(id: &str) -> bool {
-    CLIENT_APPLICATION_STANDARD_PANEL_DEFS
-        .iter()
-        .any(|standard| standard.eq_ignore_ascii_case(id))
-}
+// The platform's standard panel definitions are the `ibcmd-1c-vocab` crate's.
+pub(crate) use ibcmd_1c_vocab::client_application_panel_def_is_standard;
 
 pub(super) struct ClientApplicationPanelDef {
     pub(super) id: String,
@@ -429,8 +403,8 @@ pub(super) fn parse_command_interface_command_name_field(
     }
 }
 
-/// Stored placement codes and the names the platform exports them under.
-pub(crate) const COMMAND_INTERFACE_PLACEMENTS: [(&str, &str); 2] = [("0", "Auto"), ("1", "Manual")];
+// The stored placement codes are the `ibcmd-1c-vocab` crate's.
+pub(crate) use ibcmd_1c_vocab::COMMAND_INTERFACE_PLACEMENTS;
 
 pub(super) fn command_interface_placement_name(code: &str) -> Option<&'static str> {
     COMMAND_INTERFACE_PLACEMENTS
@@ -611,17 +585,9 @@ pub(super) fn parse_home_page_work_area_text(
     })
 }
 
-/// Stored work-area template codes and the names the platform exports them
-/// under, read and written alike: 8.3.27.2214 stores OneColumn as 0,
-/// TwoColumnsEqualWidth as 1 and TwoColumnsVariableWidth as 2 (fixtures
-/// `home_page`).
-pub(crate) const HOME_PAGE_WORK_AREA_TEMPLATES: [(&str, &str); 3] = [
-    ("0", ONE_COLUMN_TEMPLATE),
-    ("1", "TwoColumnsEqualWidth"),
-    ("2", "TwoColumnsVariableWidth"),
-];
-
-const ONE_COLUMN_TEMPLATE: &str = "OneColumn";
+// The stored work-area template codes are the `ibcmd-1c-vocab` crate's.
+pub(crate) use ibcmd_1c_vocab::HOME_PAGE_WORK_AREA_TEMPLATES;
+use ibcmd_1c_vocab::ONE_COLUMN_TEMPLATE;
 
 /// `<MACommandInterfaceDisplays>` codes: 0 Top, 1 Bottom, 2 None, which the
 /// platform does not print (fixtures `home_page`; 1Cv8 stores 0).
@@ -879,30 +845,7 @@ pub(super) fn command_interface_command_name(
 // The standard command of a metadata kind is the `ibcmd-1c-vocab` crate's.
 pub(super) use ibcmd_1c_vocab::command_interface_standard_command;
 
-pub(crate) fn command_interface_standard_command_for_code(
-    kind: &str,
-    code: &str,
-) -> Option<&'static str> {
-    match (code, kind) {
-        ("0" | "100", "Constant") => Some("Open"),
-        ("0" | "100", "CalculationRegister") => Some("OpenList"),
-        ("0" | "100", _) => command_interface_standard_command(kind),
-        // `ChartOfAccounts` names its "create" command from the same slot its
-        // siblings do; it was simply never listed. ERP УХ 3.2.12.6 spells
-        // exactly two, both `ChartOfAccounts.Хозрасчетный.StandardCommand.Create`
-        // (`Subsystems/РегламентированныйУчет/Subsystems/БухгалтерскийИНалоговыйУчет`
-        // and `Subsystems/РегламентированныйУчетПодсистемы/Subsystems/БухгалтерскийУчет`),
-        // and both were written as the raw `1:<uuid>` sentinel instead.
-        (
-            "1",
-            "BusinessProcess" | "Catalog" | "ChartOfAccounts" | "Document" | "InformationRegister",
-        ) => Some("Create"),
-        ("1", "ChartOfCharacteristicTypes") => Some("CreateFolder"),
-        ("2", "Catalog") => Some("CreateFolder"),
-        ("2", "ChartOfCharacteristicTypes") => Some("Create"),
-        _ => None,
-    }
-}
+pub(crate) use ibcmd_1c_vocab::command_interface_standard_command_for_code;
 
 pub(super) fn format_command_interface_xml(command_interface: &CommandInterface) -> String {
     let mut xml = String::from(

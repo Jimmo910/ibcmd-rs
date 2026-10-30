@@ -4,13 +4,16 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
-description = "The packers of a 1C configuration's stored bodies from their XML sources (metadata objects, forms over the native form body writer, templates, rights, styles, pictures, help, predefined data and the rest), the source context they read, the role-rights writer they call, and the metadata XML element tree"
+description = "The packers of a 1C configuration's stored bodies from their XML sources (metadata objects, forms over the native form body writer, templates, rights, styles, pictures, help, predefined data and the rest), the source context they read, the role-rights writer they call, the base-free command-interface writers, and the metadata XML element tree"
 
 [dependencies]
 # Errors as in the root, whose callers add their own context.
 anyhow = "1.0"
 ibcmd-1c-text = { path = "../ibcmd-1c-text" }
 ibcmd-1c-vocab = { path = "../ibcmd-1c-vocab" }
+# The command-interface and interface-asset codecs the base-free writers
+# serialize through.
+ibcmd-compiler-families = { path = "../ibcmd-compiler-families" }
 ibcmd-core = { path = "../ibcmd-core" }
 ibcmd-form-body = { path = "../ibcmd-form-body" }
 ibcmd-form-native = { path = "../ibcmd-form-native" }

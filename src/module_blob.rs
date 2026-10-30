@@ -4,20 +4,14 @@
 //! that read the rest of the root: the command-line wrappers, the form
 //! compiler's 8.5 and adopted-form routes and the form readiness audit (the
 //! exporter's 2.21 converters), the moxel template writer, the role-rights
-//! packer's read-back through the exporter, and the command-interface and
-//! help-page packers with their submodules.
+//! packer's read-back through the exporter, the command-interface packer
+//! that patches a base blob, and the help-page packer with its submodule.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use ibcmd_form_native::{ConfigurationField, ConfigurationObject};
-use quick_xml::Reader;
-use quick_xml::escape::{resolve_xml_entity, unescape};
-use quick_xml::events::{BytesStart, Event};
-use serde::Serialize;
 // `help_pages`' tests read it through `use super::*`.
 #[cfg(test)]
 use uuid::Uuid;
@@ -90,13 +84,19 @@ pub(crate) use ibcmd_form_writer::{
 
 mod help_pages;
 
-mod interface_assets;
-
 pub use help_pages::{HtmlPageOwner, html_page_storage_bytes};
 
-pub use interface_assets::{
-    InterfaceAssetSource, interface_asset_plaintext, pack_interface_asset_blob,
+// The base-free writers of the command-interface family are
+// `ibcmd-metadata-blob`'s; the tests that own their source trees through the
+// root's test scratch stay here.
+pub use ibcmd_metadata_blob::{
+    InterfaceAssetSource, command_interface_base_free_blockers,
+    command_interface_xml_can_pack_without_base, interface_asset_plaintext,
+    pack_command_interface_blob_from_xml_base_free, pack_interface_asset_blob,
 };
+
+#[cfg(test)]
+mod interface_assets_root_tests;
 
 pub fn pack_module_blob(args: &ModuleBlobPackArgs) -> Result<ModuleBlobPackReport> {
     let text = fs::read(&args.text)
@@ -396,40 +396,6 @@ pub fn pack_command_interface_blob_from_xml(
         plain_bytes: plain.len(),
         output_sha256,
     })
-}
-
-/// Packs CommandInterface XML without a source tree: only when every section
-/// spells raw references (`<code>:<uuid>` commands, bare uuids).
-///
-/// Readable names are classified as requiring a base and rejected here; the
-/// loader resolves them with [`pack_interface_asset_blob`] and a source tree.
-pub fn pack_command_interface_blob_from_xml_base_free(xml: &[u8]) -> Result<PackedRawDeflatedBlob> {
-    validate_command_interface_xml_document(xml)?;
-    pack_interface_asset_blob(InterfaceAssetSource::CommandInterface, xml, None)
-        .map_err(|error| anyhow!("CommandInterface XML requires a base entry: {error:#}"))
-}
-
-/// Whether the XML packs without a base and without a source tree: every
-/// section it holds is one the writer encodes, spelled with raw references.
-/// A section the writer cannot encode, or a name only a source tree resolves,
-/// is `false` -- never a body with the section dropped.
-pub fn command_interface_xml_can_pack_without_base(xml: &[u8]) -> Result<bool> {
-    validate_command_interface_xml_document(xml)?;
-    Ok(interface_asset_plaintext(InterfaceAssetSource::CommandInterface, xml, None).is_ok())
-}
-
-/// Why the XML does not pack without a base and a source tree; empty when it
-/// does.
-pub fn command_interface_base_free_blockers(xml: &[u8]) -> Result<Vec<String>> {
-    validate_command_interface_xml_document(xml)?;
-    Ok(
-        match interface_asset_plaintext(InterfaceAssetSource::CommandInterface, xml, None) {
-            Ok(_) => Vec::new(),
-            Err(error) => vec![format!(
-                "the base-free writer refuses the file without a source tree: {error:#}"
-            )],
-        },
-    )
 }
 
 pub fn patch_versions_blob(args: &VersionsBlobPatchArgs) -> Result<VersionsBlobPatchReport> {

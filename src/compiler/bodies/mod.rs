@@ -1,13 +1,20 @@
 //! Profile-gated codecs for native bodies that are not metadata-family rows.
 
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
+// The body-profile selection is `ibcmd-compiler-families`'s; the codecs
+// here and the root keep naming it from this module.
+pub use ibcmd_compiler_families::compiler::bodies::BodyProfileError;
+pub(crate) use ibcmd_compiler_families::compiler::bodies::SelectedBodyProfile;
 
-use ibcmd_core::artifact::{ProfileId, StorageProfileId};
-use ibcmd_core::profile::EffectiveProfile;
-use ibcmd_core::version::PlatformBuild;
-
-pub mod command_interface;
+/// Profile-gated base-free codec for `Ext/CommandInterface.xml` native bodies:
+/// `ibcmd-compiler-families`' `compiler::bodies::command_interface`.
+pub mod command_interface {
+    pub use ibcmd_compiler_families::compiler::bodies::command_interface::{
+        CommandInterfaceBody, CommandInterfaceCodecError, CommandInterfaceCodecProfile,
+        CommandInterfaceModel, CommandOrder, CommandPlacement, CommandPlacementMode,
+        CommandReference, CommandVisibility, SubsystemVisibility, VisibilityValue,
+        compile_command_interface, decode_command_interface,
+    };
+}
 pub mod dcs;
 // The dynamic-list, chart and planner writers are `ibcmd-form-writer`'s,
 // with the form writer that calls them, and the role-rights writer is
@@ -28,7 +35,15 @@ pub mod form_native {
     pub(crate) use ibcmd_form_native::*;
 }
 pub use ibcmd_metadata_blob::form_planner;
-pub mod interface_assets;
+/// Base-free serializers for the interface assets beside the command
+/// interfaces: `ibcmd-compiler-families`' `compiler::bodies::interface_assets`.
+pub mod interface_assets {
+    pub use ibcmd_compiler_families::compiler::bodies::interface_assets::{
+        ClientApplicationInterfaceModel, ClientApplicationNode, ClientApplicationPanelDef,
+        HomePageWorkAreaItem, HomePageWorkAreaModel, StandaloneContentExtended,
+        StandaloneContentModel,
+    };
+}
 pub mod mxl;
 pub(crate) mod mxl_native;
 pub mod predefined;
@@ -36,139 +51,9 @@ pub mod rights;
 pub use ibcmd_metadata_blob::role_rights_writer;
 pub mod support;
 pub mod template;
-
-const SUPPORTED_STORAGE_PROFILE: &str = "storage:mssql-config-configsave";
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SelectedBodyProfile {
-    profile_id: ProfileId,
-    #[allow(dead_code)]
-    platform_build: PlatformBuild,
-    #[allow(dead_code)]
-    storage_profile: StorageProfileId,
-}
-
-impl SelectedBodyProfile {
-    pub(crate) fn from_effective(
-        profile: &EffectiveProfile,
-        key: &'static str,
-        expected: &'static str,
-    ) -> Result<Self, BodyProfileError> {
-        let platform_build = profile
-            .platform_build
-            .as_ref()
-            .map(|value| value.value.clone())
-            .ok_or_else(|| BodyProfileError::MissingCoordinate {
-                profile: profile.id.clone(),
-                coordinate: "platform_build",
-            })?;
-        let storage_profile = profile
-            .storage_profile
-            .as_ref()
-            .map(|value| value.value.clone())
-            .ok_or_else(|| BodyProfileError::MissingCoordinate {
-                profile: profile.id.clone(),
-                coordinate: "storage_profile",
-            })?;
-        if storage_profile.as_str() != SUPPORTED_STORAGE_PROFILE {
-            return Err(BodyProfileError::UnsupportedCoordinate {
-                profile: profile.id.clone(),
-                coordinate: "storage_profile",
-                value: storage_profile.to_string(),
-            });
-        }
-        let actual =
-            profile
-                .constants
-                .get(key)
-                .ok_or_else(|| BodyProfileError::MissingConstant {
-                    profile: profile.id.clone(),
-                    key,
-                })?;
-        if actual.value != expected {
-            return Err(BodyProfileError::UnsupportedLayout {
-                profile: profile.id.clone(),
-                key,
-                value: actual.value.clone(),
-            });
-        }
-        Ok(Self {
-            profile_id: profile.id.clone(),
-            platform_build,
-            storage_profile,
-        })
-    }
-
-    pub(crate) const fn profile_id(&self) -> &ProfileId {
-        &self.profile_id
-    }
-
-    #[cfg(test)]
-    pub(crate) fn fixture(profile_id: &str) -> Self {
-        Self {
-            profile_id: ProfileId::parse(profile_id).unwrap(),
-            platform_build: PlatformBuild::parse("8.3.27.1989").unwrap(),
-            storage_profile: StorageProfileId::parse(SUPPORTED_STORAGE_PROFILE).unwrap(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum BodyProfileError {
-    MissingCoordinate {
-        profile: ProfileId,
-        coordinate: &'static str,
-    },
-    MissingConstant {
-        profile: ProfileId,
-        key: &'static str,
-    },
-    UnsupportedCoordinate {
-        profile: ProfileId,
-        coordinate: &'static str,
-        value: String,
-    },
-    UnsupportedLayout {
-        profile: ProfileId,
-        key: &'static str,
-        value: String,
-    },
-}
-
-impl Display for BodyProfileError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingCoordinate {
-                profile,
-                coordinate,
-            } => write!(
-                formatter,
-                "profile `{profile}` has no `{coordinate}` coordinate"
-            ),
-            Self::MissingConstant { profile, key } => {
-                write!(formatter, "profile `{profile}` has no `{key}` constant")
-            }
-            Self::UnsupportedCoordinate {
-                profile,
-                coordinate,
-                value,
-            } => write!(
-                formatter,
-                "profile `{profile}` declares unsupported `{coordinate}` value `{value}`"
-            ),
-            Self::UnsupportedLayout {
-                profile,
-                key,
-                value,
-            } => write!(
-                formatter,
-                "profile `{profile}` declares unsupported body layout `{key}={value}`"
-            ),
-        }
-    }
-}
-
-impl Error for BodyProfileError {}
+// `TemplateKind` and its codec error, without the DCS and MXL codecs that
+// `template` compiles bodies through.
+pub(crate) mod template_kind;
 
 // The writers' tests that read the root (its exporter, its test scratch).
 #[cfg(test)]
@@ -178,7 +63,6 @@ mod role_rights_writer_root_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::compiler::bodies::command_interface::CommandInterfaceCodecProfile;
     use crate::compiler::bodies::dcs::DcsCodecProfile;
     use crate::compiler::bodies::form::ManagedFormCodecProfile;
@@ -187,6 +71,7 @@ mod tests {
     use crate::compiler::bodies::rights::RightsCodecProfile;
     use crate::compiler::bodies::support::SupportPolicyProfile;
     use crate::compiler::bodies::template::TemplateCodecProfile;
+    use ibcmd_core::artifact::ProfileId;
 
     #[test]
     fn bundled_profile_selects_only_the_evidenced_body_cohort() {

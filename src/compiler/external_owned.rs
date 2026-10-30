@@ -1,7 +1,7 @@
 //! Complete source ownership, not native body compilation or EPF publication.
 use super::{
     artifact::ArtifactScope,
-    bodies::template::TemplateKind,
+    bodies::template_kind::TemplateKind,
     external_intake::{ExternalAssetClaim, ExternalIntakeError, admit_root, input, read_snapshot},
     families::assets::{SourceAssetRegistry, SourceAssetRole, SourceAssetRoute},
     graph::{BootstrapGraph, ObjectStorageRoute, StorageSuffix, build_artifact_graph},
