@@ -212,7 +212,7 @@ fn the_context_answers_through_the_trait_as_through_its_own_methods() {
         messages[0],
         format!(
             "failed to read StyleItem XML {}",
-            tree.path("StyleItems/Нет.xml").display()
+            tree.path("StyleItems").join("Нет.xml").display()
         )
     );
     assert_eq!((messages.len(), kind), (2, Some(ErrorKind::NotFound)));
@@ -221,7 +221,7 @@ fn the_context_answers_through_the_trait_as_through_its_own_methods() {
         (
             vec![format!(
                 "expected StyleItem XML at {}, got CommonPicture",
-                tree.path("StyleItems/Чужой.xml").display()
+                tree.path("StyleItems").join("Чужой.xml").display()
             )],
             None
         )
@@ -336,7 +336,7 @@ fn a_help_reference_answers_and_memoises_through_the_trait_as_the_context_does()
             (
                 vec![format!(
                     "{} declares CommonPicture.Чужой",
-                    tree.path("StyleItems/Чужой.xml").display()
+                    tree.path("StyleItems").join("Чужой.xml").display()
                 )],
                 None
             )
