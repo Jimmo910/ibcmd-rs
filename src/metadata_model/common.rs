@@ -274,7 +274,7 @@ fn child_objects<'a>(
 /// layout (the registry's `form_layout()`) and the tree is stored in it
 /// ([`tree_stores_layout_8_5_1`]).
 pub fn stores_layout_8_5_1(context: &DescriptorContext) -> bool {
-    context.platform().form_layout() >= crate::platform::FormLayout::V8_5_1
+    context.platform().form_layout() >= ibcmd_platform::FormLayout::V8_5_1
         && tree_stores_layout_8_5_1(&context.root)
 }
 

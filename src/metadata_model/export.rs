@@ -175,8 +175,8 @@ impl ExportContext {
 
     /// The platform the XML is written for, as the platform registry maps
     /// its dialect: `2.20` -> 8.3.27, `2.21` -> 8.5.1.
-    pub fn platform(&self) -> crate::platform::PlatformSpec {
-        crate::platform::of_xml_dialect(&self.version)
+    pub fn platform(&self) -> ibcmd_platform::Platform {
+        ibcmd_platform::of_xml_dialect(&self.version)
     }
 }
 

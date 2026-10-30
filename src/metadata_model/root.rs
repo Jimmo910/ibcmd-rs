@@ -115,8 +115,8 @@ pub fn configuration_facts(xml: &[u8]) -> Result<ConfigurationFacts> {
         .child("ChildObjects")
         .is_some_and(|children| children.children_named("PaletteColor").next().is_some());
     let features = if uses_palette_colors {
-        vec![crate::platform::feature_uuid(
-            crate::platform::FEATURE_PALETTE_COLORS,
+        vec![ibcmd_platform::feature_uuid(
+            ibcmd_platform::FEATURE_PALETTE_COLORS,
         )?]
     } else {
         Vec::new()
