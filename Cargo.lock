@@ -714,6 +714,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-dump-readers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "ibcmd-1c-text",
+ "ibcmd-metadata-blob",
+ "ibcmd-schema",
+]
+
+[[package]]
 name = "ibcmd-edt"
 version = "0.1.0"
 dependencies = [
@@ -866,6 +877,7 @@ dependencies = [
  "ibcmd-cf",
  "ibcmd-compiler-families",
  "ibcmd-core",
+ "ibcmd-dump-readers",
  "ibcmd-edt",
  "ibcmd-filedb",
  "ibcmd-form-body",
