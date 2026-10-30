@@ -690,6 +690,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-compiler"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "ibcmd-1c-text",
+ "ibcmd-cf",
+ "ibcmd-compiler-families",
+ "ibcmd-compiler-readiness",
+ "ibcmd-core",
+ "ibcmd-metadata-blob",
+ "ibcmd-restructure",
+ "ibcmd-schema",
+ "ibcmd-v8",
+ "ibcmd-xml",
+ "sha2",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ibcmd-compiler-families"
 version = "0.1.0"
 dependencies = [
@@ -923,6 +943,7 @@ dependencies = [
  "ibcmd-1c-text",
  "ibcmd-1c-vocab",
  "ibcmd-cf",
+ "ibcmd-compiler",
  "ibcmd-compiler-families",
  "ibcmd-compiler-readiness",
  "ibcmd-core",

@@ -1,0 +1,47 @@
+[package]
+name = "ibcmd-compiler"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "The source-to-storage compiler's coordinator: compile requests and overlays, the bootstrap, root, version and versions compilers, the external package intake, the base-free managed-form codec, the template kind and the selected file's physical identity"
+
+[dependencies]
+# Source errors, as in the root.
+anyhow = "1.0"
+# The special entries' raw deflate.
+flate2 = "1.1"
+ibcmd-compiler-families = { path = "../ibcmd-compiler-families" }
+# The bootstrap-readiness manifest, re-exported as `compiler::readiness`.
+ibcmd-compiler-readiness = { path = "../ibcmd-compiler-readiness" }
+ibcmd-core = { path = "../ibcmd-core" }
+# The base-free packers (module, command interface, metadata, form body) and
+# the form body reader the compilers call.
+ibcmd-metadata-blob = { path = "../ibcmd-metadata-blob" }
+ibcmd-schema = { path = "../ibcmd-schema" }
+ibcmd-xml = { path = "../ibcmd-xml" }
+# The versions entry's digests.
+sha2 = "0.10"
+
+[target.'cfg(windows)'.dependencies]
+# The selected file's volume and index (`file_identity`), as in the root.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_SystemInformation"] }
+
+[dev-dependencies]
+# The retained native evidence is base64.
+ibcmd-1c-text = { path = "../ibcmd-1c-text" }
+# The bootstrap tests assemble and validate a `.cf`.
+ibcmd-cf = { path = "../ibcmd-cf" }
+ibcmd-compiler-families = { path = "../ibcmd-compiler-families", features = ["test-fixtures"] }
+# The brace tree of a compiled Configuration row.
+ibcmd-restructure = { path = "../ibcmd-restructure" }
+ibcmd-v8 = { path = "../ibcmd-v8" }
+
+[features]
+# `ManagedFormCodecProfile::fixture`, for the root's codec tests.
+test-fixtures = ["ibcmd-compiler-families/test-fixtures"]
+
+[lints.rust]
+# `file_identity` reads a Windows file's identity through one FFI call and
+# allows it there; nothing else may.
+unsafe_code = "deny"

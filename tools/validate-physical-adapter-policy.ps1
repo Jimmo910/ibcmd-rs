@@ -26,6 +26,7 @@ $GuardedCrateDirectories = @(
     'crates/ibcmd-form-body/src',
     'crates/ibcmd-dump-readers/src',
     'crates/ibcmd-compiler-families/src',
+    'crates/ibcmd-compiler/src',
     'crates/ibcmd-compiler-readiness/src',
     'crates/ibcmd-parallel/src',
     'crates/ibcmd-sql/src',

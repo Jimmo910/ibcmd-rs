@@ -21,7 +21,17 @@ pub mod dcs;
 // `ibcmd-metadata-blob`'s, with its packer; `ibcmd-metadata-blob` re-exports
 // the former, and they keep their paths here.
 pub use ibcmd_metadata_blob::dynamic_list;
-pub mod form;
+/// Profile-gated base-free codec for managed `Form.xml` native bodies:
+/// `ibcmd-compiler`'s `compiler::bodies::form`.
+pub mod form {
+    pub use ibcmd_compiler::compiler::bodies::form::{
+        ManagedFormBody, ManagedFormCodecError, ManagedFormCodecProfile, compile_managed_form,
+        decode_managed_form,
+    };
+    // The transitional reader of historic fixtures, for the export and apply
+    // adapters.
+    pub(crate) use ibcmd_compiler::compiler::bodies::form::decode_compatible_managed_form;
+}
 pub mod form_chart {
     //! The chart writers, in `ibcmd-form-writer` (re-exported by
     //! `ibcmd-metadata-blob`): what the moxel writer reads.
@@ -52,12 +62,15 @@ pub use ibcmd_metadata_blob::role_rights_writer;
 pub mod support;
 pub mod template;
 // `TemplateKind` and its codec error, without the DCS and MXL codecs that
-// `template` compiles bodies through.
-pub(crate) mod template_kind;
+// `template` compiles bodies through: `ibcmd-compiler`'s.
+pub(crate) use ibcmd_compiler::compiler::bodies::template_kind;
 
-// The writers' tests that read the root (its exporter, its test scratch).
+// The writers' and codecs' tests that read the root (its exporter, its test
+// scratch).
 #[cfg(test)]
 mod form_chart_root_tests;
+#[cfg(test)]
+mod form_root_tests;
 #[cfg(test)]
 mod role_rights_writer_root_tests;
 
