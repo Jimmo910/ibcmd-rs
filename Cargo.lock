@@ -898,6 +898,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-platform"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ibcmd-compiler-families",
+ "ibcmd-core",
+ "ibcmd-form-body",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "ibcmd-postgres"
 version = "0.1.0"
 dependencies = [
@@ -959,6 +972,7 @@ dependencies = [
  "ibcmd-module-blob",
  "ibcmd-moxel",
  "ibcmd-parallel",
+ "ibcmd-platform",
  "ibcmd-postgres",
  "ibcmd-restructure",
  "ibcmd-restructure-engine",

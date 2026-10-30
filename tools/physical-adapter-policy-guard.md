@@ -270,3 +270,13 @@ outside the slice and join it with their 167 records (169 occurrences):
 The root's facades (`src/compiler/mod.rs`, `src/compiler/bodies/mod.rs`,
 `src/file_identity.rs`) stay outside the slice. No fingerprint changes. Every
 other record, the two stale ones included, is unchanged.
+
+`crates/ibcmd-platform/src/` also belongs to the slice (#559, the portable
+platform contract). Its `lib.rs` holds the portable platform registry
+formerly in `src/platform/mod.rs`, which was outside the slice; it joins it
+with 4 `name-special-case` records, count one each: the `"8.3"` and
+`"8.5.1"` arms of `parse_form_layout` (the `platform.form_layout` values)
+and the `"2.20"` and `"2.21"` arms of `build_entry` (the
+`platform.xml_format` values). `tests.rs` is a test-only module. The root's
+`src/platform/mod.rs` stays outside the slice. No fingerprint changes.
+Every other record, the two stale ones included, is unchanged.
