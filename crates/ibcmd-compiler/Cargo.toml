@@ -1,0 +1,29 @@
+[package]
+name = "ibcmd-compiler"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "The source-to-storage compiler's coordinator: the base-free managed-form codec, the template kind and the selected file's physical identity"
+
+[dependencies]
+ibcmd-compiler-families = { path = "../ibcmd-compiler-families" }
+ibcmd-core = { path = "../ibcmd-core" }
+# The form body packer and reader the managed-form codec calls.
+ibcmd-metadata-blob = { path = "../ibcmd-metadata-blob" }
+
+[target.'cfg(windows)'.dependencies]
+# The selected file's volume and index (`file_identity`), as in the root.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_SystemInformation"] }
+
+[dev-dependencies]
+ibcmd-compiler-families = { path = "../ibcmd-compiler-families", features = ["test-fixtures"] }
+
+[features]
+# `ManagedFormCodecProfile::fixture`, for the root's codec tests.
+test-fixtures = ["ibcmd-compiler-families/test-fixtures"]
+
+[lints.rust]
+# `file_identity` reads a Windows file's identity through one FFI call and
+# allows it there; nothing else may.
+unsafe_code = "deny"

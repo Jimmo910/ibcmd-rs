@@ -28,6 +28,7 @@ members = [
     "crates/ibcmd-form-body",
     "crates/ibcmd-module-blob",
     "crates/ibcmd-compiler-families",
+    "crates/ibcmd-compiler",
     "crates/ibcmd-compiler-readiness",
     "crates/ibcmd-parallel",
     "crates/ibcmd-sql",
@@ -75,6 +76,7 @@ ibcmd-1c-vocab = { path = "crates/ibcmd-1c-vocab" }
 ibcmd-form-body = { path = "crates/ibcmd-form-body" }
 ibcmd-module-blob = { path = "crates/ibcmd-module-blob" }
 ibcmd-compiler-families = { path = "crates/ibcmd-compiler-families" }
+ibcmd-compiler = { path = "crates/ibcmd-compiler" }
 ibcmd-compiler-readiness = { path = "crates/ibcmd-compiler-readiness" }
 ibcmd-parallel = { path = "crates/ibcmd-parallel" }
 ibcmd-metadata-blob = { path = "crates/ibcmd-metadata-blob" }
@@ -100,6 +102,8 @@ yaml_serde = "0.10"
 [dev-dependencies]
 # The body-profile fixture the root's codec tests build their profiles from.
 ibcmd-compiler-families = { path = "crates/ibcmd-compiler-families", features = ["test-fixtures"] }
+# The managed-form codec's profile fixture, for its root tests.
+ibcmd-compiler = { path = "crates/ibcmd-compiler", features = ["test-fixtures"] }
 # Substring search in tests/platform_oracle_boundary.rs; already in the
 # runtime graph (tiberius, futures-util).
 memchr = "2.8"

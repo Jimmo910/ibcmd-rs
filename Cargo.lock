@@ -690,6 +690,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-compiler"
+version = "0.1.0"
+dependencies = [
+ "ibcmd-compiler-families",
+ "ibcmd-core",
+ "ibcmd-metadata-blob",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ibcmd-compiler-families"
 version = "0.1.0"
 dependencies = [
@@ -923,6 +933,7 @@ dependencies = [
  "ibcmd-1c-text",
  "ibcmd-1c-vocab",
  "ibcmd-cf",
+ "ibcmd-compiler",
  "ibcmd-compiler-families",
  "ibcmd-compiler-readiness",
  "ibcmd-core",
