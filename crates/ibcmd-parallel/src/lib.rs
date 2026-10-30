@@ -1,3 +1,9 @@
+//! The process-wide worker pools: the CPU pool, the narrower memory-bound
+//! pool and the wider file-bound pool, sized from a command's own option,
+//! `IBCMD_RS_WORKERS` and `IBCMD_RS_IO_WORKERS`. Each pool is built once, on
+//! first use, and this crate is its only owner; the root's `parallel` module
+//! re-exports these functions.
+
 use anyhow::Result;
 use rayon::ThreadPoolBuilder;
 use std::sync::OnceLock;
