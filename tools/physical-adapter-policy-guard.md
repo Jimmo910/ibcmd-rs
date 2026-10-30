@@ -82,6 +82,14 @@ change fingerprints without changing its literals: a `const` made `pub`, or a
 edits the baseline record by record, lists every changed fingerprint, and keeps
 the records of files it does not touch, stale ones included.
 
+`crates/ibcmd-metadata-source/src/` also belongs to the guarded slice. It
+holds the `MetadataSource` trait through which the writers read the source
+tree, which the packers' source context implements, and the source bytes and
+memoised-answer types the trait returns, formerly in
+`crates/ibcmd-metadata-blob/src/lib.rs`. The moved types hold no guarded
+literal, so its one file joins the baseline with no occurrence and no record
+of `ibcmd-metadata-blob` changes.
+
 `crates/ibcmd-compiler-families/src/` also belongs to the guarded slice. It
 contains the native family compilers, their bootstrap artifact/graph/identity
 types, compiler axes and profile loader, formerly outside the slice under

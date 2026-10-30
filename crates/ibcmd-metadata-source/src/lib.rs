@@ -9,6 +9,12 @@
 //! ([`SourceBytes`]), and the answers the context memoises for the interface
 //! and help writers ([`InterfaceResolutionMemo`], [`HelpReference`]). They
 //! moved from `ibcmd-metadata-blob`, which re-exports them.
+//!
+//! They came from the physical-adapter guard's slice, so the guard scans
+//! every non-test `*.rs` file under this crate's `src/`
+//! (`$GuardedCrateDirectories` in `tools/validate-physical-adapter-policy.ps1`).
+//! A file added here is in the slice at once and fails the guard until its
+//! record is reviewed.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
