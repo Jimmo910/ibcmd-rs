@@ -3589,12 +3589,21 @@ mod tests {
             "the stub tree has no StyleItem.Нет"
         );
         let error = write_native_moxel_body(missing.as_bytes(), Some(&context)).unwrap_err();
-        assert!(
-            format!("{error:#}").contains(&format!(
+        let chain = error.chain().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            chain[..chain.len() - 1],
+            [format!(
                 "failed to read StyleItem XML {}",
                 root.join("StyleItems").join("Нет.xml").display()
-            )),
+            )],
             "{error:#}"
+        );
+        assert_eq!(
+            error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .map(std::io::Error::kind),
+            Some(std::io::ErrorKind::NotFound)
         );
     }
 }

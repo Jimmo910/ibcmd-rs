@@ -331,9 +331,15 @@ fn a_help_reference_answers_and_memoises_through_the_trait_as_the_context_does()
             panic!("a file that declares another class refuses through both");
         };
         assert_eq!(anatomy(&left), anatomy(&right));
-        assert!(
-            left.to_string().contains("StyleItems") && left.to_string().contains("CommonPicture"),
-            "{left:#}"
+        assert_eq!(
+            anatomy(&left),
+            (
+                vec![format!(
+                    "{} declares CommonPicture.Чужой",
+                    tree.path("StyleItems/Чужой.xml").display()
+                )],
+                None
+            )
         );
     }
 }
