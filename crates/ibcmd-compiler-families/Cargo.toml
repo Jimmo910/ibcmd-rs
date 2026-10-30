@@ -17,5 +17,9 @@ ibcmd-schema = { path = "../ibcmd-schema" }
 ibcmd-xml = { path = "../ibcmd-xml" }
 sha2 = "0.10"
 
+[features]
+# `SelectedBodyProfile::fixture`, for the root's codec tests.
+test-fixtures = []
+
 [lints.rust]
 unsafe_code = "forbid"

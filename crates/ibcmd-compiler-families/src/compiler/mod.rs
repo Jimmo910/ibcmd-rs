@@ -2,6 +2,7 @@
 
 pub mod artifact;
 mod axes;
+pub mod bodies;
 pub mod families;
 pub mod graph;
 pub mod identity;
