@@ -24,9 +24,7 @@
 //!   2.21 ones, chosen by the registry's `xml_version()`.
 
 pub(super) use ibcmd_form_body::layout_8_5_1;
-pub(super) mod load_8_5_1;
-pub(super) mod xml_2_21_order;
-pub(super) mod xml_2_21_writer;
+pub(super) use ibcmd_form_writer::form::{load_8_5_1, xml_2_21_order, xml_2_21_writer};
 
 /// [`xml_2_21_writer::apply_form_facts_8_5_1`] for the platform the export
 /// runs for: whether the build writes `ButtonImportance` `Main` on a default

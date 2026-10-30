@@ -465,7 +465,7 @@ pub(super) fn requires_adoption_adapter(form_xml: &[u8], metadata_xml: &[u8]) ->
     }
     Ok(false)
 }
-mod adopted_form;
+use ibcmd_form_writer::adopted_form;
 pub(super) use adopted_form::adopted_form_body;
 pub(crate) use adopted_form::compile_adopted_form_body_base_free;
 #[cfg(test)]

@@ -784,6 +784,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-form-writer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ibcmd-1c-text",
+ "ibcmd-1c-vocab",
+ "ibcmd-core",
+ "ibcmd-form-body",
+ "ibcmd-form-native",
+ "ibcmd-form-schema",
+ "ibcmd-metadata-source",
+ "ibcmd-module-blob",
+ "ibcmd-schema",
+ "ibcmd-xml",
+ "quick-xml 0.38.4",
+ "serde",
+ "sha2",
+ "uuid",
+]
+
+[[package]]
 name = "ibcmd-metadata-blob"
 version = "0.1.0"
 dependencies = [
@@ -794,6 +815,7 @@ dependencies = [
  "ibcmd-form-body",
  "ibcmd-form-native",
  "ibcmd-form-schema",
+ "ibcmd-form-writer",
  "ibcmd-metadata-source",
  "ibcmd-module-blob",
  "ibcmd-restructure",
@@ -892,6 +914,7 @@ dependencies = [
  "ibcmd-form-body",
  "ibcmd-form-native",
  "ibcmd-form-schema",
+ "ibcmd-form-writer",
  "ibcmd-metadata-blob",
  "ibcmd-metadata-source",
  "ibcmd-module-blob",

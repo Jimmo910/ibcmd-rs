@@ -80,6 +80,14 @@ pub(crate) use ibcmd_form_body::record_text::scan_braced_fields;
 
 pub use ibcmd_form_body::FormBodyRevision;
 
+// The form compiler's dispatch among the 8.3.27 writer, its 2.21 route and
+// the adopted form, and the form readiness audit, are the
+// `ibcmd-form-writer` crate's; the public wrappers below coerce into them.
+pub(crate) use ibcmd_form_writer::{
+    compile_native_form_body_through, form_body_base_free_blockers_with_resolver,
+    pack_native_form_body_blob_through,
+};
+
 mod help_pages;
 
 mod interface_assets;
@@ -172,53 +180,6 @@ pub fn compile_native_form_body(
     )
 }
 
-/// [`compile_native_form_body`], the source read through [`MetadataSource`].
-pub(crate) fn compile_native_form_body_through(
-    form_xml: &[u8],
-    module_text: Option<&[u8]>,
-    source: Option<&dyn MetadataSource>,
-    items_root: Option<&Path>,
-) -> Result<String> {
-    // BaseForm is a separate inherited document, never ordinary root items.
-    // Keep the usual no-BaseForm path unchanged and decide with the XML parser
-    // after this cheap token prefilter (comments cannot activate the adapter).
-    if form_xml
-        .windows(b"BaseForm".len())
-        .any(|w| w == b"BaseForm")
-        && let Some(body) = crate::mssql::offline_compile::compile_adopted_form_body_base_free(
-            form_xml,
-            module_text,
-            source,
-            items_root,
-        )?
-    {
-        return Ok(body);
-    }
-
-    // A 2.21 Form.xml is a platform 8.5 form: it is compiled through its
-    // 8.3.27 reading and stored in the 8.5 layout -- or in the 8.3.27 one,
-    // for a configuration kept in an 8.3 compatibility mode.
-    if crate::mssql_dump::is_xml_2_21_form(form_xml)
-        && XML_2_21_TREE_IN_LAYOUT_8_3.load(std::sync::atomic::Ordering::Relaxed)
-    {
-        return crate::mssql_dump::compile_xml_2_21_form_body_in_layout_8_3(
-            form_xml,
-            module_text,
-            source,
-            items_root,
-        );
-    }
-    if crate::mssql_dump::is_xml_2_21_form(form_xml) {
-        return crate::mssql_dump::compile_native_form_body_8_5_1(
-            form_xml,
-            module_text,
-            source,
-            items_root,
-        );
-    }
-    compile_native_form_body_8_3(form_xml, module_text, source, items_root)
-}
-
 /// The stored blob of one Form.xml through the native writer: the body text
 /// with the BOM the platform writes, raw-deflated. The loader's first choice;
 /// a form the writer refuses falls back to the older paths.
@@ -234,27 +195,6 @@ pub fn pack_native_form_body_blob(
         source.map(|source| source as &dyn MetadataSource),
         items_root,
     )
-}
-
-/// [`pack_native_form_body_blob`], the source read through
-/// [`MetadataSource`].
-pub(crate) fn pack_native_form_body_blob_through(
-    form_xml: &[u8],
-    module_text: Option<&[u8]>,
-    source: Option<&dyn MetadataSource>,
-    items_root: Option<&Path>,
-) -> Result<PackedRawDeflatedBlob> {
-    let body = compile_native_form_body_through(form_xml, module_text, source, items_root)?;
-    // What the exporter cannot read back would load as a form nobody can open.
-    parse_form_body_plain(&body).context("the native Form body does not parse back")?;
-    let plain = format!("\u{feff}{body}");
-    let blob = deflate_raw(plain.as_bytes())?;
-    let output_sha256 = hex_sha256(&blob);
-    Ok(PackedRawDeflatedBlob {
-        blob,
-        plain_bytes: plain.len(),
-        output_sha256,
-    })
 }
 
 pub fn form_body_base_free_blockers(
@@ -282,53 +222,6 @@ pub(crate) fn form_body_base_free_compilation_blockers(
         form_item_asset_files,
         has_source_resolver,
     )
-}
-
-fn form_body_base_free_blockers_with_resolver(
-    form_xml: &[u8],
-    has_module_text: bool,
-    form_item_asset_files: usize,
-    has_source_resolver: bool,
-) -> Result<Vec<String>> {
-    let _ = has_module_text;
-    if form_xml.is_empty() {
-        return Ok(vec![
-            "Form body source is absent, so the marker-50 source model cannot be validated"
-                .to_string(),
-        ]);
-    }
-    if crate::mssql_dump::is_xml_2_21_form(form_xml) {
-        let xml = std::str::from_utf8(form_xml).context("2.21 Form.xml is not valid UTF-8")?;
-        // Read without a configuration: what needs one (a style colour, a
-        // common picture) is a blocker of this model, not an error.
-        let xml20 = match crate::mssql_dump::down_convert_xml_2_21_form(xml, None, None) {
-            Ok((xml20, _)) => xml20,
-            Err(error) => {
-                return Ok(vec![format!(
-                    "the 2.21 form reads into 8.3.27 terms only with the configuration at hand: {error:#}"
-                )]);
-            }
-        };
-        return form_body_base_free_blockers_with_resolver(
-            xml20.as_bytes(),
-            has_module_text,
-            form_item_asset_files,
-            has_source_resolver,
-        );
-    }
-    validate_form_xml_document(form_xml)?;
-    let properties = parse_form_xml_body_properties(form_xml)?;
-    // The readiness audit runs over a complete source tree. Actual compilation
-    // still requires and verifies the resolver whenever readable refs occur.
-    let mut blockers = form_base_free_model_blockers(&properties, has_source_resolver);
-    if form_item_asset_files > 0 {
-        blockers.push(format!(
-            "embedded Form item assets have no evidenced base-free payload slot ({form_item_asset_files} source asset file(s))"
-        ));
-    }
-    blockers.sort();
-    blockers.dedup();
-    Ok(blockers)
 }
 
 /// Compiles a role's `Rights.xml` into its stored rights row without a base
