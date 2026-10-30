@@ -6,7 +6,7 @@
 //! observed precedence, which no parent contradicts. It places the elements the
 //! 8.5 appended members add; a sibling the list does not name refuses.
 
-pub(in crate::mssql_dump) fn child_order(parent: &str) -> Option<&'static [&'static str]> {
+pub fn child_order(parent: &str) -> Option<&'static [&'static str]> {
     Some(match parent {
         "AdditionSource" => &["Item", "Type"],
         "AdditionalColumns" => &["Column"],

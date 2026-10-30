@@ -9,13 +9,15 @@ use ibcmd_core::version::PlatformBuild;
 
 pub mod command_interface;
 pub mod dcs;
-// The dynamic-list, chart, planner and role-rights writers are
-// `ibcmd-metadata-blob`'s, with the packers that call them; they keep their
-// paths here.
+// The dynamic-list, chart and planner writers are `ibcmd-form-writer`'s,
+// with the form writer that calls them, and the role-rights writer is
+// `ibcmd-metadata-blob`'s, with its packer; `ibcmd-metadata-blob` re-exports
+// the former, and they keep their paths here.
 pub use ibcmd_metadata_blob::dynamic_list;
 pub mod form;
 pub mod form_chart {
-    //! The chart writers, in `ibcmd-metadata-blob`: what the moxel writer reads.
+    //! The chart writers, in `ibcmd-form-writer` (re-exported by
+    //! `ibcmd-metadata-blob`): what the moxel writer reads.
     pub(crate) use ibcmd_metadata_blob::form_chart::{ChartHost, chart_value, gantt_chart_value};
 }
 /// Writer for the managed-form item records a native 8.3.27 body stores.

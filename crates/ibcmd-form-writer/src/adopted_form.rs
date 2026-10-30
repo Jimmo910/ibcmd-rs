@@ -3,9 +3,10 @@
 //! event blocks with the interceptors' call types, and the base form after it
 //! -- compiled from `<BaseForm>` too, or put back from the base row.
 //!
-//! It moved from `offline_compile.rs`, whose staging code reads the root's
-//! loader, metadata model and exporter; this part reads only the form
-//! writer's entry points and crates, and moves with the writer.
+//! It moved from the root's `src/mssql/offline_compile.rs`, whose staging
+//! code reads the root's loader, metadata model and exporter; this part reads
+//! only the form writer's entry points and crates. The root reaches it as
+//! `mssql::offline_compile::adopted_form`.
 
 use std::path::Path;
 
@@ -16,7 +17,7 @@ use ibcmd_metadata_source::MetadataSource;
 /// Split a direct BaseForm into a complete Form document of its own. Byte
 /// spans keep every inherited namespace and source string intact; the base's
 /// controls must never enter the ordinary parser for the extension's root.
-pub(super) fn split_form_base_xml(xml: &str) -> Result<Option<(String, String)>> {
+pub fn split_form_base_xml(xml: &str) -> Result<Option<(String, String)>> {
     use quick_xml::events::Event;
     // The slice reader consumes UTF-8 BOM without adding it to its byte
     // cursor. Normalize the input used for spans, then preserve own's BOM.
@@ -111,7 +112,7 @@ pub(super) fn split_form_base_xml(xml: &str) -> Result<Option<(String, String)>>
 /// Compile an adopted form and its inherited base entirely from source XML.
 /// The base is a distinct stored form body, not a second batch of root items.
 /// A base has no source module here; the extension's BSL belongs only to own.
-pub(crate) fn compile_adopted_form_body_base_free(
+pub fn compile_adopted_form_body_base_free(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
     source: Option<&dyn MetadataSource>,
@@ -122,19 +123,15 @@ pub(crate) fn compile_adopted_form_body_base_free(
         return Ok(None);
     };
     let (own_xml, call_types) = without_adoption(xml)?;
-    let own = crate::module_blob::compile_native_form_body_through(
+    let own = crate::compile_native_form_body_through(
         own_xml.as_bytes(),
         module_text,
         source,
         items_root,
     )?;
     let own = with_call_type_blocks(&own, &call_types);
-    let base = crate::module_blob::compile_native_form_body_through(
-        base_xml.as_bytes(),
-        None,
-        source,
-        items_root,
-    )?;
+    let base =
+        crate::compile_native_form_body_through(base_xml.as_bytes(), None, source, items_root)?;
     let trimmed = own.trim_end();
     let head = trimmed
         .strip_suffix(",0,0}")
@@ -149,12 +146,12 @@ pub(crate) fn compile_adopted_form_body_base_free(
 /// The body of a form an extension adopts, compiled from its `Form.xml`:
 /// the form without `<BaseForm>` and `callType` compiles as a configuration's
 /// form, its event blocks then take the call types
-/// (`crate::mssql_dump::form_extension`: `Before` code 0, `Override` 2,
+/// (the root's `mssql_dump::form_extension`: `Before` code 0, `Override` 2,
 /// `After` an empty first handler and the handler second, code 1), and the
 /// base form body the base row carries is put back after it
 /// (`...,1,<base form body>,0` where a form body ends `...,0,0`). An edit of
 /// `<BaseForm>` itself is not taken; the load's own check refuses it.
-pub(in crate::mssql) fn adopted_form_body(
+pub fn adopted_form_body(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
     source: Option<&dyn MetadataSource>,
@@ -164,7 +161,7 @@ pub(in crate::mssql) fn adopted_form_body(
     let xml = String::from_utf8(form_xml.to_vec()).context("Form.xml is not UTF-8")?;
     let (own, call_types) = without_adoption(&xml)?;
     let compile = |xml: &str| -> Result<String> {
-        let packed = crate::module_blob::pack_native_form_body_blob_through(
+        let packed = crate::pack_native_form_body_blob_through(
             xml.as_bytes(),
             module_text,
             source,
@@ -211,15 +208,15 @@ pub(in crate::mssql) fn adopted_form_body(
 
 /// The stand-in handler an adopted form's event compiles under: one per
 /// stored event, its bindings kept aside.
-pub(super) const STAND_IN: &str = "ИбкмдПерехватчик";
+pub const STAND_IN: &str = "ИбкмдПерехватчик";
 
 /// The `(handler, call type)` bindings of one stored event, as the form's
-/// `<Event>` lines spell them (`crate::mssql_dump::form_extension`).
+/// `<Event>` lines spell them (the root's `mssql_dump::form_extension`).
 type Bindings = Vec<(String, String)>;
 
 /// The form XML without `<BaseForm>`, each event's interceptor lines folded
 /// into one line under a stand-in handler, and the stand-ins' bindings.
-pub(super) fn without_adoption(
+pub fn without_adoption(
     xml: &str,
 ) -> Result<(String, std::collections::BTreeMap<String, Bindings>)> {
     ibcmd_xml::XmlReader::from_slice(xml.as_bytes()).context("adopted Form.xml is malformed")?;
@@ -314,7 +311,7 @@ fn folded_events(
         }
         let end = usize::try_from(reader.buffer_position())?;
         first_start.get_or_insert(start);
-        let event_xml = ibcmd_xml::XmlReader::from_slice(body[start..end].as_bytes())
+        let event_xml = ibcmd_xml::XmlReader::from_slice(&body.as_bytes()[start..end])
             .context("form event XML is malformed")?;
         let node = event_xml.root();
         let attr = |name: &str| {
@@ -404,7 +401,7 @@ fn folded_events(
 /// binding with a handler first (code 0/2), else an empty first handler;
 /// every other binding after it with its code (`Before` 0, `After` 1,
 /// `Override` 2).
-pub(super) fn with_call_type_blocks(
+pub fn with_call_type_blocks(
     plain: &str,
     stand_ins: &std::collections::BTreeMap<String, Bindings>,
 ) -> String {

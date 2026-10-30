@@ -465,11 +465,11 @@ pub(super) fn requires_adoption_adapter(form_xml: &[u8], metadata_xml: &[u8]) ->
     }
     Ok(false)
 }
-mod adopted_form;
+// The adopted-form compile is the form writer's (`ibcmd-form-writer`).
 pub(super) use adopted_form::adopted_form_body;
-pub(crate) use adopted_form::compile_adopted_form_body_base_free;
 #[cfg(test)]
 use adopted_form::{STAND_IN, split_form_base_xml, with_call_type_blocks, without_adoption};
+use ibcmd_form_writer::adopted_form;
 
 #[cfg(test)]
 mod tests {

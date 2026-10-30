@@ -1,13 +1,15 @@
 //! What the form reader and the 8.5 down-conversion read of an adopted
 //! form's body: its event block, every handler of every event with its
 //! call type code, and the slot of its base form record; and the adoption
-//! model the form writer spells ([`FormAdoption`], [`FormBaseForm`]). From
-//! `src/mssql_dump/form_extension.rs`, which keeps the constructors that read
-//! the root (`form_adoption`, `adoption_without_base_form`,
+//! model the form writer spells ([`FormAdoption`], [`FormBaseForm`]), with
+//! the constructor of an adopted form that keeps no base form record
+//! ([`adoption_without_base_form`]). From `src/mssql_dump/form_extension.rs`,
+//! which keeps the constructors that read the root (`form_adoption`,
 //! `FormBaseForm::from_document`).
 
 use std::collections::BTreeMap;
 
+use anyhow::Result;
 use ibcmd_1c_text::{
     parse_1c_quoted_string_with_len, scan_1c_braced_value, split_1c_braced_fields,
 };
@@ -247,6 +249,41 @@ pub struct FormBaseForm {
     /// The children of the document's root as written: CRLF lines at the
     /// root's indentation.
     pub children: String,
+}
+
+/// The adoption facts of an adopted form that keeps no base form record
+/// (ServiceDesk's adopted `CommonForm.СвязанныеДокументы`, fixture
+/// `native-evidence/extension-form-interceptors`): the call types its event
+/// blocks store, `Before` on its commands, no `<BaseForm>`. An event block
+/// whose head is recognized but whose tail is not is refused rather than
+/// read as `Before`.
+pub fn adoption_without_base_form(layout: &str) -> Result<FormAdoption> {
+    for (start, _) in layout.match_indices('{') {
+        let Some(end) = scan_1c_braced_value(layout, start) else {
+            continue;
+        };
+        let block = &layout[start..end];
+        let Some(fields) = split_1c_braced_fields(block, 0) else {
+            continue;
+        };
+        let Some(identifier) = fields.get(1) else {
+            continue;
+        };
+        if adoption_event_name(identifier.trim().trim_matches('"')).is_some()
+            && fields
+                .first()
+                .is_some_and(|count| count.trim().parse::<usize>().is_ok())
+            && parse_form_event_block(block).is_none()
+        {
+            anyhow::bail!("unsupported or malformed adopted form event block for {identifier}");
+        }
+    }
+    Ok(FormAdoption {
+        call_types: form_event_call_types(layout),
+        // `Before`.
+        command_call_type: Some(CALL_TYPES[0]),
+        base_form: None,
+    })
 }
 
 #[cfg(test)]

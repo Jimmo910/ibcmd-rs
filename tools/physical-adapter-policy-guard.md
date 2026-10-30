@@ -35,10 +35,16 @@ with its 22 record tags), `crates/ibcmd-metadata-blob/src/` (the packers of
 a configuration's stored bodies from their XML sources, with the source
 context they read, formerly `src/module_blob.rs`, which keeps the
 command-line wrappers and the entry points that read the rest of the root
-and stays in the slice; and the dynamic-list, chart, planner and
-role-rights writers, formerly in `src/compiler/bodies/`, and the metadata
-XML element tree, formerly `src/metadata_model/xml.rs`, which were outside
-the slice and joined it with their 277 records),
+and stays in the slice; and the role-rights writer, formerly in
+`src/compiler/bodies/`, and the metadata XML element tree, formerly
+`src/metadata_model/xml.rs`, which were outside the slice and joined it with
+their records), `crates/ibcmd-form-writer/src/` (the native form body writer,
+formerly in `crates/ibcmd-metadata-blob/src/lib.rs` with the dynamic-list,
+chart and planner writers it calls; its 2.21 route, formerly
+`src/mssql_dump/form/{load_8_5_1,xml_2_21_writer,xml_2_21_order}.rs`; the
+entry points that dispatch among them, formerly in `src/module_blob.rs`; and
+the adopted-form compile, formerly `src/mssql/offline_compile/adopted_form.rs`,
+which was outside the slice and joined it with its records),
 `crates/ibcmd-module-blob/src/` (the module blob
 codec, the raw deflate helpers and digests, the raw-deflated packer and the
 versions-blob patcher, formerly in `src/module_blob.rs`; the raw inflater,
@@ -166,3 +172,26 @@ statement now names `ibcmd_form_body::parse_form_event_block` by its crate
 path: `141bb3eb8dce1bd7cb7f0477f893d0e98d2e920fdd384fbb8d1c6311d39817a8` to
 `3d272659525c543c2c5a548b0eec5ba3c5561a10d5023edb09bb1d094603420e`, count one.
 Every other record, the two stale ones included, is unchanged.
+
+Step 5f-2 of #559 moves the native form writer into `crates/ibcmd-form-writer/src/`.
+The six whole files (`dynamic_list.rs`, `form_chart.rs`, `form_planner.rs`
+from `crates/ibcmd-metadata-blob/src/`, and `form/load_8_5_1.rs`,
+`form/xml_2_21_writer.rs`, `form/xml_2_21_order.rs` from
+`src/mssql_dump/form/`) keep their records unchanged. The 2 088 records
+(2 259 occurrences) of `crates/ibcmd-metadata-blob/src/lib.rs` go to the file
+that holds each statement now: 1 605 / 1 742 to `crates/ibcmd-form-writer/src/lib.rs`
+and 492 / 518 to `crates/ibcmd-metadata-blob/src/lib.rs`; eight records whose
+statement is in both files split their count between them. Two fingerprints
+change around an unchanged literal, count one each: `NATIVE_ZERO_UUID`
+became `#[doc(hidden)] pub` for the packers (`uuid-literal`
+`79321f56ff08c266e5bef695e597cbdb4703976af4543fa7f65d71ba384dd082` to
+`739a0a806368259e55cc24fa2c21b12f3469d183731d2b01c8eeda2bdea78696`), and
+the `b"BaseForm"` prefilter of `compile_native_form_body_through` moved from
+`src/module_blob.rs` into the crate's `lib.rs`, its statement naming
+`crate::adopted_form::` (`name-special-case`
+`c75167dd7e5bd797140c48ef96cea1ccdada78ea1a954d18d29d6a2cbfd43e3e` to
+`2047a68de8f2eab7285e22838c5231b344c7cd023239685ad0d51e32ae8de552`).
+`src/module_blob.rs` stays in the slice with no occurrence.
+`crates/ibcmd-form-writer/src/adopted_form.rs` was outside the slice and
+joins it with its 32 records (33 occurrences). Every other record, the two
+stale ones included, is unchanged.
