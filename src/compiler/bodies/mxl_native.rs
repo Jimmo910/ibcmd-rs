@@ -36,7 +36,7 @@ use quick_xml::Reader;
 use quick_xml::escape::{resolve_xml_entity, unescape};
 use quick_xml::events::{BytesStart, Event};
 
-use crate::module_blob::MetadataSourceContext;
+use ibcmd_metadata_source::MetadataSource;
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 const CELL_LINE_KIND: &str = "f527dc88-1d39-40b3-bcbb-d98b690ead68";
@@ -56,7 +56,7 @@ const SYSTEM_FONTS_NS: &str = "http://v8.1c.ru/8.1/data/ui/fonts/system";
 /// a `}` that closes right behind another).
 pub(crate) fn write_native_moxel_body(
     xml: &[u8],
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     // Element spans index the text behind the byte-order mark.
     let xml = xml.strip_prefix(b"\xef\xbb\xbf").unwrap_or(xml);
@@ -679,7 +679,7 @@ impl ContentPool {
 
 struct BodyWriter<'a, 'd> {
     document: &'a Document<'d>,
-    source: Option<&'a MetadataSourceContext>,
+    source: Option<&'a dyn MetadataSource>,
     formats: IdentityPool,
     fonts: IdentityPool,
     lines: IdentityPool,
@@ -696,7 +696,7 @@ struct BodyWriter<'a, 'd> {
 }
 
 impl<'a, 'd> BodyWriter<'a, 'd> {
-    fn new(document: &'a Document<'d>, source: Option<&'a MetadataSourceContext>) -> Self {
+    fn new(document: &'a Document<'d>, source: Option<&'a dyn MetadataSource>) -> Self {
         Self {
             document,
             source,
@@ -3472,5 +3472,138 @@ mod tests {
         let exported = read_back(&body);
         assert!(exported.contains("<backColor>style:ReportHeaderBackColor</backColor>"));
         assert!(exported.contains("<backColor>#F4ECC5</backColor>"));
+    }
+
+    /// A source that answers the one style item the stub tree has; the
+    /// moxel writer of a sheet without charts or configuration types reads
+    /// nothing else.
+    #[derive(Debug)]
+    struct StubSource;
+
+    const STUB_STYLE_ITEM: &str = "5A5A5A5A-1B1B-4C4C-8D8D-9E9E9E9E9E9E";
+
+    impl MetadataSource for StubSource {
+        fn resolve_style_item_uuid(&self, reference: &str) -> Result<String> {
+            match reference {
+                "StyleItem.Акцент" => Ok(STUB_STYLE_ITEM.to_string()),
+                other => Err(anyhow!("the stub tree has no {other}")),
+            }
+        }
+        fn source_root(&self) -> &std::path::Path {
+            unreachable!("the writer reads no file")
+        }
+        fn read_source(
+            &self,
+            _: &std::path::Path,
+        ) -> std::io::Result<ibcmd_metadata_source::SourceBytes> {
+            unreachable!("the writer reads no file")
+        }
+        fn configuration_uuid(&self) -> Option<String> {
+            unreachable!("the writer reads no configuration uuid")
+        }
+        fn configuration_object(
+            &self,
+            _: &str,
+        ) -> Option<std::sync::Arc<ibcmd_form_native::ConfigurationObject>> {
+            unreachable!("the writer reads no data path")
+        }
+        fn resolve_metadata_type_id(&self, _: &str) -> Result<String> {
+            unreachable!("the sheet names no configuration type")
+        }
+        fn resolve_metadata_reference_uuid(&self, _: &str) -> Result<String> {
+            unreachable!("the writer names no object")
+        }
+        fn resolve_common_picture_uuid(&self, _: &str) -> Result<String> {
+            unreachable!("the sheet names no picture")
+        }
+        fn resolve_command_group_uuid(&self, _: &str) -> Result<String> {
+            unreachable!("the writer names no command group")
+        }
+        fn dcs_generated_type_id(&self, _: &str) -> Option<String> {
+            unreachable!("a sheet has no data-composition schema")
+        }
+        fn dcs_style_items(&self) -> &BTreeMap<String, String> {
+            unreachable!("a sheet has no data-composition schema")
+        }
+        fn moxel_object_refs(&self) -> Result<BTreeMap<String, String>> {
+            unreachable!("the sheet has no chart")
+        }
+        fn help_reference(&self, _: &str) -> Result<ibcmd_metadata_source::HelpReference> {
+            unreachable!("a sheet has no help page")
+        }
+        fn interface_memo(
+            &self,
+        ) -> &std::sync::Mutex<ibcmd_metadata_source::InterfaceResolutionMemo> {
+            unreachable!("a sheet has no command interface")
+        }
+    }
+
+    /// The writer reads the configuration only through `MetadataSource`: a
+    /// stub that answers a style colour the way a tree on disk does gives the
+    /// body the source context gives over that tree, and a resolver's error
+    /// reaches the caller as the source gave it.
+    #[test]
+    fn a_stub_source_answers_the_writer_as_the_source_context_does() {
+        let sheet = |colour: &str| {
+            format!(
+                r#"<document xmlns="http://v8.1c.ru/8.2/data/spreadsheet" xmlns:style="http://v8.1c.ru/8.1/data/ui/style">
+	<columns><size>1</size></columns>
+	<rowsItem><index>0</index><row><c><c><f>1</f></c></c></row></rowsItem>
+	<format><backColor>style:{colour}</backColor></format>
+</document>"#
+            )
+        };
+        let xml = sheet("Акцент");
+        let through_stub = write_native_moxel_body(xml.as_bytes(), Some(&StubSource)).unwrap();
+        assert!(
+            through_stub
+                .replace("\r\n", "")
+                .contains("{3,3,{0,5a5a5a5a-1b1b-4c4c-8d8d-9e9e9e9e9e9e}}"),
+            "{through_stub}"
+        );
+
+        let root = std::env::temp_dir().join(format!(
+            "ibcmd-rs-moxel-seam-{}",
+            uuid::Uuid::new_v4().hyphenated()
+        ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&root);
+        std::fs::create_dir_all(root.join("StyleItems")).unwrap();
+        std::fs::write(
+            root.join("StyleItems/Акцент.xml"),
+            format!(
+                "<MetaDataObject xmlns=\"http://v8.1c.ru/8.3/MDClasses\"><StyleItem uuid=\"{}\"><Properties><Name>Акцент</Name></Properties></StyleItem></MetaDataObject>",
+                STUB_STYLE_ITEM.to_ascii_lowercase()
+            ),
+        )
+        .unwrap();
+        let context = crate::module_blob::MetadataSourceContext::new(root.clone());
+        let through_context = write_native_moxel_body(xml.as_bytes(), Some(&context)).unwrap();
+        assert_eq!(through_stub, through_context);
+
+        // A style item neither has: the stub's own error, unchanged, and the
+        // context's naming the file it could not read.
+        let missing = sheet("Нет");
+        let error = write_native_moxel_body(missing.as_bytes(), Some(&StubSource)).unwrap_err();
+        assert_eq!(
+            error.root_cause().to_string(),
+            "the stub tree has no StyleItem.Нет"
+        );
+        let error = write_native_moxel_body(missing.as_bytes(), Some(&context)).unwrap_err();
+        let chain = error.chain().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            chain[..chain.len() - 1],
+            [format!(
+                "failed to read StyleItem XML {}",
+                root.join("StyleItems").join("Нет.xml").display()
+            )],
+            "{error:#}"
+        );
+        assert_eq!(
+            error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .map(std::io::Error::kind),
+            Some(std::io::ErrorKind::NotFound)
+        );
     }
 }

@@ -15,6 +15,8 @@ ibcmd-core = { path = "../ibcmd-core" }
 ibcmd-form-body = { path = "../ibcmd-form-body" }
 ibcmd-form-native = { path = "../ibcmd-form-native" }
 ibcmd-form-schema = { path = "../ibcmd-form-schema" }
+# The source bytes and the source context's memoised answers.
+ibcmd-metadata-source = { path = "../ibcmd-metadata-source" }
 ibcmd-module-blob = { path = "../ibcmd-module-blob" }
 # The brace model of a configuration row.
 ibcmd-restructure = { path = "../ibcmd-restructure" }

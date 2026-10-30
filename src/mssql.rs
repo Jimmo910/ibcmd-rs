@@ -57,12 +57,12 @@ use crate::compiler::{
     AdditionalIndexesMapping, CompileAxes, CompileRequest, SourcePayload, compile_source,
 };
 use crate::module_blob::{
-    CommonModuleXmlProperties, InterfaceAssetSource, MetadataSourceContext, PredefinedPatch,
-    SimpleMetadataXmlProperties, VersionReplacement, business_process_flowchart_base_free_blockers,
-    command_interface_base_free_blockers, command_interface_xml_can_pack_without_base,
-    common_module_metadata_base_free_blockers, form_body_base_free_blockers,
-    form_body_base_free_compilation_blockers, hex_sha256, interface_asset_plaintext,
-    metadata_xml_base_free_blockers, module_blob_text_sha256,
+    CommonModuleXmlProperties, InterfaceAssetSource, MetadataSource, MetadataSourceContext,
+    PredefinedPatch, SimpleMetadataXmlProperties, VersionReplacement,
+    business_process_flowchart_base_free_blockers, command_interface_base_free_blockers,
+    command_interface_xml_can_pack_without_base, common_module_metadata_base_free_blockers,
+    form_body_base_free_blockers, form_body_base_free_compilation_blockers, hex_sha256,
+    interface_asset_plaintext, metadata_xml_base_free_blockers, module_blob_text_sha256,
     pack_business_process_flowchart_blob_from_xml, pack_command_interface_blob_from_xml,
     pack_common_module_metadata_blob_from_xml, pack_exchange_plan_content_blob_from_xml,
     pack_ext_picture_blob_from_xml_and_bytes, pack_form_body_blob_from_form_xml_base_free,

@@ -27,6 +27,9 @@ pub mod form_planner;
 pub mod role_rights_writer;
 pub mod xml;
 
+#[cfg(test)]
+mod source_seam_tests;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::ops::Range;
@@ -91,6 +94,11 @@ pub use ibcmd_module_blob::{
     raw_deflated_plain_sha256, unpack_module_blob_text, versions_base_free_blockers,
 };
 pub(crate) use ibcmd_module_blob::{deflate_raw, inflate_raw};
+// The source bytes and the two answers the source context memoises are the
+// `ibcmd-metadata-source` crate's; the packers and the root name them here.
+pub use ibcmd_metadata_source::{HelpReference, InterfaceResolutionMemo, SourceBytes};
+// The seam a writer reads the source tree through; the context implements it.
+pub use ibcmd_metadata_source::MetadataSource;
 
 // Platform-level 1C standard pictures and form type IDs, not database metadata UUIDs.
 const STD_PICTURE_USER_UUID: &str = "6ff3ddbd-56e3-4ddf-a5bf-048c1e2dfb2f";
@@ -1148,8 +1156,7 @@ pub trait OriginalSourceTree: std::fmt::Debug + Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct MetadataSourceContext {
-    #[doc(hidden)]
-    pub source_root: PathBuf,
+    source_root: PathBuf,
     /// Every metadata object a `<DataPath>` has asked for, parsed once.
     ///
     /// A field id is the field's own `uuid=`, so placing a dotted data path
@@ -1163,8 +1170,7 @@ pub struct MetadataSourceContext {
     role_rights_source: Arc<SourceTreeRoleRightsSource>,
     /// What the interface writers resolve more than once: a metadata file's
     /// class and uuid, an owner's declared commands.
-    #[doc(hidden)]
-    pub interface_memo: Arc<Mutex<InterfaceResolutionMemo>>,
+    interface_memo: Arc<Mutex<InterfaceResolutionMemo>>,
     /// Generated-type `TypeId`s a data-composition schema asked for, by type
     /// name, memoised hit and miss alike: a report names the same catalog
     /// from many fields and a tree has many reports.
@@ -1188,34 +1194,6 @@ pub struct MetadataSourceContext {
     preloaded: PreloadedSourceFiles,
     /// Explicit operation-local original census, never a path-cache fallback.
     original_source: Option<Arc<dyn OriginalSourceTree>>,
-}
-
-/// A source file's bytes: shared with the preloaded store, or read for the
-/// caller.
-pub enum SourceBytes {
-    Shared(Arc<Vec<u8>>),
-    Owned(Vec<u8>),
-}
-
-impl std::ops::Deref for SourceBytes {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        match self {
-            Self::Shared(bytes) => bytes,
-            Self::Owned(bytes) => bytes,
-        }
-    }
-}
-
-impl SourceBytes {
-    #[doc(hidden)]
-    pub fn into_vec(self) -> Vec<u8> {
-        match self {
-            Self::Shared(bytes) => bytes.as_ref().clone(),
-            Self::Owned(bytes) => bytes,
-        }
-    }
 }
 
 /// Source files read into memory, by path: shared, and printed as a count.
@@ -1281,8 +1259,7 @@ impl MetadataSourceContext {
     /// The bytes of a source file: shared from memory when preloaded, else
     /// read. (The resolvers ask for ERP УХ's metadata XMLs some 150 000 times;
     /// a copy each time cost a large-block allocation each.)
-    #[doc(hidden)]
-    pub fn read_source(&self, path: &Path) -> std::io::Result<SourceBytes> {
+    fn read_source(&self, path: &Path) -> std::io::Result<SourceBytes> {
         if let Some(source) = &self.original_source {
             return source
                 .read_original_path(path)
@@ -1296,8 +1273,7 @@ impl MetadataSourceContext {
     }
 
     /// The uuid `Configuration.xml` declares for the configuration itself.
-    #[doc(hidden)]
-    pub fn configuration_uuid(&self) -> Option<String> {
+    fn configuration_uuid(&self) -> Option<String> {
         self.configuration_uuid
             .get_or_init(|| {
                 let xml = self
@@ -1318,8 +1294,7 @@ impl MetadataSourceContext {
     /// data-composition schema names it (`CatalogRef.X`, `Characteristic.X`),
     /// read from the owning object's `InternalInfo`. `None` when the tree has
     /// no such object or type.
-    #[doc(hidden)]
-    pub fn dcs_generated_type_id(&self, name: &str) -> Option<String> {
+    fn dcs_generated_type_id(&self, name: &str) -> Option<String> {
         if let Ok(cache) = self.generated_type_ids.lock()
             && let Some(found) = cache.get(name)
         {
@@ -1338,8 +1313,7 @@ impl MetadataSourceContext {
 
     /// The tree's configuration style items: lowercase uuid -> name. A file
     /// that does not parse contributes nothing rather than failing the scan.
-    #[doc(hidden)]
-    pub fn dcs_style_items(&self) -> &BTreeMap<String, String> {
+    fn dcs_style_items(&self) -> &BTreeMap<String, String> {
         self.style_items
             .get_or_init(|| style_reference_types_from_source_root(&self.source_root))
     }
@@ -1350,8 +1324,7 @@ impl MetadataSourceContext {
     /// alike. A file that will not parse, or that holds a different class than
     /// the key names, is a miss: the caller then refuses the data path rather
     /// than writing a binding from a guess.
-    #[doc(hidden)]
-    pub fn configuration_object(&self, key: &str) -> Option<Arc<ConfigurationObject>> {
+    fn configuration_object(&self, key: &str) -> Option<Arc<ConfigurationObject>> {
         if let Ok(cache) = self.configuration_objects.lock()
             && let Some(found) = cache.get(key)
         {
@@ -1416,8 +1389,7 @@ impl MetadataSourceContext {
         Ok(())
     }
 
-    #[doc(hidden)]
-    pub fn resolve_common_picture_uuid(&self, reference: &str) -> Result<String> {
+    fn resolve_common_picture_uuid(&self, reference: &str) -> Result<String> {
         let name = reference
             .trim()
             .strip_prefix("CommonPicture.")
@@ -1480,8 +1452,7 @@ impl MetadataSourceContext {
             .with_context(|| format!("failed to resolve TypeId from {}", path.display()))
     }
 
-    #[doc(hidden)]
-    pub fn resolve_command_group_uuid(&self, reference: &str) -> Result<String> {
+    fn resolve_command_group_uuid(&self, reference: &str) -> Result<String> {
         let name = reference
             .trim()
             .strip_prefix("CommandGroup.")
@@ -1504,8 +1475,7 @@ impl MetadataSourceContext {
         Ok(properties.uuid)
     }
 
-    #[doc(hidden)]
-    pub fn resolve_style_item_uuid(&self, reference: &str) -> Result<String> {
+    fn resolve_style_item_uuid(&self, reference: &str) -> Result<String> {
         let name = reference
             .trim()
             .strip_prefix("StyleItem.")
@@ -1623,8 +1593,7 @@ impl MetadataSourceContext {
         Ok(dimensions)
     }
 
-    #[doc(hidden)]
-    pub fn resolve_metadata_type_id(&self, reference: &str) -> Result<String> {
+    fn resolve_metadata_type_id(&self, reference: &str) -> Result<String> {
         let generated_type_name = reference
             .trim()
             .strip_prefix("cfg:")
@@ -1658,8 +1627,7 @@ impl MetadataSourceContext {
             .with_context(|| format!("failed to resolve TypeId from {}", path.display()))
     }
 
-    #[doc(hidden)]
-    pub fn resolve_metadata_reference_uuid(&self, reference: &str) -> Result<String> {
+    fn resolve_metadata_reference_uuid(&self, reference: &str) -> Result<String> {
         let reference = reference.trim();
         // Objects that live in a file of their own below their owner: a
         // nested subsystem (`Subsystems/A/Subsystems/B.xml`) and a
@@ -1785,25 +1753,66 @@ impl MetadataSourceContext {
     }
 }
 
-/// What resolving names reads more than once, kept for the life of the
-/// source context: the class and uuid of a metadata file, and the commands an
-/// owner declares.
-#[derive(Debug, Default)]
-#[doc(hidden)]
-pub struct InterfaceResolutionMemo {
-    #[doc(hidden)]
-    pub headers: BTreeMap<PathBuf, Option<(String, String)>>,
-    #[doc(hidden)]
-    pub commands: BTreeMap<PathBuf, Option<Arc<BTreeMap<String, String>>>>,
-}
+/// The source the tools build. Each method is the context's own of the same
+/// name (`MetadataSourceContext::name` is the inherent method, never this
+/// trait's), so a writer that reads the tree through the trait gets the very
+/// answers, errors and memoised values a call on the context gives.
+impl MetadataSource for MetadataSourceContext {
+    fn source_root(&self) -> &Path {
+        &self.source_root
+    }
 
-/// What a readable reference names in the source tree.
-#[derive(Clone, Debug)]
-#[doc(hidden)]
-pub enum HelpReference {
-    Resolved(String),
-    /// No file of the tree declares it: the configuration has no such object.
-    Absent,
+    fn read_source(&self, path: &Path) -> std::io::Result<SourceBytes> {
+        MetadataSourceContext::read_source(self, path)
+    }
+
+    fn configuration_uuid(&self) -> Option<String> {
+        MetadataSourceContext::configuration_uuid(self)
+    }
+
+    fn configuration_object(&self, key: &str) -> Option<Arc<ConfigurationObject>> {
+        MetadataSourceContext::configuration_object(self, key)
+    }
+
+    fn resolve_metadata_type_id(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_metadata_type_id(self, reference)
+    }
+
+    fn resolve_metadata_reference_uuid(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_metadata_reference_uuid(self, reference)
+    }
+
+    fn resolve_style_item_uuid(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_style_item_uuid(self, reference)
+    }
+
+    fn resolve_common_picture_uuid(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_common_picture_uuid(self, reference)
+    }
+
+    fn resolve_command_group_uuid(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_command_group_uuid(self, reference)
+    }
+
+    fn dcs_generated_type_id(&self, name: &str) -> Option<String> {
+        MetadataSourceContext::dcs_generated_type_id(self, name)
+    }
+
+    fn dcs_style_items(&self) -> &BTreeMap<String, String> {
+        MetadataSourceContext::dcs_style_items(self)
+    }
+
+    fn moxel_object_refs(&self) -> Result<BTreeMap<String, String>> {
+        MetadataSourceContext::moxel_object_refs(self)
+    }
+
+    fn help_reference(&self, reference: &str) -> Result<HelpReference> {
+        MetadataSourceContext::help_reference(self, reference)
+    }
+
+    fn interface_memo(&self) -> &Mutex<InterfaceResolutionMemo> {
+        &self.interface_memo
+    }
 }
 
 impl MetadataSourceContext {
@@ -1815,8 +1824,7 @@ impl MetadataSourceContext {
     /// A reference whose file -- or whose owner's file -- the tree does not
     /// have is [`HelpReference::Absent`]; a file that is there and declares
     /// something else, or does not parse, is an error.
-    #[doc(hidden)]
-    pub fn help_reference(&self, reference: &str) -> Result<HelpReference> {
+    fn help_reference(&self, reference: &str) -> Result<HelpReference> {
         if let Ok(cache) = self.help_references.lock()
             && let Some(found) = cache.get(reference)
         {

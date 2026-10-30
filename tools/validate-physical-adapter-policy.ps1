@@ -30,6 +30,7 @@ $GuardedCrateDirectories = @(
     'crates/ibcmd-restructure-engine/src',
     'crates/ibcmd-restructure/src/descriptor',
     'crates/ibcmd-metadata-blob/src',
+    'crates/ibcmd-metadata-source/src',
     'crates/ibcmd-module-blob/src',
     'crates/ibcmd-moxel/src/root_helpers'
 )

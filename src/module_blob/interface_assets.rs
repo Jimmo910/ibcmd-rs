@@ -51,6 +51,19 @@ pub fn interface_asset_plaintext(
     xml: &[u8],
     source: Option<&MetadataSourceContext>,
 ) -> Result<Vec<u8>> {
+    plaintext_through(
+        kind,
+        xml,
+        source.map(|source| source as &dyn MetadataSource),
+    )
+}
+
+/// [`interface_asset_plaintext`], with the names read through any source.
+fn plaintext_through(
+    kind: InterfaceAssetSource,
+    xml: &[u8],
+    source: Option<&dyn MetadataSource>,
+) -> Result<Vec<u8>> {
     let resolver = Resolver { source };
     let root = parse_document(xml)?;
     match kind {
@@ -351,11 +364,11 @@ fn parse_visibility(node: &Node, resolver: &Resolver<'_>) -> Result<(bool, Vec<V
 // ---------------------------------------------------------------------------
 
 struct Resolver<'a> {
-    source: Option<&'a MetadataSourceContext>,
+    source: Option<&'a dyn MetadataSource>,
 }
 
 impl Resolver<'_> {
-    fn source(&self, name: &str) -> Result<&MetadataSourceContext> {
+    fn source(&self, name: &str) -> Result<&dyn MetadataSource> {
         self.source.ok_or_else(|| {
             anyhow!("`{name}` names an object, and no source tree was given to resolve it")
         })
@@ -363,14 +376,14 @@ impl Resolver<'_> {
 
     /// `(class, uuid)` of the metadata file at `path`, read up to its first
     /// element.
-    fn header(&self, source: &MetadataSourceContext, path: &Path) -> Option<(String, String)> {
-        if let Ok(memo) = source.interface_memo.lock()
+    fn header(&self, source: &dyn MetadataSource, path: &Path) -> Option<(String, String)> {
+        if let Ok(memo) = source.interface_memo().lock()
             && let Some(found) = memo.headers.get(path)
         {
             return found.clone();
         }
         let found = read_metadata_file_header(source, path);
-        if let Ok(mut memo) = source.interface_memo.lock() {
+        if let Ok(mut memo) = source.interface_memo().lock() {
             memo.headers.insert(path.to_path_buf(), found.clone());
         }
         found
@@ -399,7 +412,7 @@ impl Resolver<'_> {
                 "`{name}` is not a subsystem path"
             );
             let names = parts.iter().skip(1).step_by(2).collect::<Vec<_>>();
-            let mut path = source.source_root.join("Subsystems");
+            let mut path = source.source_root().join("Subsystems");
             for (index, part) in names.iter().enumerate() {
                 path = if index + 1 == names.len() {
                     path.join(format!("{part}.xml"))
@@ -418,7 +431,7 @@ impl Resolver<'_> {
         self.file_uuid(
             name,
             &source
-                .source_root
+                .source_root()
                 .join(folder)
                 .join(format!("{object}.xml")),
             class,
@@ -441,7 +454,7 @@ impl Resolver<'_> {
         self.file_uuid(
             name,
             &source
-                .source_root
+                .source_root()
                 .join(folder)
                 .join(owner)
                 .join(directory)
@@ -461,9 +474,12 @@ impl Resolver<'_> {
         let source = self.source(name)?;
         let (_, folder) = metadata_reference_source_folder(&format!("{class}.{owner}"))
             .ok_or_else(|| anyhow!("the writer has no source folder for `{class}` objects"))?;
-        let path = source.source_root.join(folder).join(format!("{owner}.xml"));
+        let path = source
+            .source_root()
+            .join(folder)
+            .join(format!("{owner}.xml"));
         let cached = source
-            .interface_memo
+            .interface_memo()
             .lock()
             .ok()
             .and_then(|memo| memo.commands.get(&path).cloned());
@@ -475,7 +491,7 @@ impl Resolver<'_> {
                     .ok()
                     .and_then(|xml| read_declared_commands(&xml).ok())
                     .map(Arc::new);
-                if let Ok(mut memo) = source.interface_memo.lock() {
+                if let Ok(mut memo) = source.interface_memo().lock() {
                     memo.commands.insert(path.clone(), commands.clone());
                 }
                 commands
@@ -665,10 +681,7 @@ fn standard_command_code(class: &str, standard: &str) -> Result<u32> {
 
 /// `(class, uuid)` of a metadata file: the first element under
 /// `<MetaDataObject>`, which is all a reference needs.
-fn read_metadata_file_header(
-    source: &MetadataSourceContext,
-    path: &Path,
-) -> Option<(String, String)> {
+fn read_metadata_file_header(source: &dyn MetadataSource, path: &Path) -> Option<(String, String)> {
     let xml = source.read_source(path).ok()?;
     let mut reader = Reader::from_reader(&xml[..]);
     let mut buffer = Vec::new();
@@ -1267,6 +1280,188 @@ mod tests {
         assert!(
             interface_asset_plaintext(InterfaceAssetSource::CommandInterface, xml.as_bytes(), None)
                 .is_err()
+        );
+    }
+
+    /// A source the interface writer reads from memory: the files by path,
+    /// under a root that is not on disk. The writer reads the root, the
+    /// files and the memo; any other member would be a read the seam does
+    /// not expect.
+    #[derive(Debug)]
+    struct InMemorySource {
+        root: std::path::PathBuf,
+        files: BTreeMap<std::path::PathBuf, Vec<u8>>,
+        memo: std::sync::Mutex<InterfaceResolutionMemo>,
+    }
+
+    impl MetadataSource for InMemorySource {
+        fn source_root(&self) -> &Path {
+            &self.root
+        }
+        fn read_source(&self, path: &Path) -> std::io::Result<SourceBytes> {
+            self.files
+                .get(path)
+                .map(|bytes| SourceBytes::Owned(bytes.clone()))
+                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+        }
+        fn interface_memo(&self) -> &std::sync::Mutex<InterfaceResolutionMemo> {
+            &self.memo
+        }
+        fn configuration_uuid(&self) -> Option<String> {
+            unreachable!("the command interface reads no configuration uuid")
+        }
+        fn configuration_object(&self, _: &str) -> Option<Arc<ConfigurationObject>> {
+            unreachable!("the command interface reads no data path")
+        }
+        fn resolve_metadata_type_id(&self, _: &str) -> Result<String> {
+            unreachable!("the command interface resolves no type")
+        }
+        fn resolve_metadata_reference_uuid(&self, _: &str) -> Result<String> {
+            unreachable!("the command interface reads its own headers")
+        }
+        fn resolve_style_item_uuid(&self, _: &str) -> Result<String> {
+            unreachable!("the command interface names no style item")
+        }
+        fn resolve_common_picture_uuid(&self, _: &str) -> Result<String> {
+            unreachable!("the command interface names no picture")
+        }
+        fn resolve_command_group_uuid(&self, _: &str) -> Result<String> {
+            unreachable!("the command interface reads its own headers")
+        }
+        fn dcs_generated_type_id(&self, _: &str) -> Option<String> {
+            unreachable!("the command interface has no data-composition schema")
+        }
+        fn dcs_style_items(&self) -> &BTreeMap<String, String> {
+            unreachable!("the command interface has no data-composition schema")
+        }
+        fn moxel_object_refs(&self) -> Result<BTreeMap<String, String>> {
+            unreachable!("the command interface has no chart")
+        }
+        fn help_reference(&self, _: &str) -> Result<HelpReference> {
+            unreachable!("the command interface has no help page")
+        }
+    }
+
+    /// The writer reads names only through `MetadataSource`: the same files
+    /// in memory, under a root that does not exist, give the very plaintext
+    /// the source context gives over them on disk, and the headers it
+    /// memoises are the source's.
+    #[test]
+    fn an_in_memory_source_answers_the_writer_as_the_tree_on_disk_does() {
+        let files = [
+            (
+                "Catalogs/Товары.xml",
+                format!(
+                    "<Catalog uuid=\"{CATALOG}\"><Properties><Name>Товары</Name></Properties><ChildObjects><Command uuid=\"{NESTED}\"><Properties><Name>Печать</Name></Properties></Command></ChildObjects></Catalog>"
+                ),
+            ),
+            (
+                "CommonCommands/Открыть.xml",
+                format!("<CommonCommand uuid=\"{COMMAND}\"/>"),
+            ),
+            (
+                "CommandGroups/Группа.xml",
+                format!("<CommandGroup uuid=\"{GROUP}\"/>"),
+            ),
+            (
+                "Subsystems/А/Subsystems/Б.xml",
+                format!("<Subsystem uuid=\"{SUBSYSTEM}\"/>"),
+            ),
+            ("Roles/Роль.xml", format!("<Role uuid=\"{ROLE}\"/>")),
+        ];
+        let xml = r#"<CommandInterface xmlns="http://v8.1c.ru/8.3/xcf/extrnprops" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.20">
+	<CommandsVisibility>
+		<Command name="Catalog.Товары.StandardCommand.CreateFolder">
+			<Visibility>
+				<xr:Common>false</xr:Common>
+				<xr:Value name="Role.Роль">true</xr:Value>
+			</Visibility>
+		</Command>
+	</CommandsVisibility>
+	<CommandsPlacement>
+		<Command name="CommonCommand.Открыть">
+			<CommandGroup>CommandGroup.Группа</CommandGroup>
+			<Placement>Manual</Placement>
+		</Command>
+	</CommandsPlacement>
+	<CommandsOrder>
+		<Command name="Catalog.Товары.Command.Печать">
+			<CommandGroup>NavigationPanelOrdinary</CommandGroup>
+		</Command>
+	</CommandsOrder>
+	<SubsystemsOrder>
+		<Subsystem>Subsystem.А.Subsystem.Б</Subsystem>
+	</SubsystemsOrder>
+</CommandInterface>"#;
+
+        let disk = std::env::temp_dir().join(format!(
+            "ibcmd-rs-interface-seam-{}",
+            uuid::Uuid::new_v4().hyphenated()
+        ));
+        let _scratch = crate::test_scratch::TestScratch::adopt(&disk);
+        for (relative, body) in &files {
+            metadata(&disk, relative, body);
+        }
+        let context = MetadataSourceContext::new(disk.clone());
+        let expected = interface_asset_plaintext(
+            InterfaceAssetSource::CommandInterface,
+            xml.as_bytes(),
+            Some(&context),
+        )
+        .unwrap();
+
+        let root = std::path::PathBuf::from("in-memory-tree-that-is-not-on-disk");
+        assert!(!root.exists());
+        let memory = InMemorySource {
+            files: files
+                .iter()
+                // The very bytes the context reads from disk.
+                .map(|(relative, _)| (root.join(relative), fs::read(disk.join(relative)).unwrap()))
+                .collect(),
+            root,
+            memo: Default::default(),
+        };
+        let plain = plaintext_through(
+            InterfaceAssetSource::CommandInterface,
+            xml.as_bytes(),
+            Some(&memory),
+        )
+        .unwrap();
+        assert_eq!(plain, expected);
+        {
+            // Released before the writer runs again: it locks the memo.
+            let memo = memory.memo.lock().unwrap();
+            assert!(
+                memo.headers
+                    .contains_key(&memory.root.join("Subsystems/А/Subsystems/Б.xml")),
+                "{memo:?}"
+            );
+            assert!(
+                memo.commands
+                    .contains_key(&memory.root.join("Catalogs/Товары.xml")),
+                "{memo:?}"
+            );
+        }
+
+        // A name the source does not have refuses alike through either.
+        let missing = xml.replace("CommonCommand.Открыть", "CommonCommand.Нет");
+        let through_memory = plaintext_through(
+            InterfaceAssetSource::CommandInterface,
+            missing.as_bytes(),
+            Some(&memory),
+        )
+        .unwrap_err();
+        let through_disk = interface_asset_plaintext(
+            InterfaceAssetSource::CommandInterface,
+            missing.as_bytes(),
+            Some(&context),
+        )
+        .unwrap_err();
+        assert_eq!(format!("{through_memory:#}"), format!("{through_disk:#}"));
+        assert!(
+            format!("{through_memory:#}")
+                .contains("`CommonCommand.Нет` names no file of the source tree"),
+            "{through_memory:#}"
         );
     }
 }

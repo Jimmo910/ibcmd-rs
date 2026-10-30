@@ -794,6 +794,7 @@ dependencies = [
  "ibcmd-form-body",
  "ibcmd-form-native",
  "ibcmd-form-schema",
+ "ibcmd-metadata-source",
  "ibcmd-module-blob",
  "ibcmd-restructure",
  "ibcmd-schema",
@@ -802,6 +803,14 @@ dependencies = [
  "serde",
  "sha2",
  "uuid",
+]
+
+[[package]]
+name = "ibcmd-metadata-source"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ibcmd-form-native",
 ]
 
 [[package]]
@@ -884,6 +893,7 @@ dependencies = [
  "ibcmd-form-native",
  "ibcmd-form-schema",
  "ibcmd-metadata-blob",
+ "ibcmd-metadata-source",
  "ibcmd-module-blob",
  "ibcmd-moxel",
  "ibcmd-postgres",
