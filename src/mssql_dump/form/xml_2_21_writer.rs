@@ -1564,11 +1564,15 @@ fn upgrade_field(edits: &mut XmlEdits<'_>, field: usize, tag: &str) -> Result<()
 
 /// Applies to a written 8.5 `Form.xml` what the appended members say, and
 /// returns the inline pictures those members carry (files beside the form).
+/// `writes_default_button_importance`: the build writes `ButtonImportance`
+/// `Main` on a default button whose record holds no importance of its own
+/// (`PlatformSpec::writes_default_button_importance`).
 pub(in crate::mssql_dump) fn apply_form_facts_8_5_1(
     xml: String,
     facts: &FormFactsV8_5_1,
     object_refs: &std::collections::BTreeMap<String, String>,
     adoption: Option<&ibcmd_form_body::FormAdoption>,
+    writes_default_button_importance: bool,
 ) -> Result<(String, Vec<ibcmd_form_body::FormItemAsset>)> {
     let mut assets = Vec::new();
     let mut edits = XmlEdits::new(&xml)?;
@@ -1635,7 +1639,7 @@ pub(in crate::mssql_dump) fn apply_form_facts_8_5_1(
                 adoption,
                 &mut assets,
             )?;
-            if crate::platform::export_writes_default_button_importance() {
+            if writes_default_button_importance {
                 default_button_importance(&mut edits, element, item)?;
             }
         }
@@ -1747,12 +1751,9 @@ mod tests {
             ]),
             ..FormFactsV8_5_1::default()
         };
-        // The spelling of the oldest 8.5 build, whatever a parallel test noted.
+        // The spelling of the oldest 8.5 build.
         let (written, assets) =
-            crate::platform::with_export_default_button_importance(false, || {
-                apply_form_facts_8_5_1(xml, &facts, &BTreeMap::new(), None)
-            })
-            .unwrap();
+            apply_form_facts_8_5_1(xml, &facts, &BTreeMap::new(), None, false).unwrap();
         assert!(assets.is_empty());
         let expected = form(
             &[
@@ -1780,6 +1781,37 @@ mod tests {
         assert_eq!(written, expected);
     }
 
+    /// A default button whose record holds code `1` (no importance of its
+    /// own): the builds that declare it write `Main` there, the others
+    /// nothing; the writer spells what its caller says the build does.
+    #[test]
+    fn a_default_button_of_no_importance_is_main_only_where_the_build_writes_it() {
+        let xml = form(&button(
+            "Default",
+            30,
+            "\t\t\t<DefaultButton>true</DefaultButton>\r\n",
+        ));
+        let facts = FormFactsV8_5_1 {
+            items: BTreeMap::from([("30".to_owned(), button_facts("1"))]),
+            ..FormFactsV8_5_1::default()
+        };
+        let written = |writes: bool| {
+            let (written, assets) =
+                apply_form_facts_8_5_1(xml.clone(), &facts, &BTreeMap::new(), None, writes)
+                    .unwrap();
+            assert!(assets.is_empty());
+            written
+        };
+        assert_eq!(written(false), xml);
+        assert_eq!(
+            written(true),
+            xml.replace(
+                "\t\t</Button>",
+                "\t\t\t<ButtonImportance>Main</ButtonImportance>\r\n\t\t</Button>",
+            )
+        );
+    }
+
     #[test]
     fn adopted_form_group_event_keeps_call_type_after_8_5_facts() {
         use super::super::super::form_extension::adoption_without_base_form;
@@ -1802,7 +1834,7 @@ mod tests {
         );
         let xml = form("\t\t<UsualGroup name=\"Clickable\" id=\"1\">\r\n\t\t</UsualGroup>\r\n");
         let (written, _) =
-            apply_form_facts_8_5_1(xml, &facts, &BTreeMap::new(), Some(&adoption)).unwrap();
+            apply_form_facts_8_5_1(xml, &facts, &BTreeMap::new(), Some(&adoption), false).unwrap();
         assert!(
             written.contains("<Event name=\"Click\" callType=\"Before\">ClickHandler</Event>"),
             "{written}"

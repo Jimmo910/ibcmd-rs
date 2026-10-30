@@ -2525,7 +2525,7 @@ fn write_source_asset_inner(
                         || context.source_version == InfobaseConfigSourceVersion::V2_20;
                     let (xml, item_assets_8_5_1) = match &facts_8_5_1 {
                         _ if xml_2_21_pass_off => (xml, Vec::new()),
-                        Some(facts) => super::form::xml_2_21_writer::apply_form_facts_8_5_1(
+                        Some(facts) => super::form::apply_form_facts_8_5_1_for_export(
                             xml,
                             facts,
                             context.object_refs,
