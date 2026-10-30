@@ -133,3 +133,14 @@ vocabulary directory. Its eleven existing UUID fingerprints and occurrence
 counts move unchanged, record by record. The root retains its crate-visible
 alias. All other existing file records, including stale records, remain
 unchanged; neither the scope nor the baseline is regenerated.
+
+`crates/ibcmd-dump-readers/src/` follows the same rule. The additional-index
+reader, its owner model and the evidence-bound Configuration properties reader
+moved from `src/mssql_dump/{additional_indexes,configuration_properties_evidence}.rs`.
+Their two baseline file records move to the corresponding crate paths. All 11
+existing additional-index fingerprint records keep their category, hash and
+count; the Configuration reader and the new crate root have empty occurrence
+lists. No fingerprint changes. Every other file record is preserved, including
+the stale `config_dump_info.rs` and `incremental.rs` records. The source assets
+module keeps the former owner-type path through an alias. Only existing text
+and metadata-writer crates replace root aliases; no parsing policy changes.

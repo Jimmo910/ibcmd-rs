@@ -26,10 +26,21 @@ use anyhow::{Result, anyhow};
 use ibcmd_schema::metadata_child_storage_facts::AdditionalIndexStandardFieldFamily;
 use std::collections::BTreeMap;
 
-use super::source_assets::AdditionalIndexesOwner;
-use super::{
+use ibcmd_1c_text::{
     escape_xml_text, parse_1c_quoted_string_with_len, parse_uuid_field, split_1c_braced_fields,
 };
+
+/// Owner identity an `Ext/AdditionalIndexes.xml` body needs to be readable.
+///
+/// The stored body is a serialized 1C value whose records name their table by
+/// uuid, so the owner has to travel with the asset: only it turns that uuid into
+/// a source table name.
+#[derive(Clone)]
+pub struct AdditionalIndexesOwner {
+    pub kind: String,
+    pub name: String,
+    pub uuid: String,
+}
 
 /// Type uuid of one additional-index record.
 const INDEX_TYPE_UUID: &str = "4b3b32e1-14f6-4ce8-b4c4-1bc85a74237e";
@@ -44,12 +55,12 @@ xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" \
 xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" version=\"2.20\"";
 
 #[derive(Debug)]
-pub(super) struct AdditionalIndex {
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) table: String,
-    pub(super) indexed_fields: Vec<String>,
-    pub(super) additional_fields: Vec<String>,
+pub struct AdditionalIndex {
+    pub id: String,
+    pub name: String,
+    pub table: String,
+    pub indexed_fields: Vec<String>,
+    pub additional_fields: Vec<String>,
 }
 
 /// Resolves the table an index is declared on.
@@ -160,7 +171,7 @@ fn resolve_field_list(
         .collect()
 }
 
-pub(super) fn parse_additional_indexes(
+pub fn parse_additional_indexes(
     bytes: &[u8],
     owner: &AdditionalIndexesOwner,
     object_refs: &BTreeMap<String, String>,
@@ -246,7 +257,7 @@ fn push_field_list(xml: &mut String, tag: &str, fields: &[String]) {
     xml.push_str(&format!("\t\t</{tag}>\r\n"));
 }
 
-pub(super) fn format_additional_indexes_xml(indexes: &[AdditionalIndex]) -> String {
+pub fn format_additional_indexes_xml(indexes: &[AdditionalIndex]) -> String {
     if indexes.is_empty() {
         return format!("{HEADER}/>");
     }
@@ -441,7 +452,7 @@ mod tests {
 
         let owner = catalog_owner();
         let xml = format_additional_indexes_xml(indexes);
-        let blob = crate::module_blob::pack_additional_indexes_blob_from_xml(
+        let blob = ibcmd_metadata_blob::pack_additional_indexes_blob_from_xml(
             xml.as_bytes(),
             catalog_metadata_xml(declare_period).as_bytes(),
             &owner.kind,

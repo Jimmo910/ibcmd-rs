@@ -1,7 +1,40 @@
-use super::*;
+pub(crate) use super::additional_indexes::AdditionalIndexesOwner;
+use super::{
+    BTreeMap, BTreeSet, BusinessProcessFlowchart, ConfigRow, ConstantValueType, DeclaredFormType,
+    DetailedFormBodyExtraction, DumpRowContext, FamilyId, FormParseContext,
+    FormSourceAssetDiagnostic, FormSourceReference, InfobaseConfigSourceVersion, Instant,
+    MetadataCommandReference, MetadataSourceFailureClass, MetadataTextRow, MssqlDumpTimingReport,
+    MssqlLegacyAdapter, OutputWriter, ParsedFormBodyBlob, Path, PathBuf, ProfileId, Result,
+    SubsystemSourceReference, TemplateSourceReference, anyhow, bail, build_metadata_text_rows,
+    build_role_rights_object_reference_index, decode_base64_mime, dedup_form_item_assets,
+    elapsed_ms, escape_xml_element_text, escape_xml_text, ext_picture_file_name,
+    extract_base64_payload, extract_form_body_xml_from_body_detailed_timed,
+    extract_form_item_assets, extract_form_item_assets_from_text, extract_style_body_xml,
+    form_help_asset_paths, form_owner_reference_name, format_business_process_flowchart_xml,
+    format_client_application_interface_xml, format_command_interface_xml,
+    format_exchange_plan_content_xml_with_extension, format_home_page_work_area_xml,
+    format_role_rights_xml, fs, inflate_raw_deflate, is_configuration_module_group,
+    is_direct_code14_form_metadata_text, is_form_metadata_text, is_uuid_text,
+    looks_like_graphical_scheme_blob_text, metadata_owner_value_reference_key,
+    metadata_owner_value_reference_key_parts, metadata_text_row_from_blob, metadata_type_xml_name,
+    module_owner_route, number_allowed_sign_xml, parallel, parse_1c_bool_flag,
+    parse_1c_quoted_string, parse_1c_quoted_string_with_len, parse_business_process_flowchart_blob,
+    parse_business_process_flowchart_text_with_types, parse_client_application_interface_blob,
+    parse_command_interface_blob, parse_command_interface_blob_with_subsystem_refs,
+    parse_declared_form_type, parse_exchange_plan_content_blob,
+    parse_exchange_plan_content_extension, parse_form_body_blob, parse_home_page_work_area_blob,
+    parse_metadata_type_pattern, parse_non_zero_uuid, parse_role_rights_blob, parse_uuid_field,
+    sanitize_source_path_segment, scan_1c_braced_value, skip_ascii_ws_at, split_1c_braced_fields,
+    standard_picture_name, try_extract_moxel_spreadsheet_xml_with_generated_types,
+    unpack_module_blob_text, xml_bool,
+};
+#[cfg(test)]
+use super::{MxlDiagnostic, MxlDiagnosticStage};
 use crate::compiler::families::assets::{
     ConfigRowId, SourceAssetRelationError, SourceAssetRole, SourceAssetRoute,
 };
+use anyhow::Context;
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 #[derive(Debug, Clone)]
 pub(super) struct BodyOwnerSourceReference {
@@ -691,18 +724,6 @@ pub(crate) struct PredefinedDataSourceModel {
     rowset_layout: PredefinedDataRowsetLayout,
     unwrap_single_root: bool,
     item_layout: PredefinedItemLayout,
-}
-
-/// Owner identity an `Ext/AdditionalIndexes.xml` body needs to be readable.
-///
-/// The stored body is a serialized 1C value whose records name their table by
-/// uuid, so the owner has to travel with the asset: only it turns that uuid into
-/// a source table name.
-#[derive(Clone)]
-pub(crate) struct AdditionalIndexesOwner {
-    pub(crate) kind: String,
-    pub(crate) name: String,
-    pub(crate) uuid: String,
 }
 
 #[derive(Clone)]

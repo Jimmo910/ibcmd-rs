@@ -1023,7 +1023,7 @@ mod characteristics {
         )
     }
 }
-mod additional_indexes;
+use ibcmd_dump_readers::additional_indexes;
 pub mod cas;
 mod command_interface;
 pub use config_dump_info::read_config_dump_info;
@@ -1031,7 +1031,7 @@ pub(crate) use config_dump_info::read_config_dump_info_with_sql;
 mod config_dump_info;
 mod config_rows;
 pub mod config_save;
-mod configuration_properties_evidence;
+use ibcmd_dump_readers::configuration_properties_evidence;
 mod dcs;
 mod dcs_2_21;
 pub(crate) use dcs_2_21::{with_8_5_picture_values, with_stored_picture_values};
