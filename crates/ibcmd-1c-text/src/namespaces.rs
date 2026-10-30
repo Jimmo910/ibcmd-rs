@@ -71,3 +71,45 @@ pub fn declare_palette_namespace_beside_style(bytes: Vec<u8>) -> Vec<u8> {
     out.push_str(&text[cursor..]);
     out.into_bytes()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const STYLE: &str = " xmlns:style=\"http://v8.1c.ru/8.1/data/ui/style\"";
+    const PALETTE: &str = " xmlns:pal=\"http://v8.1c.ru/8.1/data/ui/colors/palette\"";
+
+    fn declared(xml: &str) -> String {
+        String::from_utf8(declare_palette_namespace_beside_style(
+            xml.as_bytes().to_vec(),
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_palette_goes_beside_the_style_namespace_in_prefix_order() {
+        // Before `style` on most roots, before `sch` on a graphical schema.
+        assert_eq!(
+            declared(&format!("<Form xmlns:app=\"a\"{STYLE}><a/></Form>")),
+            format!("<Form xmlns:app=\"a\"{PALETTE}{STYLE}><a/></Form>")
+        );
+        assert_eq!(
+            declared(&format!("<GraphicalSchema xmlns:sch=\"s\"{STYLE}/>")),
+            format!("<GraphicalSchema{PALETTE} xmlns:sch=\"s\"{STYLE}/>")
+        );
+        // A tag that declares the style namespace alone, one that already
+        // declares the palette, and a document without it stay as they are.
+        for xml in [
+            format!("<dcscor:value{STYLE}>style:X</dcscor:value>"),
+            format!("<Form xmlns:app=\"a\"{PALETTE}{STYLE}/>"),
+            "<Form xmlns:app=\"a\"/>".to_owned(),
+        ] {
+            assert_eq!(declared(&xml), xml);
+        }
+        // Bytes that are not UTF-8 are returned untouched.
+        assert_eq!(
+            declare_palette_namespace_beside_style(vec![0xff, 0xfe]),
+            [0xff, 0xfe]
+        );
+    }
+}

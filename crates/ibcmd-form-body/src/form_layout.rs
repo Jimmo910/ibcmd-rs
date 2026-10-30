@@ -52,3 +52,21 @@ impl fmt::Display for FormLayout {
         formatter.write_str(self.as_str())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FormLayout;
+
+    #[test]
+    fn a_layout_is_named_by_the_version_that_introduced_it() {
+        for (layout, name) in [(FormLayout::V8_3, "8.3"), (FormLayout::V8_5_1, "8.5.1")] {
+            assert_eq!(layout.as_str(), name);
+            assert_eq!(layout.to_string(), name);
+            assert_eq!(
+                serde_json::to_string(&layout).unwrap(),
+                format!("\"{name}\"")
+            );
+        }
+        assert!(FormLayout::V8_3 < FormLayout::V8_5_1);
+    }
+}

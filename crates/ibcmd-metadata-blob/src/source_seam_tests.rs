@@ -343,3 +343,436 @@ fn a_help_reference_answers_and_memoises_through_the_trait_as_the_context_does()
         );
     }
 }
+
+const PROCESSOR: &str = "88888888-8888-4888-8888-888888888888";
+const PROCESSOR_COMMAND: &str = "99999999-9999-4999-8999-999999999999";
+const ITEM_FORM: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const COMMON_FORM: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const ENUM: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const ENUM_REF: &str = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const ENUM_VALUE: &str = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const PREDEFINED: &str = "12121212-1212-4212-8212-121212121212";
+const NESTED_PREDEFINED: &str = "13131313-1313-4313-8313-131313131313";
+const REGISTER: &str = "14141414-1414-4414-8414-141414141414";
+const ROLE: &str = "15151515-1515-4515-8515-151515151515";
+
+/// The tree of [`Tree::new`] with what the six members the form writer
+/// reads beyond the packers' seam look up: a command, two forms, an enum
+/// value, predefined items, an information register's dimensions and a
+/// role.
+fn form_writer_tree() -> Tree {
+    let tree = Tree::new();
+    tree.write(
+        "DataProcessors/Загрузка.xml",
+        &format!("<DataProcessor uuid=\"{PROCESSOR}\"><Properties><Name>Загрузка</Name></Properties><ChildObjects><Command uuid=\"{PROCESSOR_COMMAND}\"><Properties><Name>Загрузить</Name></Properties></Command></ChildObjects></DataProcessor>"),
+    );
+    tree.write(
+        "Catalogs/Товары/Forms/ФормаЭлемента.xml",
+        &format!(
+            "<Form uuid=\"{ITEM_FORM}\"><Properties><Name>ФормаЭлемента</Name></Properties></Form>"
+        ),
+    );
+    tree.write(
+        "CommonForms/Поиск.xml",
+        &format!("<CommonForm uuid=\"{COMMON_FORM}\"><Properties><Name>Поиск</Name></Properties></CommonForm>"),
+    );
+    tree.write(
+        "Enums/Способы.xml",
+        &format!("<Enum uuid=\"{ENUM}\"><Properties><Name>Способы</Name><GeneratedTypes><GeneratedType name=\"EnumRef.Способы\"><TypeId>{ENUM_REF}</TypeId></GeneratedType></GeneratedTypes></Properties><ChildObjects><EnumValue uuid=\"{ENUM_VALUE}\"><Properties><Name>Ручной</Name></Properties></EnumValue></ChildObjects></Enum>"),
+    );
+    tree.write(
+        "Catalogs/Товары/Ext/Predefined.xml",
+        &format!("<PredefinedData><Item id=\"{PREDEFINED}\"><Name>Основной</Name><Code/><Description/><IsFolder>true</IsFolder><ChildItems><Item id=\"{NESTED_PREDEFINED}\"><Name>Вложенный</Name><Code/><Description/><IsFolder>false</IsFolder></Item></ChildItems></Item></PredefinedData>"),
+    );
+    tree.write(
+        "InformationRegisters/Курсы.xml",
+        &format!("<InformationRegister uuid=\"{REGISTER}\"><Properties><Name>Курсы</Name></Properties><ChildObjects><Dimension><Properties><Name>Валюта</Name><Master>true</Master></Properties></Dimension><Dimension><Properties><Name>Период</Name><Master>false</Master></Properties></Dimension><Dimension><Properties><Name>Банк</Name><Master>true</Master></Properties></Dimension></ChildObjects></InformationRegister>"),
+    );
+    tree.write(
+        "Roles/Администратор.xml",
+        &format!(
+            "<Role uuid=\"{ROLE}\"><Properties><Name>Администратор</Name></Properties></Role>"
+        ),
+    );
+    tree
+}
+
+/// [`same`] for answers of any type.
+fn alike<T: PartialEq + std::fmt::Debug>(
+    through_trait: Result<T>,
+    inherent: Result<T>,
+) -> Result<T> {
+    match (&through_trait, &inherent) {
+        (Ok(left), Ok(right)) => assert_eq!(left, right),
+        (Err(left), Err(right)) => assert_eq!(anatomy(left), anatomy(right)),
+        _ => panic!("the trait answered {through_trait:?} where the context answered {inherent:?}"),
+    }
+    through_trait
+}
+
+/// The six members the native form writer reads beyond the packers' seam
+/// answer through the trait as the context's own methods do: the same
+/// values, and the same refusals message by message.
+#[test]
+fn the_form_writers_members_answer_through_the_trait_as_the_context_does() {
+    let tree = form_writer_tree();
+    let context = MetadataSourceContext::new(tree.0.clone());
+    let source: &dyn MetadataSource = &context;
+
+    let command = |reference: &str| {
+        same(
+            source.resolve_command_reference_uuid(reference),
+            MetadataSourceContext::resolve_command_reference_uuid(&context, reference),
+        )
+    };
+    assert_eq!(
+        command("DataProcessor.Загрузка.Command.Загрузить").unwrap(),
+        PROCESSOR_COMMAND
+    );
+    // A reference that names no command is an object's.
+    assert_eq!(command("Catalog.Товары").unwrap(), CATALOG);
+    assert_eq!(
+        anatomy(&command("Нечто.Загрузка.Command.Загрузить").unwrap_err()).0,
+        [
+            "unsupported command owner reference for source resolution: Нечто.Загрузка.Command.Загрузить"
+        ]
+    );
+    let (messages, kind) = anatomy(&command("DataProcessor.Нет.Command.Загрузить").unwrap_err());
+    assert_eq!(
+        messages[0],
+        format!(
+            "failed to read command owner XML {}",
+            tree.path("DataProcessors").join("Нет.xml").display()
+        )
+    );
+    assert_eq!((messages.len(), kind), (2, Some(ErrorKind::NotFound)));
+    assert_eq!(
+        anatomy(&command("DataProcessor.Загрузка.Command.Нет").unwrap_err()).0[0],
+        "failed to resolve command DataProcessor.Загрузка.Command.Нет"
+    );
+
+    let form = |reference: &str| {
+        same(
+            source.resolve_form_uuid(reference),
+            MetadataSourceContext::resolve_form_uuid(&context, reference),
+        )
+    };
+    assert_eq!(
+        form("Catalog.Товары.Form.ФормаЭлемента").unwrap(),
+        ITEM_FORM
+    );
+    assert_eq!(form("CommonForm.Поиск").unwrap(), COMMON_FORM);
+    // A form the configuration no longer has is its bare uuid, lowercase.
+    assert_eq!(form(&ITEM_FORM.to_uppercase()).unwrap(), ITEM_FORM);
+    assert_eq!(
+        anatomy(&form("Товары").unwrap_err()).0,
+        ["unsupported form reference: Товары"]
+    );
+    let (messages, kind) = anatomy(&form("Catalog.Товары.Form.Нет").unwrap_err());
+    assert_eq!(
+        messages[0],
+        format!(
+            "failed to read form XML {}",
+            tree.path("Catalogs")
+                .join("Товары")
+                .join("Forms")
+                .join("Нет.xml")
+                .display()
+        )
+    );
+    assert_eq!((messages.len(), kind), (2, Some(ErrorKind::NotFound)));
+
+    let child = |owner: &str, kind: &str, name: &str| {
+        same(
+            source.resolve_metadata_child_uuid(owner, kind, name),
+            MetadataSourceContext::resolve_metadata_child_uuid(&context, owner, kind, name),
+        )
+    };
+    assert_eq!(
+        child("Enum.Способы", "EnumValue", "Ручной").unwrap(),
+        ENUM_VALUE
+    );
+    assert_eq!(
+        child("Catalog.Товары", "Attribute", "Цена").unwrap(),
+        ATTRIBUTE
+    );
+    assert_eq!(
+        anatomy(&child("Нечто.Способы", "EnumValue", "Ручной").unwrap_err()).0,
+        ["unsupported child owner reference for source resolution: Нечто.Способы"]
+    );
+    assert_eq!(
+        anatomy(&child("Enum.Способы", "EnumValue", "Нет").unwrap_err()).0[0],
+        "failed to resolve child Enum.Способы.EnumValue.Нет"
+    );
+
+    let predefined = |owner: &str, name: &str| {
+        same(
+            source.resolve_predefined_item_id(owner, name),
+            MetadataSourceContext::resolve_predefined_item_id(&context, owner, name),
+        )
+    };
+    assert_eq!(
+        predefined("Catalog.Товары", "Основной").unwrap(),
+        PREDEFINED
+    );
+    // The name is looked up over the whole nested tree.
+    assert_eq!(
+        predefined("Catalog.Товары", "Вложенный").unwrap(),
+        NESTED_PREDEFINED
+    );
+    assert_eq!(
+        anatomy(&predefined("Catalog.Товары", "Нет").unwrap_err()).0,
+        ["Catalog.Товары declares no predefined item named Нет"]
+    );
+    let (messages, kind) = anatomy(&predefined("Catalog.Цены", "Основной").unwrap_err());
+    assert_eq!(
+        messages[0],
+        format!(
+            "failed to read Predefined XML {}",
+            tree.path("Catalogs")
+                .join("Цены")
+                .join("Ext")
+                .join("Predefined.xml")
+                .display()
+        )
+    );
+    assert_eq!((messages.len(), kind), (2, Some(ErrorKind::NotFound)));
+
+    let dimensions = |register: &str| {
+        alike(
+            source.information_register_master_dimensions(register),
+            MetadataSourceContext::information_register_master_dimensions(&context, register),
+        )
+    };
+    assert_eq!(dimensions("Курсы").unwrap(), ["Валюта", "Банк"]);
+    let (messages, kind) = anatomy(&dimensions("Нет").unwrap_err());
+    assert_eq!(
+        messages[0],
+        format!(
+            "failed to read InformationRegister XML {}",
+            tree.path("InformationRegisters").join("Нет.xml").display()
+        )
+    );
+    assert_eq!((messages.len(), kind), (2, Some(ErrorKind::NotFound)));
+
+    let simple = |reference: &str, kind: &str, folder: &str, prefix: &str| {
+        same(
+            source.resolve_simple_metadata_uuid(reference, kind, folder, prefix),
+            MetadataSourceContext::resolve_simple_metadata_uuid(
+                &context, reference, kind, folder, prefix,
+            ),
+        )
+    };
+    assert_eq!(
+        simple("Role.Администратор", "Role", "Roles", "Role.").unwrap(),
+        ROLE
+    );
+    assert_eq!(
+        anatomy(&simple("Администратор", "Role", "Roles", "Role.").unwrap_err()).0,
+        ["unsupported Role reference: Администратор"]
+    );
+    assert_eq!(
+        anatomy(&simple("StyleItem.Чужой", "StyleItem", "StyleItems", "StyleItem.").unwrap_err()),
+        (
+            vec![format!(
+                "expected StyleItem XML at {}, got CommonPicture",
+                tree.path("StyleItems").join("Чужой.xml").display()
+            )],
+            None
+        )
+    );
+}
+
+/// A source that answers from a table what the form writer asks of it, and
+/// refuses everything else as a read the writer does not make.
+#[derive(Debug)]
+struct Answers(std::collections::BTreeMap<String, String>);
+
+impl Answers {
+    fn answer(&self, question: String) -> Result<String> {
+        self.0
+            .get(&question)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("the table has no answer to {question}"))
+    }
+}
+
+impl MetadataSource for Answers {
+    fn resolve_metadata_type_id(&self, reference: &str) -> Result<String> {
+        self.answer(format!("type {reference}"))
+    }
+    fn resolve_metadata_reference_uuid(&self, reference: &str) -> Result<String> {
+        self.answer(format!("object {reference}"))
+    }
+    fn resolve_command_reference_uuid(&self, reference: &str) -> Result<String> {
+        self.answer(format!("command {reference}"))
+    }
+    fn resolve_metadata_child_uuid(&self, owner: &str, kind: &str, name: &str) -> Result<String> {
+        self.answer(format!("child {owner} {kind} {name}"))
+    }
+    fn resolve_predefined_item_id(&self, owner: &str, name: &str) -> Result<String> {
+        self.answer(format!("predefined {owner} {name}"))
+    }
+    fn information_register_master_dimensions(&self, register: &str) -> Result<Vec<String>> {
+        Ok(self
+            .answer(format!("dimensions {register}"))?
+            .split(',')
+            .map(str::to_owned)
+            .collect())
+    }
+    fn resolve_simple_metadata_uuid(
+        &self,
+        reference: &str,
+        kind: &str,
+        folder: &str,
+        prefix: &str,
+    ) -> Result<String> {
+        self.answer(format!("simple {reference} {kind} {folder} {prefix}"))
+    }
+    fn configuration_object(
+        &self,
+        key: &str,
+    ) -> Option<Arc<ibcmd_form_native::ConfigurationObject>> {
+        unreachable!("the writer's functions under test read no data path ({key})")
+    }
+    fn source_root(&self) -> &std::path::Path {
+        unreachable!("the writer reads no file")
+    }
+    fn read_source(&self, _: &std::path::Path) -> std::io::Result<SourceBytes> {
+        unreachable!("the writer reads no file")
+    }
+    fn configuration_uuid(&self) -> Option<String> {
+        unreachable!("the writer's functions under test read no configuration uuid")
+    }
+    fn resolve_form_uuid(&self, reference: &str) -> Result<String> {
+        self.answer(format!("form {reference}"))
+    }
+    fn resolve_style_item_uuid(&self, _: &str) -> Result<String> {
+        unreachable!("the writer's functions under test name no style item")
+    }
+    fn resolve_common_picture_uuid(&self, _: &str) -> Result<String> {
+        unreachable!("the writer's functions under test name no picture")
+    }
+    fn resolve_command_group_uuid(&self, _: &str) -> Result<String> {
+        unreachable!("the writer's functions under test name no command group")
+    }
+    fn dcs_generated_type_id(&self, _: &str) -> Option<String> {
+        unreachable!("the writer's functions under test have no data-composition schema")
+    }
+    fn dcs_style_items(&self) -> &std::collections::BTreeMap<String, String> {
+        unreachable!("the writer's functions under test have no data-composition schema")
+    }
+    fn moxel_object_refs(&self) -> Result<std::collections::BTreeMap<String, String>> {
+        unreachable!("the writer's functions under test have no chart")
+    }
+    fn help_reference(&self, _: &str) -> Result<HelpReference> {
+        unreachable!("the writer's functions under test have no help page")
+    }
+    fn interface_memo(&self) -> &std::sync::Mutex<super::InterfaceResolutionMemo> {
+        unreachable!("the writer's functions under test have no command interface")
+    }
+}
+
+/// The form writer's functions that read the six members give, from a
+/// source that only answers a table, what they give from the context over
+/// a tree on disk that declares the same: the writer reads them through
+/// the trait and nowhere else. The data-path walk's question goes through
+/// the trait too, to the context's own memoised object.
+#[test]
+fn the_form_writer_answers_a_table_source_as_the_source_context() {
+    let tree = form_writer_tree();
+    let context = MetadataSourceContext::new(tree.0.clone());
+    let table = Answers(
+        [
+            ("type EnumRef.Способы", ENUM_REF),
+            ("type CatalogRef.Товары", CATALOG_REF),
+            ("child Enum.Способы EnumValue Ручной", ENUM_VALUE),
+            ("predefined Catalog.Товары Вложенный", NESTED_PREDEFINED),
+            ("object InformationRegister.Курсы", REGISTER),
+            ("dimensions Курсы", "Валюта,Банк"),
+            ("object DataProcessor.Загрузка", PROCESSOR),
+            (
+                "command DataProcessor.Загрузка.Command.Загрузить",
+                PROCESSOR_COMMAND,
+            ),
+            ("simple Role.Администратор Role Roles Role.", ROLE),
+        ]
+        .into_iter()
+        .map(|(question, answer)| (question.to_owned(), answer.to_owned()))
+        .collect(),
+    );
+    let through = |source: &dyn MetadataSource| {
+        let choice = |reference: &str| super::native_choice_list_reference(reference, Some(source));
+        let standard = |reference: &str| {
+            super::native_object_standard_command(reference, Some(source)).unwrap()
+        };
+        let interface = |reference: &str| {
+            super::native_command_interface_command(
+                &super::FormXmlCommandInterfaceItem {
+                    command: Some(reference.to_owned()),
+                    ..Default::default()
+                },
+                &super::FormXmlBodyProperties::default(),
+                "",
+                Some(source),
+            )
+            .unwrap()
+        };
+        let rights = super::native_rights(
+            &super::FormXmlRights {
+                common: Some(false),
+                values: vec![("Role.Администратор".to_owned(), Some(true))],
+            },
+            "<UserVisible>",
+            Some(source),
+        )
+        .unwrap();
+        (
+            [
+                choice("Enum.Способы.EnumValue.Ручной").unwrap(),
+                choice("Catalog.Товары.Вложенный").unwrap(),
+                choice("Catalog.Товары.EmptyRef").unwrap(),
+            ],
+            [
+                standard("InformationRegister.Курсы.StandardCommand.OpenByValue.Банк"),
+                standard("DataProcessor.Загрузка.StandardCommand.Open"),
+            ],
+            interface("DataProcessor.Загрузка.Command.Загрузить"),
+            rights,
+        )
+    };
+    let from_tree = through(&context);
+    assert_eq!(from_tree, through(&table));
+    assert_eq!(
+        from_tree,
+        (
+            [
+                (ENUM_REF.to_owned(), ENUM_VALUE.to_owned()),
+                (CATALOG_REF.to_owned(), NESTED_PREDEFINED.to_owned()),
+                (
+                    CATALOG_REF.to_owned(),
+                    "00000000-0000-0000-0000-000000000000".to_owned()
+                ),
+            ],
+            [format!("{{4,{REGISTER}}}"), format!("{{0,{PROCESSOR}}}")],
+            format!("{{0,{PROCESSOR_COMMAND}}}"),
+            format!("{{0,{{0,{{\"B\",0}},1,{ROLE},{{\"B\",1}}}}}}"),
+        )
+    );
+
+    // The data-path walk asks for an object through the trait: the very
+    // object the context's own `ConfigurationObjects` answer memoises.
+    use ibcmd_form_native::ConfigurationObjects;
+    let walked = super::SourceConfigurationObjects(&context)
+        .object("Catalog.Товары")
+        .unwrap();
+    assert!(Arc::ptr_eq(
+        &walked,
+        &ConfigurationObjects::object(&context, "Catalog.Товары").unwrap()
+    ));
+    assert!(
+        super::SourceConfigurationObjects(&context)
+            .object("Catalog.Нет")
+            .is_none()
+    );
+}
