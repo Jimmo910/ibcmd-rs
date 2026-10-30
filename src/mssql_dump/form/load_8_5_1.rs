@@ -26,12 +26,12 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use ibcmd_1c_text::{crlf_line_breaks, format_1c_string as quote_1c};
 
-use super::layout_8_5_1::Node;
 use super::xml_2_21_writer::{
     FIELD_TAGS, GROUPING, TRI_STATE, XmlEdits, child_text, element_name, simple_text,
 };
 use crate::module_blob::{MetadataSource, MetadataSourceContext};
-use crate::platform::FormLayout;
+use ibcmd_form_body::FormLayout;
+use ibcmd_form_body::layout_8_5_1::Node;
 
 const FORM_ITEM_CLASS_UUID: &str = "02023637-7868-4a5f-8576-835a76e0c9ba";
 const FORM_COMMAND_CLASS_UUID: &str = "409b9a53-7f7e-4178-86c1-33176c7c7a7a";
@@ -1647,18 +1647,18 @@ fn base64_leaf_8_5_1(payload: &str) -> String {
     if !compact.is_ascii() {
         return format!("#base64:{payload}");
     }
-    let declared = crate::module_blob::decode_base64_mime(&compact).and_then(|bytes| {
+    let declared = ibcmd_1c_text::decode_base64_mime_lenient(&compact).and_then(|bytes| {
         let document = bytes
             .strip_prefix(b"\xEF\xBB\xBF".as_slice())
             .unwrap_or(&bytes);
         if !document.starts_with(b"<?xml") {
             return None;
         }
-        let declared = super::super::declare_palette_namespace_beside_style(bytes.clone());
+        let declared = ibcmd_1c_text::declare_palette_namespace_beside_style(bytes.clone());
         (declared != bytes).then_some(declared)
     });
     let encoded = match declared {
-        Some(bytes) => crate::module_blob::encode_base64(&bytes),
+        Some(bytes) => ibcmd_1c_text::encode_base64(&bytes),
         None => compact,
     };
     let mut out = String::with_capacity(8 + encoded.len() + encoded.len() / 64 * 3);
@@ -2194,9 +2194,9 @@ mod tests {
                 for revision in 0..=40 {
                     for len in 0..=80 {
                         let revision = revision.to_string();
-                        if let Some((v8_3, appended)) =
-                            super::super::layout_8_5_1::bag_revision(owner, &kind, &revision, len)
-                        {
+                        if let Some((v8_3, appended)) = ibcmd_form_body::layout_8_5_1::bag_revision(
+                            owner, &kind, &revision, len,
+                        ) {
                             let (v8_5_1, defaults) = up_bag(owner, &kind, v8_3, len - appended)
                                 .unwrap_or_else(|| {
                                     panic!("no inverse for {owner}/{kind}/{revision}/{len}")
@@ -2220,7 +2220,7 @@ mod tests {
         );
         let body = format!(
             "{{\"a\nb\",\"c\r\nd\",{{#base64:{}}}}}",
-            crate::module_blob::encode_base64(settings.as_bytes())
+            ibcmd_1c_text::encode_base64(settings.as_bytes())
         );
         let mut node = parse_raw(&body).unwrap();
         up_convert_leaves(&mut node);
@@ -2231,7 +2231,7 @@ mod tests {
             panic!()
         };
         let text = leaf(&document[0]).unwrap();
-        let encoded = crate::module_blob::encode_base64(with_pal.as_bytes());
+        let encoded = ibcmd_1c_text::encode_base64(with_pal.as_bytes());
         let lines: Vec<&str> = text["#base64:".len()..].split("\r\r\n").collect();
         assert_eq!(lines.concat(), encoded);
         assert!(lines[..lines.len() - 1].iter().all(|line| line.len() == 64));

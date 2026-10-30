@@ -12,7 +12,9 @@ use std::collections::BTreeSet;
 
 use anyhow::{Result, anyhow, bail};
 
-use super::layout_8_5_1::{FormFactsV8_5_1, FormItemFactsV8_5_1, Node, group_event_name_8_5_1};
+use ibcmd_form_body::layout_8_5_1::{
+    FormFactsV8_5_1, FormItemFactsV8_5_1, Node, group_event_name_8_5_1,
+};
 
 /// The base form of an adopted form: a document of its own, written and passed
 /// by its own facts before the form's writer encloses it
@@ -458,7 +460,7 @@ fn fact_object_xml(
             if text == "{3,4,{0}}" {
                 return Ok(None);
             }
-            let value = super::super::form_body::parse_form_control_color(&text, object_refs)
+            let value = ibcmd_form_body::form_body::parse_form_control_color(&text, object_refs)
                 .ok_or_else(|| anyhow!("<{element}>: unreadable 8.5 colour {text}"))?;
             Some(format!("<{element}>{value}</{element}>\r\n"))
         }
@@ -467,23 +469,25 @@ fn fact_object_xml(
                 return Ok(None);
             }
             if let Some((reference, load_transparent)) =
-                super::super::form_body::parse_form_child_item_picture_value(&text, object_refs)
+                ibcmd_form_body::form_body::parse_form_child_item_picture_value(&text, object_refs)
             {
-                return Ok(Some(super::super::form_body::format_form_picture_element(
-                    element,
-                    Some(&reference),
-                    None,
-                    load_transparent,
-                    None,
-                    0,
-                )));
+                return Ok(Some(
+                    ibcmd_form_body::form_body::format_form_picture_element(
+                        element,
+                        Some(&reference),
+                        None,
+                        load_transparent,
+                        None,
+                        0,
+                    ),
+                ));
             }
             // An inline picture: the element names the file the platform
             // writes beside the form (`Items/<item>/<element>.<ext>`).
             let (file_name, load_transparent, transparent_pixel, content) =
-                super::super::form_body::parse_form_embedded_picture_payload(&text, element)
+                ibcmd_form_body::form_body::parse_form_embedded_picture_payload(&text, element)
                     .ok_or_else(|| anyhow!("<{element}>: unreadable 8.5 picture {text}"))?;
-            let xml = super::super::form_body::format_form_picture_element(
+            let xml = ibcmd_form_body::form_body::format_form_picture_element(
                 element,
                 None,
                 Some(&file_name),
@@ -498,11 +502,11 @@ fn fact_object_xml(
             if text == "{1,0}" {
                 return Ok(None);
             }
-            let values = super::super::form_body::parse_form_localized_strings(&text);
+            let values = ibcmd_form_body::form_body::parse_form_localized_strings(&text);
             if values.is_empty() {
                 bail!("<{element}>: unreadable 8.5 localized string {text}");
             }
-            Some(super::super::form_body::format_form_localized_section(
+            Some(ibcmd_form_body::form_body::format_form_localized_section(
                 element, &values, 0,
             ))
         }
@@ -1053,7 +1057,7 @@ fn apply_group_events(
     edits: &mut XmlEdits<'_>,
     group: usize,
     node: &Node,
-    adoption: Option<&super::super::form_extension::FormAdoption>,
+    adoption: Option<&ibcmd_form_body::FormAdoption>,
 ) -> Result<()> {
     let Node::List(members) = node else {
         bail!("<UsualGroup> events: the 8.5 member is not a tuple");
@@ -1066,7 +1070,7 @@ fn apply_group_events(
         return Ok(());
     }
     let record = node.to_text();
-    let bindings = super::super::form_extension::parse_form_event_block(&record)
+    let bindings = ibcmd_form_body::parse_form_event_block(&record)
         .ok_or_else(|| anyhow!("<UsualGroup> events: unexpected 8.5 record {record}"))?;
     let mut events = Vec::new();
     for binding in bindings {
@@ -1085,13 +1089,13 @@ fn apply_group_events(
             ),
             None => None,
         };
-        events.push(super::super::FormBodyEvent {
+        events.push(ibcmd_form_body::form_body::FormBodyEvent {
             name: name.to_owned(),
             handler: binding.handler,
             call_type,
         });
     }
-    let body = super::super::format_form_events_xml(&events, 0);
+    let body = ibcmd_form_body::form_body::format_form_events_xml(&events, 0);
     for child in edits.direct_children(group, "Events") {
         edits.remove(child);
     }
@@ -1141,14 +1145,14 @@ fn apply_choice_value_pictures(
         }
         let text = picture.to_text();
         let (reference, load_transparent) =
-            super::super::form_body::parse_form_child_item_picture_value(&text, object_refs)
+            ibcmd_form_body::form_body::parse_form_child_item_picture_value(&text, object_refs)
                 .ok_or_else(|| anyhow!("unreadable 8.5 choice-list value picture {text}"))?;
         let anchor = edits
             .direct_children(value, "Value")
             .last()
             .copied()
             .ok_or_else(|| anyhow!("a written choice-list value has no <Value>"))?;
-        let body = super::super::form_body::format_form_picture_element(
+        let body = ibcmd_form_body::form_body::format_form_picture_element(
             "Picture",
             Some(&reference),
             None,
@@ -1184,8 +1188,8 @@ fn apply_rules(
     item: Option<&FormItemFactsV8_5_1>,
     command: Option<&[Node]>,
     object_refs: &std::collections::BTreeMap<String, String>,
-    adoption: Option<&super::super::form_extension::FormAdoption>,
-    assets: &mut Vec<super::super::FormItemAsset>,
+    adoption: Option<&ibcmd_form_body::FormAdoption>,
+    assets: &mut Vec<ibcmd_form_body::FormItemAsset>,
 ) -> Result<()> {
     let tag = edits.elements[element].tag.clone();
     for rule in FACT_OBJECT_RULES {
@@ -1201,7 +1205,7 @@ fn apply_rules(
         if let Some((file_name, content)) = payload {
             let item_name = element_name(edits, element)
                 .ok_or_else(|| anyhow!("<{tag}> with an inline picture has no name"))?;
-            assets.push(super::super::FormItemAsset {
+            assets.push(ibcmd_form_body::FormItemAsset {
                 item_name,
                 file_name,
                 content,
@@ -1564,8 +1568,8 @@ pub(in crate::mssql_dump) fn apply_form_facts_8_5_1(
     xml: String,
     facts: &FormFactsV8_5_1,
     object_refs: &std::collections::BTreeMap<String, String>,
-    adoption: Option<&super::super::form_extension::FormAdoption>,
-) -> Result<(String, Vec<super::super::FormItemAsset>)> {
+    adoption: Option<&ibcmd_form_body::FormAdoption>,
+) -> Result<(String, Vec<ibcmd_form_body::FormItemAsset>)> {
     let mut assets = Vec::new();
     let mut edits = XmlEdits::new(&xml)?;
     let root = edits.root()?;
@@ -1783,7 +1787,7 @@ mod tests {
         let block = format!("{{1,{event_id},\"ClickHandler\",1,0,{event_id},0,1}}");
         let adoption = adoption_without_base_form(&block).unwrap();
         let mut tail = vec![Node::Leaf("0".to_owned()); 13];
-        tail[4] = super::super::layout_8_5_1::parse_node(&block).unwrap();
+        tail[4] = ibcmd_form_body::layout_8_5_1::parse_node(&block).unwrap();
         let mut facts = FormFactsV8_5_1::default();
         facts.items.insert(
             "1".to_owned(),
@@ -1811,7 +1815,7 @@ mod tests {
             format!("{{1,{id},\"ClickHandler\"UNMODELED,1,0,{id},0,1}}"),
             format!("{{1,{id},\"\",1,0,{id},0,2,\"AfterHandler\"UNMODELED,1}}"),
         ] {
-            let node = super::super::layout_8_5_1::parse_node(&block).unwrap();
+            let node = ibcmd_form_body::layout_8_5_1::parse_node(&block).unwrap();
             let xml = form("\t\t<UsualGroup name=\"Clickable\" id=\"1\">\r\n\t\t</UsualGroup>\r\n");
             let mut edits = XmlEdits::new(&xml).unwrap();
             let group = edits

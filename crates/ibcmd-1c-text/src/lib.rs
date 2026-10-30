@@ -3,8 +3,9 @@
 //! fields, and the XML escaping the writers apply to what they read.
 //!
 //! Everything here moved unchanged from the root crate's `mssql_dump`
-//! (`mod.rs`; `extract_base64_payload`, `decode_base64_mime` and
-//! `format_1c_date_time` from `source_assets.rs`; the UUID scan
+//! (`mod.rs`; `extract_base64_payload`, `decode_base64_mime`,
+//! `format_1c_date_time` and the 2.21 palette namespace rule
+//! `declare_palette_namespace_beside_style` from `source_assets.rs`; the UUID scan
 //! `uuid_like_values` from `refs.rs`), which still reaches every item by its
 //! old name through imports. The writers `encode_base64`,
 //! `platform_base64_token`, `format_1c_string` and `crlf_line_breaks` are the
@@ -26,6 +27,7 @@
 
 mod braced;
 mod fields;
+mod namespaces;
 mod paths;
 mod strings;
 mod xml;
@@ -42,6 +44,7 @@ pub use fields::{
     parse_non_zero_uuid, parse_uuid_field, platform_base64_token, uuid_like_values,
     uuid_like_values_in_text_order,
 };
+pub use namespaces::declare_palette_namespace_beside_style;
 pub use paths::sanitize_source_path_segment;
 pub use strings::{
     crlf_line_breaks, format_1c_string, parse_1c_quoted_string, parse_1c_quoted_string_with_len,
