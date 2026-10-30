@@ -3,6 +3,11 @@
 
 The model has 25,692 Rust lines in 36 files. Direct root paths, including tests and excluding whole-module self paths: **7 modules / 56 references**. This preparatory change leaves **4 modules / 18 references**; production retains `parallel` and `platform`, and the tests retain `test_scratch` and the exporter collection consistency check.
 
+Since then the platform seam is closed: the portable platform registry is
+`crates/ibcmd-platform`, and `DescriptorContext::platform` /
+`ExportContext::platform` return its `Platform` (see "Platform contract"
+below). The tables keep the inventory as it was prepared.
+
 ## Root dependency inventory
 
 | Root owner | Direct references | Preparation / remaining seam |
@@ -86,3 +91,17 @@ The next step is a coordinated portable platform contract, a single portable poo
 ## Guard transition
 
 The vocabulary src directory was already guarded. Its new file takes all eleven UUID records from the existing mssql_dump/mod.rs record. All eleven fingerprints and occurrence counts are unchanged, despite widening the constant for the crate boundary. The other 169 existing file records, including the two stale records, are unchanged. No guard scope change, new dependency or baseline refresh is needed.
+
+## Platform contract
+
+The model's seven `crate::platform` sites now name `ibcmd_platform`:
+`DescriptorContext::platform` and `ExportContext::platform` return
+`ibcmd_platform::Platform` (re-exported as `crate::platform::Platform`)
+from `ibcmd_platform::of_xml_dialect`; `common.rs` compares with
+`ibcmd_platform::FormLayout::V8_5_1`; `root.rs` reads
+`ibcmd_platform::feature_uuid(FEATURE_PALETTE_COLORS)`. The crate owns the
+registry of builds and releases the bundled profiles declare; the root's
+`PlatformSpec` wraps each `Platform` with the command line's XML selector
+and the MSSQL capabilities, and `PlatformSpec::from(context.platform())`
+gives a caller the root's spec. Production code in the model now reaches the
+root only through `crate::parallel`, a facade over `ibcmd-parallel`.
