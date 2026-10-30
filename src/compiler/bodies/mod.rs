@@ -36,6 +36,9 @@ pub mod rights;
 pub use ibcmd_metadata_blob::role_rights_writer;
 pub mod support;
 pub mod template;
+// `TemplateKind` and its codec error, without the DCS and MXL codecs that
+// `template` compiles bodies through.
+pub(crate) mod template_kind;
 
 const SUPPORTED_STORAGE_PROFILE: &str = "storage:mssql-config-configsave";
 
