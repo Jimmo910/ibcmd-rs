@@ -31,6 +31,7 @@ members = [
     "crates/ibcmd-compiler",
     "crates/ibcmd-compiler-readiness",
     "crates/ibcmd-parallel",
+    "crates/ibcmd-platform",
     "crates/ibcmd-sql",
     "crates/ibcmd-metadata-blob",
     "crates/ibcmd-form-writer",
@@ -79,6 +80,7 @@ ibcmd-compiler-families = { path = "crates/ibcmd-compiler-families" }
 ibcmd-compiler = { path = "crates/ibcmd-compiler" }
 ibcmd-compiler-readiness = { path = "crates/ibcmd-compiler-readiness" }
 ibcmd-parallel = { path = "crates/ibcmd-parallel" }
+ibcmd-platform = { path = "crates/ibcmd-platform" }
 ibcmd-metadata-blob = { path = "crates/ibcmd-metadata-blob" }
 ibcmd-form-writer = { path = "crates/ibcmd-form-writer" }
 ibcmd-metadata-source = { path = "crates/ibcmd-metadata-source" }

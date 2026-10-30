@@ -29,6 +29,7 @@ $GuardedCrateDirectories = @(
     'crates/ibcmd-compiler/src',
     'crates/ibcmd-compiler-readiness/src',
     'crates/ibcmd-parallel/src',
+    'crates/ibcmd-platform/src',
     'crates/ibcmd-sql/src',
     'crates/ibcmd-restructure-engine/src',
     'crates/ibcmd-restructure/src/descriptor',

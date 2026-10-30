@@ -16,11 +16,15 @@
 //!
 //! The builds and what they declare live in `profiles/platform/*.json`: the
 //! bundled profiles `profile_registry` compiles in, whose MSSQL write
-//! capabilities `MssqlNativePlatformProfile` checks. This module reads the
-//! same declarations -- the constants `platform.xml_format`,
+//! capabilities `MssqlNativePlatformProfile` checks. The `ibcmd-platform`
+//! crate reads the same declarations -- the constants `platform.xml_format`,
 //! `platform.form_layout` and `platform.feature.<name>` -- instead of
-//! repeating them in code. A build whose profile declares no XML format (the
-//! 8.3.24.1819 seed) is known but not supported.
+//! repeating them in code, and owns the registry of builds and releases; its
+//! [`Platform`] is what code outside the root (the metadata model) reads.
+//! This module wraps each one in a [`PlatformSpec`] with what only the root
+//! knows: the command line's XML selector and the MSSQL capabilities. A build
+//! whose profile declares no XML format (the 8.3.24.1819 seed) is known but
+//! not supported.
 //!
 //! A platform is named by its full version: an exact build (`8.3.27.2214`)
 //! or a release (`8.3.27`), which stands for every known build of it and
@@ -45,98 +49,45 @@
 //!   between it and the 8.5.1 layout, a `FormLayout::V8_5_4`, and the entry
 //!   declares `"platform.form_layout": "8.5.4"`;
 //! - its XML format changed (say to 2.22): `xml_2_22_*` modules, an
-//!   `InfobaseConfigSourceVersion::V2_22`, and the entry declares
+//!   `InfobaseConfigSourceVersion::V2_22` and an `ibcmd_platform::XmlFormat::V2_22`,
+//!   and the entry declares
 //!   `"platform.xml_format": "2.22"`.
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::OnceLock;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use clap::ValueEnum;
-use ibcmd_core::profile::{CapabilityId, CapabilityState, EffectiveProfile};
+use ibcmd_core::profile::{CapabilityId, CapabilityState};
+use ibcmd_platform::XmlFormat;
 use serde::{Serialize, Serializer};
 
 use crate::legacy_version::InfobaseConfigSourceVersion;
 use crate::mssql_platform_profile::{CAPABILITY_MAIN_WRITE, MssqlNativePlatformProfile};
 
-/// Profile constant: the XML format a build reads and writes (`2.20`, `2.21`).
-pub const CONSTANT_XML_FORMAT: &str = "platform.xml_format";
-/// Profile constant: the stored form layout of a build (`8.3`, `8.5.1`).
-pub const CONSTANT_FORM_LAYOUT: &str = "platform.form_layout";
-/// Profile constant prefix: `platform.feature.<name>` = the feature's uuid.
-pub const CONSTANT_FEATURE_PREFIX: &str = "platform.feature.";
-/// Profile constant: `main` when the build writes `ButtonImportance` `Main`
-/// on a default button whose record holds the code of no importance of its
-/// own (8.5.1.1529; 8.5.1.1150 writes nothing there).
-pub const CONSTANT_DEFAULT_BUTTON_IMPORTANCE: &str = "platform.form.default_button_importance";
-/// The palette-colours feature (since 8.5.1): every `PaletteColor` object a
-/// configuration holds reports it, and its `version` row lists it.
-pub const FEATURE_PALETTE_COLORS: &str = "palette-colors";
+// The portable registry -- the builds, the releases standing for them and
+// what each declares -- is the `ibcmd-platform` crate's; its public paths are
+// these.
+pub use ibcmd_platform::{
+    CONSTANT_DEFAULT_BUTTON_IMPORTANCE, CONSTANT_FEATURE_PREFIX, CONSTANT_FORM_LAYOUT,
+    CONSTANT_XML_FORMAT, FEATURE_PALETTE_COLORS, FormLayout, Platform, PlatformFeature,
+    feature_uuid,
+};
 
 /// Help text of the `--platform` flag.
 pub const PLATFORM_FLAG_HELP: &str = "Platform the XML is for: a release (8.3.27, 8.5.1) or an exact build (8.3.27.2214, 8.5.1.1150); 8.3.x reads and writes XML 2.20, 8.5.x 2.21";
 
-// The stored layout of managed-form bodies is the `ibcmd-form-body` crate's,
-// with the 8.5 layout's conversion; its public path is this one.
-pub use ibcmd_form_body::FormLayout;
-
-/// The layout a profile's `platform.form_layout` constant names.
-fn parse_form_layout(text: &str) -> Option<FormLayout> {
-    match text {
-        "8.3" => Some(FormLayout::V8_3),
-        "8.5.1" => Some(FormLayout::V8_5_1),
-        _ => None,
-    }
-}
-
-/// A feature a configuration saved by the platform can list in its
-/// `version` row, which an older platform that does not know it refuses.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-pub struct PlatformFeature {
-    name: String,
-    uuid: String,
-}
-
-impl PlatformFeature {
-    /// The feature's name in the profiles (`palette-colors`).
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// The fixed uuid the platform's feature registry gives it.
-    pub fn uuid(&self) -> &str {
-        &self.uuid
-    }
-}
-
-/// One known build, or one release standing for its builds.
-#[derive(Debug, PartialEq, Eq)]
+/// One portable platform with what the root adds to it.
 struct Entry {
-    /// `8.3.27.2214` or `8.3.27`.
-    name: String,
-    release: [u32; 3],
-    /// The fourth component of an exact build.
-    build: Option<u32>,
+    platform: Platform,
     xml: InfobaseConfigSourceVersion,
-    form_layout: FormLayout,
-    features: Vec<PlatformFeature>,
     native_profile: Option<MssqlNativePlatformProfile>,
     live_activation: bool,
-    /// See [`CONSTANT_DEFAULT_BUTTON_IMPORTANCE`]. A release never has it: it
-    /// stands for the builds that agree on the XML format, the form layout and
-    /// the features, and keeps the behavior of the oldest of them.
-    default_button_importance: bool,
 }
 
-#[derive(Debug)]
+/// The portable registry's entries, in its order.
 struct Registry {
-    /// Exact builds, then releases, each in version order.
     entries: Vec<Entry>,
-    /// Builds a profile names without declaring an XML format.
-    unsupported: Vec<String>,
-    /// Releases whose builds disagree, so only a build names them.
-    ambiguous_releases: Vec<String>,
 }
 
 static REGISTRY: OnceLock<std::result::Result<Registry, String>> = OnceLock::new();
@@ -145,153 +96,67 @@ fn registry() -> Result<&'static Registry> {
     REGISTRY
         .get_or_init(|| build_registry().map_err(|error| format!("{error:#}")))
         .as_ref()
-        .map_err(|error| anyhow!("the bundled platform registry is invalid: {error}"))
+        .map_err(|error| anyhow!("{error}"))
 }
 
+/// The root entries. An error already says that the bundled platform
+/// registry is invalid.
 fn build_registry() -> Result<Registry> {
-    let profiles = crate::profile_registry::load_bundled_profile_registry()?;
-    let mut builds = Vec::new();
-    let mut unsupported = Vec::new();
-    for profile in profiles.profiles().values() {
-        let Some(build) = &profile.platform_build else {
-            continue;
-        };
-        let name = build.value.to_string();
-        let components = build.value.as_version().components();
-        let &[major, minor, patch, number] = components else {
-            bail!(
-                "platform profile `{}` names `{name}`, not a four-part build",
-                profile.id
-            );
-        };
-        match build_entry(profile, name.clone(), [major, minor, patch], number)? {
-            Some(entry) => builds.push(entry),
-            None => unsupported.push(name),
-        }
-    }
-    builds.sort_by_key(|entry| (entry.release, entry.build));
-
-    let mut by_release = BTreeMap::<[u32; 3], Vec<&Entry>>::new();
-    for entry in &builds {
-        by_release.entry(entry.release).or_default().push(entry);
-    }
-    let mut releases = Vec::new();
-    let mut ambiguous_releases = Vec::new();
-    for (release, members) in by_release {
-        let first = members[0];
-        let agree = members.iter().all(|entry| {
-            entry.xml == first.xml
-                && entry.form_layout == first.form_layout
-                && entry.features == first.features
-        });
-        let name = release_name(release);
-        if !agree {
-            ambiguous_releases.push(name);
-            continue;
-        }
-        releases.push(Entry {
-            name,
-            release,
-            build: None,
-            xml: first.xml,
-            form_layout: first.form_layout,
-            features: first.features.clone(),
-            native_profile: None,
-            live_activation: false,
-            default_button_importance: false,
-        });
-    }
-    let mut entries = builds;
-    entries.extend(releases);
-    Ok(Registry {
-        entries,
-        unsupported,
-        ambiguous_releases,
-    })
+    let platforms = ibcmd_platform::known()?;
+    let main_write = CapabilityId::parse(CAPABILITY_MAIN_WRITE).map_err(|error| {
+        anyhow!(
+            "the bundled platform registry is invalid: invalid capability id `{CAPABILITY_MAIN_WRITE}`: {error}"
+        )
+    })?;
+    let entries = platforms
+        .into_iter()
+        .map(|platform| {
+            let profile = platform.profile();
+            let native_profile = profile.and_then(|profile| {
+                MssqlNativePlatformProfile::value_variants()
+                    .iter()
+                    .copied()
+                    .find(|native| native.id() == profile.id.as_str())
+            });
+            let live_activation = profile.is_some_and(|profile| {
+                profile
+                    .capabilities
+                    .get(&main_write)
+                    .is_some_and(|state| state.value == CapabilityState::Supported)
+            });
+            Entry {
+                platform,
+                xml: xml_version(platform.xml_format()),
+                native_profile,
+                live_activation,
+            }
+        })
+        .collect();
+    Ok(Registry { entries })
 }
 
-/// A build entry from its profile, or `None` when the profile declares no
-/// XML format (a build ibcmd-rs does not read or write).
-fn build_entry(
-    profile: &EffectiveProfile,
-    name: String,
-    release: [u32; 3],
-    build: u32,
-) -> Result<Option<Entry>> {
-    let constant = |key: &str| profile.constants.get(key).map(|value| value.value.as_str());
-    let Some(xml) = constant(CONSTANT_XML_FORMAT) else {
-        return Ok(None);
-    };
-    let xml = match xml {
-        "2.20" => InfobaseConfigSourceVersion::V2_20,
-        "2.21" => InfobaseConfigSourceVersion::V2_21,
-        other => bail!(
-            "platform profile `{}` declares {CONSTANT_XML_FORMAT} `{other}`, which ibcmd-rs does not read or write",
-            profile.id
-        ),
-    };
-    let layout = constant(CONSTANT_FORM_LAYOUT).ok_or_else(|| {
-        anyhow!(
-            "platform profile `{}` declares its XML format but no {CONSTANT_FORM_LAYOUT}",
-            profile.id
-        )
-    })?;
-    let form_layout = parse_form_layout(layout).ok_or_else(|| {
-        anyhow!(
-            "platform profile `{}` declares an unknown {CONSTANT_FORM_LAYOUT} `{layout}`",
-            profile.id
-        )
-    })?;
-    let mut features = Vec::new();
-    for (key, value) in &profile.constants {
-        let Some(feature) = key.strip_prefix(CONSTANT_FEATURE_PREFIX) else {
-            continue;
-        };
-        let uuid = uuid::Uuid::parse_str(&value.value).with_context(|| {
-            format!(
-                "platform profile `{}` declares feature `{feature}` with a malformed uuid",
-                profile.id
-            )
-        })?;
-        features.push(PlatformFeature {
-            name: feature.to_string(),
-            uuid: uuid.hyphenated().to_string(),
-        });
+fn xml_version(xml: XmlFormat) -> InfobaseConfigSourceVersion {
+    match xml {
+        XmlFormat::V2_20 => InfobaseConfigSourceVersion::V2_20,
+        XmlFormat::V2_21 => InfobaseConfigSourceVersion::V2_21,
     }
-    features.sort();
-    let native_profile = MssqlNativePlatformProfile::value_variants()
+}
+
+fn xml_format(xml: InfobaseConfigSourceVersion) -> XmlFormat {
+    match xml {
+        InfobaseConfigSourceVersion::V2_20 => XmlFormat::V2_20,
+        InfobaseConfigSourceVersion::V2_21 => XmlFormat::V2_21,
+    }
+}
+
+/// The spec of a portable platform.
+fn spec(platform: Platform) -> Result<PlatformSpec> {
+    registry()?
+        .entries
         .iter()
-        .copied()
-        .find(|native| native.id() == profile.id.as_str());
-    let main_write = CapabilityId::parse(CAPABILITY_MAIN_WRITE)
-        .map_err(|error| anyhow!("invalid capability id `{CAPABILITY_MAIN_WRITE}`: {error}"))?;
-    let live_activation = profile
-        .capabilities
-        .get(&main_write)
-        .is_some_and(|state| state.value == CapabilityState::Supported);
-    let default_button_importance = match constant(CONSTANT_DEFAULT_BUTTON_IMPORTANCE) {
-        None => false,
-        Some("main") => true,
-        Some(other) => bail!(
-            "platform profile `{}` declares an unknown {CONSTANT_DEFAULT_BUTTON_IMPORTANCE} `{other}`",
-            profile.id
-        ),
-    };
-    Ok(Some(Entry {
-        name,
-        release,
-        build: Some(build),
-        xml,
-        form_layout,
-        features,
-        native_profile,
-        live_activation,
-        default_button_importance,
-    }))
-}
-
-fn release_name(release: [u32; 3]) -> String {
-    format!("{}.{}.{}", release[0], release[1], release[2])
+        .find(|entry| entry.platform == platform)
+        .map(|entry| PlatformSpec { entry })
+        .ok_or_else(|| anyhow!("the root platform registry has no entry for {platform}"))
 }
 
 /// A known platform: an exact build or a release.
@@ -314,24 +179,49 @@ impl fmt::Debug for PlatformSpec {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_tuple("PlatformSpec")
-            .field(&self.entry.name)
+            .field(&self.display())
             .finish()
     }
 }
 
 impl fmt::Display for PlatformSpec {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.entry.name)
+        formatter.write_str(self.display())
     }
 }
 
 impl Serialize for PlatformSpec {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.entry.name)
+        serializer.serialize_str(self.display())
+    }
+}
+
+/// The portable platform a spec wraps.
+impl From<PlatformSpec> for Platform {
+    fn from(spec: PlatformSpec) -> Self {
+        spec.platform()
+    }
+}
+
+/// The spec of a portable platform, such as the one a metadata context's
+/// `platform()` returns.
+///
+/// # Panics
+///
+/// Never for a platform the portable registry returned: the root has an
+/// entry for each, and its own additions cannot fail.
+impl From<Platform> for PlatformSpec {
+    fn from(platform: Platform) -> Self {
+        spec(platform).expect("the root platform registry wraps every portable platform")
     }
 }
 
 impl PlatformSpec {
+    /// The portable platform, without what only the root knows.
+    pub fn platform(&self) -> Platform {
+        self.entry.platform
+    }
+
     /// The XML format the platform reads and writes: 2.20 for 8.3.x, 2.21 for
     /// 8.5.x.
     pub fn xml_version(&self) -> InfobaseConfigSourceVersion {
@@ -342,65 +232,57 @@ impl PlatformSpec {
     /// configuration kept in an older compatibility mode may store the
     /// previous one ([`FormLayout::stored`]).
     pub fn form_layout(&self) -> FormLayout {
-        self.entry.form_layout
+        self.entry.platform.form_layout()
     }
 
     /// The features beyond older platforms' that the platform knows, by name.
     pub fn features(&self) -> &'static [PlatformFeature] {
-        &self.entry.features
+        self.entry.platform.features()
     }
 
     /// One feature by name, when the platform knows it.
     pub fn feature(&self, name: &str) -> Option<&'static PlatformFeature> {
-        self.entry
-            .features
-            .iter()
-            .find(|feature| feature.name == name)
+        self.entry.platform.feature(name)
     }
 
     /// The version as given: `8.5.1.1150` or `8.5.1`.
     pub fn display(&self) -> &'static str {
-        &self.entry.name
+        self.entry.platform.display()
     }
 
     /// Whether the spec names one exact build rather than a release.
     pub fn is_exact_build(&self) -> bool {
-        self.entry.build.is_some()
+        self.entry.platform.is_exact_build()
     }
 
     /// `[8, 5, 1]`: the release, also the compatibility mode the platform
     /// runs a configuration in that names none.
     pub fn release(&self) -> [u32; 3] {
-        self.entry.release
+        self.entry.platform.release()
     }
 
     /// The release as a spec (itself for a release).
     pub fn release_spec(&self) -> Result<PlatformSpec> {
-        if self.entry.build.is_none() {
-            return Ok(*self);
-        }
-        parse(&release_name(self.entry.release))
+        spec(self.entry.platform.release_platform()?)
     }
 
     /// The platform's own compatibility level, packed as the rows store it:
     /// `80327`, `80501`.
     pub fn compatibility_packed(&self) -> u32 {
-        let [major, minor, patch] = self.entry.release;
-        major * 10000 + minor * 100 + patch
+        self.entry.platform.compatibility_packed()
     }
 
     /// The platform's own compatibility mode as `Configuration.xml` spells
     /// it: `Version8_3_27`, `Version8_5_1`.
     pub fn compatibility_mode(&self) -> String {
-        let [major, minor, patch] = self.entry.release;
-        format!("Version{major}_{minor}_{patch}")
+        self.entry.platform.compatibility_mode()
     }
 
     /// Whether the build writes `ButtonImportance` `Main` on a default button
     /// whose record holds the code of no importance of its own (see
     /// [`CONSTANT_DEFAULT_BUTTON_IMPORTANCE`]).
     pub fn writes_default_button_importance(&self) -> bool {
-        self.entry.default_button_importance
+        self.entry.platform.writes_default_button_importance()
     }
 
     /// The native MSSQL profile of an exact build, when one is declared.
@@ -468,97 +350,26 @@ pub(crate) fn with_export_default_button_importance<T>(value: bool, body: impl F
 /// Parses a platform version: an exact build (`8.3.27.2214`) or a release
 /// (`8.3.27`) the registry knows.
 pub fn parse(text: &str) -> Result<PlatformSpec> {
-    let text = text.trim();
-    let registry = registry()?;
-    let components = text
-        .split('.')
-        .map(|part| {
-            (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
-                .then(|| part.parse::<u32>().ok())
-                .flatten()
-        })
-        .collect::<Option<Vec<_>>>();
-    let Some(components) = components.filter(|parts| matches!(parts.len(), 3 | 4)) else {
-        bail!(
-            "`{text}` is not a platform version: name a release such as 8.3.27 or an exact build such as 8.3.27.2214 ({})",
-            known_list(registry)
-        );
-    };
-    let canonical = components
-        .iter()
-        .map(u32::to_string)
-        .collect::<Vec<_>>()
-        .join(".");
-    if let Some(entry) = registry
-        .entries
-        .iter()
-        .find(|entry| entry.name == canonical)
-    {
-        return Ok(PlatformSpec { entry });
-    }
-    if registry.unsupported.contains(&canonical) {
-        bail!(
-            "platform {canonical} is not supported: ibcmd-rs reads and writes only the XML of the platforms it knows ({})",
-            known_list(registry)
-        );
-    }
-    if registry.ambiguous_releases.contains(&canonical) {
-        bail!(
-            "the known builds of {canonical} differ in their XML format, form layout or features: name the exact build ({})",
-            known_list(registry)
-        );
-    }
-    let what = if components.len() == 4 {
-        "build"
-    } else {
-        "release"
-    };
-    bail!(
-        "unknown platform {what} {canonical}: ibcmd-rs knows {}",
-        known_list(registry)
-    )
+    spec(ibcmd_platform::parse(text)?)
 }
 
 /// The release that reads and writes an XML format: 2.20 -> 8.3.27, 2.21 ->
 /// 8.5.1. A format no known release writes, or one several releases write,
 /// is refused: only a platform named outright tells them apart.
 pub fn for_xml_version(xml: InfobaseConfigSourceVersion) -> Result<PlatformSpec> {
-    let registry = registry()?;
-    let mut releases = registry
-        .entries
-        .iter()
-        .filter(|entry| entry.build.is_none() && entry.xml == xml);
-    match (releases.next(), releases.next()) {
-        (Some(entry), None) => Ok(PlatformSpec { entry }),
-        (None, _) => bail!(
-            "no known platform writes XML {}: ibcmd-rs knows {}",
-            xml.as_str(),
-            known_list(registry)
-        ),
-        (Some(first), Some(second)) => bail!(
-            "XML {} is written by more than one known release ({}, {}, ...): name the platform",
-            xml.as_str(),
-            first.name,
-            second.name
-        ),
-    }
+    spec(ibcmd_platform::for_xml_format(xml_format(xml))?)
 }
 
 /// The release of an XML dialect as the metadata contexts carry it: `2.20`
 /// is 8.3.27's and any other dialect 8.5.1's, the way their
-/// `is_xml_2_21()` reads it.
+/// `is_xml_2_21()` reads it ([`ibcmd_platform::of_xml_dialect`]).
 ///
 /// # Panics
 ///
 /// Only when the bundled registry lacks the 8.3.27 or the 8.5.1 release,
 /// which its tests rule out.
 pub(crate) fn of_xml_dialect(dialect: &str) -> PlatformSpec {
-    let xml = if dialect == InfobaseConfigSourceVersion::V2_20.as_str() {
-        InfobaseConfigSourceVersion::V2_20
-    } else {
-        InfobaseConfigSourceVersion::V2_21
-    };
-    for_xml_version(xml).expect("the bundled platform registry maps XML 2.20 and 2.21")
+    ibcmd_platform::of_xml_dialect(dialect).into()
 }
 
 /// Every known build and release, builds first, each in version order.
@@ -570,40 +381,9 @@ pub fn known() -> Result<Vec<PlatformSpec>> {
         .collect())
 }
 
-/// The uuid of a named feature, as the builds that know it declare it.
-pub fn feature_uuid(name: &str) -> Result<&'static str> {
-    registry()?
-        .entries
-        .iter()
-        .flat_map(|entry| &entry.features)
-        .find(|feature| feature.name == name)
-        .map(|feature| feature.uuid.as_str())
-        .ok_or_else(|| anyhow!("no known platform declares the feature `{name}`"))
-}
-
 /// For clap: parses `--platform` through the registry.
 pub fn parse_flag(text: &str) -> std::result::Result<PlatformSpec, String> {
     parse(text).map_err(|error| format!("{error:#}"))
-}
-
-fn known_list(registry: &Registry) -> String {
-    let builds = registry
-        .entries
-        .iter()
-        .filter(|entry| entry.build.is_some())
-        .map(|entry| entry.name.as_str())
-        .collect::<Vec<_>>();
-    let releases = registry
-        .entries
-        .iter()
-        .filter(|entry| entry.build.is_none())
-        .map(|entry| entry.name.as_str())
-        .collect::<Vec<_>>();
-    format!(
-        "releases {}; builds {}",
-        releases.join(", "),
-        builds.join(", ")
-    )
 }
 
 #[cfg(test)]
