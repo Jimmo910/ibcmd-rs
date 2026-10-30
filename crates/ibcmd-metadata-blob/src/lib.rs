@@ -27,6 +27,9 @@ pub mod form_planner;
 pub mod role_rights_writer;
 pub mod xml;
 
+#[cfg(test)]
+mod source_seam_tests;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::ops::Range;
