@@ -3536,6 +3536,30 @@ mod tests {
         ) -> &std::sync::Mutex<ibcmd_metadata_source::InterfaceResolutionMemo> {
             unreachable!("a sheet has no command interface")
         }
+        fn resolve_command_reference_uuid(&self, _: &str) -> Result<String> {
+            unreachable!("the sheet names no command")
+        }
+        fn resolve_form_uuid(&self, _: &str) -> Result<String> {
+            unreachable!("the sheet names no form")
+        }
+        fn resolve_metadata_child_uuid(&self, _: &str, _: &str, _: &str) -> Result<String> {
+            unreachable!("the sheet names no child object")
+        }
+        fn resolve_predefined_item_id(&self, _: &str, _: &str) -> Result<String> {
+            unreachable!("the sheet names no predefined item")
+        }
+        fn information_register_master_dimensions(&self, _: &str) -> Result<Vec<String>> {
+            unreachable!("the sheet reads no register")
+        }
+        fn resolve_simple_metadata_uuid(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<String> {
+            unreachable!("the sheet names no object")
+        }
     }
 
     /// The writer reads the configuration only through `MetadataSource`: a

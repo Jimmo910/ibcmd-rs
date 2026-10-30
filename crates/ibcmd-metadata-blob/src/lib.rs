@@ -1794,6 +1794,52 @@ impl MetadataSource for MetadataSourceContext {
         MetadataSourceContext::resolve_command_group_uuid(self, reference)
     }
 
+    fn resolve_command_reference_uuid(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_command_reference_uuid(self, reference)
+    }
+
+    fn resolve_form_uuid(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_form_uuid(self, reference)
+    }
+
+    fn resolve_metadata_child_uuid(
+        &self,
+        owner_reference: &str,
+        child_kind: &str,
+        child_name: &str,
+    ) -> Result<String> {
+        MetadataSourceContext::resolve_metadata_child_uuid(
+            self,
+            owner_reference,
+            child_kind,
+            child_name,
+        )
+    }
+
+    fn resolve_predefined_item_id(&self, owner_reference: &str, item_name: &str) -> Result<String> {
+        MetadataSourceContext::resolve_predefined_item_id(self, owner_reference, item_name)
+    }
+
+    fn information_register_master_dimensions(&self, register: &str) -> Result<Vec<String>> {
+        MetadataSourceContext::information_register_master_dimensions(self, register)
+    }
+
+    fn resolve_simple_metadata_uuid(
+        &self,
+        reference: &str,
+        expected_kind: &str,
+        folder: &str,
+        prefix: &str,
+    ) -> Result<String> {
+        MetadataSourceContext::resolve_simple_metadata_uuid(
+            self,
+            reference,
+            expected_kind,
+            folder,
+            prefix,
+        )
+    }
+
     fn dcs_generated_type_id(&self, name: &str) -> Option<String> {
         MetadataSourceContext::dcs_generated_type_id(self, name)
     }
