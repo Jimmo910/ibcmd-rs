@@ -258,7 +258,7 @@ fn the_context_answers_through_the_trait_as_through_its_own_methods() {
         anatomy(&group("CommandGroup.Нет").unwrap_err()).0[0],
         format!(
             "failed to read CommandGroup XML {}",
-            tree.path("CommandGroups/Нет.xml").display()
+            tree.path("CommandGroups").join("Нет.xml").display()
         )
     );
 
@@ -277,7 +277,7 @@ fn the_context_answers_through_the_trait_as_through_its_own_methods() {
         anatomy(&object("Catalog.Нет").unwrap_err()).0[0],
         format!(
             "failed to read Catalog XML {}",
-            tree.path("Catalogs/Нет.xml").display()
+            tree.path("Catalogs").join("Нет.xml").display()
         )
     );
 
@@ -296,7 +296,7 @@ fn the_context_answers_through_the_trait_as_through_its_own_methods() {
         anatomy(&type_id("cfg:CatalogRef.Нет").unwrap_err()).0[0],
         format!(
             "failed to read metadata XML {}",
-            tree.path("Catalogs/Нет.xml").display()
+            tree.path("Catalogs").join("Нет.xml").display()
         )
     );
 }
