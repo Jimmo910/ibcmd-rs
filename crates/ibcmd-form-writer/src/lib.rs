@@ -32,21 +32,19 @@ pub mod form {
 
 pub mod adopted_form;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use ibcmd_1c_text::{
-    crlf_line_breaks, format_1c_string, is_uuid_like_ascii, sanitize_source_path_segment,
-};
+use ibcmd_1c_text::{format_1c_string, is_uuid_like_ascii, sanitize_source_path_segment};
 use ibcmd_1c_vocab::is_svg_content;
 use ibcmd_core::dcs::{DcsConditionalAppearance, DcsFilter, DcsOrder};
 use ibcmd_form_native::{
-    ConfigurationField, ConfigurationObject, ConfigurationObjects, DataPathAttribute,
-    DataPathColumn, DataPathForm, DataPathItem,
+    ConfigurationObject, ConfigurationObjects, DataPathAttribute, DataPathColumn, DataPathForm,
+    DataPathItem,
 };
 use ibcmd_form_schema::{
     FormCheckBoxFieldSchema, FormColumnGroupSchema, FormConditionalTableSchema,
@@ -74,52 +72,44 @@ use ibcmd_xml::{
     parse_dcs_filter_storage_document, parse_dcs_order_storage_document, parse_form_dcs_children,
 };
 use quick_xml::Reader;
-use quick_xml::escape::{resolve_xml_entity, unescape};
+use quick_xml::escape::resolve_xml_entity;
 use quick_xml::events::{BytesStart, Event};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-// The base64 helpers, by the names the packers call them.
+// The base64 helpers, by the names the writer calls them.
 pub(crate) use ibcmd_1c_text::decode_base64_mime_lenient as decode_base64_mime;
-pub(crate) use ibcmd_1c_text::{encode_base64, platform_base64_token};
-// The module blob codec, the raw deflate helpers and digests, the
-// raw-deflated packer and the versions-blob patcher are the
-// `ibcmd-module-blob` crate's; the packers call them by these names.
-pub use ibcmd_module_blob::{
-    PackedModuleBlob, PackedRawDeflatedBlob, PatchedVersionsBlob, VersionReplacement, hex_sha256,
-    module_blob_text_sha256, pack_module_blob_bytes, pack_module_blob_bytes_base_free,
-    pack_module_blob_container_bytes, pack_raw_deflated_blob_from_bytes, patch_versions_blob_bytes,
-    patch_versions_blob_bytes_allowing_additions, raw_deflated_first_base64_payload_sha256,
-    raw_deflated_plain_sha256, unpack_module_blob_text, versions_base_free_blockers,
-};
+pub(crate) use ibcmd_1c_text::encode_base64;
+// The raw-deflated blob, the raw deflate helpers and digests are the
+// `ibcmd-module-blob` crate's; the writer calls them by these names.
+use ibcmd_module_blob::{PackedRawDeflatedBlob, hex_sha256};
 pub(crate) use ibcmd_module_blob::{deflate_raw, inflate_raw};
-// The source bytes and the two answers the source context memoises are the
-// `ibcmd-metadata-source` crate's; the packers and the root name them here.
-pub use ibcmd_metadata_source::{HelpReference, InterfaceResolutionMemo, SourceBytes};
+// The source bytes are the `ibcmd-metadata-source` crate's.
+use ibcmd_metadata_source::SourceBytes;
 // The seam a writer reads the source tree through; the context implements it.
-pub use ibcmd_metadata_source::MetadataSource;
+use ibcmd_metadata_source::MetadataSource;
 
-// A form body record and its container revision are the `ibcmd-form-body`
-// crate's (the form reader there reads them); this module unpacks them and
-// keeps their public paths.
-pub use ibcmd_form_body::ParsedFormBodyBlob;
+// A form body record is the `ibcmd-form-body` crate's (the form reader there
+// reads it); this module unpacks it.
+use ibcmd_form_body::ParsedFormBodyBlob;
 // The form body record (with the root-`42` upgrade it reads first), the
 // physical layout of its Form Attributes tail and the braced-record text
-// primitives both read moved to that crate too; the packers here patch
+// primitives both read moved to that crate too; the writer here patches
 // the ranges they locate.
 pub(crate) use ibcmd_form_body::parse_form_body_plain;
 pub(crate) use ibcmd_form_body::record_text::scan_braced_fields;
 use ibcmd_form_body::record_text::{
-    decode_base64_payload_field, parse_1c_quoted_string, scan_1c_quoted_string_end,
-    scan_balanced_braces, trim_ascii_ws_range,
+    decode_base64_payload_field, parse_1c_quoted_string, scan_balanced_braces, trim_ascii_ws_range,
 };
 use ibcmd_form_body::{
     FormBodyContainer, parse_form_attributes_conditional_appearance_tail,
     scan_form_attributes_tail_layout,
 };
 
-pub use ibcmd_form_body::FormBodyRevision;
+// A test here reads the form body container's revision by this path.
+#[cfg(test)]
+use ibcmd_form_body::FormBodyRevision;
 
 #[doc(hidden)]
 pub const FORM_DYNAMIC_LIST_TYPE_UUID: &str = "65abad24-838b-4987-8b35-ed9e2bd4d9c8";
@@ -141,7 +131,8 @@ pub struct FormXmlBodyProperties {
     height: Option<String>,
     window_opening_mode: Option<FormXmlWindowOpeningMode>,
     enter_key_behavior: Option<FormXmlEnterKeyBehavior>,
-    save_window_settings: Option<bool>,
+    #[doc(hidden)]
+    pub save_window_settings: Option<bool>,
     auto_title: Option<bool>,
     read_only: Option<bool>,
     auto_url: Option<bool>,
@@ -186,7 +177,8 @@ pub struct FormXmlBodyProperties {
     command_interface_present: bool,
     command_interface_items: Vec<FormXmlCommandInterfaceItem>,
     child_items_present: bool,
-    child_items: Vec<FormXmlChildItem>,
+    #[doc(hidden)]
+    pub child_items: Vec<FormXmlChildItem>,
     /// `<MobileDeviceCommandBarContent>`, `None` when the form does not carry
     /// the element -- which is 13 443 of the 13 603 forms of both corpora.
     mobile_device_command_bar_content: Option<Vec<FormXmlMobileCommandBarItem>>,
@@ -253,9 +245,12 @@ struct FormXmlEvent {
 /// A rights setting -- `<UserVisible>` of an item, `<Use>` of a command:
 /// `<xr:Common>` and one `<xr:Value name="Role.X">` per role, in XML order.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-struct FormXmlRights {
-    common: Option<bool>,
-    values: Vec<(String, Option<bool>)>,
+#[doc(hidden)]
+pub struct FormXmlRights {
+    #[doc(hidden)]
+    pub common: Option<bool>,
+    #[doc(hidden)]
+    pub values: Vec<(String, Option<bool>)>,
 }
 
 /// One `<xr:Link>` of an input field's `<ChoiceParameterLinks>`.
@@ -430,21 +425,26 @@ pub struct FormXmlDynamicListSettings {
     dynamic_data_read: Option<bool>,
     query_text: Option<String>,
     main_table: Option<String>,
-    fields: Vec<FormXmlDynamicListField>,
+    #[doc(hidden)]
+    pub fields: Vec<FormXmlDynamicListField>,
     #[doc(hidden)]
     pub list_settings: FormXmlListSettings,
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-struct FormXmlDynamicListField {
-    data_path: Option<String>,
-    field: Option<String>,
+#[doc(hidden)]
+pub struct FormXmlDynamicListField {
+    #[doc(hidden)]
+    pub data_path: Option<String>,
+    #[doc(hidden)]
+    pub field: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 #[doc(hidden)]
 pub struct FormXmlListSettings {
-    filter: Option<FormXmlListSettingsFilter>,
+    #[doc(hidden)]
+    pub filter: Option<FormXmlListSettingsFilter>,
     #[doc(hidden)]
     pub order: Option<FormXmlListSettingsOrder>,
     conditional_appearance: Option<DcsConditionalAppearance>,
@@ -453,8 +453,10 @@ pub struct FormXmlListSettings {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct FormXmlListSettingsFilter {
-    canonical: DcsFilter,
+#[doc(hidden)]
+pub struct FormXmlListSettingsFilter {
+    #[doc(hidden)]
+    pub canonical: DcsFilter,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -465,28 +467,39 @@ pub struct FormXmlListSettingsOrder {
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-struct FormXmlCommandInterfaceItem {
+#[doc(hidden)]
+pub struct FormXmlCommandInterfaceItem {
     /// `NavigationPanel` or `CommandBar` -- which of the two panels spells it,
     /// and so which member of the frame the item's record lands in: 7 for the
     /// navigation panel, 8 for the command bar.
-    panel: String,
-    command: Option<String>,
+    #[doc(hidden)]
+    pub panel: String,
+    #[doc(hidden)]
+    pub command: Option<String>,
     /// `<Attribute>`, a form-local data path stored at slot 3 exactly as an
     /// item's `<DataPath>` is (rt-fields2.md §8.1, 56 of 56).
-    attribute: Option<String>,
+    #[doc(hidden)]
+    pub attribute: Option<String>,
     /// `<Type>`: `Auto` and `Added`, the only two either corpus spells.
-    item_type: Option<String>,
+    #[doc(hidden)]
+    pub item_type: Option<String>,
     /// The `<Visible><Value name="Role.X">` children, in order: slot 8 is the
     /// tuple `native_rights` builds (rt-fields2.md §8.2, 8 of 8).
-    visible_roles: Vec<(String, Option<bool>)>,
-    command_group: Option<String>,
-    index: Option<usize>,
-    default_visible: Option<bool>,
-    visible_common: Option<bool>,
+    #[doc(hidden)]
+    pub visible_roles: Vec<(String, Option<bool>)>,
+    #[doc(hidden)]
+    pub command_group: Option<String>,
+    #[doc(hidden)]
+    pub index: Option<usize>,
+    #[doc(hidden)]
+    pub default_visible: Option<bool>,
+    #[doc(hidden)]
+    pub visible_common: Option<bool>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct FormXmlChildItem {
+#[doc(hidden)]
+pub struct FormXmlChildItem {
     tag: String,
     depth: usize,
     id: String,
@@ -494,8 +507,10 @@ struct FormXmlChildItem {
     group: Option<FormXmlGroup>,
     behavior: Option<FormXmlGroupBehavior>,
     representation: Option<FormXmlGroupRepresentation>,
-    table_representation: Option<String>,
-    table_command_bar_location: Option<String>,
+    #[doc(hidden)]
+    pub table_representation: Option<String>,
+    #[doc(hidden)]
+    pub table_command_bar_location: Option<String>,
     table_current_row_use: Option<FormTableCurrentRowUse>,
     table_search_on_input: Option<FormTableSearchOnInput>,
     table_initial_list_view: Option<FormTableInitialListView>,
@@ -508,14 +523,19 @@ struct FormXmlChildItem {
     file_drag_mode: Option<String>,
     auto_refresh: Option<bool>,
     auto_refresh_period: Option<String>,
-    period: Option<FormXmlTablePeriod>,
+    #[doc(hidden)]
+    pub period: Option<FormXmlTablePeriod>,
     use_alternation_row_color: Option<bool>,
     default_item: Option<bool>,
     initial_tree_view: Option<String>,
-    choice_folders_and_items: Option<FormXmlUseForFoldersAndItems>,
-    restore_current_row: Option<bool>,
-    row_filter_nil: Option<bool>,
-    row_picture_data_path: Option<String>,
+    #[doc(hidden)]
+    pub choice_folders_and_items: Option<FormXmlUseForFoldersAndItems>,
+    #[doc(hidden)]
+    pub restore_current_row: Option<bool>,
+    #[doc(hidden)]
+    pub row_filter_nil: Option<bool>,
+    #[doc(hidden)]
+    pub row_picture_data_path: Option<String>,
     update_on_data_change: Option<FormXmlUpdateOnDataChange>,
     user_settings_group: Option<String>,
     allow_getting_current_row_url: Option<bool>,
@@ -711,10 +731,14 @@ struct FormXmlItemPicture {
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-struct FormXmlTablePeriod {
-    variant: Option<String>,
-    start_date: Option<String>,
-    end_date: Option<String>,
+#[doc(hidden)]
+pub struct FormXmlTablePeriod {
+    #[doc(hidden)]
+    pub variant: Option<String>,
+    #[doc(hidden)]
+    pub start_date: Option<String>,
+    #[doc(hidden)]
+    pub end_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -795,7 +819,8 @@ enum FormXmlUsePostingMode {
 struct FormXmlExcludedCommand(String);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum FormXmlUseForFoldersAndItems {
+#[doc(hidden)]
+pub enum FormXmlUseForFoldersAndItems {
     Items,
     Folders,
     FoldersAndItems,
@@ -927,7 +952,8 @@ pub struct LocalizedString {
     pub content: String,
 }
 
-fn xml_attrs_map(event: &BytesStart<'_>) -> BTreeMap<String, String> {
+#[doc(hidden)]
+pub fn xml_attrs_map(event: &BytesStart<'_>) -> BTreeMap<String, String> {
     event
         .attributes()
         .with_checks(false)
@@ -940,7 +966,8 @@ fn xml_attrs_map(event: &BytesStart<'_>) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn style_body_key_for_name(name: &str, source: Option<&dyn MetadataSource>) -> Result<String> {
+#[doc(hidden)]
+pub fn style_body_key_for_name(name: &str, source: Option<&dyn MetadataSource>) -> Result<String> {
     if let Some(code) = style_body_standard_code_for_name(name) {
         return Ok(format!("{{{code}}}"));
     }
@@ -954,7 +981,8 @@ fn style_body_key_for_name(name: &str, source: Option<&dyn MetadataSource>) -> R
     Err(anyhow!("unsupported Style Item name: {name}"))
 }
 
-fn style_body_ref_key(reference: &str, source: Option<&dyn MetadataSource>) -> Result<String> {
+#[doc(hidden)]
+pub fn style_body_ref_key(reference: &str, source: Option<&dyn MetadataSource>) -> Result<String> {
     let reference = reference.trim();
     let name = reference
         .strip_prefix("style:")
@@ -965,7 +993,8 @@ fn style_body_ref_key(reference: &str, source: Option<&dyn MetadataSource>) -> R
     style_body_key_for_name(&format!("StyleItem.{name}"), source)
 }
 
-fn format_style_body_color_value(
+#[doc(hidden)]
+pub fn format_style_body_color_value(
     value: &str,
     source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
@@ -1025,7 +1054,8 @@ fn format_style_body_font_value(
     ))
 }
 
-fn parse_optional_xml_bool(value: Option<&String>) -> Result<bool> {
+#[doc(hidden)]
+pub fn parse_optional_xml_bool(value: Option<&String>) -> Result<bool> {
     match value.map(|value| value.as_str()) {
         Some("true") => Ok(true),
         Some("false") => Ok(false),
@@ -1038,7 +1068,8 @@ fn bool_code(value: bool) -> u8 {
     if value { 1 } else { 0 }
 }
 
-fn style_body_standard_code_for_name(name: &str) -> Option<i32> {
+#[doc(hidden)]
+pub fn style_body_standard_code_for_name(name: &str) -> Option<i32> {
     ibcmd_1c_vocab::standard_style_item_code_for_name(name)
 }
 
@@ -1095,7 +1126,8 @@ fn xml_event_is_nil(event: &BytesStart<'_>) -> Result<bool> {
 
 /// [`pack_form_body_blob_from_form_xml_with_source_and_assets`], the source
 /// read through [`MetadataSource`].
-fn pack_form_body_blob_from_form_xml_through(
+#[doc(hidden)]
+pub fn pack_form_body_blob_from_form_xml_through(
     base_blob: &[u8],
     form_xml: &[u8],
     module_text: Option<&[u8]>,
@@ -1304,7 +1336,8 @@ impl NativeDataPaths<'_> {
 /// object by key, asked through [`MetadataSource::configuration_object`]:
 /// what `impl ConfigurationObjects for MetadataSourceContext` answers, for a
 /// source of any type.
-struct SourceConfigurationObjects<'a>(&'a dyn MetadataSource);
+#[doc(hidden)]
+pub struct SourceConfigurationObjects<'a>(#[doc(hidden)] pub &'a dyn MetadataSource);
 
 impl ConfigurationObjects for SourceConfigurationObjects<'_> {
     fn object(&self, key: &str) -> Option<Arc<ConfigurationObject>> {
@@ -1847,7 +1880,8 @@ fn native_form_attribute_use_always(
 /// Where a load onto a database reads its target's always-used constants
 /// from (their own rows); unset for an empty infobase, whose constants are
 /// compiled with the flag clear.
-static ALWAYS_USED_CONSTANTS_SOURCE: std::sync::OnceLock<
+#[doc(hidden)]
+pub static ALWAYS_USED_CONSTANTS_SOURCE: std::sync::OnceLock<
     Box<dyn Fn() -> Vec<String> + Send + Sync>,
 > = std::sync::OnceLock::new();
 
@@ -1855,7 +1889,8 @@ static ALWAYS_USED_CONSTANTS_SOURCE: std::sync::OnceLock<
 /// constants are compiled with the always-used flag clear, so a constants set
 /// is written against clear flags, whatever `IBCMD_RS_ALWAYS_USED_CONSTANTS`
 /// names (that file describes a target database, which an empty one is not).
-static ALWAYS_USED_CONSTANTS_CLEAR: std::sync::atomic::AtomicBool =
+#[doc(hidden)]
+pub static ALWAYS_USED_CONSTANTS_CLEAR: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// The constants the target database flags always-used: none for an empty
@@ -3968,7 +4003,8 @@ fn native_font_of(
 }
 
 /// The zero uuid, which a choice-list literal stores for both of its ids.
-const NATIVE_ZERO_UUID: &str = "00000000-0000-0000-0000-000000000000";
+#[doc(hidden)]
+pub const NATIVE_ZERO_UUID: &str = "00000000-0000-0000-0000-000000000000";
 
 /// Slot 1 of a field's payload: the `<ChoiceList>` it offers.
 fn native_choice_list(
@@ -4303,7 +4339,8 @@ fn native_choice_list_number(text: &str) -> bool {
 /// (1 166 items), `<Kind>.<X>.<Y>` naming a predefined item stores its
 /// `Ext/Predefined.xml` `<Item id>` (20), and `<Kind>.<X>.EmptyRef` stores
 /// the zero uuid (24). Anything else refuses the form.
-fn native_choice_list_reference(
+#[doc(hidden)]
+pub fn native_choice_list_reference(
     reference: &str,
     source: Option<&dyn MetadataSource>,
 ) -> Result<(String, String)> {
@@ -5965,7 +6002,8 @@ fn native_item_extended_tooltip(
 /// order. `Role.X` is the uuid of `Roles/X.xml`; a name that is itself a uuid
 /// -- a role the configuration no longer has -- is written verbatim. 7 239 of
 /// 7 239 `<UserVisible>` blocks and 376 of 376 command `<Use>` blocks.
-fn native_rights(
+#[doc(hidden)]
+pub fn native_rights(
     rights: &FormXmlRights,
     owner: &str,
     source: Option<&dyn MetadataSource>,
@@ -7368,7 +7406,8 @@ pub fn compile_native_form_body_8_3(
 
 /// [`pack_form_body_blob_from_form_xml_base_free`], the source read through
 /// [`MetadataSource`].
-fn pack_form_body_blob_from_form_xml_base_free_through(
+#[doc(hidden)]
+pub fn pack_form_body_blob_from_form_xml_base_free_through(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
     source: Option<&dyn MetadataSource>,
@@ -14119,7 +14158,8 @@ fn native_command_interface_item(
 
 /// Member 2 of the item record: `{<discriminator>,<owner uuid>}`, which is not
 /// the flat single-uuid namespace a button's standard command uses.
-fn native_command_interface_command(
+#[doc(hidden)]
+pub fn native_command_interface_command(
     item: &FormXmlCommandInterfaceItem,
     properties: &FormXmlBodyProperties,
     main_attribute_class: &str,
@@ -14191,7 +14231,8 @@ fn native_command_interface_command(
 /// starts at 3 on an independent register, which has no `OpenByRecorder` at
 /// all, and `Catalog.OpenByValue` is 4 whether the catalog has folders or not.
 /// Measured over 3 946 references of both corpora and both holders.
-fn native_object_standard_command(
+#[doc(hidden)]
+pub fn native_object_standard_command(
     reference: &str,
     source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
@@ -15943,7 +15984,8 @@ fn form_layout_uses_property_bag(layout: &str, fields: &[Range<usize>]) -> bool 
             .is_some_and(|range| layout[range.clone()].trim().parse::<usize>().is_ok())
 }
 
-fn form_layout_child_items_tail_start(layout: &str, fields: &[Range<usize>]) -> Option<usize> {
+#[doc(hidden)]
+pub fn form_layout_child_items_tail_start(layout: &str, fields: &[Range<usize>]) -> Option<usize> {
     if fields
         .first()
         .is_some_and(|range| layout[range.clone()].trim() == "50")
@@ -15993,7 +16035,11 @@ fn form_layout_child_items_tail_start(layout: &str, fields: &[Range<usize>]) -> 
     None
 }
 
-fn form_layout_child_item_pairs_tail_start(layout: &str, fields: &[Range<usize>]) -> Option<usize> {
+#[doc(hidden)]
+pub fn form_layout_child_item_pairs_tail_start(
+    layout: &str,
+    fields: &[Range<usize>],
+) -> Option<usize> {
     if fields
         .first()
         .is_some_and(|range| layout[range.clone()].trim() == "50")
@@ -23128,11 +23174,13 @@ fn parse_1c_nested_localized_strings(
     Ok(output)
 }
 
-fn one_c_values_equal_ignoring_ws(left: &str, right: &str) -> bool {
+#[doc(hidden)]
+pub fn one_c_values_equal_ignoring_ws(left: &str, right: &str) -> bool {
     compact_1c_value(left) == compact_1c_value(right)
 }
 
-fn compact_1c_value(value: &str) -> String {
+#[doc(hidden)]
+pub fn compact_1c_value(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     let mut chars = value.chars().peekable();
     let mut in_string = false;
@@ -23265,7 +23313,8 @@ pub fn parse_form_body_blob(blob: &[u8]) -> Result<ParsedFormBodyBlob> {
     parse_form_body_plain(&plain)
 }
 
-fn parse_xml_bool_text(name: &str, value: &str) -> Result<bool> {
+#[doc(hidden)]
+pub fn parse_xml_bool_text(name: &str, value: &str) -> Result<bool> {
     match value {
         "true" => Ok(true),
         "false" => Ok(false),
@@ -23273,7 +23322,8 @@ fn parse_xml_bool_text(name: &str, value: &str) -> Result<bool> {
     }
 }
 
-fn format_schedule_date(value: &str) -> Result<String> {
+#[doc(hidden)]
+pub fn format_schedule_date(value: &str) -> Result<String> {
     let mut parts = value.split('-');
     let year = parts
         .next()
@@ -23299,7 +23349,8 @@ fn format_schedule_date(value: &str) -> Result<String> {
     Ok(format!("{year}{month}{day}000000"))
 }
 
-fn format_schedule_time(value: &str) -> Result<String> {
+#[doc(hidden)]
+pub fn format_schedule_time(value: &str) -> Result<String> {
     let mut parts = value.split(':');
     let hour = parts
         .next()
@@ -23326,7 +23377,8 @@ fn format_schedule_time(value: &str) -> Result<String> {
 }
 
 #[derive(Debug, Clone)]
-enum MetadataTypePatternElement {
+#[doc(hidden)]
+pub enum MetadataTypePatternElement {
     Boolean,
     String {
         length: Option<u32>,
@@ -23355,7 +23407,8 @@ enum MetadataTypePatternElement {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn parse_metadata_type_pattern_elements(
+#[doc(hidden)]
+pub fn parse_metadata_type_pattern_elements(
     kind: &str,
     types: &[String],
     string_length: Option<String>,
@@ -23603,7 +23656,8 @@ fn builtin_v8_type_id(type_name: &str) -> Option<&'static str> {
     }
 }
 
-fn common_command_group_uuid(reference: &str) -> Option<String> {
+#[doc(hidden)]
+pub fn common_command_group_uuid(reference: &str) -> Option<String> {
     match reference.trim() {
         "NavigationPanelOrdinary" => Some("77ea1b8f-dd79-4717-9dba-5628e7f348cf".to_string()),
         "NavigationPanelSeeAlso" => Some("bc80566a-86a5-4e87-acd4-872239385a2e".to_string()),
@@ -23646,7 +23700,8 @@ fn parse_required_u32(name: &str, value: Option<&str>) -> Result<u32> {
 /// them, so the caller says which it means rather than one of them being
 /// silently applied to the other's artifacts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StringAllowedLengthCoding {
+#[doc(hidden)]
+pub enum StringAllowedLengthCoding {
     /// `Variable` is 1 and `Fixed` is 0, which is what a form body stores --
     /// and a constant or a defined type too: every one of both corpora whose
     /// `<Type>` is a string with a non-zero `<Length>` (БСП 21 constants
@@ -23709,7 +23764,8 @@ fn parse_number_allowed_sign_flag(value: Option<&str>) -> Result<u8> {
     }
 }
 
-fn format_metadata_type_pattern(value_types: &[MetadataTypePatternElement]) -> String {
+#[doc(hidden)]
+pub fn format_metadata_type_pattern(value_types: &[MetadataTypePatternElement]) -> String {
     let mut output = r#"{"Pattern""#.to_string();
     for value_type in value_types {
         output.push(',');
@@ -23719,7 +23775,8 @@ fn format_metadata_type_pattern(value_types: &[MetadataTypePatternElement]) -> S
     output
 }
 
-fn format_metadata_type_pattern_element(value_type: &MetadataTypePatternElement) -> String {
+#[doc(hidden)]
+pub fn format_metadata_type_pattern_element(value_type: &MetadataTypePatternElement) -> String {
     match value_type {
         MetadataTypePatternElement::Boolean => r#"{"B"}"#.to_string(),
         MetadataTypePatternElement::String {
@@ -23752,7 +23809,8 @@ fn format_metadata_type_pattern_element(value_type: &MetadataTypePatternElement)
     }
 }
 
-fn format_1c_synonyms(synonyms: &[LocalizedString]) -> String {
+#[doc(hidden)]
+pub fn format_1c_synonyms(synonyms: &[LocalizedString]) -> String {
     let mut output = format!("{{{}", synonyms.len());
     for synonym in synonyms {
         output.push(',');
@@ -23764,7 +23822,8 @@ fn format_1c_synonyms(synonyms: &[LocalizedString]) -> String {
     output
 }
 
-fn path_ends_with(path: &[String], suffix: &[&str]) -> bool {
+#[doc(hidden)]
+pub fn path_ends_with(path: &[String], suffix: &[&str]) -> bool {
     if path.len() < suffix.len() {
         return false;
     }
@@ -23986,8 +24045,9 @@ pub fn xml_local_name(name: &[u8]) -> String {
     String::from_utf8_lossy(name).to_string()
 }
 
-/// [`compile_native_form_body`], the source read through [`MetadataSource`].
-pub(crate) fn compile_native_form_body_through(
+/// The root's `compile_native_form_body`, the source read through
+/// [`MetadataSource`].
+pub fn compile_native_form_body_through(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
     source: Option<&dyn MetadataSource>,
@@ -23999,7 +24059,7 @@ pub(crate) fn compile_native_form_body_through(
     if form_xml
         .windows(b"BaseForm".len())
         .any(|w| w == b"BaseForm")
-        && let Some(body) = crate::mssql::offline_compile::compile_adopted_form_body_base_free(
+        && let Some(body) = crate::adopted_form::compile_adopted_form_body_base_free(
             form_xml,
             module_text,
             source,
@@ -24012,18 +24072,18 @@ pub(crate) fn compile_native_form_body_through(
     // A 2.21 Form.xml is a platform 8.5 form: it is compiled through its
     // 8.3.27 reading and stored in the 8.5 layout -- or in the 8.3.27 one,
     // for a configuration kept in an 8.3 compatibility mode.
-    if crate::mssql_dump::is_xml_2_21_form(form_xml)
+    if crate::form::load_8_5_1::is_xml_2_21_form(form_xml)
         && XML_2_21_TREE_IN_LAYOUT_8_3.load(std::sync::atomic::Ordering::Relaxed)
     {
-        return crate::mssql_dump::compile_xml_2_21_form_body_in_layout_8_3(
+        return crate::form::load_8_5_1::compile_xml_2_21_form_body_in_layout_8_3(
             form_xml,
             module_text,
             source,
             items_root,
         );
     }
-    if crate::mssql_dump::is_xml_2_21_form(form_xml) {
-        return crate::mssql_dump::compile_native_form_body_8_5_1(
+    if crate::form::load_8_5_1::is_xml_2_21_form(form_xml) {
+        return crate::form::load_8_5_1::compile_native_form_body_8_5_1(
             form_xml,
             module_text,
             source,
@@ -24033,9 +24093,9 @@ pub(crate) fn compile_native_form_body_through(
     compile_native_form_body_8_3(form_xml, module_text, source, items_root)
 }
 
-/// [`pack_native_form_body_blob`], the source read through
+/// The root's `pack_native_form_body_blob`, the source read through
 /// [`MetadataSource`].
-pub(crate) fn pack_native_form_body_blob_through(
+pub fn pack_native_form_body_blob_through(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
     source: Option<&dyn MetadataSource>,
@@ -24054,7 +24114,8 @@ pub(crate) fn pack_native_form_body_blob_through(
     })
 }
 
-fn form_body_base_free_blockers_with_resolver(
+#[doc(hidden)]
+pub fn form_body_base_free_blockers_with_resolver(
     form_xml: &[u8],
     has_module_text: bool,
     form_item_asset_files: usize,
@@ -24067,11 +24128,11 @@ fn form_body_base_free_blockers_with_resolver(
                 .to_string(),
         ]);
     }
-    if crate::mssql_dump::is_xml_2_21_form(form_xml) {
+    if crate::form::load_8_5_1::is_xml_2_21_form(form_xml) {
         let xml = std::str::from_utf8(form_xml).context("2.21 Form.xml is not valid UTF-8")?;
         // Read without a configuration: what needs one (a style colour, a
         // common picture) is a blocker of this model, not an error.
-        let xml20 = match crate::mssql_dump::down_convert_xml_2_21_form(xml, None, None) {
+        let xml20 = match crate::form::load_8_5_1::down_convert_xml_2_21_form(xml, None, None) {
             Ok((xml20, _)) => xml20,
             Err(error) => {
                 return Ok(vec![format!(
@@ -24103,11 +24164,6 @@ fn form_body_base_free_blockers_with_resolver(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        CommonCommandRepresentation, common_command_representation_code, deflate_raw, inflate_raw,
-        parse_common_command_representation,
-    };
-
     /// Every `<ExcludedCommand>` name the compiler accepts must be the name the
     /// export writes for the uuid it packs, and no accepted name may share its
     /// uuid with another accepted name -- otherwise a form would be packed with

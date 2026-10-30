@@ -1055,7 +1055,6 @@ mod form_extension;
 #[cfg(test)]
 mod revision_mix_tests;
 pub(crate) use form::load_8_5_1::{
-    compile_native_form_body_8_5_1, compile_xml_2_21_form_body_in_layout_8_3,
     down_convert_xml_2_21_form, is_xml_2_21_form, up_convert_chart_records_8_5_1,
     up_convert_primitives_8_5_1_in_place,
 };

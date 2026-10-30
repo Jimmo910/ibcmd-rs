@@ -12,6 +12,10 @@
 //!   version (`xml_2_21_writer`, `xml_2_21_order`: what the 2.21 `Form.xml`
 //!   adds to the 2.20 one).
 //!
+//! The `load_*` and `xml_*` modules are the form writer's, in the
+//! `ibcmd-form-writer` crate (`ibcmd_form_writer::form`), and are re-exported
+//! here; what reads the platform registry stays here.
+//!
 //! Which layout and which XML format a build uses is the platform registry's
 //! answer (`src/platform/`), not something to infer from a version number.
 //! When a new build arrives (say 8.5.4):
@@ -24,7 +28,10 @@
 //!   2.21 ones, chosen by the registry's `xml_version()`.
 
 pub(super) use ibcmd_form_body::layout_8_5_1;
-pub(super) use ibcmd_form_writer::form::{load_8_5_1, xml_2_21_order, xml_2_21_writer};
+pub(super) use ibcmd_form_writer::form::{load_8_5_1, xml_2_21_writer};
+// Only a test of the exporter reads the 2.21 child order.
+#[cfg(test)]
+pub(super) use ibcmd_form_writer::form::xml_2_21_order;
 
 /// [`xml_2_21_writer::apply_form_facts_8_5_1`] for the platform the export
 /// runs for: whether the build writes `ButtonImportance` `Main` on a default

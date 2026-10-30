@@ -26,16 +26,16 @@ const BASE_FORM: &str = "BaseForm";
 /// One element of a written `Form.xml`, located by byte offsets. The writer
 /// puts every element on its own line, indented with tabs.
 #[derive(Debug, Clone)]
-pub(in crate::mssql_dump) struct XmlElement {
-    pub(in crate::mssql_dump) tag: String,
-    pub(in crate::mssql_dump) id: Option<String>,
+pub struct XmlElement {
+    pub tag: String,
+    pub id: Option<String>,
     line_start: usize,
-    pub(in crate::mssql_dump) open_start: usize,
+    pub open_start: usize,
     close_line_start: usize,
-    pub(in crate::mssql_dump) line_end: usize,
-    pub(in crate::mssql_dump) self_closing: bool,
-    pub(in crate::mssql_dump) parent: Option<usize>,
-    pub(in crate::mssql_dump) children: Vec<usize>,
+    pub line_end: usize,
+    pub self_closing: bool,
+    pub parent: Option<usize>,
+    pub children: Vec<usize>,
 }
 
 fn line_start_of(xml: &str, offset: usize) -> usize {
@@ -146,9 +146,9 @@ fn scan_elements(xml: &str) -> Result<Vec<XmlElement>> {
 }
 
 /// Pending text edits against one written XML, applied in one pass.
-pub(in crate::mssql_dump) struct XmlEdits<'a> {
-    pub(in crate::mssql_dump) xml: &'a str,
-    pub(in crate::mssql_dump) elements: Vec<XmlElement>,
+pub struct XmlEdits<'a> {
+    pub xml: &'a str,
+    pub elements: Vec<XmlElement>,
     removed: BTreeSet<usize>,
     /// (start, end, replacement, child-order rank, sequence).
     edits: Vec<(usize, usize, String, usize, usize)>,
@@ -162,7 +162,7 @@ pub(in crate::mssql_dump) struct XmlEdits<'a> {
 }
 
 impl<'a> XmlEdits<'a> {
-    pub(in crate::mssql_dump) fn new(xml: &'a str) -> Result<Self> {
+    pub fn new(xml: &'a str) -> Result<Self> {
         Ok(Self {
             xml,
             elements: scan_elements(xml)?,
@@ -173,7 +173,7 @@ impl<'a> XmlEdits<'a> {
         })
     }
 
-    pub(in crate::mssql_dump) fn new_lenient(xml: &'a str) -> Result<Self> {
+    pub fn new_lenient(xml: &'a str) -> Result<Self> {
         let mut edits = Self::new(xml)?;
         edits.lenient = true;
         Ok(edits)
@@ -181,7 +181,7 @@ impl<'a> XmlEdits<'a> {
 
     /// Replaces an element with `body` (CRLF-terminated lines) at its own
     /// place and indentation.
-    pub(in crate::mssql_dump) fn replace(&mut self, element: usize, body: &str) {
+    pub fn replace(&mut self, element: usize, body: &str) {
         if self.removed.insert(element) {
             let start = self.elements[element].line_start;
             let end = self.elements[element].line_end;
@@ -202,7 +202,7 @@ impl<'a> XmlEdits<'a> {
     }
 
     /// The root element, `<Form>`.
-    pub(in crate::mssql_dump) fn root(&self) -> Result<usize> {
+    pub fn root(&self) -> Result<usize> {
         self.elements
             .iter()
             .position(|element| element.parent.is_none() && element.tag == "Form")
@@ -211,7 +211,7 @@ impl<'a> XmlEdits<'a> {
 
     /// The lines between the opening and closing tags of `element`: its
     /// children as written, nothing for an element written on one line.
-    pub(in crate::mssql_dump) fn inner_lines(&self, element: usize) -> &'a str {
+    pub fn inner_lines(&self, element: usize) -> &'a str {
         let element = &self.elements[element];
         if element.self_closing {
             return "";
@@ -226,7 +226,7 @@ impl<'a> XmlEdits<'a> {
     }
 
     /// Whether an ancestor of `element` is a `tag` element.
-    pub(in crate::mssql_dump) fn within(&self, element: usize, tag: &str) -> bool {
+    pub fn within(&self, element: usize, tag: &str) -> bool {
         let mut parent = self.elements[element].parent;
         while let Some(ancestor) = parent {
             if self.elements[ancestor].tag == tag {
@@ -237,7 +237,7 @@ impl<'a> XmlEdits<'a> {
         false
     }
 
-    pub(in crate::mssql_dump) fn direct_children(&self, parent: usize, tag: &str) -> Vec<usize> {
+    pub fn direct_children(&self, parent: usize, tag: &str) -> Vec<usize> {
         self.elements[parent]
             .children
             .iter()
@@ -246,7 +246,7 @@ impl<'a> XmlEdits<'a> {
             .collect()
     }
 
-    pub(in crate::mssql_dump) fn remove(&mut self, element: usize) {
+    pub fn remove(&mut self, element: usize) {
         if self.removed.insert(element) {
             let start = self.elements[element].line_start;
             let end = self.elements[element].line_end;
@@ -261,12 +261,7 @@ impl<'a> XmlEdits<'a> {
 
     /// Adds `body` (CRLF-terminated lines, relative indentation) as a child of
     /// `parent`, at the place the 2.21 child order gives `tag`.
-    pub(in crate::mssql_dump) fn insert_child(
-        &mut self,
-        parent: usize,
-        tag: &str,
-        body: &str,
-    ) -> Result<()> {
+    pub fn insert_child(&mut self, parent: usize, tag: &str, body: &str) -> Result<()> {
         self.inserts.push((parent, tag.to_owned(), body.to_owned()));
         Ok(())
     }
@@ -344,7 +339,7 @@ impl<'a> XmlEdits<'a> {
         Ok(())
     }
 
-    pub(in crate::mssql_dump) fn finish(mut self) -> Result<String> {
+    pub fn finish(mut self) -> Result<String> {
         for (parent, tag, body) in std::mem::take(&mut self.inserts) {
             self.place_child(parent, &tag, &body)?;
         }
@@ -524,7 +519,7 @@ struct FactRule {
     values: &'static [(&'static str, Option<&'static str>)],
 }
 
-pub(in crate::mssql_dump) const FIELD_TAGS: &[&str] = &[
+pub const FIELD_TAGS: &[&str] = &[
     "InputField",
     "LabelField",
     "CheckBoxField",
@@ -543,7 +538,7 @@ pub(in crate::mssql_dump) const FIELD_TAGS: &[&str] = &[
     "PDFDocumentField",
 ];
 
-pub(in crate::mssql_dump) const GROUPING: &[(&str, Option<&str>)] = &[
+pub const GROUPING: &[(&str, Option<&str>)] = &[
     ("0", Some("Vertical")),
     ("1", Some("Horizontal")),
     ("2", Some("HorizontalIfPossible")),
@@ -553,7 +548,7 @@ pub(in crate::mssql_dump) const GROUPING: &[(&str, Option<&str>)] = &[
 ];
 
 /// `0` false, `1` true, `2` unset.
-pub(in crate::mssql_dump) const TRI_STATE: &[(&str, Option<&str>)] =
+pub const TRI_STATE: &[(&str, Option<&str>)] =
     &[("0", Some("false")), ("1", Some("true")), ("2", None)];
 
 const FACT_RULES: &[FactRule] = &[
@@ -1166,7 +1161,7 @@ fn apply_choice_value_pictures(
 }
 
 /// The `name` attribute of a written element's opening tag.
-pub(in crate::mssql_dump) fn element_name(edits: &XmlEdits<'_>, element: usize) -> Option<String> {
+pub fn element_name(edits: &XmlEdits<'_>, element: usize) -> Option<String> {
     let open = edits.elements[element].open_start;
     let tag_end = edits.xml[open..].find('>')? + open;
     let inner = &edits.xml[open..tag_end];
@@ -1306,10 +1301,7 @@ fn apply_rules(
 }
 
 /// The value of a written one-line element `<Tag ...>value</Tag>`.
-pub(in crate::mssql_dump) fn simple_text<'x>(
-    edits: &XmlEdits<'x>,
-    element: usize,
-) -> Option<&'x str> {
+pub fn simple_text<'x>(edits: &XmlEdits<'x>, element: usize) -> Option<&'x str> {
     let element = &edits.elements[element];
     if element.self_closing {
         return Some("");
@@ -1323,7 +1315,7 @@ pub(in crate::mssql_dump) fn simple_text<'x>(
 
 /// The value of the one direct child `tag` of `parent`, when it is a
 /// one-line element.
-pub(in crate::mssql_dump) fn child_text<'x>(
+pub fn child_text<'x>(
     edits: &XmlEdits<'x>,
     parent: usize,
     tag: &str,
@@ -1358,7 +1350,7 @@ fn add_simple(edits: &mut XmlEdits<'_>, parent: usize, tag: &str, value: &str) -
 /// element against the 8.3.27 property it follows
 /// (`F:/ibcmd/lab/v85/tools/upg.py`). A value outside a rule's evidence
 /// refuses the form rather than guessing a spelling.
-pub(in crate::mssql_dump) fn apply_xml_2_21_upgrade_defaults(xml: String) -> Result<String> {
+pub fn apply_xml_2_21_upgrade_defaults(xml: String) -> Result<String> {
     let mut edits = XmlEdits::new(&xml)?;
     for index in 0..edits.elements.len() {
         if edits.within(index, BASE_FORM) {
@@ -1567,7 +1559,7 @@ fn upgrade_field(edits: &mut XmlEdits<'_>, field: usize, tag: &str) -> Result<()
 /// `writes_default_button_importance`: the build writes `ButtonImportance`
 /// `Main` on a default button whose record holds no importance of its own
 /// (`PlatformSpec::writes_default_button_importance`).
-pub(in crate::mssql_dump) fn apply_form_facts_8_5_1(
+pub fn apply_form_facts_8_5_1(
     xml: String,
     facts: &FormFactsV8_5_1,
     object_refs: &std::collections::BTreeMap<String, String>,
@@ -1814,7 +1806,7 @@ mod tests {
 
     #[test]
     fn adopted_form_group_event_keeps_call_type_after_8_5_facts() {
-        use super::super::super::form_extension::adoption_without_base_form;
+        use ibcmd_form_body::adoption_without_base_form;
         let event_id = "a3da1388-983a-4d28-87f2-5096d7e3a4ef";
         let block = format!("{{1,{event_id},\"ClickHandler\",1,0,{event_id},0,1}}");
         let adoption = adoption_without_base_form(&block).unwrap();

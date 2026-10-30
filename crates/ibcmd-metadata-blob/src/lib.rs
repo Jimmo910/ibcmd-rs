@@ -32,15 +32,6 @@ mod source_seam_tests;
 // The native form writer is the `ibcmd-form-writer` crate's: its modules
 // and public items keep their paths here, and the packers call the
 // helpers they share with it by these names.
-pub use ibcmd_form_writer::{dynamic_list, form_chart, form_planner};
-pub use ibcmd_form_writer::{
-    FORM_DYNAMIC_LIST_TYPE_UUID, FormXmlAttribute, FormXmlBodyProperties,
-    FormXmlDynamicListSettings, FormXmlListSettings, FormXmlListSettingsOrder, LocalizedString,
-    NATIVE_EMPTY_SETTINGS, STD_PICTURE_VALUES, XML_2_21_TREE_IN_LAYOUT_8_3,
-    compile_native_form_body_8_3, form_base_free_model_blockers, native_item_color,
-    native_picture_from_parts, parse_form_body_blob, parse_form_xml_body_properties,
-    validate_form_xml_document, xml_local_name,
-};
 use ibcmd_form_writer::{
     ALWAYS_USED_CONSTANTS_CLEAR, ALWAYS_USED_CONSTANTS_SOURCE, MetadataTypePatternElement,
     NATIVE_ZERO_UUID, StringAllowedLengthCoding, common_command_group_uuid, compact_1c_value,
@@ -51,11 +42,22 @@ use ibcmd_form_writer::{
     parse_optional_xml_bool, parse_xml_bool_text, path_ends_with, style_body_key_for_name,
     style_body_ref_key, style_body_standard_code_for_name, xml_attrs_map,
 };
+pub use ibcmd_form_writer::{
+    FORM_DYNAMIC_LIST_TYPE_UUID, FormXmlAttribute, FormXmlBodyProperties,
+    FormXmlDynamicListSettings, FormXmlListSettings, FormXmlListSettingsOrder, LocalizedString,
+    NATIVE_EMPTY_SETTINGS, STD_PICTURE_VALUES, XML_2_21_TREE_IN_LAYOUT_8_3,
+    compile_native_form_body_8_3, form_base_free_model_blockers, native_item_color,
+    native_picture_from_parts, parse_form_body_blob, parse_form_xml_body_properties,
+    validate_form_xml_document, xml_local_name,
+};
+pub use ibcmd_form_writer::{dynamic_list, form_chart, form_planner};
 // What the tests here read of the writer.
 #[cfg(test)]
 use ibcmd_form_writer::{
-    FormXmlTablePeriod, FormXmlUseForFoldersAndItems, form_layout_child_item_pairs_tail_start,
-    form_layout_child_items_tail_start,
+    FormXmlCommandInterfaceItem, FormXmlRights, FormXmlTablePeriod, FormXmlUseForFoldersAndItems,
+    SourceConfigurationObjects, form_layout_child_item_pairs_tail_start,
+    form_layout_child_items_tail_start, native_choice_list_reference,
+    native_command_interface_command, native_object_standard_command, native_rights,
 };
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
@@ -65,22 +67,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
-use ibcmd_1c_text::{
-    crlf_line_breaks, format_1c_string, is_uuid_like_ascii, sanitize_source_path_segment,
-};
-
-use ibcmd_form_native::{
-    ConfigurationField, ConfigurationObject, ConfigurationObjects, DataPathAttribute,
-    DataPathColumn, DataPathForm, DataPathItem,
-};
-
-use ibcmd_schema::{
-    FormTextDocumentContextMenuMultiplicity, bundled_dcs_conditional_appearance_policy,
-    bundled_dcs_filter_policy, bundled_dcs_form_attributes_conditional_appearance_policy,
-    bundled_dcs_order_policy, form_layout_single_child_item_slot_indices,
-    parse_form_text_document_context_menu_multiplicity,
-};
-
+use ibcmd_1c_text::{crlf_line_breaks, format_1c_string, is_uuid_like_ascii};
+use ibcmd_form_native::{ConfigurationField, ConfigurationObject, ConfigurationObjects};
 use quick_xml::Reader;
 use quick_xml::escape::{resolve_xml_entity, unescape};
 use quick_xml::events::{BytesStart, Event};

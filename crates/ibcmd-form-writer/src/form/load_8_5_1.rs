@@ -48,7 +48,7 @@ const UNSET_COLOR: &str = "{3,4,{0}}";
 const DEFAULT_BORDER: &str = "{3,0,{0},0,1,0,48312c09-257f-4b29-b280-284dd89efc1e}";
 
 /// Whether a `Form.xml` is written in dialect 2.21 (platform 8.5).
-pub(crate) fn is_xml_2_21_form(xml: &[u8]) -> bool {
+pub fn is_xml_2_21_form(xml: &[u8]) -> bool {
     let head = &xml[..xml.len().min(8192)];
     let text = String::from_utf8_lossy(head);
     let Some(at) = text.find("<Form") else {
@@ -60,7 +60,7 @@ pub(crate) fn is_xml_2_21_form(xml: &[u8]) -> bool {
 
 /// What a 2.21 `Form.xml` says that only the members 8.5 appends hold.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct FormLoadFactsV8_5_1 {
+pub struct FormLoadFactsV8_5_1 {
     /// Root trailer members by index.
     root_tail: BTreeMap<usize, String>,
     /// The root's scale percentage, when not 100.
@@ -270,7 +270,7 @@ fn picture_member(
             other => bail!("<{holder}> <Picture> holds <{other}>"),
         }
     }
-    ibcmd_metadata_blob::native_picture_from_parts(
+    crate::native_picture_from_parts(
         holder,
         item_name,
         abs,
@@ -284,13 +284,13 @@ fn picture_member(
 }
 
 fn color_member(value: &str, what: &str, source: Option<&dyn MetadataSource>) -> Result<String> {
-    ibcmd_metadata_blob::native_item_color(Some(value), source)
+    crate::native_item_color(Some(value), source)
         .ok_or_else(|| anyhow!("{what}: the writer cannot place the colour {value}"))
 }
 
 /// Takes out of a 2.21 `Form.xml` what only the members 8.5 appends hold and
 /// returns the XML the 8.3.27 writer reads, with those members as facts.
-pub(crate) fn down_convert_xml_2_21_form(
+pub fn down_convert_xml_2_21_form(
     xml: &str,
     source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
@@ -1303,7 +1303,7 @@ fn up_convert_primitives(node: &mut Node) {
 /// `layout_8_5_1::rewrite_primitives_8_5_1_in_place`. For a body 8.5 stores whole
 /// (a spreadsheet template), where no 8.3.27-shaped tuple survives
 /// (`F:/ibcmd/lab/v85/tools/primcensus.py`: none in the 9 935 BSP 8.5 rows).
-pub(crate) fn up_convert_primitives_8_5_1_in_place(text: &str) -> String {
+pub fn up_convert_primitives_8_5_1_in_place(text: &str) -> String {
     const MAX_TUPLE: usize = 512;
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len() + text.len() / 16);
@@ -1372,7 +1372,7 @@ pub(crate) fn up_convert_primitives_8_5_1_in_place(text: &str) -> String {
 /// and points) becomes `{75,...}` with eight automatic colours appended
 /// (8.5.1.1150 BSP, both Gantt chart templates; the exporter reads nothing
 /// else in those eight).
-pub(crate) fn up_convert_chart_records_8_5_1(text: &str) -> Result<String> {
+pub fn up_convert_chart_records_8_5_1(text: &str) -> Result<String> {
     const RECORD_LIMIT: usize = 16 * 1024 * 1024;
     let mut out = String::with_capacity(text.len() + 256);
     let mut cursor = 0;
@@ -1564,10 +1564,7 @@ struct UpConversion<'f> {
 }
 
 /// Bumps one form body written in the 8.3.27 layout to what 8.5 stores.
-pub(crate) fn up_convert_form_body_8_5_1(
-    body: &str,
-    facts: &FormLoadFactsV8_5_1,
-) -> Result<String> {
+pub fn up_convert_form_body_8_5_1(body: &str, facts: &FormLoadFactsV8_5_1) -> Result<String> {
     let text = body.trim_start_matches('\u{feff}');
     let mut container = parse_raw(text)?;
     let mut state = UpConversion {
@@ -2090,7 +2087,7 @@ fn command_identity(members: &[Node]) -> Option<String> {
 
 /// A 2.21 `Form.xml` through the 8.3.27 native writer, stored as 8.5 stores
 /// it.
-pub(crate) fn compile_native_form_body_8_5_1(
+pub fn compile_native_form_body_8_5_1(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
     source: Option<&dyn MetadataSource>,
@@ -2098,12 +2095,8 @@ pub(crate) fn compile_native_form_body_8_5_1(
 ) -> Result<String> {
     let xml = std::str::from_utf8(form_xml).context("2.21 Form.xml is not valid UTF-8")?;
     let (xml20, facts) = down_convert_xml_2_21_form(xml, source, items_root)?;
-    let body = ibcmd_metadata_blob::compile_native_form_body_8_3(
-        xml20.as_bytes(),
-        module_text,
-        source,
-        items_root,
-    )?;
+    let body =
+        crate::compile_native_form_body_8_3(xml20.as_bytes(), module_text, source, items_root)?;
     up_convert_form_body_8_5_1(&body, &facts)
 }
 
@@ -2111,7 +2104,7 @@ pub(crate) fn compile_native_form_body_8_5_1(
 /// the 8.3.27 writer, without the 8.5 up-conversion -- what a configuration
 /// kept in an 8.3 compatibility mode stores under 8.5 (every form of the
 /// ERP УХ 8.5 clone).
-pub(crate) fn compile_xml_2_21_form_body_in_layout_8_3(
+pub fn compile_xml_2_21_form_body_in_layout_8_3(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
     source: Option<&dyn MetadataSource>,
@@ -2119,12 +2112,7 @@ pub(crate) fn compile_xml_2_21_form_body_in_layout_8_3(
 ) -> Result<String> {
     let xml = std::str::from_utf8(form_xml).context("2.21 Form.xml is not valid UTF-8")?;
     let (xml20, _) = down_convert_xml_2_21_form_as(xml, source, items_root, FormLayout::V8_3)?;
-    ibcmd_metadata_blob::compile_native_form_body_8_3(
-        xml20.as_bytes(),
-        module_text,
-        source,
-        items_root,
-    )
+    crate::compile_native_form_body_8_3(xml20.as_bytes(), module_text, source, items_root)
 }
 
 #[cfg(test)]
