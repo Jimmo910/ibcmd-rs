@@ -693,9 +693,19 @@ dependencies = [
 name = "ibcmd-compiler"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "flate2",
+ "ibcmd-1c-text",
+ "ibcmd-cf",
  "ibcmd-compiler-families",
+ "ibcmd-compiler-readiness",
  "ibcmd-core",
  "ibcmd-metadata-blob",
+ "ibcmd-restructure",
+ "ibcmd-schema",
+ "ibcmd-v8",
+ "ibcmd-xml",
+ "sha2",
  "windows-sys 0.61.2",
 ]
 

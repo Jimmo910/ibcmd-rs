@@ -480,7 +480,8 @@ const CONFIGURATION_SECTIONS: [ConfigurationSectionLayout; 7] = [
 
 /// The metadata kind a configuration root family holds, by the family's
 /// class id (`{<class>,<count>,<object uuids>…}` in the root row).
-pub(crate) fn configuration_family_kind(class_id: &str) -> Option<&'static str> {
+#[doc(hidden)]
+pub fn configuration_family_kind(class_id: &str) -> Option<&'static str> {
     CONFIGURATION_SECTIONS
         .iter()
         .flat_map(|section| section.slots.iter())
@@ -1449,7 +1450,7 @@ mod tests {
             let entry =
                 compile_configuration_body(&identities, &graph, &profile(), &properties).unwrap();
             let bytes = inflate_for_test(entry.outcome().compiled_payload().unwrap().bytes());
-            let row = crate::metadata_model::brace::parse_row(&bytes).unwrap();
+            let row = ibcmd_restructure::brace::parse_row(&bytes).unwrap();
             let tuple = row.at(&[3, 1, 1]).unwrap().as_list().unwrap();
             assert_eq!(tuple.len(), 61);
             assert_eq!(tuple[0].as_atom(), Some("68"));
@@ -1600,7 +1601,7 @@ mod tests {
     #[test]
     fn evidenced_all_default_properties_compile_to_the_retained_native_tuple() {
         const REFERENCE_B64: &str = include_str!(
-            "../../tests/fixtures/native-evidence/8.3.27.2214/dcs-area-style-item-uuid/config-body-unpacked.bin.b64"
+            "../../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-area-style-item-uuid/config-body-unpacked.bin.b64"
         );
         let (identities, graph) = fixture(&ALL_ROOT_FAMILIES);
         let language = identities
@@ -1627,7 +1628,7 @@ mod tests {
             compile_configuration_body(&identities, &graph, &profile(), &properties).unwrap();
         let plain = inflate_for_test(compiled.outcome().compiled_payload().unwrap().bytes());
         let actual = properties_tuple_fields(std::str::from_utf8(&plain).unwrap());
-        let reference = crate::module_blob::decode_base64_mime(REFERENCE_B64.trim()).unwrap();
+        let reference = ibcmd_1c_text::decode_base64_mime_lenient(REFERENCE_B64.trim()).unwrap();
         let expected = properties_tuple_fields(std::str::from_utf8(&reference).unwrap());
 
         assert_eq!(actual.len(), 61);

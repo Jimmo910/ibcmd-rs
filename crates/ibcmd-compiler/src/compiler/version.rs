@@ -250,7 +250,8 @@ mod tests {
 
     #[test]
     fn only_the_evidenced_bundled_platform_profile_selects_this_cohort() {
-        let registry = crate::profile_registry::load_bundled_profile_registry().unwrap();
+        let registry =
+            ibcmd_compiler_families::profile_registry::load_bundled_profile_registry().unwrap();
         let supported = registry
             .get(&ProfileId::parse("platform-8.3.27.1989").unwrap())
             .unwrap();

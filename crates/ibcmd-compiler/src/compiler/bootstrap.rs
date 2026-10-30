@@ -2242,7 +2242,7 @@ mod tests {
     use ibcmd_v8::format::Revision;
     use ibcmd_xml::source_tree::{SourceEntry, SourcePath};
 
-    use crate::profile_registry::load_bundled_profile_registry;
+    use ibcmd_compiler_families::profile_registry::load_bundled_profile_registry;
 
     use super::*;
 
@@ -2279,17 +2279,18 @@ mod tests {
     /// two all-default trees whose Configuration headers differ in length,
     /// and one that carries three non-default evidenced enum values.
     const T1_ALL_DEFAULT_NATIVE_XML_B64: &str = include_str!(
-        "../../tests/fixtures/native-evidence/8.3.27.2214/dcs-area-style-item-uuid/native-configuration.xml.b64"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-area-style-item-uuid/native-configuration.xml.b64"
     );
     const T2_LONGER_HEADER_NATIVE_XML_B64: &str = include_str!(
-        "../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-list-settings-server-state/native-configuration.xml.b64"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-form-list-settings-server-state/native-configuration.xml.b64"
     );
     const T3_ENUM_GROUP_NATIVE_XML_B64: &str = include_str!(
-        "../../tests/fixtures/native-evidence/8.3.27.2214/configuration-properties-enum-group/native-configuration.xml.b64"
+        "../../../../tests/fixtures/native-evidence/8.3.27.2214/configuration-properties-enum-group/native-configuration.xml.b64"
     );
 
     fn native_configuration_xml(encoded: &str) -> String {
-        String::from_utf8(crate::module_blob::decode_base64_mime(encoded.trim()).unwrap()).unwrap()
+        String::from_utf8(ibcmd_1c_text::decode_base64_mime_lenient(encoded.trim()).unwrap())
+            .unwrap()
     }
 
     fn project_native(encoded: &str) -> Result<ConfigurationProjection, BootstrapCompileError> {
