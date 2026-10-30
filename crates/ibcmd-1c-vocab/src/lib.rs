@@ -29,6 +29,7 @@
 //! the slice at once and fails the guard until its record is reviewed.
 
 mod builtin_type_ids;
+mod command_interface;
 mod commands;
 mod patterns;
 mod pictures;
@@ -41,8 +42,13 @@ mod types;
 mod values;
 
 pub use builtin_type_ids::{FIXED_ARRAY_TYPE, builtin_type_id, builtin_type_qname};
+pub use command_interface::{
+    CLIENT_APPLICATION_STANDARD_PANEL_DEFS, COMMAND_INTERFACE_PLACEMENTS,
+    HOME_PAGE_WORK_AREA_TEMPLATES, ONE_COLUMN_TEMPLATE, client_application_panel_def_is_standard,
+};
 pub use commands::{
-    ShortcutModifierStyle, command_interface_standard_command, parse_common_command_picture_value,
+    ShortcutModifierStyle, command_interface_standard_command,
+    command_interface_standard_command_for_code, parse_common_command_picture_value,
     parse_common_command_shortcut_value, parse_common_command_shortcut_value_with_style,
 };
 pub use patterns::{
