@@ -59,7 +59,6 @@ use std::sync::OnceLock;
 use anyhow::{Result, anyhow};
 use clap::ValueEnum;
 use ibcmd_core::profile::{CapabilityId, CapabilityState};
-use ibcmd_platform::XmlFormat;
 use serde::{Serialize, Serializer};
 
 use crate::legacy_version::InfobaseConfigSourceVersion;
@@ -70,7 +69,7 @@ use crate::mssql_platform_profile::{CAPABILITY_MAIN_WRITE, MssqlNativePlatformPr
 // these.
 pub use ibcmd_platform::{
     CONSTANT_DEFAULT_BUTTON_IMPORTANCE, CONSTANT_FEATURE_PREFIX, CONSTANT_FORM_LAYOUT,
-    CONSTANT_XML_FORMAT, FEATURE_PALETTE_COLORS, FormLayout, Platform, PlatformFeature,
+    CONSTANT_XML_FORMAT, FEATURE_PALETTE_COLORS, FormLayout, Platform, PlatformFeature, XmlFormat,
     feature_uuid,
 };
 
