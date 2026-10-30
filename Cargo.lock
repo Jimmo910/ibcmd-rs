@@ -705,6 +705,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-compiler-readiness"
+version = "0.1.0"
+dependencies = [
+ "ibcmd-core",
+ "ibcmd-xml",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ibcmd-core"
 version = "0.1.0"
 dependencies = [
@@ -859,6 +869,14 @@ name = "ibcmd-number-format"
 version = "0.1.0"
 
 [[package]]
+name = "ibcmd-parallel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rayon",
+]
+
+[[package]]
 name = "ibcmd-postgres"
 version = "0.1.0"
 dependencies = [
@@ -905,6 +923,7 @@ dependencies = [
  "ibcmd-1c-vocab",
  "ibcmd-cf",
  "ibcmd-compiler-families",
+ "ibcmd-compiler-readiness",
  "ibcmd-core",
  "ibcmd-dump-readers",
  "ibcmd-edt",
@@ -917,6 +936,7 @@ dependencies = [
  "ibcmd-metadata-source",
  "ibcmd-module-blob",
  "ibcmd-moxel",
+ "ibcmd-parallel",
  "ibcmd-postgres",
  "ibcmd-restructure",
  "ibcmd-restructure-engine",

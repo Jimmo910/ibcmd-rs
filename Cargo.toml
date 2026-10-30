@@ -28,6 +28,8 @@ members = [
     "crates/ibcmd-form-body",
     "crates/ibcmd-module-blob",
     "crates/ibcmd-compiler-families",
+    "crates/ibcmd-compiler-readiness",
+    "crates/ibcmd-parallel",
     "crates/ibcmd-sql",
     "crates/ibcmd-metadata-blob",
     "crates/ibcmd-form-writer",
@@ -73,6 +75,8 @@ ibcmd-1c-vocab = { path = "crates/ibcmd-1c-vocab" }
 ibcmd-form-body = { path = "crates/ibcmd-form-body" }
 ibcmd-module-blob = { path = "crates/ibcmd-module-blob" }
 ibcmd-compiler-families = { path = "crates/ibcmd-compiler-families" }
+ibcmd-compiler-readiness = { path = "crates/ibcmd-compiler-readiness" }
+ibcmd-parallel = { path = "crates/ibcmd-parallel" }
 ibcmd-metadata-blob = { path = "crates/ibcmd-metadata-blob" }
 ibcmd-form-writer = { path = "crates/ibcmd-form-writer" }
 ibcmd-metadata-source = { path = "crates/ibcmd-metadata-source" }

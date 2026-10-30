@@ -45,7 +45,7 @@ const REQUIRED_LEGACY_INVENTORY_IDS: &[&str] = &[
     "help_asset_contributor",
 ];
 
-const BUNDLED_MANIFEST_JSON: &str = include_str!("../../compatibility/bootstrap.json");
+const BUNDLED_MANIFEST_JSON: &str = include_str!("../../../compatibility/bootstrap.json");
 
 /// Manifest representation of the canonical source-tree classifier.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]

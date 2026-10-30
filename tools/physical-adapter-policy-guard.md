@@ -195,3 +195,13 @@ the `b"BaseForm"` prefilter of `compile_native_form_body_through` moved from
 `crates/ibcmd-form-writer/src/adopted_form.rs` was outside the slice and
 joins it with its 32 records (33 occurrences). Every other record, the two
 stale ones included, is unchanged.
+
+`crates/ibcmd-compiler-readiness/src/` and `crates/ibcmd-parallel/src/` also
+belong to the slice. The first holds the compiler's bootstrap-readiness
+manifest and build preflight, formerly `src/compiler/readiness.rs`; it still
+embeds the canonical workspace `compatibility/bootstrap.json`, with an
+adjusted relative include path. The second holds the process-wide worker
+pools, formerly `src/parallel.rs`, whose root module re-exports them so the
+pool and requested-worker state keep one owner. Both files were outside the
+slice and join it with no occurrence. Every other record, the two stale ones
+included, is unchanged.
