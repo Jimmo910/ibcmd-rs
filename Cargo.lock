@@ -821,6 +821,7 @@ dependencies = [
  "anyhow",
  "ibcmd-1c-text",
  "ibcmd-1c-vocab",
+ "ibcmd-compiler-families",
  "ibcmd-core",
  "ibcmd-form-body",
  "ibcmd-form-native",

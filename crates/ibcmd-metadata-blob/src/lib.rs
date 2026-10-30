@@ -23,8 +23,17 @@
 //! and their literals stay in the guard's baseline. A file added here is in
 //! the slice at once and fails the guard until its record is reviewed.
 
+mod interface_assets;
 pub mod role_rights_writer;
 pub mod xml;
+
+#[doc(hidden)]
+pub use interface_assets::plaintext_through;
+pub use interface_assets::{
+    InterfaceAssetSource, command_interface_base_free_blockers,
+    command_interface_xml_can_pack_without_base, interface_asset_plaintext,
+    pack_command_interface_blob_from_xml_base_free, pack_interface_asset_blob,
+};
 
 #[cfg(test)]
 mod source_seam_tests;

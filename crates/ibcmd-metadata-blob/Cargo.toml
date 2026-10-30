@@ -11,6 +11,9 @@ description = "The packers of a 1C configuration's stored bodies from their XML 
 anyhow = "1.0"
 ibcmd-1c-text = { path = "../ibcmd-1c-text" }
 ibcmd-1c-vocab = { path = "../ibcmd-1c-vocab" }
+# The command-interface and interface-asset codecs the base-free writers
+# serialize through.
+ibcmd-compiler-families = { path = "../ibcmd-compiler-families" }
 ibcmd-core = { path = "../ibcmd-core" }
 ibcmd-form-body = { path = "../ibcmd-form-body" }
 ibcmd-form-native = { path = "../ibcmd-form-native" }

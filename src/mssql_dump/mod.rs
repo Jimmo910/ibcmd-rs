@@ -1124,10 +1124,6 @@ pub(crate) fn fetch_extension_activation_rows(
 pub(crate) use fetch::fetch_config_part0_rows;
 
 use command_interface::*;
-pub(crate) use command_interface::{
-    COMMAND_INTERFACE_PLACEMENTS, HOME_PAGE_WORK_AREA_TEMPLATES,
-    client_application_panel_def_is_standard, command_interface_standard_command_for_code,
-};
 pub use config_dump_info::stored_config_versions;
 use config_dump_info::*;
 use config_rows::*;
