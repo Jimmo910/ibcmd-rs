@@ -240,3 +240,32 @@ guarded directories:
   (`a == !b` written `a != b`).
 No directory is added to `$GuardedCrateDirectories`. Every other record, the
 two stale ones included, is unchanged.
+
+`crates/ibcmd-compiler/src/` also belongs to the slice (#559, the compiler
+coordinator). It holds the coordinator formerly under `src/compiler/`
+(`mod.rs`, `bootstrap.rs`, `root.rs`, `version.rs`, `versions.rs`,
+`overlay.rs`, `external_intake.rs`, `external_owned.rs`, `identity.rs`), the
+managed-form codec and the template kind formerly in `src/compiler/bodies/`
+(`form.rs`, `template_kind.rs`) and `src/file_identity.rs`. All of them were
+outside the slice and join it with their 167 records (169 occurrences):
+- `compiler/bootstrap.rs`: 90 `name-special-case` (the source tree's `.xml`
+  and `MetaDataObject`, the Configuration root's child family kinds and the
+  Configuration property names it projects) and 4 `xml-policy` (the
+  placeholder values of its property-projection refusals);
+- `compiler/root.rs`: 58 `uuid-literal` (the Configuration family slot
+  table, the class ids and `NIL_UUID`) and 1 `name-special-case`
+  (`"Configuration"`);
+- `compiler/external_intake.rs`: 3 `name-special-case` (`ChildForms`,
+  `ChildTemplates`, `.xml`);
+- `compiler/external_owned.rs`: 4 `name-special-case` (`TemplateType`,
+  `.xml`, `.txt`, `text/`);
+- `compiler/bodies/template_kind.rs`: 8 `name-special-case` (the template
+  kind names `TemplateKind::parse` matches);
+- `compiler/bodies/form.rs`: 1 `xml-policy` (the `"<absent>"` layout marker
+  of a refusal);
+- `lib.rs`, `file_identity.rs`, `compiler/{mod,identity,overlay,version,versions}.rs`
+  and the two facades `compiler/bodies/mod.rs` and `compiler/families/mod.rs`:
+  none.
+The root's facades (`src/compiler/mod.rs`, `src/compiler/bodies/mod.rs`,
+`src/file_identity.rs`) stay outside the slice. No fingerprint changes. Every
+other record, the two stale ones included, is unchanged.
