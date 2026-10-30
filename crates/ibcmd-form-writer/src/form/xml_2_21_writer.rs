@@ -1106,11 +1106,7 @@ fn apply_choice_value_pictures(
     object_refs: &std::collections::BTreeMap<String, String>,
 ) -> Result<()> {
     let is_empty = |node: &Node| node.to_text().starts_with("{4,0,{0},");
-    if facts
-        .choice_value_pictures
-        .iter()
-        .all(|node| is_empty(node))
-    {
+    if facts.choice_value_pictures.iter().all(&is_empty) {
         return Ok(());
     }
     let values = edits
@@ -1176,6 +1172,7 @@ pub fn element_name(edits: &XmlEdits<'_>, element: usize) -> Option<String> {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_rules(
     edits: &mut XmlEdits<'_>,
     element: usize,

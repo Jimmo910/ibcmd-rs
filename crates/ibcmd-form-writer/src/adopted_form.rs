@@ -311,7 +311,7 @@ fn folded_events(
         }
         let end = usize::try_from(reader.buffer_position())?;
         first_start.get_or_insert(start);
-        let event_xml = ibcmd_xml::XmlReader::from_slice(body[start..end].as_bytes())
+        let event_xml = ibcmd_xml::XmlReader::from_slice(&body.as_bytes()[start..end])
             .context("form event XML is malformed")?;
         let node = event_xml.root();
         let attr = |name: &str| {

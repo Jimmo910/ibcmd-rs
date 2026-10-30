@@ -668,7 +668,7 @@ fn load_item(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::collapsible_match)]
 fn load_field(
     edits: &mut XmlEdits<'_>,
     element: usize,
@@ -1996,8 +1996,8 @@ fn add_report_state(members: &mut Vec<Node>, state: &ReportState) -> Result<()> 
         (23, "{\"N\",0}".to_owned()),
     ];
     for (key, value) in defaults {
-        if !pairs.contains_key(&key) {
-            pairs.insert(key, node_of(&value)?);
+        if let std::collections::btree_map::Entry::Vacant(entry) = pairs.entry(key) {
+            entry.insert(node_of(&value)?);
         }
     }
     let mut replacement = vec![Node::Leaf(pairs.len().to_string())];
@@ -2223,7 +2223,7 @@ mod tests {
         let lines: Vec<&str> = text["#base64:".len()..].split("\r\r\n").collect();
         assert_eq!(lines.concat(), encoded);
         assert!(lines[..lines.len() - 1].iter().all(|line| line.len() == 64));
-        assert!(!lines.last().unwrap().is_empty() || encoded.len() % 64 == 0);
+        assert!(!lines.last().unwrap().is_empty() || encoded.len().is_multiple_of(64));
         // A payload of exactly 64 characters keeps the break after it.
         assert_eq!(
             base64_leaf_8_5_1(&"A".repeat(64)),
