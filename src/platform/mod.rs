@@ -77,54 +77,16 @@ pub const FEATURE_PALETTE_COLORS: &str = "palette-colors";
 /// Help text of the `--platform` flag.
 pub const PLATFORM_FLAG_HELP: &str = "Platform the XML is for: a release (8.3.27, 8.5.1) or an exact build (8.3.27.2214, 8.5.1.1150); 8.3.x reads and writes XML 2.20, 8.5.x 2.21";
 
-/// The stored layout of managed-form bodies, and of the colours and fonts in
-/// the other rows of a configuration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-pub enum FormLayout {
-    /// The layout 8.3 platforms store: form root revision 50, colours
-    /// `{3,...}`, fonts `{7,...}`.
-    #[serde(rename = "8.3")]
-    V8_3,
-    /// The layout 8.5.1 introduced: form root revision 59, members appended
-    /// to the 8.3 records, colours `{4,...}`, fonts `{8,...}`.
-    #[serde(rename = "8.5.1")]
-    V8_5_1,
-}
+// The stored layout of managed-form bodies is the `ibcmd-form-body` crate's,
+// with the 8.5 layout's conversion; its public path is this one.
+pub use ibcmd_form_body::FormLayout;
 
-impl FormLayout {
-    /// The version that introduced the layout, as profiles declare it.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::V8_3 => "8.3",
-            Self::V8_5_1 => "8.5.1",
-        }
-    }
-
-    fn parse(text: &str) -> Option<Self> {
-        match text {
-            "8.3" => Some(Self::V8_3),
-            "8.5.1" => Some(Self::V8_5_1),
-            _ => None,
-        }
-    }
-
-    /// The layout a configuration's rows take on a platform whose own layout
-    /// is `self`: a configuration kept in a compatibility mode older than 8.5
-    /// (packed, `80327`) keeps the 8.3 layout -- every form and style of the
-    /// ERP УХ 8.5 clone, compatibility 8.3.27, is stored the 8.3 way -- while
-    /// compatibility 8.5 or later takes the platform's own.
-    pub fn stored(self, compatibility: u32) -> Self {
-        if compatibility >= 80500 {
-            self
-        } else {
-            Self::V8_3
-        }
-    }
-}
-
-impl fmt::Display for FormLayout {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
+/// The layout a profile's `platform.form_layout` constant names.
+fn parse_form_layout(text: &str) -> Option<FormLayout> {
+    match text {
+        "8.3" => Some(FormLayout::V8_3),
+        "8.5.1" => Some(FormLayout::V8_5_1),
+        _ => None,
     }
 }
 
@@ -274,7 +236,7 @@ fn build_entry(
             profile.id
         )
     })?;
-    let form_layout = FormLayout::parse(layout).ok_or_else(|| {
+    let form_layout = parse_form_layout(layout).ok_or_else(|| {
         anyhow!(
             "platform profile `{}` declares an unknown {CONSTANT_FORM_LAYOUT} `{layout}`",
             profile.id

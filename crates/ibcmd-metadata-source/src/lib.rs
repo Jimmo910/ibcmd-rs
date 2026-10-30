@@ -65,6 +65,46 @@ pub trait MetadataSource: std::fmt::Debug + Send + Sync {
     /// The uuid of `CommandGroup.<Name>`.
     fn resolve_command_group_uuid(&self, reference: &str) -> Result<String>;
 
+    /// The uuid of a command a reference names: `<Owner>.Command.<Name>`,
+    /// read from the owner's XML; any other reference as
+    /// [`resolve_metadata_reference_uuid`](Self::resolve_metadata_reference_uuid)
+    /// resolves it.
+    fn resolve_command_reference_uuid(&self, reference: &str) -> Result<String>;
+
+    /// The uuid of a form a property names: `CommonForm.<Name>` or
+    /// `<Owner>.Form.<Name>`, read from the form's own XML. A bare uuid (a
+    /// form the configuration no longer has) answers itself, lowercase.
+    fn resolve_form_uuid(&self, reference: &str) -> Result<String>;
+
+    /// The uuid of the child `<child_kind>` named `child_name` that the XML
+    /// of the object `owner_reference` names declares (an attribute, a
+    /// tabular section, a command).
+    fn resolve_metadata_child_uuid(
+        &self,
+        owner_reference: &str,
+        child_kind: &str,
+        child_name: &str,
+    ) -> Result<String>;
+
+    /// The `<Item id="...">` the `Ext/Predefined.xml` of the object
+    /// `owner_reference` gives its predefined item `item_name`, looked up
+    /// over the whole nested tree.
+    fn resolve_predefined_item_id(&self, owner_reference: &str, item_name: &str) -> Result<String>;
+
+    /// The names of the information register's dimensions whose `<Master>`
+    /// is `true`, in document order.
+    fn information_register_master_dimensions(&self, register: &str) -> Result<Vec<String>>;
+
+    /// The uuid of `<prefix><Name>`, read from `<folder>/<Name>.xml`, which
+    /// must declare the class `expected_kind`.
+    fn resolve_simple_metadata_uuid(
+        &self,
+        reference: &str,
+        expected_kind: &str,
+        folder: &str,
+        prefix: &str,
+    ) -> Result<String>;
+
     /// The storage `TypeId` of a generated type named the way a
     /// data-composition schema names it (`CatalogRef.X`), or `None`.
     fn dcs_generated_type_id(&self, name: &str) -> Option<String>;

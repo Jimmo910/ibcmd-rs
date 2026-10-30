@@ -6816,7 +6816,7 @@ fn prepare_form_body_row(
         let blob = offline_compile::adopted_form_body(
             &form_xml,
             module_text.as_deref(),
-            source,
+            source.map(|source| source as &dyn MetadataSource),
             Some(items_root.as_path()),
             &base_body,
         )

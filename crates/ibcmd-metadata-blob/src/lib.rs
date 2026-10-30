@@ -1794,6 +1794,52 @@ impl MetadataSource for MetadataSourceContext {
         MetadataSourceContext::resolve_command_group_uuid(self, reference)
     }
 
+    fn resolve_command_reference_uuid(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_command_reference_uuid(self, reference)
+    }
+
+    fn resolve_form_uuid(&self, reference: &str) -> Result<String> {
+        MetadataSourceContext::resolve_form_uuid(self, reference)
+    }
+
+    fn resolve_metadata_child_uuid(
+        &self,
+        owner_reference: &str,
+        child_kind: &str,
+        child_name: &str,
+    ) -> Result<String> {
+        MetadataSourceContext::resolve_metadata_child_uuid(
+            self,
+            owner_reference,
+            child_kind,
+            child_name,
+        )
+    }
+
+    fn resolve_predefined_item_id(&self, owner_reference: &str, item_name: &str) -> Result<String> {
+        MetadataSourceContext::resolve_predefined_item_id(self, owner_reference, item_name)
+    }
+
+    fn information_register_master_dimensions(&self, register: &str) -> Result<Vec<String>> {
+        MetadataSourceContext::information_register_master_dimensions(self, register)
+    }
+
+    fn resolve_simple_metadata_uuid(
+        &self,
+        reference: &str,
+        expected_kind: &str,
+        folder: &str,
+        prefix: &str,
+    ) -> Result<String> {
+        MetadataSourceContext::resolve_simple_metadata_uuid(
+            self,
+            reference,
+            expected_kind,
+            folder,
+            prefix,
+        )
+    }
+
     fn dcs_generated_type_id(&self, name: &str) -> Option<String> {
         MetadataSourceContext::dcs_generated_type_id(self, name)
     }
@@ -2831,9 +2877,18 @@ fn format_style_body_item(
     item: &StyleBodyXmlItem,
     source: Option<&MetadataSourceContext>,
 ) -> Result<String> {
-    let key = style_body_key_for_name(&item.name, source)?;
+    let key = style_body_key_for_name(
+        &item.name,
+        source.map(|source| source as &dyn MetadataSource),
+    )?;
     let (kind, value) = match &item.value {
-        StyleBodyXmlValue::Color(value) => ("0", format_style_body_color_value(value, source)?),
+        StyleBodyXmlValue::Color(value) => (
+            "0",
+            format_style_body_color_value(
+                value,
+                source.map(|source| source as &dyn MetadataSource),
+            )?,
+        ),
         StyleBodyXmlValue::Font(attrs) => {
             let node = style_body_value_85(style_body_font_node(attrs, source)?, true);
             let mut text = String::new();
@@ -2845,7 +2900,7 @@ fn format_style_body_item(
     Ok(format!("{{{key},{kind},{value}}}"))
 }
 
-fn style_body_key_for_name(name: &str, source: Option<&MetadataSourceContext>) -> Result<String> {
+fn style_body_key_for_name(name: &str, source: Option<&dyn MetadataSource>) -> Result<String> {
     if let Some(code) = style_body_standard_code_for_name(name) {
         return Ok(format!("{{{code}}}"));
     }
@@ -2859,7 +2914,7 @@ fn style_body_key_for_name(name: &str, source: Option<&MetadataSourceContext>) -
     Err(anyhow!("unsupported Style Item name: {name}"))
 }
 
-fn style_body_ref_key(reference: &str, source: Option<&MetadataSourceContext>) -> Result<String> {
+fn style_body_ref_key(reference: &str, source: Option<&dyn MetadataSource>) -> Result<String> {
     let reference = reference.trim();
     let name = reference
         .strip_prefix("style:")
@@ -2872,7 +2927,7 @@ fn style_body_ref_key(reference: &str, source: Option<&MetadataSourceContext>) -
 
 fn format_style_body_color_value(
     value: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let value = value.trim();
     if let Some(hex) = value.strip_prefix('#') {
@@ -2899,7 +2954,7 @@ fn format_style_body_color_value(
 
 fn format_style_body_font_value(
     attrs: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let reference = attrs
         .get("ref")
@@ -2936,7 +2991,7 @@ fn format_style_body_border_value(
 ) -> Result<String> {
     let reference = attrs
         .get("ref")
-        .map(|value| style_body_ref_key(value, source))
+        .map(|value| style_body_ref_key(value, source.map(|source| source as &dyn MetadataSource)))
         .transpose()?
         .unwrap_or_else(|| "{-18}".to_string());
     Ok(format!("{{3,1,{reference},0,0,0}}"))
@@ -3188,6 +3243,24 @@ pub fn pack_form_body_blob_from_form_xml_with_source_and_assets(
     source: Option<&MetadataSourceContext>,
     form_item_assets_root: Option<&Path>,
 ) -> Result<PackedRawDeflatedBlob> {
+    pack_form_body_blob_from_form_xml_through(
+        base_blob,
+        form_xml,
+        module_text,
+        source.map(|source| source as &dyn MetadataSource),
+        form_item_assets_root,
+    )
+}
+
+/// [`pack_form_body_blob_from_form_xml_with_source_and_assets`], the source
+/// read through [`MetadataSource`].
+fn pack_form_body_blob_from_form_xml_through(
+    base_blob: &[u8],
+    form_xml: &[u8],
+    module_text: Option<&[u8]>,
+    source: Option<&dyn MetadataSource>,
+    form_item_assets_root: Option<&Path>,
+) -> Result<PackedRawDeflatedBlob> {
     let inflated = inflate_raw(base_blob).context("failed to inflate base Form body blob")?;
     let mut plain =
         String::from_utf8(inflated).context("base Form body blob is not valid UTF-8")?;
@@ -3368,19 +3441,33 @@ const fn native_flag(value: Option<bool>) -> Option<bool> {
 /// per run, however many paths name them.
 struct NativeDataPaths<'a> {
     form: DataPathForm,
-    source: Option<&'a MetadataSourceContext>,
+    source: Option<&'a dyn MetadataSource>,
 }
 
 impl NativeDataPaths<'_> {
     /// Member 11 of the record, or `None` when the path names something the
     /// measured rule cannot place -- which refuses the form.
     fn resolve(&self, data_path: &str) -> Option<String> {
+        let objects = self.source.map(SourceConfigurationObjects);
         ibcmd_form_native::resolve_form_data_path(
             &self.form,
-            self.source
-                .map(|source| source as &dyn ConfigurationObjects),
+            objects
+                .as_ref()
+                .map(|objects| objects as &dyn ConfigurationObjects),
             data_path,
         )
+    }
+}
+
+/// The data-path walk's one question to the source tree, a configuration
+/// object by key, asked through [`MetadataSource::configuration_object`]:
+/// what `impl ConfigurationObjects for MetadataSourceContext` answers, for a
+/// source of any type.
+struct SourceConfigurationObjects<'a>(&'a dyn MetadataSource);
+
+impl ConfigurationObjects for SourceConfigurationObjects<'_> {
+    fn object(&self, key: &str) -> Option<Arc<ConfigurationObject>> {
+        self.0.configuration_object(key)
     }
 }
 
@@ -3575,7 +3662,7 @@ fn native_dynamic_list_bag(
     attribute: &str,
     map: &crate::dynamic_list::FieldMap,
     required: &[String],
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     use crate::dynamic_list::{ListConfiguration, dynamic_list_bag};
     let type_id = |name: &str, _is_set: bool| -> Result<String> {
@@ -4092,7 +4179,7 @@ fn native_context_menu(
     command_ids: &BTreeMap<String, String>,
     items: &BTreeMap<String, NativeItemTarget>,
     main_attribute_class: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     let mut children = Vec::new();
@@ -4126,7 +4213,7 @@ fn format_native_child_item(
     command_ids: &BTreeMap<String, String>,
     items: &BTreeMap<String, NativeItemTarget>,
     main_attribute_class: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<(&'static str, String)> {
     use ibcmd_form_native as native;
@@ -4689,7 +4776,7 @@ fn format_native_table(
     command_ids: &BTreeMap<String, String>,
     items: &BTreeMap<String, NativeItemTarget>,
     main_attribute_class: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     format_native_table_record(
@@ -4715,7 +4802,7 @@ fn format_native_table_record(
     command_ids: &BTreeMap<String, String>,
     items: &BTreeMap<String, NativeItemTarget>,
     main_attribute_class: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
     nested_in_gantt_chart: bool,
 ) -> Result<String> {
@@ -5361,7 +5448,7 @@ fn native_table_addition(
     command_ids: &BTreeMap<String, String>,
     items: &BTreeMap<String, NativeItemTarget>,
     main_attribute_class: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
     served_table_id: Option<&str>,
 ) -> Result<String> {
@@ -5512,7 +5599,7 @@ fn native_table_addition(
 fn native_table_property_bag(
     item: &FormXmlChildItem,
     items: &BTreeMap<String, NativeItemTarget>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<Vec<(&'static str, String)>> {
     let _ = source;
     let scalar = |name: &str| item.scalars.get(name).map(String::as_str);
@@ -5650,7 +5737,7 @@ fn native_container_payload(
     item: &FormXmlChildItem,
     data_paths: &NativeDataPaths<'_>,
     items: &BTreeMap<String, NativeItemTarget>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     use ibcmd_form_native as native;
@@ -5835,7 +5922,7 @@ fn native_button_command(
     command_ids: &BTreeMap<String, String>,
     items: &BTreeMap<String, NativeItemTarget>,
     main_attribute_class: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     use ibcmd_form_native as native;
     let Some(path) = item.command_name.as_deref() else {
@@ -6003,7 +6090,7 @@ const fn native_fixing_in_table_spelling(fixing: FormFixingInTable) -> &'static 
 /// own style items resolved when the caller can reach them.
 pub fn native_item_color(
     value: Option<&str>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Option<String> {
     ibcmd_form_native::format_native_color(value, |name| {
         source?
@@ -6016,7 +6103,7 @@ pub fn native_item_color(
 /// resolved when the caller can reach them.
 fn native_item_font(
     item: &FormXmlChildItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     native_font_of(item, item.font.as_ref(), source)
 }
@@ -6026,7 +6113,7 @@ fn native_item_font(
 /// `<TitleFont>` that never reached the record.
 fn native_item_title_font(
     item: &FormXmlChildItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     // The typed field is read for a usual group only; every other container
     // keeps its `<TitleFont>` in the font map -- 82 of 82 popups lost theirs.
@@ -6042,7 +6129,7 @@ fn native_item_title_font(
 fn native_font_of(
     item: &FormXmlChildItem,
     attributes: Option<&BTreeMap<String, String>>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let empty = BTreeMap::new();
     ibcmd_form_native::format_native_font(attributes.unwrap_or(&empty), |name| {
@@ -6072,7 +6159,7 @@ fn find_predefined_item_id(items: &[PredefinedDataXmlItem], name: &str) -> Optio
 /// Slot 1 of a field's payload: the `<ChoiceList>` it offers.
 fn native_choice_list(
     item: &FormXmlChildItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let Some(choices) = item.choice_list.as_deref() else {
         return Ok("{3,0}".to_string());
@@ -6126,7 +6213,7 @@ fn native_text_input_tail(item: &FormXmlChildItem) -> Result<[&'static str; 8]> 
 /// shape a dynamic list's main table takes; another type is not measured.
 fn native_button_parameter(
     item: &FormXmlChildItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let Some(value) = item.scalars.get("Parameter").map(|value| value.trim()) else {
         return Ok("{\"U\"}".to_string());
@@ -6164,7 +6251,7 @@ fn native_item_shortcut(item: &FormXmlChildItem) -> Result<String> {
 /// when it names none. 1 356 of 1 364.
 fn native_choice_parameters(
     item: &FormXmlChildItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let mut out = format!("{{0,{}", item.choice_parameters.len());
     for (name, value) in &item.choice_parameters {
@@ -6201,7 +6288,7 @@ fn native_choice_parameters(
 /// the measurement read.
 fn native_choice_list_value(
     choice: &FormXmlChoiceListItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     use ibcmd_form_native as native;
     if let Some(part) = choice.unwritable.first() {
@@ -6404,7 +6491,7 @@ fn native_choice_list_number(text: &str) -> bool {
 /// the zero uuid (24). Anything else refuses the form.
 fn native_choice_list_reference(
     reference: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<(String, String)> {
     // `<type uuid>.<value uuid>` is the exporter's spelling of a value its
     // type does not name; the body holds the two uuids (2 of 2).
@@ -6495,7 +6582,7 @@ fn native_field_payload(
     item: &FormXmlChildItem,
     data_paths: &NativeDataPaths<'_>,
     main_attribute_class: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     use ibcmd_form_native as native;
@@ -7066,7 +7153,7 @@ fn native_field_payload(
 fn native_decoration_payload(
     item: &FormXmlChildItem,
     main_attribute_class: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     use ibcmd_form_native as native;
@@ -7746,7 +7833,7 @@ fn native_decoration_titles(item: &FormXmlChildItem) -> Result<(String, String)>
 
 fn native_item_picture(
     item: &FormXmlChildItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     native_picture_of(
@@ -7769,7 +7856,7 @@ pub fn native_picture_from_parts(
     load_transparent: Option<String>,
     transparent_x: Option<String>,
     transparent_y: Option<String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     let picture = FormXmlItemPicture {
@@ -7789,7 +7876,7 @@ fn native_picture_of(
     item_name: &str,
     picture: Option<&FormXmlItemPicture>,
     picture_present: bool,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     use ibcmd_form_native as native;
@@ -7978,7 +8065,7 @@ fn native_scalar_flag(item: &FormXmlChildItem, name: &str, default: bool) -> boo
 fn native_scalar_color(
     item: &FormXmlChildItem,
     name: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     native_item_color(item.scalars.get(name).map(String::as_str), source)
         .ok_or_else(|| anyhow!("<{}> names a colour the writer cannot place", item.tag))
@@ -7994,7 +8081,7 @@ fn native_scalar_color(
 fn native_item_extended_tooltip(
     item: &FormXmlChildItem,
     main_attribute_class: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<Option<String>> {
     use ibcmd_form_native as native;
@@ -8067,7 +8154,7 @@ fn native_item_extended_tooltip(
 fn native_rights(
     rights: &FormXmlRights,
     owner: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let common = rights
         .common
@@ -8327,7 +8414,7 @@ fn native_embedded_chart(
     form_text: &str,
     attribute: &str,
     gantt: bool,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let missing =
         || anyhow!("the chart attribute {attribute} spells no <Settings> the writer can find");
@@ -8357,7 +8444,7 @@ fn native_embedded_chart(
 /// (`{3,3,{0,<uuid>}}`) and the exporter prints one it cannot name
 /// (Документооборот 3.0 `DataProcessors/ПротоколРаботыСотрудников`,
 /// `style:ПользовательВыбранный`). The platform's own styles stay as they are.
-fn native_chart_style_colours(settings: &str, source: Option<&MetadataSourceContext>) -> String {
+fn native_chart_style_colours(settings: &str, source: Option<&dyn MetadataSource>) -> String {
     let Some(source) = source else {
         return settings.to_string();
     };
@@ -8389,7 +8476,7 @@ fn native_chart_style_colours(settings: &str, source: Option<&MetadataSourceCont
 /// A column's `<View>` and `<Edit>`, each the default tuple when absent.
 fn native_column_rights(
     column: &FormXmlAttributeColumn,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<(String, String)> {
     let one = |rights: Option<&FormXmlRights>, owner: &str| -> Result<String> {
         match rights {
@@ -8406,7 +8493,7 @@ fn native_column_rights(
 /// An item's `<UserVisible>` block, `None` when it spells none.
 fn native_user_visible(
     item: &FormXmlChildItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<Option<String>> {
     item.user_visible
         .as_ref()
@@ -8501,7 +8588,7 @@ fn native_type_link(item: &FormXmlChildItem, data_paths: &NativeDataPaths<'_>) -
 fn native_named_font(
     item: &FormXmlChildItem,
     element: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     native_font_of(item, item.fonts.get(element), source)
 }
@@ -8517,7 +8604,7 @@ fn native_localized(item: &FormXmlChildItem, section: &str) -> String {
 fn native_extra_picture(
     item: &FormXmlChildItem,
     section: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     native_picture_of(
@@ -8536,7 +8623,7 @@ fn native_extra_picture(
 fn native_input_drop_list_settings(
     item: &FormXmlChildItem,
     data_paths: &NativeDataPaths<'_>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let check = native_scalar_tristate(item, "ShowCheckBoxesInDropList")?;
     let column = |name: &str| -> Result<Option<String>> {
@@ -8641,7 +8728,7 @@ fn native_typed_scalar(item: &FormXmlChildItem, name: &str) -> Result<String> {
 /// holds; the zero uuid when the item names none.
 fn native_choice_form(
     item: &FormXmlChildItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let Some(reference) = item.scalars.get("ChoiceForm").map(|value| value.trim()) else {
         return Ok(NATIVE_ZERO_UUID.to_string());
@@ -8761,7 +8848,7 @@ fn form_attributes_conditional_appearance_source(xml: &[u8]) -> Option<String> {
 /// wrapped in the fixed ten-namespace `<Settings>` header.
 fn native_conditional_appearance_settings(
     subtree: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     const HEADER: &str = concat!(
         "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n",
@@ -8835,7 +8922,7 @@ fn format_native_form_body(
     form_text: Option<&str>,
     properties: &FormXmlBodyProperties,
     module_text: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     let blockers = native_form_body_blockers(properties);
@@ -9444,7 +9531,7 @@ pub static XML_2_21_TREE_IN_LAYOUT_8_3: std::sync::atomic::AtomicBool =
 pub fn compile_native_form_body_8_3(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     validate_form_xml_document(form_xml)?;
@@ -9472,6 +9559,20 @@ pub fn pack_form_body_blob_from_form_xml_base_free(
     module_text: Option<&[u8]>,
     source: Option<&MetadataSourceContext>,
 ) -> Result<PackedRawDeflatedBlob> {
+    pack_form_body_blob_from_form_xml_base_free_through(
+        form_xml,
+        module_text,
+        source.map(|source| source as &dyn MetadataSource),
+    )
+}
+
+/// [`pack_form_body_blob_from_form_xml_base_free`], the source read through
+/// [`MetadataSource`].
+fn pack_form_body_blob_from_form_xml_base_free_through(
+    form_xml: &[u8],
+    module_text: Option<&[u8]>,
+    source: Option<&dyn MetadataSource>,
+) -> Result<PackedRawDeflatedBlob> {
     validate_form_xml_document(form_xml)?;
     let properties = parse_form_xml_body_properties(form_xml)?;
     let blockers = form_base_free_model_blockers(&properties, source.is_some());
@@ -9484,11 +9585,12 @@ pub fn pack_form_body_blob_from_form_xml_base_free(
 
     let template = format_form_base_free_template(&properties)?;
     let template_blob = deflate_raw(template.as_bytes())?;
-    let packed = pack_form_body_blob_from_form_xml_with_source(
+    let packed = pack_form_body_blob_from_form_xml_through(
         &template_blob,
         form_xml,
         module_text,
         source,
+        None,
     )?;
     validate_base_free_form_output(&packed.blob, &properties)?;
     Ok(packed)
@@ -9933,7 +10035,7 @@ fn form_trailing_section_count(value: &str, index: usize) -> Result<usize> {
 fn patch_form_item_picture_assets_with_source(
     plain: &mut String,
     assets_root: &Path,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<()> {
     if !assets_root.is_dir() {
         return Ok(());
@@ -16179,7 +16281,7 @@ fn native_command_interface_panel(
     panel: &str,
     main_attribute_class: &str,
     data_paths: &NativeDataPaths<'_>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let mut records = String::new();
     let mut count = 0usize;
@@ -16217,7 +16319,7 @@ fn native_command_interface_item(
     properties: &FormXmlBodyProperties,
     main_attribute_class: &str,
     data_paths: &NativeDataPaths<'_>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let attribute = match item.attribute.as_deref().map(str::trim) {
         Some(path) => data_paths.resolve(path).ok_or_else(|| {
@@ -16289,7 +16391,7 @@ fn native_command_interface_command(
     item: &FormXmlCommandInterfaceItem,
     properties: &FormXmlBodyProperties,
     main_attribute_class: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     const FORM_COMMANDS: &str = "409b9a53-7f7e-4178-86c1-33176c7c7a7a";
     let reference = item
@@ -16359,7 +16461,7 @@ fn native_command_interface_command(
 /// Measured over 3 946 references of both corpora and both holders.
 fn native_object_standard_command(
     reference: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let (owner, rest) = reference
         .split_once(".StandardCommand.")
@@ -18590,7 +18692,7 @@ fn patch_form_layout_auto_command_bar(
     command_bar: &FormXmlAutoCommandBar,
     commands: &[FormXmlCommand],
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     let fields = scan_braced_fields(text, 0)?;
     if fields.first().map(|range| text[range.clone()].trim()) == Some("22")
@@ -18832,7 +18934,7 @@ fn patch_form_layout_child_items(
     attributes: &[FormXmlAttribute],
     commands: &[FormXmlCommand],
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     retain_missing: bool,
 ) -> Result<()> {
     if retain_missing {
@@ -19032,7 +19134,7 @@ fn patch_form_layout_child_item(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     let fields = scan_braced_fields(text, 0)?;
     if form_layout_child_item_matches(text, &fields, item) {
@@ -19085,7 +19187,7 @@ fn append_form_layout_top_level_child_item(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     if item.depth != 0 {
         return Ok(false);
@@ -19221,7 +19323,7 @@ fn format_form_layout_new_top_level_item(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     match item.tag.as_str() {
         "Button" => format_form_layout_new_child_item(
@@ -19288,7 +19390,7 @@ fn format_form_layout_new_child_item(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     if form_child_item_strict_properties_require_existing_layout(item) {
         return Err(anyhow!(
@@ -19356,7 +19458,7 @@ fn format_form_layout_new_button_item(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     if item.location_in_command_bar.is_some()
         || item.show_title.is_some()
@@ -19417,7 +19519,7 @@ fn format_form_layout_new_extended_button_item(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let item_type = item
         .item_type
@@ -19916,7 +20018,7 @@ fn format_form_layout_new_table_item(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     if item.data_path.is_some() && item.child_items.is_empty() {
         return Ok(format_form_layout_new_table_item_with_data_path(
@@ -20026,7 +20128,7 @@ fn format_form_layout_new_group_item(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     if item.tag == "Pages" && (!item.tooltip.is_empty() || item.height.is_some()) {
         return format_form_layout_new_extended_pages_item(
@@ -20142,7 +20244,7 @@ fn format_form_layout_new_extended_pages_item(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     format_form_layout_new_extended_group_with_child_span(
         item,
@@ -20170,7 +20272,7 @@ fn format_form_layout_new_extended_page_item(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let creatable_children = item
         .child_items
@@ -20234,7 +20336,7 @@ fn format_form_layout_new_extended_group_with_child_span(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     scroll_on_compress: &str,
     height: &str,
 ) -> Result<String> {
@@ -20294,7 +20396,7 @@ fn format_form_layout_new_extended_group_with_child_span(
 
 fn form_new_extended_group_title_text_color(
     item: &FormXmlChildItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     item.title_text_color
         .as_deref()
@@ -20305,7 +20407,7 @@ fn form_new_extended_group_title_text_color(
 
 fn format_form_usual_group_title_text_color_value(
     value: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let value = value.trim();
     if let Some(name) = value.strip_prefix("style:") {
@@ -20356,7 +20458,7 @@ fn form_usual_group_system_color_code_for_name(name: &str) -> Option<i32> {
 
 fn form_new_extended_group_title_font(
     item: &FormXmlChildItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     item.title_font
         .as_ref()
@@ -20367,7 +20469,7 @@ fn form_new_extended_group_title_font(
 
 fn form_existing_extended_group_title_text_color(
     item: &FormXmlChildItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     existing: &str,
 ) -> Result<String> {
     let formatted = form_new_extended_group_title_text_color(item, source)?;
@@ -20399,7 +20501,7 @@ fn form_existing_extended_group_title_text_color(
 
 fn form_existing_extended_group_title_font(
     item: &FormXmlChildItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     existing: &str,
 ) -> Result<String> {
     let formatted = form_new_extended_group_title_font(item, source)?;
@@ -20569,7 +20671,7 @@ fn format_form_new_button_command_reference(
     command_name: &str,
     commands: &[FormXmlCommand],
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<Option<String>> {
     if let Some(uuid) = form_standard_command_uuid(command_name) {
         return Ok(Some(format!("{{0,{uuid}}}")));
@@ -21036,7 +21138,7 @@ fn patch_form_layout_child_item_entry(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<()> {
     let Some(wrapper) = fields.first().map(|range| text[range.clone()].trim()) else {
         return Ok(());
@@ -22436,7 +22538,7 @@ fn patch_form_layout_direct_child_items(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<()> {
     if item.child_items_present {
         retain_form_layout_direct_child_items(text, &item.child_items)?;
@@ -22479,7 +22581,7 @@ fn patch_form_layout_single_child_items(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<()> {
     let fields = scan_braced_fields(text, 0)?;
     let is_text_document_context_menu_owner = fields.first().and_then(|range| {
@@ -22620,7 +22722,7 @@ fn patch_or_append_form_layout_single_child_item(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     let fields = scan_braced_fields(text, 0)?;
     let Some((count_range, item_range)) = form_layout_single_child_item_slot(text, &fields) else {
@@ -22763,7 +22865,7 @@ fn patch_or_append_form_layout_direct_child_item(
     table_ids_by_name: &BTreeMap<String, String>,
     table_column_ids_by_name: &BTreeMap<(String, String), String>,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     let fields = scan_braced_fields(text, 0)?;
     if !matches!(
@@ -23186,7 +23288,7 @@ fn format_form_button_command_reference(
     existing: &str,
     command_name: &str,
     commands: &[FormXmlCommand],
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<Option<String>> {
     if let Some(uuid) = form_standard_command_uuid(command_name) {
         return Ok(Some(format!("{{0,{uuid}}}")));
@@ -23547,7 +23649,7 @@ fn patch_form_body_commands(
     text: &mut String,
     commands: &[FormXmlCommand],
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<()> {
     retain_form_body_commands(text, commands)?;
     for command in commands {
@@ -23639,7 +23741,7 @@ fn form_body_command_entry_identity(text: &str) -> Result<Option<(String, String
 fn patch_form_command_interface(
     text: &mut String,
     items: &[FormXmlCommandInterfaceItem],
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<()> {
     let fields = scan_braced_fields(text, 0)?;
     if fields.first().map(|range| text[range.clone()].trim()) != Some("0") {
@@ -23694,7 +23796,7 @@ fn patch_form_command_interface(
 fn patch_existing_form_command_interface_items(
     text: &mut String,
     items: &[FormXmlCommandInterfaceItem],
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<()> {
     let fields = scan_braced_fields(text, 0)?;
     let item_ranges = fields
@@ -23725,7 +23827,7 @@ fn patch_existing_form_command_interface_items(
 
 fn format_form_command_interface_item(
     item: &FormXmlCommandInterfaceItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<Option<String>> {
     let Some(source) = source else {
         return Ok(None);
@@ -23754,7 +23856,7 @@ fn format_form_command_interface_item(
 fn patch_form_command_interface_item(
     text: &mut String,
     item: &FormXmlCommandInterfaceItem,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<()> {
     let fields = scan_braced_fields(text, 0)?;
     let mut replacements = Vec::<(Range<usize>, String)>::new();
@@ -23809,7 +23911,7 @@ fn format_form_nested_common_bool(value: bool) -> String {
 fn patch_form_body_parameters(
     text: &mut String,
     parameters: &[FormXmlParameter],
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<()> {
     retain_form_body_parameters(text, parameters)?;
     for parameter in parameters {
@@ -23875,7 +23977,7 @@ fn form_body_parameter_entry_name(text: &str) -> Result<Option<String>> {
 fn patch_form_body_parameter(
     text: &mut String,
     parameter: &FormXmlParameter,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     let fields = scan_braced_fields(text, 0)?;
     for range in fields {
@@ -23894,7 +23996,7 @@ fn patch_form_body_parameter(
 fn patch_form_body_parameter_entry(
     text: &mut String,
     parameter: &FormXmlParameter,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     let fields = scan_braced_fields(text, 0)?;
     let existing_name = fields
@@ -23935,7 +24037,7 @@ fn patch_form_body_parameter_entry(
 fn append_form_body_parameter(
     text: &mut String,
     parameter: &FormXmlParameter,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     let fields = scan_braced_fields(text, 0)?;
     if fields.first().map(|range| text[range.clone()].trim()) != Some("0") {
@@ -23962,7 +24064,7 @@ fn append_form_body_parameter(
 
 fn format_form_body_new_parameter(
     parameter: &FormXmlParameter,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     Ok(format!(
         "{{0,{},{},{}}}",
@@ -23978,7 +24080,7 @@ fn format_form_body_new_parameter(
 
 fn format_form_parameter_type_pattern(
     parameter: &FormXmlParameter,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let value_types = parse_metadata_type_pattern_elements(
         "Form Parameter",
@@ -23999,7 +24101,7 @@ fn format_form_parameter_type_pattern(
 fn patch_form_body_attributes(
     text: &mut String,
     attributes: &[FormXmlAttribute],
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<()> {
     retain_form_body_attributes(text, attributes)?;
     for attribute in attributes {
@@ -24187,7 +24289,7 @@ fn form_body_attribute_entry_identity(text: &str) -> Result<Option<(String, Opti
 fn patch_form_body_attribute(
     text: &mut String,
     attribute: &FormXmlAttribute,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     let fields = scan_braced_fields(text, 0)?;
     for range in fields {
@@ -24210,7 +24312,7 @@ fn patch_form_body_attribute(
 fn patch_form_body_attribute_entry(
     text: &mut String,
     attribute: &FormXmlAttribute,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     let fields = scan_braced_fields(text, 0)?;
     if fields.first().map(|range| text[range.clone()].trim()) != Some("9") {
@@ -24265,7 +24367,7 @@ fn patch_form_body_attribute_entry(
 fn append_form_body_attribute(
     text: &mut String,
     attribute: &FormXmlAttribute,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     if attribute.types.is_empty() {
         return Ok(false);
@@ -24301,7 +24403,7 @@ fn append_form_body_attribute(
 
 fn format_form_body_new_attribute(
     attribute: &FormXmlAttribute,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let settings_text = if let Some(settings) = &attribute.settings {
         format_form_dynamic_list_settings_new(settings, source)?
@@ -24330,7 +24432,7 @@ fn format_form_body_new_attribute(
 
 fn format_form_attribute_type_pattern(
     attribute: &FormXmlAttribute,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     if attribute.types.len() == 1 && attribute.types[0].trim() == "cfg:DynamicList" {
         return Ok(format!(
@@ -24368,7 +24470,7 @@ fn format_form_attribute_type_pattern(
 fn format_form_type_spec_pattern(
     kind: &str,
     spec: &FormXmlTypeSpec,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let value_types = parse_metadata_type_pattern_elements(
         kind,
@@ -24388,7 +24490,7 @@ fn format_form_type_spec_pattern(
 
 fn format_form_dynamic_list_settings_new(
     settings: &FormXmlDynamicListSettings,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let conditional_appearance_policy = bundled_dcs_conditional_appearance_policy()
         .map_err(|error| anyhow!("cannot load DCS conditional-appearance policy: {error}"))?;
@@ -24456,7 +24558,7 @@ fn format_form_dynamic_list_settings_new(
 fn patch_form_dynamic_list_settings(
     text: &mut String,
     settings: &FormXmlDynamicListSettings,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<()> {
     if let Some(query_text) = &settings.query_text {
         let current_matches = find_form_setting_value_range(text, "QueryText")
@@ -24915,7 +25017,7 @@ fn format_form_setting_bool(value: bool) -> String {
 }
 
 fn format_form_setting_metadata_ref(
-    source: &MetadataSourceContext,
+    source: &dyn MetadataSource,
     reference: &str,
 ) -> Result<String> {
     let uuid = source.resolve_metadata_reference_uuid(reference)?;
@@ -25033,7 +25135,7 @@ fn canonical_form_xml_list_settings_order(order: &FormXmlListSettingsOrder) -> R
 fn patch_form_body_command(
     text: &mut String,
     command: &FormXmlCommand,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     let fields = scan_braced_fields(text, 0)?;
     for range in fields {
@@ -25056,7 +25158,7 @@ fn patch_form_body_command(
 fn patch_form_body_command_entry(
     text: &mut String,
     command: &FormXmlCommand,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     let fields = scan_braced_fields(text, 0)?;
     if !matches!(
@@ -25324,7 +25426,7 @@ fn append_form_body_command(
     text: &mut String,
     command: &FormXmlCommand,
     command_uuids: &BTreeMap<String, String>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<bool> {
     let fields = scan_braced_fields(text, 0)?;
     if fields.first().map(|range| text[range.clone()].trim()) != Some("0") {
@@ -25354,7 +25456,7 @@ fn append_form_body_command(
 fn format_form_body_new_command(
     command: &FormXmlCommand,
     uuid: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<String> {
     let action = command.action.as_deref().unwrap_or("");
     let current_row_use = if command.current_row_use == Some(FormXmlCommandCurrentRowUse::DontUse) {
@@ -25402,7 +25504,7 @@ fn form_command_current_row_use_code(value: FormXmlCommandCurrentRowUse) -> Resu
 }
 
 fn format_form_reference_list(
-    source: &MetadataSourceContext,
+    source: &dyn MetadataSource,
     references: &[String],
 ) -> Result<String> {
     let mut text = format!("{{0,{}", references.len());
@@ -28894,7 +28996,7 @@ fn parse_defined_type_xml_properties(
         number_allowed_sign,
         date_fractions,
         StringAllowedLengthCoding::VariableIsOne,
-        source,
+        source.map(|source| source as &dyn MetadataSource),
         true,
     )?;
 
@@ -30023,7 +30125,7 @@ fn parse_constant_value_type(
         number_allowed_sign,
         date_fractions,
         StringAllowedLengthCoding::VariableIsOne,
-        source,
+        source.map(|source| source as &dyn MetadataSource),
         false,
     )?;
     elements
@@ -30042,7 +30144,7 @@ fn parse_metadata_type_pattern_elements(
     number_allowed_sign: Option<String>,
     date_fractions: Option<String>,
     allowed_length_coding: StringAllowedLengthCoding,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     allow_multiple: bool,
 ) -> Result<Vec<MetadataTypePatternElement>> {
     // A form attribute, a parameter or a column may declare no type at all:
@@ -30094,7 +30196,7 @@ fn parse_metadata_type_pattern_element(
     number_allowed_sign: Option<&str>,
     date_fractions: Option<&str>,
     allowed_length_coding: StringAllowedLengthCoding,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
 ) -> Result<MetadataTypePatternElement> {
     if let Some(type_id) = type_name.trim().strip_prefix(RAW_TYPE_ID_PREFIX) {
         return Ok(MetadataTypePatternElement::Reference {

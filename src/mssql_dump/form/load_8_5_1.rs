@@ -26,12 +26,12 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use ibcmd_1c_text::{crlf_line_breaks, format_1c_string as quote_1c};
 
-use super::layout_8_5_1::Node;
 use super::xml_2_21_writer::{
     FIELD_TAGS, GROUPING, TRI_STATE, XmlEdits, child_text, element_name, simple_text,
 };
-use crate::module_blob::{MetadataSource, MetadataSourceContext};
-use crate::platform::FormLayout;
+use ibcmd_form_body::FormLayout;
+use ibcmd_form_body::layout_8_5_1::Node;
+use ibcmd_metadata_source::MetadataSource;
 
 const FORM_ITEM_CLASS_UUID: &str = "02023637-7868-4a5f-8576-835a76e0c9ba";
 const FORM_COMMAND_CLASS_UUID: &str = "409b9a53-7f7e-4178-86c1-33176c7c7a7a";
@@ -239,7 +239,7 @@ fn picture_member(
     element: usize,
     holder: &str,
     item_name: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     let mut abs = None;
@@ -270,7 +270,7 @@ fn picture_member(
             other => bail!("<{holder}> <Picture> holds <{other}>"),
         }
     }
-    crate::module_blob::native_picture_from_parts(
+    ibcmd_metadata_blob::native_picture_from_parts(
         holder,
         item_name,
         abs,
@@ -283,8 +283,8 @@ fn picture_member(
     )
 }
 
-fn color_member(value: &str, what: &str, source: Option<&MetadataSourceContext>) -> Result<String> {
-    crate::module_blob::native_item_color(Some(value), source)
+fn color_member(value: &str, what: &str, source: Option<&dyn MetadataSource>) -> Result<String> {
+    ibcmd_metadata_blob::native_item_color(Some(value), source)
         .ok_or_else(|| anyhow!("{what}: the writer cannot place the colour {value}"))
 }
 
@@ -292,7 +292,7 @@ fn color_member(value: &str, what: &str, source: Option<&MetadataSourceContext>)
 /// returns the XML the 8.3.27 writer reads, with those members as facts.
 pub(crate) fn down_convert_xml_2_21_form(
     xml: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<(String, FormLoadFactsV8_5_1)> {
     down_convert_xml_2_21_form_as(xml, source, items_root, FormLayout::V8_5_1)
@@ -304,7 +304,7 @@ pub(crate) fn down_convert_xml_2_21_form(
 /// absence.
 fn down_convert_xml_2_21_form_as(
     xml: &str,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
     layout: FormLayout,
 ) -> Result<(String, FormLoadFactsV8_5_1)> {
@@ -418,7 +418,7 @@ fn down_convert_xml_2_21_form_as(
 fn report_state_of(
     edits: &XmlEdits<'_>,
     root: usize,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<Option<ReportState>> {
     let Some(form_type) = peek(edits, root, "ReportFormType")? else {
@@ -463,7 +463,7 @@ fn report_state_of(
     if form_type == "Settings" && !common {
         return Ok(None);
     }
-    let Some(configuration) = source.and_then(MetadataSourceContext::configuration_uuid) else {
+    let Some(configuration) = source.and_then(MetadataSource::configuration_uuid) else {
         return Ok(None);
     };
     Ok(Some(ReportState {
@@ -553,7 +553,7 @@ fn load_item(
     tag: &str,
     name: &str,
     item: &mut ItemFacts,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
     layout: FormLayout,
 ) -> Result<()> {
@@ -675,7 +675,7 @@ fn load_field(
     tag: &str,
     name: &str,
     item: &mut ItemFacts,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<()> {
     let mark = take(edits, element, "MarkRequiredComplete")?;
@@ -1069,7 +1069,7 @@ fn load_usual_group(edits: &mut XmlEdits<'_>, element: usize, item: &mut ItemFac
 fn load_choice_value_pictures(
     edits: &mut XmlEdits<'_>,
     facts: &mut FormLoadFactsV8_5_1,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<()> {
     let values = edits
@@ -1647,18 +1647,18 @@ fn base64_leaf_8_5_1(payload: &str) -> String {
     if !compact.is_ascii() {
         return format!("#base64:{payload}");
     }
-    let declared = crate::module_blob::decode_base64_mime(&compact).and_then(|bytes| {
+    let declared = ibcmd_1c_text::decode_base64_mime_lenient(&compact).and_then(|bytes| {
         let document = bytes
             .strip_prefix(b"\xEF\xBB\xBF".as_slice())
             .unwrap_or(&bytes);
         if !document.starts_with(b"<?xml") {
             return None;
         }
-        let declared = super::super::declare_palette_namespace_beside_style(bytes.clone());
+        let declared = ibcmd_1c_text::declare_palette_namespace_beside_style(bytes.clone());
         (declared != bytes).then_some(declared)
     });
     let encoded = match declared {
-        Some(bytes) => crate::module_blob::encode_base64(&bytes),
+        Some(bytes) => ibcmd_1c_text::encode_base64(&bytes),
         None => compact,
     };
     let mut out = String::with_capacity(8 + encoded.len() + encoded.len() / 64 * 3);
@@ -2093,12 +2093,12 @@ fn command_identity(members: &[Node]) -> Option<String> {
 pub(crate) fn compile_native_form_body_8_5_1(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     let xml = std::str::from_utf8(form_xml).context("2.21 Form.xml is not valid UTF-8")?;
     let (xml20, facts) = down_convert_xml_2_21_form(xml, source, items_root)?;
-    let body = crate::module_blob::compile_native_form_body_8_3(
+    let body = ibcmd_metadata_blob::compile_native_form_body_8_3(
         xml20.as_bytes(),
         module_text,
         source,
@@ -2114,12 +2114,12 @@ pub(crate) fn compile_native_form_body_8_5_1(
 pub(crate) fn compile_xml_2_21_form_body_in_layout_8_3(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<String> {
     let xml = std::str::from_utf8(form_xml).context("2.21 Form.xml is not valid UTF-8")?;
     let (xml20, _) = down_convert_xml_2_21_form_as(xml, source, items_root, FormLayout::V8_3)?;
-    crate::module_blob::compile_native_form_body_8_3(
+    ibcmd_metadata_blob::compile_native_form_body_8_3(
         xml20.as_bytes(),
         module_text,
         source,
@@ -2194,9 +2194,9 @@ mod tests {
                 for revision in 0..=40 {
                     for len in 0..=80 {
                         let revision = revision.to_string();
-                        if let Some((v8_3, appended)) =
-                            super::super::layout_8_5_1::bag_revision(owner, &kind, &revision, len)
-                        {
+                        if let Some((v8_3, appended)) = ibcmd_form_body::layout_8_5_1::bag_revision(
+                            owner, &kind, &revision, len,
+                        ) {
                             let (v8_5_1, defaults) = up_bag(owner, &kind, v8_3, len - appended)
                                 .unwrap_or_else(|| {
                                     panic!("no inverse for {owner}/{kind}/{revision}/{len}")
@@ -2220,7 +2220,7 @@ mod tests {
         );
         let body = format!(
             "{{\"a\nb\",\"c\r\nd\",{{#base64:{}}}}}",
-            crate::module_blob::encode_base64(settings.as_bytes())
+            ibcmd_1c_text::encode_base64(settings.as_bytes())
         );
         let mut node = parse_raw(&body).unwrap();
         up_convert_leaves(&mut node);
@@ -2231,7 +2231,7 @@ mod tests {
             panic!()
         };
         let text = leaf(&document[0]).unwrap();
-        let encoded = crate::module_blob::encode_base64(with_pal.as_bytes());
+        let encoded = ibcmd_1c_text::encode_base64(with_pal.as_bytes());
         let lines: Vec<&str> = text["#base64:".len()..].split("\r\r\n").collect();
         assert_eq!(lines.concat(), encoded);
         assert!(lines[..lines.len() - 1].iter().all(|line| line.len() == 64));

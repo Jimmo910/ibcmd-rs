@@ -109,7 +109,7 @@ pub(super) fn form_adoption(
     let base_xml = match (v85, &facts) {
         (false, _) => base_xml,
         (true, Some(facts)) => {
-            super::form::xml_2_21_writer::apply_form_facts_8_5_1(
+            super::form::apply_form_facts_8_5_1_for_export(
                 base_xml,
                 facts,
                 object_refs,

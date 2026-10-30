@@ -2223,74 +2223,9 @@ fn self_close_empty_languages(xml: Vec<u8>) -> Vec<u8> {
     out
 }
 
-const STYLE_NAMESPACE_DECLARATION: &str = " xmlns:style=\"http://v8.1c.ru/8.1/data/ui/style\"";
-const PALETTE_NAMESPACE_DECLARATION: &str =
-    " xmlns:pal=\"http://v8.1c.ru/8.1/data/ui/colors/palette\"";
-
-/// Dialect 2.21 declares the palette colour namespace on exactly the elements
-/// that declare the style namespace, and nowhere else.
-///
-/// 8.5.1.1150 BSP native tree: of 6 299 start tags carrying namespace
-/// declarations, every one of the 6 298 that declares `xmlns:style` also
-/// declares `xmlns:pal` (`MetaDataObject`, `Form`, `document`,
-/// `dcsset:settings`, `settings`, `GraphicalSchema`, `AppearanceTemplate`) and
-/// none of the others does. The platform lists declarations alphabetically by
-/// prefix, so `pal` goes before the first prefixed declaration that sorts after
-/// it -- `style` on most roots, `sch` on a graphical schema. A tag that already
-/// declares the prefix is left as it is.
-pub(crate) fn declare_palette_namespace_beside_style(bytes: Vec<u8>) -> Vec<u8> {
-    let Ok(text) = std::str::from_utf8(&bytes) else {
-        return bytes;
-    };
-    if !text.contains(STYLE_NAMESPACE_DECLARATION) {
-        return bytes;
-    }
-    let mut out = String::with_capacity(text.len() + 256);
-    let mut cursor = 0;
-    let mut search_from = 0;
-    while let Some(relative) = text[search_from..].find(STYLE_NAMESPACE_DECLARATION) {
-        let style_at = search_from + relative;
-        search_from = style_at + STYLE_NAMESPACE_DECLARATION.len();
-        let Some(tag_start) = text[..style_at].rfind('<') else {
-            continue;
-        };
-        if tag_start < cursor || text[tag_start..style_at].contains('>') {
-            continue;
-        }
-        let tag_end = text[style_at..]
-            .find('>')
-            .map_or(text.len(), |offset| style_at + offset);
-        let tag = &text[tag_start..tag_end];
-        if tag.contains(" xmlns:pal=") {
-            continue;
-        }
-        // A value that declares the style namespace alone for its own `ref`
-        // (a DCS font `dcscor:value`) gets no palette beside it: 23 of 23 in
-        // the 8.5.1.1150 ERP УХ export, against every tag that declares more.
-        if tag.matches(" xmlns:").count() == 1 {
-            continue;
-        }
-        let mut insert_at = style_at;
-        let mut scan = tag_start;
-        while let Some(offset) = text[scan..style_at].find(" xmlns:") {
-            let declaration = scan + offset;
-            let prefix_start = declaration + " xmlns:".len();
-            let prefix_end = text[prefix_start..style_at]
-                .find('=')
-                .map_or(style_at, |end| prefix_start + end);
-            if &text[prefix_start..prefix_end] > "pal" {
-                insert_at = declaration;
-                break;
-            }
-            scan = prefix_end;
-        }
-        out.push_str(&text[cursor..insert_at]);
-        out.push_str(PALETTE_NAMESPACE_DECLARATION);
-        cursor = insert_at;
-    }
-    out.push_str(&text[cursor..]);
-    out.into_bytes()
-}
+// The 2.21 palette namespace rule is the `ibcmd-1c-text` crate's, which the
+// 2.21 form loader reads too; the root reaches it by this path.
+pub(crate) use ibcmd_1c_text::declare_palette_namespace_beside_style;
 
 /// Preserves historical MSSQL source-asset output behavior only.
 ///
@@ -2590,7 +2525,7 @@ fn write_source_asset_inner(
                         || context.source_version == InfobaseConfigSourceVersion::V2_20;
                     let (xml, item_assets_8_5_1) = match &facts_8_5_1 {
                         _ if xml_2_21_pass_off => (xml, Vec::new()),
-                        Some(facts) => super::form::xml_2_21_writer::apply_form_facts_8_5_1(
+                        Some(facts) => super::form::apply_form_facts_8_5_1_for_export(
                             xml,
                             facts,
                             context.object_refs,
@@ -3478,8 +3413,6 @@ pub(super) struct HelpContent {
     pub(super) pages: Vec<HelpPage>,
     pub(super) files: Vec<HelpFile>,
 }
-
-pub(super) use ibcmd_form_body::FormItemAsset;
 
 #[derive(Clone)]
 pub(super) struct PredefinedItem {

@@ -1340,6 +1340,30 @@ mod tests {
         fn help_reference(&self, _: &str) -> Result<HelpReference> {
             unreachable!("the command interface has no help page")
         }
+        fn resolve_command_reference_uuid(&self, _: &str) -> Result<String> {
+            unreachable!("the command interface names no command")
+        }
+        fn resolve_form_uuid(&self, _: &str) -> Result<String> {
+            unreachable!("the command interface names no form")
+        }
+        fn resolve_metadata_child_uuid(&self, _: &str, _: &str, _: &str) -> Result<String> {
+            unreachable!("the command interface names no child object")
+        }
+        fn resolve_predefined_item_id(&self, _: &str, _: &str) -> Result<String> {
+            unreachable!("the command interface names no predefined item")
+        }
+        fn information_register_master_dimensions(&self, _: &str) -> Result<Vec<String>> {
+            unreachable!("the command interface reads no register")
+        }
+        fn resolve_simple_metadata_uuid(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<String> {
+            unreachable!("the command interface names no object")
+        }
     }
 
     /// The writer reads names only through `MetadataSource`: the same files

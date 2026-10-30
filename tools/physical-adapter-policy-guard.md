@@ -152,3 +152,17 @@ lists. No fingerprint changes. Every other file record is preserved, including
 the stale `config_dump_info.rs` and `incremental.rs` records. The source assets
 module keeps the former owner-type path through an alias. Only existing text
 and metadata-writer crates replace root aliases; no parsing policy changes.
+
+Step 5f-1 of #559 (the form writer's preparation) adds three files to
+guarded directories. `crates/ibcmd-1c-text/src/namespaces.rs` holds the 2.21
+palette namespace rule, formerly in `src/mssql_dump/source_assets.rs`; its
+four records (one `name-special-case`, three `xml-policy`) move unchanged.
+`crates/ibcmd-1c-text/src/brace_list.rs`, the brace-list field splitter
+formerly in `src/external/brace.rs`, and `crates/ibcmd-form-body/src/form_layout.rs`,
+the stored form layout formerly in `src/platform/mod.rs`, were outside the
+slice and join it with no occurrence. In `src/mssql_dump/form/xml_2_21_writer.rs`
+one `xml-policy` fingerprint changes around an unchanged literal, because the
+statement now names `ibcmd_form_body::parse_form_event_block` by its crate
+path: `141bb3eb8dce1bd7cb7f0477f893d0e98d2e920fdd384fbb8d1c6311d39817a8` to
+`3d272659525c543c2c5a548b0eec5ba3c5561a10d5023edb09bb1d094603420e`, count one.
+Every other record, the two stale ones included, is unchanged.
