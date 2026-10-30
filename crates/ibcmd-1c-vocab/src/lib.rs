@@ -8,7 +8,10 @@
 //!
 //! Everything here moved from the root crate's `mssql_dump` (`mod.rs`, the
 //! picture-payload helpers from `source_assets.rs`, the standard command
-//! of a metadata kind from `command_interface.rs` and the role-right
+//! of a metadata kind, the standard command of a stored command code and
+//! the stored command-interface codes (placements, home page work-area
+//! templates, the platform's standard panel definitions) from
+//! `command_interface.rs` and the role-right
 //! vocabulary from `role_rights.rs`), and the standard
 //! pictures and the compiler's built-in type table (`builtin_type_id`,
 //! `builtin_type_qname`) from its `metadata_model`; `inflate_raw_deflate`

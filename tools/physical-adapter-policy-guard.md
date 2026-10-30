@@ -205,3 +205,38 @@ pools, formerly `src/parallel.rs`, whose root module re-exports them so the
 pool and requested-worker state keep one owner. Both files were outside the
 slice and join it with no occurrence. Every other record, the two stale ones
 included, is unchanged.
+
+The compiler-coordinator preparation of #559 moves the base-free
+command-interface writers and what they read out of the root, in three
+guarded directories:
+- `crates/ibcmd-1c-vocab/src/`: the stored command-interface codes
+  (`COMMAND_INTERFACE_PLACEMENTS`, `HOME_PAGE_WORK_AREA_TEMPLATES`, the
+  standard panel definitions) go to the new `command_interface.rs`, and
+  `command_interface_standard_command_for_code` to `commands.rs`, all from
+  `src/mssql_dump/command_interface.rs`. Their 16 records (5
+  `uuid-literal`, 11 `name-special-case`) move unchanged, record by record;
+  the root keeps crate-visible aliases.
+- `crates/ibcmd-compiler-families/src/compiler/bodies/`: the body-profile
+  selection (`mod.rs`, formerly in `src/compiler/bodies/mod.rs`) and the
+  command-interface and interface-asset codecs (`command_interface.rs`,
+  `interface_assets.rs`, formerly `src/compiler/bodies/`) were outside the
+  slice and join it: `mod.rs` with no occurrence, `command_interface.rs`
+  with 8 records (1 `uuid-literal`, `NIL_UUID`; 7 `name-special-case`, the
+  stored codes `"0"`/`"1"` and the `"B"` type tag) and
+  `interface_assets.rs` with 3 `uuid-literal` (`NIL_UUID` and the client
+  application group and panel markers).
+- `crates/ibcmd-metadata-blob/src/interface_assets.rs`: the writers,
+  formerly `src/module_blob/interface_assets.rs`, which was outside the
+  slice (only `src/module_blob.rs` itself is scanned), join it with their 51
+  records (1 `uuid-literal`, 34 `name-special-case`, 16 `xml-policy`). The
+  three entry points that moved with them from `src/module_blob.rs` held no
+  record. The mechanical clippy fixes that follow change two of the 51
+  fingerprints around unchanged literals, count one each:
+  `name-special-case` `3d91910acab3e05a938ebf1f16b28b9f6adf360ab3407255072b188c8876d7b1`
+  to `615f82b54916833454c163b18af6032fc0338f0dc73208564b88eb8fa5b7ab5c`
+  (an `else if` folded into a let chain) and `xml-policy`
+  `2276ddf5fa7ac2b23903956bd92e99361daa8ef50f1b24c9bc698e3db30e019a` to
+  `593ef6aa56a2e5ddcabd698a0e9d99fd1d4b294d1fa3d3445f48ce1dcacefd16`
+  (`a == !b` written `a != b`).
+No directory is added to `$GuardedCrateDirectories`. Every other record, the
+two stale ones included, is unchanged.

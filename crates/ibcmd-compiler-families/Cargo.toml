@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
-description = "Native metadata-family compilation, bootstrap identities and profile loading"
+description = "Native metadata-family compilation, bootstrap identities and profile loading, with the body-profile selection and the command-interface and interface-asset codecs"
 
 [dependencies]
 anyhow = "1.0"

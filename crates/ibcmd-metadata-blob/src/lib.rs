@@ -7,15 +7,19 @@
 //! writer they call ([`role_rights_writer`]) and the metadata XML element
 //! tree ([`xml`]). The form writer's modules and items keep their paths
 //! here through re-exports: [`dynamic_list`], [`form_chart`],
-//! [`form_planner`].
+//! [`form_planner`]. The base-free writers of the command-interface family
+//! ([`pack_interface_asset_blob`], [`interface_asset_plaintext`] and the
+//! command-interface entry points) serialize through the codecs of
+//! `ibcmd-compiler-families`.
 //!
-//! Everything here moved from the root crate (`src/module_blob.rs`,
-//! `src/compiler/bodies/` and `src/metadata_model/xml.rs`), which keeps every
-//! path through re-exports (`module_blob::…`, `compiler::bodies::…`,
-//! `metadata_model::xml`). The root keeps the entry points that read the rest
-//! of it (the exporter, the command-line arguments, the moxel and
-//! command-interface writers) and the tests that do; what those read here
-//! is `pub`, and `#[doc(hidden)]` where it was private.
+//! Everything here moved from the root crate (`src/module_blob.rs` with its
+//! `interface_assets.rs`, `src/compiler/bodies/` and
+//! `src/metadata_model/xml.rs`), which keeps every path through re-exports
+//! (`module_blob::…`, `compiler::bodies::…`, `metadata_model::xml`). The
+//! root keeps the entry points that read the rest of it (the exporter, the
+//! command-line arguments, the moxel writer and the command-interface
+//! packer that patches a base blob) and the tests that do; what those read
+//! here is `pub`, and `#[doc(hidden)]` where it was private.
 //!
 //! The code came from the physical-adapter guard's slice, so the guard scans
 //! every non-test `*.rs` file under this crate's `src/`

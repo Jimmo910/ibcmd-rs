@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
-description = "The packers of a 1C configuration's stored bodies from their XML sources (metadata objects, forms over the native form body writer, templates, rights, styles, pictures, help, predefined data and the rest), the source context they read, the role-rights writer they call, and the metadata XML element tree"
+description = "The packers of a 1C configuration's stored bodies from their XML sources (metadata objects, forms over the native form body writer, templates, rights, styles, pictures, help, predefined data and the rest), the source context they read, the role-rights writer they call, the base-free command-interface writers, and the metadata XML element tree"
 
 [dependencies]
 # Errors as in the root, whose callers add their own context.
