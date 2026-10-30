@@ -248,10 +248,11 @@ coordinator). It holds the coordinator formerly under `src/compiler/`
 managed-form codec and the template kind formerly in `src/compiler/bodies/`
 (`form.rs`, `template_kind.rs`) and `src/file_identity.rs`. All of them were
 outside the slice and join it with their 167 records (169 occurrences):
-- `compiler/bootstrap.rs`: 90 `name-special-case` (the source tree's `.xml`
-  and `MetaDataObject`, the Configuration root's child family kinds and the
-  Configuration property names it projects) and 4 `xml-policy` (the
-  placeholder values of its property-projection refusals);
+- `compiler/bootstrap.rs`: 88 `name-special-case` records, 90 occurrences
+  (the source tree's `.xml` and `MetaDataObject`, the Configuration root's
+  child family kinds and the Configuration property names it projects), and
+  4 `xml-policy` (the placeholder values of its property-projection
+  refusals);
 - `compiler/root.rs`: 58 `uuid-literal` (the Configuration family slot
   table, the class ids and `NIL_UUID`) and 1 `name-special-case`
   (`"Configuration"`);
