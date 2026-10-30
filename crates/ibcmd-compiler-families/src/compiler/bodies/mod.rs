@@ -1,6 +1,8 @@
 //! The body-profile selection the root's profile-gated body codecs share:
 //! a codec admits an effective profile only when its storage profile is
 //! the one supported and the profile declares the codec's layout constant.
+//! With it, the codecs of the command interface and of the interface assets
+//! beside it, which read nothing else of the root.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -8,6 +10,9 @@ use std::fmt::{self, Display, Formatter};
 use ibcmd_core::artifact::{ProfileId, StorageProfileId};
 use ibcmd_core::profile::EffectiveProfile;
 use ibcmd_core::version::PlatformBuild;
+
+pub mod command_interface;
+pub mod interface_assets;
 
 const SUPPORTED_STORAGE_PROFILE: &str = "storage:mssql-config-configsave";
 

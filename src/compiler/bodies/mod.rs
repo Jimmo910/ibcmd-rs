@@ -5,7 +5,16 @@
 pub use ibcmd_compiler_families::compiler::bodies::BodyProfileError;
 pub(crate) use ibcmd_compiler_families::compiler::bodies::SelectedBodyProfile;
 
-pub mod command_interface;
+/// Profile-gated base-free codec for `Ext/CommandInterface.xml` native bodies:
+/// `ibcmd-compiler-families`' `compiler::bodies::command_interface`.
+pub mod command_interface {
+    pub use ibcmd_compiler_families::compiler::bodies::command_interface::{
+        CommandInterfaceBody, CommandInterfaceCodecError, CommandInterfaceCodecProfile,
+        CommandInterfaceModel, CommandOrder, CommandPlacement, CommandPlacementMode,
+        CommandReference, CommandVisibility, SubsystemVisibility, VisibilityValue,
+        compile_command_interface, decode_command_interface,
+    };
+}
 pub mod dcs;
 // The dynamic-list, chart and planner writers are `ibcmd-form-writer`'s,
 // with the form writer that calls them, and the role-rights writer is
@@ -26,7 +35,15 @@ pub mod form_native {
     pub(crate) use ibcmd_form_native::*;
 }
 pub use ibcmd_metadata_blob::form_planner;
-pub mod interface_assets;
+/// Base-free serializers for the interface assets beside the command
+/// interfaces: `ibcmd-compiler-families`' `compiler::bodies::interface_assets`.
+pub mod interface_assets {
+    pub use ibcmd_compiler_families::compiler::bodies::interface_assets::{
+        ClientApplicationInterfaceModel, ClientApplicationNode, ClientApplicationPanelDef,
+        HomePageWorkAreaItem, HomePageWorkAreaModel, StandaloneContentExtended,
+        StandaloneContentModel,
+    };
+}
 pub mod mxl;
 pub(crate) mod mxl_native;
 pub mod predefined;

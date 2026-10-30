@@ -40,7 +40,7 @@ pub struct HomePageWorkAreaItem {
     pub values: Vec<VisibilityValue>,
 }
 
-pub(crate) fn home_page_work_area_plaintext(
+pub fn home_page_work_area_plaintext(
     model: &HomePageWorkAreaModel,
 ) -> Result<Vec<u8>, NativeError> {
     let mut fields = vec![token("1"), token(model.template)];
@@ -96,7 +96,7 @@ pub struct ClientApplicationPanelDef {
     pub representation: Option<&'static str>,
 }
 
-pub(crate) fn client_application_interface_plaintext(
+pub fn client_application_interface_plaintext(
     model: &ClientApplicationInterfaceModel,
 ) -> Result<Vec<u8>, NativeError> {
     let mut fields = vec![token("1")];
@@ -183,7 +183,7 @@ pub struct StandaloneContentExtended {
     pub local_server_priority: Vec<ObjectUuid>,
 }
 
-pub(crate) fn standalone_content_plaintext(
+pub fn standalone_content_plaintext(
     model: &StandaloneContentModel,
 ) -> Result<Vec<u8>, NativeError> {
     let mut fields = vec![token("2"), token(model.used.len().to_string())];

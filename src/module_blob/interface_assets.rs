@@ -12,21 +12,21 @@
 
 use super::*;
 
-use crate::compiler::bodies::command_interface::{
-    CommandInterfaceModel, CommandOrder, CommandPlacement, CommandPlacementMode, CommandReference,
-    CommandVisibility, SubsystemVisibility, VisibilityValue, command_interface_plaintext,
-};
-use crate::compiler::bodies::interface_assets::{
-    ClientApplicationInterfaceModel, ClientApplicationNode, ClientApplicationPanelDef,
-    HomePageWorkAreaItem, HomePageWorkAreaModel, StandaloneContentExtended, StandaloneContentModel,
-    client_application_interface_plaintext, home_page_work_area_plaintext,
-    standalone_content_plaintext,
-};
 use crate::mssql_dump::{
     COMMAND_INTERFACE_PLACEMENTS, COMMON_COMMAND_GROUPS, HOME_PAGE_WORK_AREA_TEMPLATES,
     client_application_panel_def_is_standard, command_interface_standard_command_for_code,
 };
 use anyhow::{bail, ensure};
+use ibcmd_compiler_families::compiler::bodies::command_interface::{
+    CommandInterfaceModel, CommandOrder, CommandPlacement, CommandPlacementMode, CommandReference,
+    CommandVisibility, SubsystemVisibility, VisibilityValue, command_interface_plaintext,
+};
+use ibcmd_compiler_families::compiler::bodies::interface_assets::{
+    ClientApplicationInterfaceModel, ClientApplicationNode, ClientApplicationPanelDef,
+    HomePageWorkAreaItem, HomePageWorkAreaModel, StandaloneContentExtended, StandaloneContentModel,
+    client_application_interface_plaintext, home_page_work_area_plaintext,
+    standalone_content_plaintext,
+};
 use ibcmd_core::identity::ObjectUuid;
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";

@@ -142,7 +142,7 @@ pub(crate) fn compile_evidenced_command_interface(
 }
 
 /// The plain text the platform stores for `model`, BOM included.
-pub(crate) fn command_interface_plaintext(
+pub fn command_interface_plaintext(
     model: &CommandInterfaceModel,
 ) -> Result<Vec<u8>, CommandInterfaceCodecError> {
     validate_model(model)?;
