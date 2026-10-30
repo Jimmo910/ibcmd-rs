@@ -701,12 +701,10 @@ fn read_metadata_file_header(source: &dyn MetadataSource, path: &Path) -> Option
                 }
                 depth += 1;
             }
-            Event::Empty(event) => {
-                if depth == 1 && root_is_metadata {
-                    let local = xml_local_name(event.local_name().as_ref());
-                    let uuid = normalize_uuid_text(&xml_attr_value(&event, "uuid")?).ok()?;
-                    return Some((local, uuid));
-                }
+            Event::Empty(event) if depth == 1 && root_is_metadata => {
+                let local = xml_local_name(event.local_name().as_ref());
+                let uuid = normalize_uuid_text(&xml_attr_value(&event, "uuid")?).ok()?;
+                return Some((local, uuid));
             }
             Event::End(_) => depth = depth.checked_sub(1)?,
             Event::Eof => return None,
@@ -747,10 +745,11 @@ fn read_declared_commands(xml: &[u8]) -> Result<BTreeMap<String, String>> {
                     && let Some((_, name)) = current.as_mut()
                 {
                     *name = Some(text.trim().to_string());
-                } else if local == "Command" && path.len() == 3 {
-                    if let Some((uuid, Some(name))) = current.take() {
-                        commands.insert(name, uuid);
-                    }
+                } else if local == "Command"
+                    && path.len() == 3
+                    && let Some((uuid, Some(name))) = current.take()
+                {
+                    commands.insert(name, uuid);
                 }
                 text.clear();
             }
@@ -986,7 +985,7 @@ fn client_application_interface_model(root: &Node) -> Result<ClientApplicationIn
     }
     while let Some(panel_def) = children.optional("panelDef") {
         panel_def.only_attributes(&["id"])?;
-        let representation = match &panel_def.elements()?[..] {
+        let representation = match panel_def.elements()? {
             [] => None,
             [spr] if spr.name == "spr" => Some(match spr.leaf()?.trim() {
                 "Picture" => "0",
@@ -1123,7 +1122,7 @@ fn standalone_content_model(
     // ends the file on a line break exactly when the record has no sections
     // beyond the used list.
     ensure!(
-        settings.is_some() == !unused.is_empty(),
+        settings.is_some() != unused.is_empty(),
         "<DataExchangeSettings> is present without unused items, or missing with them"
     );
     let extended = if !unused.is_empty() || !local_server_priority.is_empty() {
