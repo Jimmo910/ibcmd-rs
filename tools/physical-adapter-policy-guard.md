@@ -97,9 +97,42 @@ fingerprint changes from
 `a1eb8c22ec2bfbf1d9159e97d2da8911a0a0d134b01e0e3abca8a2a4dc644539`,
 with category and occurrence count (one) unchanged.
 
+`crates/ibcmd-sql/src/` contains the database clients formerly in `src/sql/`,
+which were outside the slice. Eight production files join it with their four
+existing fingerprint records unchanged. The feature-gated live test module
+stays excluded by its test-only declaration. All earlier records, including
+the two stale records, remain unchanged.
+
+`crates/ibcmd-restructure-engine/src/` and the existing portable model crate's
+new `crates/ibcmd-restructure/src/descriptor/` directory also belong to the
+slice. The engine holds the native restructuring planner, caches, database
+execution and search-information records formerly under `src/restructure/`
+and `src/mssql_config_apply/si.rs`, plus the apply model's text primitives.
+The descriptor directory holds the shared object layouts and adoption
+identity formerly under `src/metadata_model/objects*.rs` and
+`src/mssql_dump/extension/mod.rs`. The portable model crate's earlier source
+stays outside this slice, as the earlier MOXCEL decoder does. All 132 earlier
+file records, including stale records, remain unchanged. Thirty-eight new
+production file records join with their 300 existing fingerprint records.
+The two public descriptor UUID constants retain their values and counts;
+their fingerprints change only because `pub(crate)` becomes `pub`. The exact
+before/after records are listed in the extraction's evidence. No baseline
+refresh is used. Root CLI/settings/apply adapters remain in the root.
+
 The guard tokenizes logical Rust statements outside comments and provably
 test-only items, including multiline, raw-string, escaped-string and char forms.
 It conservatively inventories immediate XML sink fragments and literal
 concatenations.  It remains lexical inventory governance, not a full Rust parser
 or general data-flow analysis, and cannot replace migration of XML policy into
 schema-owned writers.
+
+`crates/ibcmd-dump-readers/src/` follows the same rule. The additional-index
+reader, its owner model and the evidence-bound Configuration properties reader
+moved from `src/mssql_dump/{additional_indexes,configuration_properties_evidence}.rs`.
+Their two baseline file records move to the corresponding crate paths. All 11
+existing additional-index fingerprint records keep their category, hash and
+count; the Configuration reader and the new crate root have empty occurrence
+lists. No fingerprint changes. Every other file record is preserved, including
+the stale `config_dump_info.rs` and `incremental.rs` records. The source assets
+module keeps the former owner-type path through an alias. Only existing text
+and metadata-writer crates replace root aliases; no parsing policy changes.

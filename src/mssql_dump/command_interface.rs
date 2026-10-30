@@ -1,4 +1,10 @@
-use super::*;
+use super::{
+    BTreeMap, FormSourceReference, InfobaseConfigSourceVersion, MetadataCommandReference,
+    SubsystemSourceReference, common_command_group_name, escape_xml_element_text, escape_xml_text,
+    form_source_reference_name, inflate_raw_deflate, information_register_uuid_is_zero,
+    is_uuid_text, parse_non_zero_uuid, parse_uuid_field, split_1c_braced_fields,
+    split_1c_braced_fields_bounded, subsystem_source_reference_name, xml_bool,
+};
 
 const MAX_COMMAND_INTERFACE_SECTION_ITEMS: usize = 100_000;
 const MAX_COMMAND_INTERFACE_ROOT_FIELDS: usize = 12 + 9 * MAX_COMMAND_INTERFACE_SECTION_ITEMS;

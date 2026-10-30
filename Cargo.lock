@@ -714,6 +714,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-dump-readers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "ibcmd-1c-text",
+ "ibcmd-metadata-blob",
+ "ibcmd-schema",
+]
+
+[[package]]
 name = "ibcmd-edt"
 version = "0.1.0"
 dependencies = [
@@ -845,6 +856,22 @@ dependencies = [
  "anyhow",
  "flate2",
  "ibcmd-schema",
+ "serde",
+]
+
+[[package]]
+name = "ibcmd-restructure-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ibcmd-1c-text",
+ "ibcmd-compiler-families",
+ "ibcmd-restructure",
+ "ibcmd-sql",
+ "serde",
+ "serde_json",
+ "sha2",
+ "uuid",
 ]
 
 [[package]]
@@ -854,12 +881,12 @@ dependencies = [
  "anyhow",
  "clap",
  "flate2",
- "futures-util",
  "ibcmd-1c-text",
  "ibcmd-1c-vocab",
  "ibcmd-cf",
  "ibcmd-compiler-families",
  "ibcmd-core",
+ "ibcmd-dump-readers",
  "ibcmd-edt",
  "ibcmd-filedb",
  "ibcmd-form-body",
@@ -871,7 +898,9 @@ dependencies = [
  "ibcmd-moxel",
  "ibcmd-postgres",
  "ibcmd-restructure",
+ "ibcmd-restructure-engine",
  "ibcmd-schema",
+ "ibcmd-sql",
  "ibcmd-v8",
  "ibcmd-xml",
  "memchr",
@@ -886,7 +915,6 @@ dependencies = [
  "sha2",
  "tiberius",
  "tokio",
- "tokio-util",
  "toml",
  "uuid",
  "walkdir",
@@ -902,6 +930,19 @@ dependencies = [
  "serde_json",
  "sha2",
  "uuid",
+]
+
+[[package]]
+name = "ibcmd-sql"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "ibcmd-postgres",
+ "serde_json",
+ "tiberius",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

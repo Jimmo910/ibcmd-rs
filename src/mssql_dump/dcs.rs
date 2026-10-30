@@ -6,7 +6,7 @@
 
 // The tests below read `mssql_dump`'s names, as when this file held the code.
 #[cfg(test)]
-use super::*;
+use super::{BTreeMap, MetadataSourceFailureClass, ProfileId};
 
 pub(super) use ibcmd_form_body::ANY_IB_REF_TYPE_ID;
 pub(crate) use ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles;
