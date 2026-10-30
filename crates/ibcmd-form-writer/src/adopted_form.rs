@@ -146,7 +146,7 @@ pub fn compile_adopted_form_body_base_free(
 /// The body of a form an extension adopts, compiled from its `Form.xml`:
 /// the form without `<BaseForm>` and `callType` compiles as a configuration's
 /// form, its event blocks then take the call types
-/// (`crate::mssql_dump::form_extension`: `Before` code 0, `Override` 2,
+/// (the root's `mssql_dump::form_extension`: `Before` code 0, `Override` 2,
 /// `After` an empty first handler and the handler second, code 1), and the
 /// base form body the base row carries is put back after it
 /// (`...,1,<base form body>,0` where a form body ends `...,0,0`). An edit of
@@ -211,7 +211,7 @@ pub fn adopted_form_body(
 pub const STAND_IN: &str = "ИбкмдПерехватчик";
 
 /// The `(handler, call type)` bindings of one stored event, as the form's
-/// `<Event>` lines spell them (`crate::mssql_dump::form_extension`).
+/// `<Event>` lines spell them (the root's `mssql_dump::form_extension`).
 type Bindings = Vec<(String, String)>;
 
 /// The form XML without `<BaseForm>`, each event's interceptor lines folded

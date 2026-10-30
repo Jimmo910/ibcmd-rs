@@ -14,7 +14,6 @@ ibcmd-1c-vocab = { path = "../ibcmd-1c-vocab" }
 ibcmd-core = { path = "../ibcmd-core" }
 ibcmd-form-body = { path = "../ibcmd-form-body" }
 ibcmd-form-native = { path = "../ibcmd-form-native" }
-ibcmd-form-schema = { path = "../ibcmd-form-schema" }
 # The native form body writer, whose helpers the packers share.
 ibcmd-form-writer = { path = "../ibcmd-form-writer" }
 # The source bytes and the source context's memoised answers.
@@ -23,7 +22,6 @@ ibcmd-module-blob = { path = "../ibcmd-module-blob" }
 # The brace model of a configuration row.
 ibcmd-restructure = { path = "../ibcmd-restructure" }
 ibcmd-schema = { path = "../ibcmd-schema" }
-ibcmd-xml = { path = "../ibcmd-xml" }
 quick-xml = "0.38"
 # The packers' reports, which the root prints.
 serde = { version = "1.0", features = ["derive"] }

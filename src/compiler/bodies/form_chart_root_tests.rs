@@ -1,4 +1,4 @@
-//! The test of `form_chart` (in `ibcmd-metadata-blob`) that renders the
+//! The test of `form_chart` (in `ibcmd-form-writer`) that renders the
 //! written bodies through the root's exporter.
 
 #[cfg(test)]
