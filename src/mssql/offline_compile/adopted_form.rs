@@ -419,7 +419,7 @@ pub(super) fn with_call_type_blocks(
     while let Some(offset) = plain[at..].find('{') {
         let start = at + offset;
         at = start + 1;
-        let Some((fields, end)) = crate::external::brace::fields(plain, start) else {
+        let Some((fields, end)) = ibcmd_1c_text::brace_list::fields(plain, start) else {
             continue;
         };
         let Ok(count) = fields.first().copied().unwrap_or_default().parse::<usize>() else {

@@ -19,12 +19,18 @@
 //! crate's per-thread jump table ([`register_brace_jumps`]); the splitters
 //! here read the same table, so it has one definition, in this crate.
 //!
+//! [`brace_list`], the top-level fields of a brace list, moved unchanged from
+//! the root's external-object adapter (`external/brace.rs`), which was outside
+//! the guard's slice; the adapter re-exports it, and the adopted-form compile
+//! reads it.
+//!
 //! The code came from the physical-adapter guard's slice, so the guard scans
 //! every non-test `*.rs` file under this crate's `src/`
 //! (`$GuardedCrateDirectories` in `tools/validate-physical-adapter-policy.ps1`)
 //! and their literals stay in the guard's baseline. A file added here is in
 //! the slice at once and fails the guard until its record is reviewed.
 
+pub mod brace_list;
 mod braced;
 mod fields;
 mod namespaces;
