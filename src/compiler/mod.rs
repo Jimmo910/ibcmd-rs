@@ -31,7 +31,7 @@ pub mod families;
 pub use ibcmd_compiler_families::compiler::graph;
 pub mod identity;
 pub mod overlay;
-pub mod readiness;
+pub use ibcmd_compiler_readiness as readiness;
 pub mod root;
 pub mod version;
 pub mod versions;
@@ -909,7 +909,9 @@ mod tests {
                 "../../crates/ibcmd-compiler-families/src/compiler/graph.rs"
             )),
             production(include_str!("overlay.rs")),
-            production(include_str!("readiness.rs")),
+            production(include_str!(
+                "../../crates/ibcmd-compiler-readiness/src/lib.rs"
+            )),
             production(include_str!("root.rs")),
             production(include_str!("version.rs")),
             production(include_str!("versions.rs"))
