@@ -28,7 +28,7 @@ use super::attribute;
 use super::brace::Brace;
 use super::xml::Element;
 use super::{DescriptorContext, ObjectXml, localized, md_base, parse_bool};
-use crate::brace_list;
+use ibcmd_restructure::brace_list;
 
 pub fn compile(object: &ObjectXml<'_>, context: &DescriptorContext) -> Result<Brace> {
     match object.kind {
@@ -1269,7 +1269,7 @@ mod tests {
     use crate::metadata_model::brace::serialize;
     use crate::metadata_model::index::ConfigIndex;
     use crate::metadata_model::xml::MetadataXml;
-    use crate::module_blob::MetadataSourceContext;
+    use ibcmd_metadata_blob::MetadataSourceContext;
 
     const NAMESPACES: &str = r#"xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance""#;
 

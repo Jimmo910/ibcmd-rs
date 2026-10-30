@@ -40,8 +40,8 @@ use super::brace::{Brace, NIL_UUID, parse_row};
 use super::common::{stores_layout_8_5_1, up_convert_primitives_8_5_1};
 use super::types::{design_time_ref, object_uuid};
 use super::xml::{Element, parse_element_tree_raw_line_breaks};
-use crate::brace_list;
-use crate::compiler::bodies::form_native::{format_native_color, format_native_font};
+use ibcmd_form_native::{format_native_color, format_native_font};
+use ibcmd_restructure::brace_list;
 
 /// The border and line record's constant member.
 const LINE_RECORD_UUID: &str = "e45c0cd8-a878-4bcb-8e1a-af934481e1cc";
@@ -419,7 +419,7 @@ impl<'a> Flowchart<'a> {
                 Brace::str(""),
             ]);
         }
-        let uuid = crate::mssql_dump::standard_picture_uuid(reference)
+        let uuid = ibcmd_1c_vocab::standard_picture_uuid(reference)
             .ok_or_else(|| anyhow!("unsupported flowchart picture {reference}"))?;
         Ok(brace_list![
             Brace::num(4),
@@ -913,7 +913,7 @@ fn outline(
 /// Base64 as the platform stores a picture: `#base64:` and lines of 64,
 /// each full line ended by CR CR LF (the last one too when it is full).
 fn base64_lines(bytes: &[u8]) -> String {
-    let encoded = crate::module_blob::encode_base64(bytes);
+    let encoded = ibcmd_1c_text::encode_base64(bytes);
     let mut out = String::with_capacity(encoded.len() + encoded.len() / 64 * 3 + 8);
     out.push_str("#base64:");
     for chunk in encoded.as_bytes().chunks(64) {

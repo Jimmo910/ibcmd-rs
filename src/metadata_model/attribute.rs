@@ -35,7 +35,7 @@ use super::brace::Brace;
 use super::types::{data_path, empty_string_value, form_uuid, type_pattern, typed_value};
 use super::xml::Element;
 use super::{DescriptorContext, localized, md_base, native_text, parse_bool};
-use crate::brace_list;
+use ibcmd_restructure::brace_list;
 
 #[path = "attribute_export.rs"]
 pub(crate) mod export;

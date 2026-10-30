@@ -14,10 +14,10 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::{Context, Result, anyhow, bail};
 
 use super::{line_number_marker, standard_markers};
-use crate::brace_list;
 use crate::metadata_model::brace::{Brace, NIL_UUID};
 use crate::metadata_model::xml::{Element, MetadataXml};
 use crate::metadata_model::{DescriptorContext, ObjectXml, localized, md_base, native_text};
+use ibcmd_restructure::brace_list;
 
 pub(crate) fn num(value: i64) -> Brace {
     Brace::num(value)
@@ -799,7 +799,7 @@ impl<'a> Obj<'a> {
         let value = if let Some(name) = reference.strip_prefix("StdPicture.") {
             if let Some(code) = std_picture_code(name) {
                 brace_list![num(code)]
-            } else if let Some(uuid) = crate::mssql_dump::standard_picture_uuid(reference) {
+            } else if let Some(uuid) = ibcmd_1c_vocab::standard_picture_uuid(reference) {
                 brace_list![num(0), Brace::uuid(uuid)]
             } else {
                 bail!("no stored value for {reference}");

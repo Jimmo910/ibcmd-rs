@@ -176,7 +176,7 @@ fn picture(node: &Brace, names: &NameIndex) -> Result<Element> {
         }
         [zero, uuid] if atom(zero)? == "0" => {
             let uuid = atom(uuid)?;
-            match crate::mssql_dump::standard_picture_name(uuid) {
+            match ibcmd_1c_vocab::standard_picture_name(uuid) {
                 Some(name) => name.to_string(),
                 None => match names.name(uuid) {
                     Some(name) => name.to_string(),

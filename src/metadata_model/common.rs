@@ -24,10 +24,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use super::brace::{Brace, parse_row};
 use super::xml::{Element, MetadataXml};
 use super::{DescriptorContext, ObjectXml, native_text, not_yet, parse_bool};
-use crate::brace_list;
-use crate::compiler::bodies::form_native::{
+use ibcmd_form_native::{
     format_native_color, format_native_control_border, format_native_font, format_native_shortcut,
 };
+use ibcmd_restructure::brace_list;
 
 pub fn compile(object: &ObjectXml<'_>, context: &DescriptorContext) -> Result<Brace> {
     let mut tree = compile_tree(object, context)?;
@@ -519,7 +519,7 @@ fn picture_source(reference: &str, context: &DescriptorContext) -> Result<Pictur
         {
             return Ok(PictureSource::Code(code));
         }
-        let uuid = crate::mssql_dump::standard_picture_uuid(reference)
+        let uuid = ibcmd_1c_vocab::standard_picture_uuid(reference)
             .ok_or_else(|| anyhow!("no uuid for {reference}"))?;
         return Ok(PictureSource::Uuid(uuid.to_string()));
     }
@@ -1171,7 +1171,7 @@ impl CommonCommand {
 /// A `<Group>` reference: a platform group by name or `CommandGroup.<name>`.
 fn command_group_uuid(reference: &str, context: &DescriptorContext) -> Result<String> {
     let reference = reference.trim();
-    if let Some((uuid, _)) = crate::mssql_dump::COMMON_COMMAND_GROUPS
+    if let Some((uuid, _)) = ibcmd_1c_vocab::COMMON_COMMAND_GROUPS
         .iter()
         .find(|(_, name)| *name == reference)
     {

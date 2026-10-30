@@ -18,7 +18,7 @@
 //! corpora; the ones that disagree carry deleted or reordered rows, which
 //! the source does not record.
 
-use crate::brace_list;
+use ibcmd_restructure::brace_list;
 
 use super::brace::Brace;
 

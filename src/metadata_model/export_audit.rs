@@ -20,8 +20,8 @@ use super::super::brace::{parse_row, serialize_row};
 use super::super::objects::parts::compatibility;
 use super::super::{DescriptorContext, ObjectXml, compile_object};
 use super::{ExportContext, NameIndex, decode_object, object_names, rewrite_file, write_document};
-use crate::module_blob::parse_simple_metadata_xml_properties;
 use crate::parallel;
+use ibcmd_metadata_blob::parse_simple_metadata_xml_properties;
 
 #[derive(Debug, Clone, Default)]
 pub struct ExportAuditOptions {

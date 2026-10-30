@@ -3,7 +3,6 @@
 
 use anyhow::{Context, Result, anyhow};
 
-use crate::brace_list;
 use crate::metadata_model::attribute::{choice_parameter_links, choice_parameters, link_by_type};
 use crate::metadata_model::brace::Brace;
 use crate::metadata_model::types::{type_pattern, typed_value};
@@ -11,6 +10,7 @@ use crate::metadata_model::xml::Element;
 use crate::metadata_model::{
     DescriptorContext, ObjectXml, localized, md_base, native_text, parse_bool,
 };
+use ibcmd_restructure::brace_list;
 
 /// Which layout generation the rows follow. It is the configuration's
 /// compatibility mode that decides, not the platform: БСП in 8.3.24
@@ -606,7 +606,7 @@ fn picture(element: Option<&Element>, context: &DescriptorContext) -> Result<Bra
         {
             brace_list![Brace::num(*code)]
         } else {
-            let uuid = crate::mssql_dump::standard_picture_uuid(reference_text)
+            let uuid = ibcmd_1c_vocab::standard_picture_uuid(reference_text)
                 .ok_or_else(|| anyhow!("unknown standard picture {reference_text}"))?;
             brace_list![Brace::num(0), Brace::uuid(uuid)]
         }

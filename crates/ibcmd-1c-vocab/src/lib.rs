@@ -90,3 +90,6 @@ pub use values::{
     information_register_decimal_is_valid, metadata_choice_folders_and_items_xml,
     parse_design_time_reference,
 };
+
+mod command_groups;
+pub use command_groups::COMMON_COMMAND_GROUPS;

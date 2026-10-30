@@ -220,7 +220,7 @@ fn standard_attributes(
                 .ok_or_else(|| anyhow!("unsupported ext dimension {position}"))?;
             let code = class_code + position;
             table.push((name, code));
-            remapped[2 + 3 * index] = crate::brace_list![Brace::num(code)];
+            remapped[2 + 3 * index] = ibcmd_restructure::brace_list![Brace::num(code)];
         }
     }
     let block = Brace::List(remapped);
