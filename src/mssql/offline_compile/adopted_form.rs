@@ -11,7 +11,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
-use crate::module_blob::MetadataSourceContext;
+use ibcmd_metadata_source::MetadataSource;
 
 /// Split a direct BaseForm into a complete Form document of its own. Byte
 /// spans keep every inherited namespace and source string intact; the base's
@@ -114,7 +114,7 @@ pub(super) fn split_form_base_xml(xml: &str) -> Result<Option<(String, String)>>
 pub(crate) fn compile_adopted_form_body_base_free(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
 ) -> Result<Option<String>> {
     let xml = std::str::from_utf8(form_xml).context("Form.xml is not UTF-8")?;
@@ -122,14 +122,14 @@ pub(crate) fn compile_adopted_form_body_base_free(
         return Ok(None);
     };
     let (own_xml, call_types) = without_adoption(xml)?;
-    let own = crate::module_blob::compile_native_form_body(
+    let own = crate::module_blob::compile_native_form_body_through(
         own_xml.as_bytes(),
         module_text,
         source,
         items_root,
     )?;
     let own = with_call_type_blocks(&own, &call_types);
-    let base = crate::module_blob::compile_native_form_body(
+    let base = crate::module_blob::compile_native_form_body_through(
         base_xml.as_bytes(),
         None,
         source,
@@ -157,14 +157,14 @@ pub(crate) fn compile_adopted_form_body_base_free(
 pub(in crate::mssql) fn adopted_form_body(
     form_xml: &[u8],
     module_text: Option<&[u8]>,
-    source: Option<&MetadataSourceContext>,
+    source: Option<&dyn MetadataSource>,
     items_root: Option<&Path>,
     base_body: &[u8],
 ) -> Result<Vec<u8>> {
     let xml = String::from_utf8(form_xml.to_vec()).context("Form.xml is not UTF-8")?;
     let (own, call_types) = without_adoption(&xml)?;
     let compile = |xml: &str| -> Result<String> {
-        let packed = crate::module_blob::pack_native_form_body_blob(
+        let packed = crate::module_blob::pack_native_form_body_blob_through(
             xml.as_bytes(),
             module_text,
             source,

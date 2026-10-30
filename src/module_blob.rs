@@ -164,6 +164,21 @@ pub fn compile_native_form_body(
     source: Option<&MetadataSourceContext>,
     items_root: Option<&Path>,
 ) -> Result<String> {
+    compile_native_form_body_through(
+        form_xml,
+        module_text,
+        source.map(|source| source as &dyn MetadataSource),
+        items_root,
+    )
+}
+
+/// [`compile_native_form_body`], the source read through [`MetadataSource`].
+pub(crate) fn compile_native_form_body_through(
+    form_xml: &[u8],
+    module_text: Option<&[u8]>,
+    source: Option<&dyn MetadataSource>,
+    items_root: Option<&Path>,
+) -> Result<String> {
     // BaseForm is a separate inherited document, never ordinary root items.
     // Keep the usual no-BaseForm path unchanged and decide with the XML parser
     // after this cheap token prefilter (comments cannot activate the adapter).
@@ -213,7 +228,23 @@ pub fn pack_native_form_body_blob(
     source: Option<&MetadataSourceContext>,
     items_root: Option<&Path>,
 ) -> Result<PackedRawDeflatedBlob> {
-    let body = compile_native_form_body(form_xml, module_text, source, items_root)?;
+    pack_native_form_body_blob_through(
+        form_xml,
+        module_text,
+        source.map(|source| source as &dyn MetadataSource),
+        items_root,
+    )
+}
+
+/// [`pack_native_form_body_blob`], the source read through
+/// [`MetadataSource`].
+pub(crate) fn pack_native_form_body_blob_through(
+    form_xml: &[u8],
+    module_text: Option<&[u8]>,
+    source: Option<&dyn MetadataSource>,
+    items_root: Option<&Path>,
+) -> Result<PackedRawDeflatedBlob> {
+    let body = compile_native_form_body_through(form_xml, module_text, source, items_root)?;
     // What the exporter cannot read back would load as a form nobody can open.
     parse_form_body_plain(&body).context("the native Form body does not parse back")?;
     let plain = format!("\u{feff}{body}");
