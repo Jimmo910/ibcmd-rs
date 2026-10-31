@@ -494,7 +494,7 @@ pub(crate) fn require_infobase_summary(text: &str, infobase_id: Uuid) -> Result<
     let observed = values
         .get("infobase")
         .and_then(|value| Uuid::parse_str(value).ok());
-    if observed != Some(infobase_id) || !values.get("name").is_some_and(|v| !v.is_empty()) {
+    if observed != Some(infobase_id) || values.get("name").is_none_or(|v| v.is_empty()) {
         bail!(
             "RAS summary must contain exactly the requested infobase registration `{infobase_id}` and its name"
         );

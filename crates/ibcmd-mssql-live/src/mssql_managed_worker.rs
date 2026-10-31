@@ -19,6 +19,9 @@ mod command;
 mod identity;
 pub(crate) use identity::ProcessIdentity;
 mod native;
+// The guarded live undo is built and tested, but no command runs it yet; in
+// the root its unused items were dead-code warnings.
+#[allow(dead_code)]
 pub(crate) mod undo;
 #[doc(hidden)]
 pub use native::{Creation, CreatorOptions, NativeRuntime, create};
@@ -209,6 +212,8 @@ impl Journal {
 }
 
 #[doc(hidden)]
+// `OwnedRuntime` stays crate-private: no other crate implements a runtime.
+#[allow(private_bounds)]
 pub struct ManagedWorker<R: OwnedRuntime> {
     runtime: R,
     binding: LifetimeBinding,
@@ -220,6 +225,7 @@ pub struct ManagedWorker<R: OwnedRuntime> {
     stopped: bool,
 }
 
+#[allow(private_bounds)]
 impl<R: OwnedRuntime> ManagedWorker<R> {
     /// Called only by the product creator after its authenticated fresh-birth
     /// barrier. The first observation must have no registrations or loads.
@@ -252,7 +258,7 @@ impl<R: OwnedRuntime> ManagedWorker<R> {
         }
         session
             .journal
-            .append("creator_barrier", &session.binding.nonce.to_string())?;
+            .append("creator_barrier", session.binding.nonce.to_string())?;
         Ok(session)
     }
 
@@ -404,7 +410,7 @@ impl<R: OwnedRuntime> ManagedWorker<R> {
     pub fn shutdown(&mut self) -> Result<ColdSession<'_, R>> {
         self.prepare()?;
         self.journal
-            .append("cold_shutdown_intent", &self.binding.nonce.to_string())?;
+            .append("cold_shutdown_intent", self.binding.nonce.to_string())?;
         let result = self.runtime.stop_owned(&mut self.journal);
         // Even a fully proved stop invalidates every publication capability.
         self.stopped = true;
@@ -498,11 +504,15 @@ impl<R: OwnedRuntime> ManagedWorker<R> {
 /// A borrowed live authority, never serialized or recovered from a user's
 /// certificate. The runtime/lease and original exited handles stay retained.
 #[doc(hidden)]
+#[allow(private_bounds)]
 pub struct ColdSession<'a, R: OwnedRuntime> {
     session: &'a mut ManagedWorker<R>,
+    // Read by the undo's executor seam, which no command runs yet.
+    #[allow(dead_code)]
     undo_attempted: bool,
 }
 
+#[allow(private_bounds)]
 impl<R: OwnedRuntime> ColdSession<'_, R> {
     #[doc(hidden)]
     pub fn require_current(&mut self) -> Result<()> {
@@ -520,6 +530,7 @@ impl<R: OwnedRuntime> ColdSession<'_, R> {
     /// Internal executor seam only. The caller's transaction must perform
     /// database identity and full published-postimage CAS before its writes.
     /// Unknown SQL outcome never allows a second dispatch with this authority.
+    #[allow(dead_code)] // No command runs the guarded undo yet.
     pub(crate) fn run_cold_transaction_once<T>(
         &mut self,
         undo: impl FnOnce(&LifetimeBinding) -> Result<T>,

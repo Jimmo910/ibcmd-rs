@@ -360,7 +360,7 @@ fn idle_session_inventory(text: &[u8]) -> Result<()> {
 
 fn rac_bounded(rac: &Path, args: &[&str], timeout: Duration) -> Result<String> {
     let stdout = rac_bounded_bytes(rac, args, timeout)?;
-    Ok(String::from_utf8(stdout).context("RAS readiness output is not UTF-8")?)
+    String::from_utf8(stdout).context("RAS readiness output is not UTF-8")
 }
 
 /// RAS session presence needs no decoding of OEM user names. Only an empty,
@@ -380,6 +380,7 @@ fn render_continuation_sessions_check(database: &str, interrupt: bool) -> String
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn finish(
     client: &dyn SqlClient,
     artifact: &LiveArtifact,
@@ -395,6 +396,7 @@ pub fn finish(
     )
 }
 #[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
 pub fn finish_verified(
     client: &dyn SqlClient,
     artifact: &LiveArtifact,
@@ -418,6 +420,7 @@ pub fn finish_verified(
         verification.physical_database_binding_verified,
     )
 }
+#[allow(clippy::too_many_arguments)]
 fn finish_with_binding(
     client: &dyn SqlClient,
     artifact: &LiveArtifact,

@@ -115,9 +115,9 @@ pub fn write(path: &Path, artifact: &LiveArtifact) -> Result<()> {
     let sidecar = sibling(path, &candidate.recovery_file)?;
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     ensure!(
-        !name.eq_ignore_ascii_case(&candidate.recovery_file)
-            && !(name.to_ascii_lowercase().starts_with("ibcmd-recovery-")
-                && name.to_ascii_lowercase().ends_with(".pack")),
+        !(name.eq_ignore_ascii_case(&candidate.recovery_file)
+            || (name.to_ascii_lowercase().starts_with("ibcmd-recovery-")
+                && name.to_ascii_lowercase().ends_with(".pack"))),
         "LIVE manifest cannot use a recovery sidecar or pack filename"
     );
     encode(candidate)?;

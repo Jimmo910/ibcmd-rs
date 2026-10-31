@@ -293,6 +293,9 @@ ConvertTo-Json -InputObject @{observer=$observer;owned=$owned;foreign=$foreign;l
 /// Even failed creation returns its original children/journal. The caller
 /// cannot silently discard uncertain ownership or restart a second attempt.
 #[doc(hidden)]
+// The ready worker is moved, never copied; boxing it would change the
+// command glue that matches on it.
+#[allow(clippy::large_enum_variant)]
 pub enum Creation {
     Ready(ManagedWorker<NativeRuntime>),
     Retained {
@@ -424,7 +427,7 @@ pub fn create(options: CreatorOptions) -> Result<Creation> {
         {
             bail!("fresh managed authority barrier drift");
         }
-        journal.append("creator_barrier", &runtime.binding.nonce.to_string())?;
+        journal.append("creator_barrier", runtime.binding.nonce.to_string())?;
         runtime.startup_remaining()?;
         runtime.startup_deadline = None;
         Ok(())
@@ -945,6 +948,7 @@ impl NativeRuntime {
         Ok(())
     }
 
+    #[allow(dead_code)] // No command runs the guarded undo yet.
     pub(super) fn require_cold_sql_target(&self, sql: &crate::sql::SqlExec) -> Result<()> {
         if sql.server() != self.options.database_server || sql.client().is_none() {
             bail!("cold undo SQL endpoint/backend differs from original creator");
@@ -1660,6 +1664,37 @@ fn measured_denials() -> &'static [DenialFingerprint] {
     &[]
 }
 
+fn blocks(text: &str) -> Result<Vec<BTreeMap<String, String>>> {
+    let mut result = Vec::new();
+    let mut record = BTreeMap::new();
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() {
+            if !record.is_empty() {
+                result.push(std::mem::take(&mut record));
+            }
+            continue;
+        }
+        let (key, value) = line
+            .split_once(':')
+            .context("managed RAC inventory line unparsed")?;
+        let key = key.trim();
+        if key.is_empty()
+            || record
+                .insert(key.to_owned(), value.trim().to_owned())
+                .is_some()
+        {
+            bail!("managed RAC duplicate field");
+        }
+    }
+    if !record.is_empty() {
+        result.push(record);
+    }
+    if result.len() > 128 {
+        bail!("managed RAC inventory count bound");
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2065,35 +2100,4 @@ mod tests {
         assert!(blocks(&"a: b\n\n".repeat(129)).is_err());
         assert!(blocks("").unwrap().is_empty());
     }
-}
-
-fn blocks(text: &str) -> Result<Vec<BTreeMap<String, String>>> {
-    let mut result = Vec::new();
-    let mut record = BTreeMap::new();
-    for line in text.lines().map(str::trim) {
-        if line.is_empty() {
-            if !record.is_empty() {
-                result.push(std::mem::take(&mut record));
-            }
-            continue;
-        }
-        let (key, value) = line
-            .split_once(':')
-            .context("managed RAC inventory line unparsed")?;
-        let key = key.trim();
-        if key.is_empty()
-            || record
-                .insert(key.to_owned(), value.trim().to_owned())
-                .is_some()
-        {
-            bail!("managed RAC duplicate field");
-        }
-    }
-    if !record.is_empty() {
-        result.push(record);
-    }
-    if result.len() > 128 {
-        bail!("managed RAC inventory count bound");
-    }
-    Ok(result)
 }

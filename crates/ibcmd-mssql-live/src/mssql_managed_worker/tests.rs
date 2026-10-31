@@ -160,7 +160,6 @@ fn shutdown_retains_history_and_original_journal_and_invalidates_publication() {
         &*effects.borrow(),
         &["register", "load", "stop_owned", "require_cold"]
     );
-    drop(cold);
     assert!(session.prepare().is_err());
     drop(session);
     let rows = retained_rows(&path);
@@ -226,7 +225,6 @@ fn cold_replacement_prevents_undo_and_unknown_sql_can_never_retry() {
             .is_err()
         );
         assert_eq!(*calls.borrow(), usize::from(scenario != "before_sql"));
-        drop(cold);
         dispose(session, &path);
     }
 }
