@@ -93,6 +93,10 @@ fn text_of(row: &[u8]) -> &str {
 /// (`<uuid>.1c` and so on) of the objects that store predefined items, and
 /// returns the rows it has (name -> inflated): the name index reads the names
 /// of predefined items from them.
+#[allow(
+    clippy::type_complexity,
+    reason = "the loader's signature says what it reads and returns"
+)]
 pub fn build(
     descriptors: &BTreeMap<String, Vec<u8>>,
     root: Option<&[u8]>,

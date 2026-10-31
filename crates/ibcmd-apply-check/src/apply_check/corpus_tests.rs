@@ -88,7 +88,7 @@ fn write_sample_pair(root: &Path, scratch: &Path, stride: usize) -> usize {
         // Only every stride-th XML file is opened: reading all of them is
         // minutes of first-read time on a corpus.
         seen += 1;
-        if seen % stride != 0 {
+        if !seen.is_multiple_of(stride) {
             continue;
         }
         let bytes = fs::read(entry.path()).unwrap();
