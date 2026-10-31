@@ -44,7 +44,7 @@ use crate::metadata_model::root::{
 };
 use crate::metadata_model::{DescriptorContext, compile_descriptor};
 use crate::module_blob::{
-    SimpleMetadataXmlProperties, deflate_raw, hex_sha256, inflate_raw,
+    MetadataSource, SimpleMetadataXmlProperties, deflate_raw, hex_sha256, inflate_raw,
     parse_simple_metadata_xml_properties,
 };
 use crate::parallel;

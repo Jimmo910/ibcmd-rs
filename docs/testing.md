@@ -153,6 +153,17 @@ cargo test --locked -p ibcmd-rs --features mssql-live-tests live_compares_native
 
 Neither opt-in feature is enabled by default or in ordinary CI.
 
+The built-in SQL client's nine live tests live in `ibcmd-sql`. They retain
+their `sql::mssql::live_tests::` names and are run explicitly against the
+disposable `tempdb` tables described in that module:
+
+```text
+cargo test --locked -p ibcmd-sql --features mssql-live-tests sql::mssql::live_tests:: -- --nocapture
+```
+
+The root's `mssql-live-tests` feature forwards to the crate; the ignored
+root blob comparisons above remain in `ibcmd-rs`.
+
 ## Public Coverage corpus
 
 Coverage native inputs, combined configurations and fixture records are pinned

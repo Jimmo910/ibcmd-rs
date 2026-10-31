@@ -30,11 +30,13 @@ pub mod infobase_oracle;
 pub mod legacy_version;
 pub mod load;
 pub mod metadata_model;
+// `brace_list!`, which `metadata_model::brace` exported at the crate root.
+pub use ibcmd_metadata_model::brace_list;
 pub(crate) mod metadata_owner_graph;
 pub mod module_blob;
 pub mod mssql;
 pub mod mssql_apply;
-mod mssql_artifact;
+pub(crate) use ibcmd_mssql_live::mssql_artifact;
 pub mod mssql_config_apply;
 pub mod mssql_dump;
 pub mod mssql_effective_row;
@@ -45,12 +47,12 @@ pub mod mssql_extension_restructure;
 pub mod mssql_extension_stage;
 pub mod mssql_extension_tree_load;
 pub mod mssql_extensions;
-mod mssql_live_artifact;
+pub(crate) use ibcmd_mssql_live::mssql_live_artifact;
 pub mod mssql_live_gate;
 pub mod mssql_main_activation;
 mod mssql_managed_worker;
 pub mod mssql_platform_profile;
-mod mssql_recovery_artifact;
+pub(crate) use ibcmd_mssql_live::mssql_recovery_artifact;
 pub mod mssql_source_change;
 pub mod mssql_worker_switch;
 pub mod mxl_line_provenance;
@@ -72,18 +74,17 @@ pub mod source;
 pub mod source_audit;
 pub(crate) mod source_listing;
 pub mod source_oracle;
-pub mod sql;
+pub use ibcmd_sql::sql;
 pub mod storage_map;
 pub mod stored_objects;
 pub mod templates;
 pub mod trace;
 pub mod update;
-pub(crate) mod v8_container;
+// The anyhow wrapper over `ibcmd-v8`'s format-15 reader and writer, moved to
+// the module blob codec's crate; callers keep `crate::v8_container::…`.
+pub(crate) use ibcmd_module_blob::v8_container;
 
 pub mod mssql_live_continue;
-
-mod profile_process;
-mod rac_process;
 
 pub mod mcp;
 

@@ -1,3 +1,3 @@
-//! Compatibility re-export of the portable schema model.
+//! Compatibility re-export of the native restructuring engine.
 
-pub use ibcmd_restructure::schema::*;
+pub use ibcmd_restructure_engine::restructure::schema::*;

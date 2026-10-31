@@ -197,7 +197,10 @@ test("dependency expansion covers every canonical root collection", async () => 
     path = require("node:path");
   const index = fs
     .readFileSync(
-      path.join(__dirname, "../../../src/metadata_model/index.rs"),
+      path.join(
+        __dirname,
+        "../../../crates/ibcmd-metadata-model/src/metadata_model/index.rs",
+      ),
       "utf8",
     )
     .split("pub const ROOT_COLLECTIONS:")[1]

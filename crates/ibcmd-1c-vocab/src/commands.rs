@@ -320,3 +320,26 @@ pub fn command_interface_standard_command(kind: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+// From `src/mssql_dump/command_interface.rs`.
+pub fn command_interface_standard_command_for_code(kind: &str, code: &str) -> Option<&'static str> {
+    match (code, kind) {
+        ("0" | "100", "Constant") => Some("Open"),
+        ("0" | "100", "CalculationRegister") => Some("OpenList"),
+        ("0" | "100", _) => command_interface_standard_command(kind),
+        // `ChartOfAccounts` names its "create" command from the same slot its
+        // siblings do; it was simply never listed. ERP УХ 3.2.12.6 spells
+        // exactly two, both `ChartOfAccounts.Хозрасчетный.StandardCommand.Create`
+        // (`Subsystems/РегламентированныйУчет/Subsystems/БухгалтерскийИНалоговыйУчет`
+        // and `Subsystems/РегламентированныйУчетПодсистемы/Subsystems/БухгалтерскийУчет`),
+        // and both were written as the raw `1:<uuid>` sentinel instead.
+        (
+            "1",
+            "BusinessProcess" | "Catalog" | "ChartOfAccounts" | "Document" | "InformationRegister",
+        ) => Some("Create"),
+        ("1", "ChartOfCharacteristicTypes") => Some("CreateFolder"),
+        ("2", "Catalog") => Some("CreateFolder"),
+        ("2", "ChartOfCharacteristicTypes") => Some("Create"),
+        _ => None,
+    }
+}

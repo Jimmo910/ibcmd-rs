@@ -1076,7 +1076,7 @@ mod tests {
         // `raw-unpacked` envelope; slice the terminal side-table document
         // from its length-prefixed header (magic + settings count + one
         // length per non-terminal document), matching the layout also
-        // exercised in `src/compiler/bodies/dcs.rs`.
+        // exercised in `crates/ibcmd-compiler/src/compiler/bodies/dcs.rs`.
         let unpacked = decode_base64_fixture(include_str!(concat!(
             "../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-appearance-web-color/raw-unpacked.bin.b64"

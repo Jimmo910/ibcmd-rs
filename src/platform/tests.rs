@@ -239,3 +239,30 @@ fn specs_serialize_as_their_version() {
         "PlatformSpec(\"8.3.27\")"
     );
 }
+
+/// A metadata context's `platform()` is the portable `Platform`; the root's
+/// spec of it, and back, is one conversion each way.
+#[test]
+fn a_spec_and_its_portable_platform_convert_both_ways() {
+    for spec in known().unwrap() {
+        let platform = spec.platform();
+        assert_eq!(Platform::from(spec), platform, "{spec}");
+        assert_eq!(PlatformSpec::from(platform), spec, "{spec}");
+        assert_eq!(platform.display(), spec.display(), "{spec}");
+        assert_eq!(
+            platform.xml_format().as_str(),
+            spec.xml_version().as_str(),
+            "{spec}"
+        );
+    }
+    for (dialect, name) in [("2.20", "8.3.27"), ("2.21", "8.5.1")] {
+        let context = crate::metadata_model::export::ExportContext {
+            names: Default::default(),
+            version: dialect.to_owned(),
+            compat: crate::metadata_model::objects::parts::Compat(8, 3, 27),
+        };
+        let spec = PlatformSpec::from(context.platform());
+        assert_eq!(spec, parse(name).unwrap(), "{dialect}");
+        assert_eq!(spec, of_xml_dialect(dialect), "{dialect}");
+    }
+}

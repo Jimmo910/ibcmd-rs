@@ -9,7 +9,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 
 use super::{
-    Creation, CreatorOptions, Journal, ManagedOutcome, NativeManagedWorker, PublicationState,
+    Creation, CreatorOptions, Journal, ManagedOutcome, ManagedTarget, NativeManagedWorker,
+    NativeRuntime, PublicationState,
 };
 use crate::cli::{
     ManagedWorkerCliArgs, MssqlActivateStagedMainArgs, MssqlApplySourceChangeArgs,
@@ -344,7 +345,7 @@ fn drive<O, R, T>(
 }
 
 struct CreatorRetained {
-    _runtime: super::native::NativeRuntime,
+    _runtime: NativeRuntime,
     journal: Journal,
     _diagnostic: String,
 }
@@ -371,22 +372,22 @@ fn finish<T>(completion: Completion<T, NativeManagedWorker, CreatorRetained>) ->
                 Retained::Ready { owner, failure, .. } => eprintln!(
                     "managed UNKNOWN: phase={}; root={}; nonce={}; journal={}; cluster={}; infobase={}; retaining ORIGINAL owner; no retry/undo/cleanup",
                     failure.phase,
-                    owner.binding.root.display(),
-                    owner.binding.nonce,
-                    owner.journal.path.display(),
-                    owner.binding.cluster,
-                    owner.binding.infobase
+                    owner.binding().root.display(),
+                    owner.binding().nonce,
+                    owner.journal().path().display(),
+                    owner.binding().cluster,
+                    owner.binding().infobase
                 ),
                 Retained::Creation(owner) => eprintln!(
                     "managed UNKNOWN: phase=creation; root={}; nonce={}; journal={}; retaining ORIGINAL runtime and pipes; no retry/adoption/cleanup",
                     owner
                         .journal
-                        .path
+                        .path()
                         .parent()
                         .unwrap_or_else(|| Path::new(""))
                         .display(),
-                    owner.journal.nonce,
-                    owner.journal.path.display()
+                    owner.journal.nonce(),
+                    owner.journal.path().display()
                 ),
             }));
             // Resident policy: no ordinary Err unwinding drops original process,
@@ -413,7 +414,7 @@ struct GeneratedTarget {
 impl GeneratedTarget {
     fn from_owner(owner: &mut NativeManagedWorker, resolved: &ResolvedInputs) -> Result<Self> {
         owner.prepare()?;
-        let binding = &owner.binding;
+        let binding = owner.binding();
         if binding.cluster.is_nil()
             || binding.infobase.is_nil()
             || binding.database != resolved.creator.database
@@ -581,6 +582,43 @@ pub(crate) fn activate(
         },
         cold,
     ))
+}
+
+impl MssqlApplySourceChangeArgs {
+    /// The managed target this source change names.
+    pub(crate) fn managed_target(&self) -> ManagedTarget<'_> {
+        ManagedTarget {
+            worker_mode: self.mode == MssqlMainActivationModeArg::Worker,
+            sqlcmd: self.sqlcmd.is_some(),
+            bcp_executable: self.bcp_executable.is_some(),
+            extension: self.extension.is_some(),
+            database: &self.database,
+            cluster_id: self.cluster_id,
+            infobase_id: self.infobase_id,
+            rac: &self.rac,
+            ras_endpoint: &self.ras_endpoint,
+            server: &self.server,
+        }
+    }
+}
+
+impl MssqlActivateStagedMainArgs {
+    /// The managed target this activation names. An activation names no
+    /// extension.
+    pub(crate) fn managed_target(&self) -> ManagedTarget<'_> {
+        ManagedTarget {
+            worker_mode: self.mode == MssqlMainActivationModeArg::Worker,
+            sqlcmd: self.sqlcmd.is_some(),
+            bcp_executable: self.bcp_executable.is_some(),
+            extension: false,
+            database: &self.database,
+            cluster_id: self.cluster_id,
+            infobase_id: self.infobase_id,
+            rac: &self.rac,
+            ras_endpoint: &self.ras_endpoint,
+            server: &self.server,
+        }
+    }
 }
 
 #[cfg(test)]

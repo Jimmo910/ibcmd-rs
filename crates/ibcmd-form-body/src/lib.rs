@@ -48,6 +48,7 @@ mod dcs;
 mod declarations;
 pub mod form_body;
 mod form_extension;
+mod form_layout;
 mod form_ref_index;
 mod form_root_42;
 mod indexes;
@@ -87,8 +88,10 @@ pub use declarations::{
 };
 pub use form_extension::{
     CALL_TYPES, EventCallTypes, FormAdoption, FormBaseForm, FormEventBinding,
-    adopted_base_record_slot, adoption_event_name, form_event_call_types, parse_form_event_block,
+    adopted_base_record_slot, adoption_event_name, adoption_without_base_form,
+    form_event_call_types, parse_form_event_block,
 };
+pub use form_layout::FormLayout;
 pub use form_ref_index::FormObjectRefIndex;
 pub use indexes::{
     DcsTypeIndex, DcsTypeResolution, InformationRegisterFieldReference,

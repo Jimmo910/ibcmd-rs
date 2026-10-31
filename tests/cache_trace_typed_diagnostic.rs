@@ -668,7 +668,9 @@ fn retained_source_admission_and_original_comparison_compose_without_proposal_or
         part: 0,
         version: "own-current-version".into(),
     };
-    let predecessor = include_bytes!("../src/restructure/caches/trace_diagnostic.rs");
+    let predecessor = include_bytes!(
+        "../crates/ibcmd-restructure-engine/src/restructure/caches/trace_diagnostic.rs"
+    );
     let predecessor_path = owned.0.join("source-snapshot.rs");
     fs::write(&predecessor_path, predecessor).unwrap();
     let rows = [
