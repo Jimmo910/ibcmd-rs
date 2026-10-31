@@ -350,3 +350,34 @@ facades and the tests that stay in the root
 (`src/compiler/bodies/{mxl_native_root_tests,mxl_root_tests}.rs`) are
 outside the slice. Every other record, the two stale ones included, is
 unchanged.
+
+`crates/ibcmd-apply-check/src/` also belongs to the slice (#559, the
+restructuring check of a configuration apply). Its `apply_check/` holds the
+check formerly under `src/apply_check/`, which was outside the slice. The
+crate's 19 guarded files join it with 163 records, 164 occurrences (11
+`uuid-literal`, 109 `name-special-case`, 43 `xml-policy` records with 44
+occurrences):
+- `apply_check/roles.rs`: 46 `name-special-case`;
+- `apply_check/rules.rs`: 27 `name-special-case`;
+- `apply_check/trees.rs`: 8 `name-special-case`, 1 `xml-policy` (2
+  occurrences);
+- `apply_check/dbtree.rs`: 2 `name-special-case`, 3 `xml-policy`;
+- `apply_check/s1.rs`: 5 `name-special-case`;
+- `apply_check/plan.rs`: 4 `name-special-case`;
+- `apply_check/upgrade.rs`: 3 `uuid-literal`, 1 `name-special-case`;
+- `apply_check/check.rs` and `apply_check/model.rs`: 2 `name-special-case`
+  each;
+- `apply_check/dbtree_tests.rs` (5 `uuid-literal`, 9 `name-special-case`,
+  15 `xml-policy`) and `apply_check/trees_tests.rs` (3 `uuid-literal`, 3
+  `name-special-case`, 24 `xml-policy`): unit tests, but their modules are
+  declared with `#[path = "..."]`, which the guard does not resolve, so they
+  stay in the slice;
+- `lib.rs`, `apply_check/{mod,cli,descriptor,root_row,rule_id,sql,tree_diff}.rs`:
+  none.
+`apply_check/{corpus_tests,record_format_tests,s1_matrix_tests,s1h_corpus_tests}.rs`
+and `test_scratch.rs` are test-only modules. The root's facade
+(`src/apply_check.rs`) stays outside the slice. Each record equals the one a
+scan of the same file as it stood under `src/apply_check/` gives: the move's
+edits (the crate paths of two `module_blob` imports, a rebased
+`include_str!` path) and the clippy fixes that follow change no
+fingerprint. Every other record, the two stale ones included, is unchanged.

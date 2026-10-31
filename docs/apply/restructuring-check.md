@@ -134,7 +134,7 @@ the list of plain rows (`sql::published_names`).
   harmless; an object that joins or leaves is `structure` (a registration table comes or goes).
 * **Service** (`root`, `version`, `versions`). `root` and `version` must not change (a `root` that differs from the
   stored one in the final 16-byte block of its payload only is the 8.5 platform's re-stamp, which it applies on every
-  write, and passes with a note: `src/apply_check/root_row.rs`, `evidence/dropin-apply/s1-acceptance-85.md`);
+  write, and passes with a note: `crates/ibcmd-apply-check/src/apply_check/root_row.rs`, `evidence/dropin-apply/s1-acceptance-85.md`);
   `versions` is the inventory,
   and it also gives every file a version id. A file that the staged `versions` gives another version than the
   active one (or lists as new) and that the ConfigSave does not hold means a partial stage (the native import
@@ -598,7 +598,7 @@ Things to read in the table:
 Every descriptor of every corpus exports, with the metadata model, to exactly the bytes the native export wrote
 (`descriptors_compared: 0`: nothing had to be parsed and diffed). The objects, the kinds and the dialect (2.20 and
 2.21) all match: the model decodes the four configurations completely, and a tree that is an export of its database
-gives no reason. `cargo test -p ibcmd-rs --lib --no-default-features apply_check::corpus_tests -- --ignored`
+gives no reason. `cargo test -p ibcmd-apply-check apply_check::corpus_tests -- --ignored`
 repeats it (the trees against themselves; a sample of every seventh metadata file rewritten by the model's writer
 and compared with the original, to make the check parse and diff real files; the БСП export against its database
 when `IBCMD_RS_APPLY_CHECK_DB` names one).
@@ -744,7 +744,7 @@ ibcmd-rs mssql-apply-check --database ibcmd_rs_04_rcheck_bsp_b2 --tree F:\path\t
 ibcmd-rs apply-check-trees --old F:\path\to\export --new F:\path\to\edited --json
 ```
 
-Tests: `cargo test -p ibcmd-rs --lib --no-default-features apply_check` (115 tests: every rule with synthetic XML, the
+Tests: `cargo test -p ibcmd-apply-check` (115 tests: every rule with synthetic XML, the
 row check with fake rows, the modes on synthetic trees, the upgrade proof, the S1 classification and its matrix);
 `... apply_check::corpus_tests -- --ignored` for the reference exports (6.4); `... apply_check::s1h -- --ignored`
 for the a2 image (3.6; the rows are the lab's `fixtures/nat_a2` and `fixtures/nat_a2_base`).

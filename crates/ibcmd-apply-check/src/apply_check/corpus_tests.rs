@@ -2,7 +2,7 @@
 //! a tree against itself, and against a copy written differently, must need
 //! no restructuring and give no reason. Ignored by default: the exports live
 //! under the lab folders. Run with
-//! `cargo test -p ibcmd-rs --lib --no-default-features apply_check::corpus -- --ignored --nocapture`.
+//! `cargo test -p ibcmd-apply-check apply_check::corpus -- --ignored --nocapture`.
 //!
 //! `IBCMD_RS_APPLY_CHECK_DB` (a database restored from the БСП 8.3.27 corpus
 //! backup) also enables the check of the БСП export against that database.
