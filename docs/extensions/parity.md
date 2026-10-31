@@ -278,8 +278,8 @@ registers with a period adjustment among them), 1, 1 and 3 charts of accounts,
 1, 1 and 2 charts of calculation types, 5, 5 and 25 charts of characteristic
 types, 1, 1 and 2 calculation registers.
 
-`src/metadata_model/slot_evidence_tests.rs` compiles the extension's register
-and four charts (`tests/fixtures/native-evidence/extension-register-slots/`,
+`crates/ibcmd-metadata-model/src/metadata_model/slot_evidence_tests.rs`
+compiles the extension's register and four charts (`tests/fixtures/native-evidence/extension-register-slots/`,
 the native XML next to the stored rows) to their stored rows byte for byte,
 reads every scalar property back, and edits one property of each at a time,
 requiring that exactly the slot above moves; the typed compiler has one such
