@@ -15,9 +15,9 @@ use serde::Serialize;
 use walkdir::WalkDir;
 
 use super::{DescriptorContext, compile_descriptor};
-use crate::parallel;
 use ibcmd_metadata_blob::parse_simple_metadata_xml_properties;
 use ibcmd_module_blob::inflate_raw;
+use ibcmd_parallel as parallel;
 
 #[derive(Debug, Clone)]
 pub struct DescriptorAuditOptions {

@@ -40,12 +40,12 @@ macro_rules! fixture {
             folder: $folder,
             stem: $stem,
             xml: include_str!(concat!(
-                "../../tests/fixtures/native-evidence/extension-register-slots/",
+                "../../../../tests/fixtures/native-evidence/extension-register-slots/",
                 $kind,
                 ".xml"
             )),
             row: include_str!(concat!(
-                "../../tests/fixtures/native-evidence/extension-register-slots/",
+                "../../../../tests/fixtures/native-evidence/extension-register-slots/",
                 $kind,
                 ".row.txt"
             )),

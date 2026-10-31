@@ -1023,7 +1023,8 @@ pub fn up_convert_primitives_8_5_1(node: &mut Brace) {
 // ---------------------------------------------------------------------------
 
 /// `ButtonRepresentation`.
-pub(crate) const REPRESENTATIONS: &[(&str, i64)] = &[
+#[doc(hidden)]
+pub const REPRESENTATIONS: &[(&str, i64)] = &[
     ("Text", 0),
     ("Picture", 1),
     ("PictureAndText", 2),
@@ -1079,9 +1080,11 @@ impl CommandGroup {
 /// The class a common command's `{2,<uuid>,<class>}` identity names.
 const COMMAND_CLASS: &str = "078a6af8-d22c-4248-9c33-7e90075a3d2c";
 
-pub(crate) const PARAMETER_USE_MODES: &[(&str, i64)] = &[("Single", 0), ("Multiple", 1)];
+#[doc(hidden)]
+pub const PARAMETER_USE_MODES: &[(&str, i64)] = &[("Single", 0), ("Multiple", 1)];
 
-pub(crate) const MAIN_SERVER_UNAVAILABLE_BEHAVIORS: &[(&str, i64)] = &[("Auto", 0)];
+#[doc(hidden)]
+pub const MAIN_SERVER_UNAVAILABLE_BEHAVIORS: &[(&str, i64)] = &[("Auto", 0)];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommonCommand {

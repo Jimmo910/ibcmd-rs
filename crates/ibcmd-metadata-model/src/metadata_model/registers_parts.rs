@@ -551,7 +551,8 @@ fn command_group(name: &str, context: &DescriptorContext) -> Result<Brace> {
 }
 
 /// Standard pictures stored by code rather than by uuid.
-pub(crate) const STANDARD_PICTURE_CODES: &[(&str, i64)] = &[
+#[doc(hidden)]
+pub const STANDARD_PICTURE_CODES: &[(&str, i64)] = &[
     ("CheckAll", -10),
     ("Clear", -200),
     ("InputFieldCalculator", -6),

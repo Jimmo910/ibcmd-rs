@@ -23,7 +23,8 @@ pub mod types;
 
 // Kind families, one track each.
 pub mod common;
-pub(crate) mod interface;
+#[doc(hidden)]
+pub mod interface;
 pub mod websocket_client;
 // Base-free body rows of track D: predefined data, flowcharts, aggregates.
 pub mod bodies_aggregates;
@@ -31,8 +32,10 @@ pub mod bodies_flowchart;
 pub mod bodies_predefined;
 pub mod bodies_rows;
 pub mod bodies_value_table;
-pub(crate) mod external_data_source;
-pub(crate) mod external_data_source_children;
+#[doc(hidden)]
+pub mod external_data_source;
+#[doc(hidden)]
+pub mod external_data_source_children;
 pub mod objects;
 pub mod registers;
 pub mod root;
@@ -40,11 +43,10 @@ pub mod simple;
 /// The platform's standard pictures, the `ibcmd-1c-vocab` crate's table,
 /// under the path the crate's readers and writers name them by.
 pub mod standard_pictures {
-    pub(crate) use ibcmd_1c_vocab::{standard_picture_name, standard_picture_uuid};
+    #[doc(hidden)]
+    pub use ibcmd_1c_vocab::{standard_picture_name, standard_picture_uuid};
 }
 
-#[cfg(test)]
-mod collection_tests;
 #[cfg(test)]
 mod slot_evidence_tests;
 

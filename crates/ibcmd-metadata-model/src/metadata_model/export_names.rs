@@ -244,7 +244,8 @@ const ROOT_CLASSES: &[(&str, &str)] = &[
 ];
 
 /// Canonical top-level collection identities already used by the name reader.
-pub(crate) fn root_class_kinds() -> &'static [(&'static str, &'static str)] {
+#[doc(hidden)]
+pub fn root_class_kinds() -> &'static [(&'static str, &'static str)] {
     ROOT_CLASSES
 }
 

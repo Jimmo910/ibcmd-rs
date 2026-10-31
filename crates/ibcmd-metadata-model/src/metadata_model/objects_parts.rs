@@ -46,11 +46,13 @@ const LOCALIZED_STRING: &str = "87024738-fc2a-4436-ada1-df79d395c424";
 
 /// A configuration's compatibility mode, `Version8_3_24` -> `(8, 3, 24)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct Compat(pub u32, pub u32, pub u32);
+#[doc(hidden)]
+pub struct Compat(pub u32, pub u32, pub u32);
 
 impl Compat {
     /// `Version8_3_24` -> `Compat(8, 3, 24)`.
-    pub(crate) fn parse(text: &str) -> Option<Self> {
+    #[doc(hidden)]
+    pub fn parse(text: &str) -> Option<Self> {
         let rest = text.trim().strip_prefix("Version")?;
         let parts = rest
             .split('_')
@@ -67,7 +69,8 @@ impl Compat {
 /// The compatibility mode of the tree's `Configuration.xml`, read once per
 /// state of the file. `DontUse` (or no file) means the platform's own: the
 /// release the registry maps the XML dialect to.
-pub(crate) fn compatibility(context: &DescriptorContext) -> Compat {
+#[doc(hidden)]
+pub fn compatibility(context: &DescriptorContext) -> Compat {
     type Key = (PathBuf, Option<std::time::SystemTime>, u64);
     static CACHE: OnceLock<Mutex<HashMap<Key, Compat>>> = OnceLock::new();
     let path = context.root.join("Configuration.xml");

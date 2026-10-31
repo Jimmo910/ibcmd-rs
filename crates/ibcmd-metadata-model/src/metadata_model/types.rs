@@ -657,7 +657,7 @@ pub mod corpus {
     use super::super::brace::{parse_row, serialize};
     use super::super::xml::{Element, MetadataXml, parse_element_tree};
     use super::type_pattern;
-    use crate::parallel;
+    use ibcmd_parallel as parallel;
 
     #[derive(Debug, Default, Serialize)]
     pub struct PatternAuditReport {

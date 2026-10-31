@@ -29,6 +29,8 @@ pub mod infobase_oracle;
 pub mod legacy_version;
 pub mod load;
 pub mod metadata_model;
+// `brace_list!`, which `metadata_model::brace` exported at the crate root.
+pub use ibcmd_metadata_model::brace_list;
 pub(crate) mod metadata_owner_graph;
 pub mod module_blob;
 pub mod mssql;

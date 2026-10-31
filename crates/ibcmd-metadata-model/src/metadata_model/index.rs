@@ -12,7 +12,7 @@ use rayon::prelude::*;
 
 use super::audit::descriptor_xmls;
 use super::xml::{Element, MetadataXml};
-use crate::parallel;
+use ibcmd_parallel as parallel;
 
 #[derive(Clone, Debug)]
 pub struct ObjectEntry {

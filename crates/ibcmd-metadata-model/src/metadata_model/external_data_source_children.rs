@@ -587,7 +587,8 @@ fn field_properties(
 }
 
 /// Decode one child row into its XML element.
-pub(crate) fn decode_row(kind: &str, row: &Brace, context: &ExportContext) -> Result<Element> {
+#[doc(hidden)]
+pub fn decode_row(kind: &str, row: &Brace, context: &ExportContext) -> Result<Element> {
     let parsed = Row::parse(row, kind)?;
     let head = parsed.header(kind)?;
     let full = full_name(&context.names, &head.uuid)?;
@@ -681,7 +682,8 @@ fn child_objects(
 }
 
 /// The name index contribution of an owned child row.
-pub(crate) fn owned_names(kind: &str, row: &Brace, owner: &str) -> Result<ObjectNames> {
+#[doc(hidden)]
+pub fn owned_names(kind: &str, row: &Brace, owner: &str) -> Result<ObjectNames> {
     let parsed = Row::parse(row, kind)?;
     let head = parsed.header(kind)?;
     if owner.is_empty() {
@@ -747,7 +749,8 @@ fn inline_children(kind: &str, row: &Row<'_>, full_name: &str) -> Result<Vec<(St
 }
 
 /// The cube and table UUIDs a root ExternalDataSource row lists.
-pub(crate) fn root_children(text: &str) -> Result<(Vec<String>, Vec<String>)> {
+#[doc(hidden)]
+pub fn root_children(text: &str) -> Result<(Vec<String>, Vec<String>)> {
     let row = parse_row(text.as_bytes())?;
     let root = list(&row)?;
     let count = usize::try_from(super::export::number(item(root, 2)?)?)
@@ -776,7 +779,8 @@ pub(crate) fn root_children(text: &str) -> Result<(Vec<String>, Vec<String>)> {
 }
 
 /// The dimension-table UUIDs a Cube row lists.
-pub(crate) fn dimension_table_refs(text: &str) -> Result<Vec<String>> {
+#[doc(hidden)]
+pub fn dimension_table_refs(text: &str) -> Result<Vec<String>> {
     let row = parse_row(text.as_bytes())?;
     let parsed = Row::parse(&row, schema::CUBE_KIND)?;
     parsed
@@ -788,7 +792,8 @@ pub(crate) fn dimension_table_refs(text: &str) -> Result<Vec<String>> {
 
 /// Recognise a child descriptor by its measured body layout. `None` is not an
 /// error: the caller keeps its previous fallbacks.
-pub(crate) fn family(text: &str, uuid: &str) -> Option<(&'static str, &'static str)> {
+#[doc(hidden)]
+pub fn family(text: &str, uuid: &str) -> Option<(&'static str, &'static str)> {
     let row = parse_row(text.as_bytes()).ok()?;
     let parsed = Row::parse(&row, schema::CUBE_KIND)
         .ok()
@@ -812,7 +817,8 @@ fn parsed_kind(payload: &[Brace]) -> Result<&'static str> {
 
 /// Whether the row has a measured EDS-child body shape but failed `family`.
 /// The caller refuses it instead of letting it fall into `IntegrationService`.
-pub(crate) fn looks_like_eds_child(text: &str) -> bool {
+#[doc(hidden)]
+pub fn looks_like_eds_child(text: &str) -> bool {
     let Ok(row) = parse_row(text.as_bytes()) else {
         return false;
     };
@@ -842,7 +848,7 @@ mod tests {
     // (`docs/evidence/rea-external-data-source-20261022/README.md`). It has
     // non-empty KeyFields/InputByString and both N and S field types.
     const ROW: &str =
-        include_str!("../../tests/fixtures/eds-branch/external_data_source_table_row.txt");
+        include_str!("../../../../tests/fixtures/eds-branch/external_data_source_table_row.txt");
 
     #[test]
     fn branch_table_row_names_key_fields_and_input_by_string() {
@@ -893,7 +899,7 @@ mod tests {
 mod eds_guard_regressions {
     use super::*;
     const TABLE: &[u8] =
-        include_bytes!("../../tests/fixtures/eds-branch/external_data_source_table_row.txt");
+        include_bytes!("../../../../tests/fixtures/eds-branch/external_data_source_table_row.txt");
 
     #[test]
     fn eds_guard_refuses_nonempty_presentation() {
@@ -960,15 +966,15 @@ mod eds_guard_additional {
         for (kind, bytes) in [
             (
                 schema::CUBE_KIND,
-                include_bytes!("../../tests/fixtures/eds-matrix/cube.txt").as_slice(),
+                include_bytes!("../../../../tests/fixtures/eds-matrix/cube.txt").as_slice(),
             ),
             (
                 schema::TABLE_KIND,
-                include_bytes!("../../tests/fixtures/eds-matrix/table.txt").as_slice(),
+                include_bytes!("../../../../tests/fixtures/eds-matrix/table.txt").as_slice(),
             ),
             (
                 schema::DIMENSION_TABLE_KIND,
-                include_bytes!("../../tests/fixtures/eds-matrix/dimension.txt").as_slice(),
+                include_bytes!("../../../../tests/fixtures/eds-matrix/dimension.txt").as_slice(),
             ),
         ] {
             let valid = parse_row(bytes).unwrap();
@@ -988,7 +994,7 @@ mod eds_guard_additional {
     #[test]
     fn eds_guard_rejects_malformed_typed_reference_counts() {
         let mut row = parse_row(include_bytes!(
-            "../../tests/fixtures/eds-branch/external_data_source_table_row.txt"
+            "../../../../tests/fixtures/eds-branch/external_data_source_table_row.txt"
         ))
         .unwrap();
         row.as_list_mut().unwrap()[1].as_list_mut().unwrap()[schema::TABLE_KEY_FIELDS_SLOT]
@@ -998,8 +1004,10 @@ mod eds_guard_additional {
     }
     #[test]
     fn eds_guard_distinguishes_absent_from_malformed_collections() {
-        let mut row =
-            parse_row(include_bytes!("../../tests/fixtures/eds-matrix/table.txt")).unwrap();
+        let mut row = parse_row(include_bytes!(
+            "../../../../tests/fixtures/eds-matrix/table.txt"
+        ))
+        .unwrap();
         let outer = row.as_list_mut().unwrap();
         let at = outer
             .iter()
