@@ -372,22 +372,22 @@ fn finish<T>(completion: Completion<T, NativeManagedWorker, CreatorRetained>) ->
                 Retained::Ready { owner, failure, .. } => eprintln!(
                     "managed UNKNOWN: phase={}; root={}; nonce={}; journal={}; cluster={}; infobase={}; retaining ORIGINAL owner; no retry/undo/cleanup",
                     failure.phase,
-                    owner.binding.root.display(),
-                    owner.binding.nonce,
-                    owner.journal.path.display(),
-                    owner.binding.cluster,
-                    owner.binding.infobase
+                    owner.binding().root.display(),
+                    owner.binding().nonce,
+                    owner.journal().path().display(),
+                    owner.binding().cluster,
+                    owner.binding().infobase
                 ),
                 Retained::Creation(owner) => eprintln!(
                     "managed UNKNOWN: phase=creation; root={}; nonce={}; journal={}; retaining ORIGINAL runtime and pipes; no retry/adoption/cleanup",
                     owner
                         .journal
-                        .path
+                        .path()
                         .parent()
                         .unwrap_or_else(|| Path::new(""))
                         .display(),
-                    owner.journal.nonce,
-                    owner.journal.path.display()
+                    owner.journal.nonce(),
+                    owner.journal.path().display()
                 ),
             }));
             // Resident policy: no ordinary Err unwinding drops original process,
@@ -414,7 +414,7 @@ struct GeneratedTarget {
 impl GeneratedTarget {
     fn from_owner(owner: &mut NativeManagedWorker, resolved: &ResolvedInputs) -> Result<Self> {
         owner.prepare()?;
-        let binding = &owner.binding;
+        let binding = owner.binding();
         if binding.cluster.is_nil()
             || binding.infobase.is_nil()
             || binding.database != resolved.creator.database

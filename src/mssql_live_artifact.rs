@@ -107,7 +107,8 @@ fn envelope(artifact: &LiveArtifact, recovery_file_sha256: String) -> Result<Env
 
 /// Publishes complete pack, recovery sidecar, then LIVE manifest; no SQL is run.
 /// An interrupted publication can leave complete unreferenced sidecars.
-pub(crate) fn write(path: &Path, artifact: &LiveArtifact) -> Result<()> {
+#[doc(hidden)]
+pub fn write(path: &Path, artifact: &LiveArtifact) -> Result<()> {
     artifact.validate()?;
     // Check envelope size/path collisions before any file publication.
     let candidate = envelope(artifact, "0".repeat(64))?;

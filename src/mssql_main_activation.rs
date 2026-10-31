@@ -14,9 +14,12 @@ use uuid::Uuid;
 
 use crate::mssql_platform_profile::{OwnRasProcess, exclusive_session_gate};
 
-pub(crate) const MAX_ROW_BYTES: usize = 16 * 1024 * 1024;
-pub(crate) const MAX_PLAN_BYTES: usize = 32 * 1024 * 1024;
-pub(crate) const MAX_ROWS: usize = 128;
+#[doc(hidden)]
+pub const MAX_ROW_BYTES: usize = 16 * 1024 * 1024;
+#[doc(hidden)]
+pub const MAX_PLAN_BYTES: usize = 32 * 1024 * 1024;
+#[doc(hidden)]
+pub const MAX_ROWS: usize = 128;
 const MAX_INFLATED_VERSIONS_BYTES: usize = 16 * 1024 * 1024;
 const SERVICE_NAMES: [&str; 3] = ["root", "version", "versions"];
 
@@ -271,7 +274,8 @@ impl MainActivationPlan {
     }
 
     /// Runtime profile evidence; unverified/default plans stay conservative.
-    pub(crate) fn with_profile_verification(
+    #[doc(hidden)]
+    pub fn with_profile_verification(
         mut self,
         verification: &crate::mssql_platform_profile::MssqlNativeProfileVerification,
     ) -> Self {
@@ -302,7 +306,8 @@ impl MainActivationPlan {
     /// Internal, validated assertions executed under the same serializable transaction and row
     /// locks as publication, after the exact stage/markers and before even no-op consumption.
     /// This hook is for CAS assertions, not writes or user-supplied SQL.
-    pub(crate) fn with_precondition_sql(mut self, sql: String) -> Self {
+    #[doc(hidden)]
+    pub fn with_precondition_sql(mut self, sql: String) -> Self {
         self.precondition_sql = Some(sql).filter(|sql| !sql.trim().is_empty());
         self
     }
@@ -1546,7 +1551,8 @@ fn quote_ident(value: &str) -> Result<String, MainActivationError> {
     Ok(format!("[{}]", value.replace(']', "]]")))
 }
 
-pub(crate) fn quote_string(value: &str) -> String {
+#[doc(hidden)]
+pub fn quote_string(value: &str) -> String {
     value.replace('\'', "''")
 }
 

@@ -243,7 +243,8 @@ fn encode(
 /// Writes an immutable pair and verifies its readback before the caller can run SQL.
 /// A failed manifest publication may leave an unreferenced complete pack; it is
 /// never mistaken for a committed operation and is not automatically removed.
-pub(crate) fn write(
+#[doc(hidden)]
+pub fn write(
     path: &Path,
     database: &str,
     mode: MainActivationMode,

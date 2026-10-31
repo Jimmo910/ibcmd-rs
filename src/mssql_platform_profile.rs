@@ -161,7 +161,8 @@ impl MssqlNativePlatformProfile {
     }
 
     /// XML dialect does not authorize a different CAS storage format.
-    pub(crate) fn require_extension_storage_format(self, format: u32) -> Result<()> {
+    #[doc(hidden)]
+    pub fn require_extension_storage_format(self, format: u32) -> Result<()> {
         let admitted = match self {
             Self::Platform8_5_1_1150 => [80_327, 80_501].contains(&format),
             _ => [80_310, 80_314, 80_321, 80_324, 80_327].contains(&format),
@@ -670,16 +671,19 @@ fn exclusive_ras_processes(
 /// numeric majors follow Microsoft's SQL2022-and-later permission rule.
 /// CASE always returns 0/1, including NULL version/role/permission results.
 /// Source: Microsoft sys.dm_exec_sessions and HAS_PERMS_BY_NAME documentation.
-pub(crate) const SESSION_VISIBILITY_PREDICATE: &str = r#"CASE WHEN TRY_CONVERT(int, SERVERPROPERTY(N'ProductMajorVersion')) >= 11 AND (
+#[doc(hidden)]
+pub const SESSION_VISIBILITY_PREDICATE: &str = r#"CASE WHEN TRY_CONVERT(int, SERVERPROPERTY(N'ProductMajorVersion')) >= 11 AND (
     IS_SRVROLEMEMBER(N'sysadmin') = 1
     OR (TRY_CONVERT(int, SERVERPROPERTY(N'ProductMajorVersion')) BETWEEN 11 AND 15 AND HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW SERVER STATE') = 1)
     OR (TRY_CONVERT(int, SERVERPROPERTY(N'ProductMajorVersion')) >= 16 AND HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW SERVER PERFORMANCE STATE') = 1)
 ) THEN 1 ELSE 0 END"#;
 
-pub(crate) const SESSION_VISIBILITY_ERROR: &str = "SQL session visibility cannot be proven: require sysadmin or VIEW SERVER STATE (SQL2012-2019) / VIEW SERVER PERFORMANCE STATE (SQL2022 and later); NULL or unsupported SQL version refuses. No infobase application account is required";
+#[doc(hidden)]
+pub const SESSION_VISIBILITY_ERROR: &str = "SQL session visibility cannot be proven: require sysadmin or VIEW SERVER STATE (SQL2012-2019) / VIEW SERVER PERFORMANCE STATE (SQL2022 and later); NULL or unsupported SQL version refuses. No infobase application account is required";
 
 /// No DECLARE statements: the same guard may be repeated in one SQL batch.
-pub(crate) fn session_visibility_gate(code: u32) -> String {
+#[doc(hidden)]
+pub fn session_visibility_gate(code: u32) -> String {
     format!(
         "IF ({SESSION_VISIBILITY_PREDICATE}) <> 1 THROW {code}, N'{SESSION_VISIBILITY_ERROR}', 1;\n"
     )
@@ -695,7 +699,8 @@ pub(crate) fn unbound_live_session_gate(database: &str) -> String {
     )
 }
 
-pub(crate) fn refuse_unbound_live_sessions(sql: &SqlExec, database: &str) -> Result<()> {
+#[doc(hidden)]
+pub fn refuse_unbound_live_sessions(sql: &SqlExec, database: &str) -> Result<()> {
     let SqlBackend::Client(client) = sql.backend() else {
         return Ok(());
     };
@@ -735,7 +740,8 @@ pub fn exclusive_session_gate(code: u32, message: &str, own: &[OwnRasProcess]) -
 
 /// The sessions the exclusive gates leave out, as a condition to append to a
 /// `WHERE` over `sys.dm_exec_sessions`: none when `own` is empty.
-pub(crate) fn session_exemption(own: &[OwnRasProcess]) -> String {
+#[doc(hidden)]
+pub fn session_exemption(own: &[OwnRasProcess]) -> String {
     if own.is_empty() {
         String::new()
     } else {

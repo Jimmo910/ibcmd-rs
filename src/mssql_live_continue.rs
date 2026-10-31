@@ -233,7 +233,8 @@ pub(crate) fn header_table() -> &'static str {
     "DROP TABLE IF EXISTS #LiveHeader; CREATE TABLE #LiveHeader (BackupName nvarchar(128), BackupDescription nvarchar(255), BackupType tinyint, ExpirationDate datetime, Compressed tinyint, Position smallint, DeviceType tinyint, UserName nvarchar(128), ServerName nvarchar(128), DatabaseName nvarchar(128), DatabaseVersion int, DatabaseCreationDate datetime, BackupSize bigint, FirstLSN numeric(25,0), LastLSN numeric(25,0), CheckpointLSN numeric(25,0), DatabaseBackupLSN numeric(25,0), BackupStartDate datetime, BackupFinishDate datetime, SortOrder smallint, CodePage smallint, UnicodeLocaleId int, UnicodeComparisonStyle int, CompatibilityLevel tinyint, SoftwareVendorId int, SoftwareVersionMajor int, SoftwareVersionMinor int, SoftwareVersionBuild int, MachineName nvarchar(128), Flags int, BindingID uniqueidentifier, RecoveryForkID uniqueidentifier, Collation nvarchar(128), FamilyGUID uniqueidentifier, HasBulkLoggedData bit, IsSnapshot bit, IsReadOnly bit, IsSingleUser bit, HasBackupChecksums bit, IsDamaged bit, BeginsLogChain bit, HasIncompleteMetaData bit, IsForceOffline bit, IsCopyOnly bit, FirstRecoveryForkID uniqueidentifier, ForkPointLSN numeric(25,0), RecoveryModel nvarchar(60), DifferentialBaseLSN numeric(25,0), DifferentialBaseGUID uniqueidentifier, BackupTypeDescription nvarchar(60), BackupSetGUID uniqueidentifier, CompressedBackupSize bigint, Containment tinyint, KeyAlgorithm nvarchar(32), EncryptorThumbprint varbinary(20), EncryptorType nvarchar(32), LastValidRestoreTime datetime, TimeZone smallint, CompressionAlgorithm nvarchar(32));\n"
 }
 
-fn database_ident(database: &str) -> Result<String> {
+#[doc(hidden)]
+pub fn database_ident(database: &str) -> Result<String> {
     ensure!(
         !database.is_empty()
             && database.encode_utf16().count() <= 128
@@ -395,7 +396,8 @@ pub fn finish(
         client, artifact, path, rac, endpoint, user, pwd, interrupt, false,
     )
 }
-pub(crate) fn finish_verified(
+#[doc(hidden)]
+pub fn finish_verified(
     client: &dyn SqlClient,
     artifact: &LiveArtifact,
     path: &Path,

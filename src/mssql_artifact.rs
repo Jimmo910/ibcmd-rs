@@ -10,7 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-pub(crate) fn write_new_or_identical(path: &Path, bytes: &[u8]) -> io::Result<()> {
+#[doc(hidden)]
+pub fn write_new_or_identical(path: &Path, bytes: &[u8]) -> io::Result<()> {
     match identical_existing(path, bytes)? {
         Some(true) => return Ok(()),
         Some(false) => return Err(existing_artifact(path)),

@@ -27,7 +27,8 @@ use authentication::{
 
 // Input descriptor only: cloning never copies a runtime, process or journal owner.
 #[derive(Clone)]
-pub(crate) struct CreatorOptions {
+#[doc(hidden)]
+pub struct CreatorOptions {
     pub parent: PathBuf,
     pub platform_bin: PathBuf,
     pub powershell: PathBuf,
@@ -291,7 +292,8 @@ ConvertTo-Json -InputObject @{observer=$observer;owned=$owned;foreign=$foreign;l
 
 /// Even failed creation returns its original children/journal. The caller
 /// cannot silently discard uncertain ownership or restart a second attempt.
-pub(crate) enum Creation {
+#[doc(hidden)]
+pub enum Creation {
     Ready(ManagedWorker<NativeRuntime>),
     Retained {
         runtime: NativeRuntime,
@@ -300,7 +302,8 @@ pub(crate) enum Creation {
     },
 }
 
-pub(crate) struct NativeRuntime {
+#[doc(hidden)]
+pub struct NativeRuntime {
     options: CreatorOptions,
     rac: Tool,
     pwsh: Tool,
@@ -323,7 +326,8 @@ pub(crate) struct NativeRuntime {
     cold: bool,
 }
 
-pub(crate) fn create(options: CreatorOptions) -> Result<Creation> {
+#[doc(hidden)]
+pub fn create(options: CreatorOptions) -> Result<Creation> {
     if !cfg!(windows)
         || options.timeout.is_zero()
         || options.timeout > Duration::from_secs(120)

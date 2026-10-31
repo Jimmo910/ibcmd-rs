@@ -21,13 +21,16 @@ mod identity;
 pub(crate) use identity::ProcessIdentity;
 mod native;
 pub(crate) mod undo;
-pub(crate) use native::{Creation, CreatorOptions, NativeRuntime, create};
-pub(crate) type NativeManagedWorker = ManagedWorker<native::NativeRuntime>;
+#[doc(hidden)]
+pub use native::{Creation, CreatorOptions, NativeRuntime, create};
+#[doc(hidden)]
+pub type NativeManagedWorker = ManagedWorker<native::NativeRuntime>;
 #[cfg(test)]
 mod tests;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LifetimeBinding {
+#[doc(hidden)]
+pub struct LifetimeBinding {
     pub nonce: Uuid,
     pub root: PathBuf,
     pub cluster: Uuid,
@@ -69,7 +72,8 @@ pub(crate) trait OwnedRuntime {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub(crate) enum PublicationState {
+#[doc(hidden)]
+pub enum PublicationState {
     NotStarted,
     StageUnproved,
     Staged,
@@ -78,7 +82,8 @@ pub(crate) enum PublicationState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct ManagedOutcome {
+#[doc(hidden)]
+pub struct ManagedOutcome {
     pub publication: PublicationState,
     pub handoff_proved: bool,
     pub diagnostic: Option<String>,
@@ -87,7 +92,8 @@ pub(crate) struct ManagedOutcome {
 /// An exclusive original journal handle is retained for the entire session.
 /// Records are flushed before dispatch. Any failed append poisons authority;
 /// there is no replay API which turns a user's journal into a live capability.
-pub(crate) struct Journal {
+#[doc(hidden)]
+pub struct Journal {
     file: File,
     path: PathBuf,
     length: u64,
@@ -121,6 +127,18 @@ impl Journal {
             nonce,
             failed: false,
         })
+    }
+
+    /// The journal's path, for a diagnostic. Reading it grants no authority.
+    #[doc(hidden)]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The lifetime's nonce the journal records, for a diagnostic.
+    #[doc(hidden)]
+    pub fn nonce(&self) -> Uuid {
+        self.nonce
     }
 
     fn append(&mut self, event: &str, value: impl Serialize) -> Result<()> {
@@ -191,7 +209,8 @@ impl Journal {
     }
 }
 
-pub(crate) struct ManagedWorker<R: OwnedRuntime> {
+#[doc(hidden)]
+pub struct ManagedWorker<R: OwnedRuntime> {
     runtime: R,
     binding: LifetimeBinding,
     journal: Journal,
@@ -236,6 +255,19 @@ impl<R: OwnedRuntime> ManagedWorker<R> {
             .journal
             .append("creator_barrier", &session.binding.nonce.to_string())?;
         Ok(session)
+    }
+
+    /// The lifetime this worker is bound to, for the command glue's target
+    /// and diagnostics. Reading it grants no authority.
+    #[doc(hidden)]
+    pub fn binding(&self) -> &LifetimeBinding {
+        &self.binding
+    }
+
+    /// The exclusive journal this worker appends to, for a diagnostic.
+    #[doc(hidden)]
+    pub fn journal(&self) -> &Journal {
+        &self.journal
     }
 
     fn checked_observation(&mut self) -> Result<Observation> {
@@ -283,7 +315,8 @@ impl<R: OwnedRuntime> ManagedWorker<R> {
         result
     }
 
-    pub(crate) fn register_and_load(&mut self) -> Result<()> {
+    #[doc(hidden)]
+    pub fn register_and_load(&mut self) -> Result<()> {
         self.checked_observation()?;
         if self.registered || !self.ever_loaded.is_empty() {
             bail!("single managed registration/load only");
@@ -321,7 +354,8 @@ impl<R: OwnedRuntime> ManagedWorker<R> {
         Ok(())
     }
 
-    pub(crate) fn prepare(&mut self) -> Result<ProcessIdentity> {
+    #[doc(hidden)]
+    pub fn prepare(&mut self) -> Result<ProcessIdentity> {
         let o = self.checked_observation()?;
         if !self.registered
             || self.ever_loaded != BTreeSet::from([self.binding.infobase])
@@ -348,7 +382,8 @@ impl<R: OwnedRuntime> ManagedWorker<R> {
         Ok(current.1)
     }
 
-    pub(crate) fn stage_source<T>(&mut self, stage: impl FnOnce() -> Result<T>) -> Result<T> {
+    #[doc(hidden)]
+    pub fn stage_source<T>(&mut self, stage: impl FnOnce() -> Result<T>) -> Result<T> {
         let worker = self.prepare()?;
         self.journal.append("source_stage_intent", &worker)?;
         match stage() {
@@ -366,7 +401,8 @@ impl<R: OwnedRuntime> ManagedWorker<R> {
 
     /// Retains the original runtime and exclusive journal on failure. There is
     /// no automatic Drop cleanup, replay constructor or PID-absence shortcut.
-    pub(crate) fn shutdown(&mut self) -> Result<ColdSession<'_, R>> {
+    #[doc(hidden)]
+    pub fn shutdown(&mut self) -> Result<ColdSession<'_, R>> {
         self.prepare()?;
         self.journal
             .append("cold_shutdown_intent", &self.binding.nonce.to_string())?;
@@ -393,7 +429,8 @@ impl<R: OwnedRuntime> ManagedWorker<R> {
     /// Real orchestration seam: stage and commit callbacks are unreachable on
     /// ownership refusal. Uncertain SQL and post-commit handoff are returned
     /// as distinct states; neither can be rewritten as a successful rollback.
-    pub(crate) fn publish_and_handoff(
+    #[doc(hidden)]
+    pub fn publish_and_handoff(
         &mut self,
         stage: impl FnOnce() -> Result<()>,
         commit: impl FnOnce() -> Result<()>,
@@ -461,13 +498,15 @@ impl<R: OwnedRuntime> ManagedWorker<R> {
 
 /// A borrowed live authority, never serialized or recovered from a user's
 /// certificate. The runtime/lease and original exited handles stay retained.
-pub(crate) struct ColdSession<'a, R: OwnedRuntime> {
+#[doc(hidden)]
+pub struct ColdSession<'a, R: OwnedRuntime> {
     session: &'a mut ManagedWorker<R>,
     undo_attempted: bool,
 }
 
 impl<R: OwnedRuntime> ColdSession<'_, R> {
-    pub(crate) fn require_current(&mut self) -> Result<()> {
+    #[doc(hidden)]
+    pub fn require_current(&mut self) -> Result<()> {
         self.session.journal.require_original()?;
         if self.session.tainted || !self.session.stopped {
             bail!("original cold lifetime authority lost");
@@ -518,7 +557,8 @@ impl<R: OwnedRuntime> ColdSession<'_, R> {
 /// arguments are the root CLI's; its glue (`cli.rs`) builds this from them,
 /// so the lifetime authority checks a target without reading CLI types.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ManagedTarget<'a> {
+#[doc(hidden)]
+pub struct ManagedTarget<'a> {
     /// The command's activation mode is `worker`.
     pub worker_mode: bool,
     /// The command names a `sqlcmd` executable.
@@ -536,7 +576,8 @@ pub(crate) struct ManagedTarget<'a> {
 }
 
 impl NativeManagedWorker {
-    pub(crate) fn require_source_target(&mut self, target: &ManagedTarget<'_>) -> Result<()> {
+    #[doc(hidden)]
+    pub fn require_source_target(&mut self, target: &ManagedTarget<'_>) -> Result<()> {
         if !target.worker_mode
             || target.sqlcmd
             || target.bcp_executable
@@ -552,7 +593,8 @@ impl NativeManagedWorker {
         self.prepare()?;
         Ok(())
     }
-    pub(crate) fn verify_target_profile(
+    #[doc(hidden)]
+    pub fn verify_target_profile(
         &mut self,
         claimed: crate::mssql_platform_profile::MssqlNativePlatformProfile,
         options: crate::mssql_platform_profile::MssqlNativeProfileVerificationOptions<'_>,
@@ -563,7 +605,8 @@ impl NativeManagedWorker {
 
     /// Reads every field of `target` but `extension`, which an activation does
     /// not name.
-    pub(crate) fn require_activation_target(&mut self, target: &ManagedTarget<'_>) -> Result<()> {
+    #[doc(hidden)]
+    pub fn require_activation_target(&mut self, target: &ManagedTarget<'_>) -> Result<()> {
         if !target.worker_mode
             || target.sqlcmd
             || target.bcp_executable
