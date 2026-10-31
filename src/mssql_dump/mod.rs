@@ -1033,9 +1033,9 @@ mod config_rows;
 pub mod config_save;
 use ibcmd_dump_readers::configuration_properties_evidence;
 mod dcs;
-// The 8.5 picture-value rewrite of a schema template, which the DCS codec
-// (`compiler::bodies::dcs`) reads.
-pub(crate) mod dcs_2_21;
+// The 8.5 picture-value rewrite of a schema template: `ibcmd-compiler`'s,
+// beside the DCS codec that reads it.
+use ibcmd_compiler::compiler::bodies::dcs_2_21;
 mod dynamic_generation;
 mod empty_configuration;
 pub(crate) mod extension;

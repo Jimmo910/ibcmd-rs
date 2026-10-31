@@ -160,17 +160,6 @@ pub fn compile_role_rights(
     raw_deflate(&RoleRightsBody::from_model(model)?.native).map_err(Into::into)
 }
 
-pub fn decode_role_rights(
-    profile: &RightsCodecProfile,
-    blob: &[u8],
-) -> Result<RoleRightsBody, RightsCodecError> {
-    decode_role_rights_with(
-        profile,
-        blob,
-        crate::mssql_dump::extension::active().is_some(),
-    )
-}
-
 /// Decodes a stored role rights body. `extension_active` says whether a
 /// configuration extension's export is running: an extension's role stores
 /// the `false` of a defaulted root flag as `2`, which reads as `false` only

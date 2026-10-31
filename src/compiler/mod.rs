@@ -5,10 +5,10 @@
 //! data around this boundary. Bytes derived from a base artifact deliberately
 //! stay outside this base-free compiler contract.
 //!
-//! The coordinator is the `ibcmd-compiler` crate's `compiler` module, and
-//! this module keeps its paths. `bodies` holds the body codecs that read the
-//! rest of the root, beside the crate's, and `families` is the root's view of
-//! the family compilers.
+//! The coordinator and its body codecs are the `ibcmd-compiler` crate's
+//! `compiler` module, and this module keeps their paths. `bodies` re-exports
+//! the codecs and the writers other crates own, and `families` is the root's
+//! view of the family compilers.
 
 pub use ibcmd_compiler::compiler::{
     AdditionalIndexesMapping, CompileAxes, CompileError, CompileRequest, CompileResult,
