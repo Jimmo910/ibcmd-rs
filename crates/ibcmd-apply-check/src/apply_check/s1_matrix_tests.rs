@@ -651,7 +651,7 @@ fn escape(text: &str) -> String {
 /// `probe_auto_a`: one top-level property of one object, 159 times.
 fn auto_probes() -> Vec<Case> {
     const TABLE: &str =
-        include_str!("../../docs/apply/evidence/restructuring-check/probes-auto-a.tsv");
+        include_str!("../../../../docs/apply/evidence/restructuring-check/probes-auto-a.tsv");
     TABLE
         .lines()
         .skip(1)

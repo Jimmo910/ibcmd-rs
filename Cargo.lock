@@ -680,6 +680,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-apply-check"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "flate2",
+ "ibcmd-1c-text",
+ "ibcmd-metadata-model",
+ "ibcmd-module-blob",
+ "ibcmd-parallel",
+ "ibcmd-sql",
+ "rayon",
+ "serde",
+ "serde_json",
+ "walkdir",
+]
+
+[[package]]
 name = "ibcmd-cf"
 version = "0.1.0"
 dependencies = [
@@ -1002,6 +1020,7 @@ dependencies = [
  "flate2",
  "ibcmd-1c-text",
  "ibcmd-1c-vocab",
+ "ibcmd-apply-check",
  "ibcmd-cf",
  "ibcmd-compiler",
  "ibcmd-compiler-families",

@@ -87,7 +87,17 @@ pub mod root {
         pub use ibcmd_metadata_model::metadata_model::root::export::*;
 
         pub(crate) use ibcmd_metadata_model::metadata_model::root::export::{
-            fold_split_compatibility, root_configuration_uuid, stored_shape, version_text,
+            root_configuration_uuid, stored_shape,
+        };
+
+        // Read by no root code since `apply_check` moved to its crate; the
+        // re-export still keeps the widened items out of the glob above.
+        #[allow(
+            unused_imports,
+            reason = "hides the widened items from the public glob of this module"
+        )]
+        pub(crate) use ibcmd_metadata_model::metadata_model::root::export::{
+            fold_split_compatibility, version_text,
         };
     }
 }
