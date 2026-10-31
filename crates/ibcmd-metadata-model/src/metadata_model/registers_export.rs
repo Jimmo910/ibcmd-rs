@@ -317,10 +317,7 @@ fn children_of(
     class: &str,
     decode: impl Fn(&[Brace]) -> Result<Element>,
 ) -> Result<Vec<Element>> {
-    row.records(class)?
-        .into_iter()
-        .map(|record| decode(record))
-        .collect()
+    row.records(class)?.into_iter().map(decode).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1215,6 +1212,7 @@ pub(crate) fn names(kind: &str, row: &Brace) -> Result<ObjectNames> {
         "AccountingRegister" if atom(parsed.slot(0)?)? == "22" => 1,
         _ => 0,
     };
+    #[allow(clippy::type_complexity)]
     let (header_slot, generated, children): (usize, &[(&str, usize)], &[(&str, &str)]) = match kind
     {
         "InformationRegister" => (

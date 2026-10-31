@@ -164,7 +164,8 @@ pub struct ExportContext {
     pub version: String,
     /// The configuration's compatibility mode: it decides the record
     /// versions of the rows.
-    pub(crate) compat: Compat,
+    #[doc(hidden)]
+    pub compat: Compat,
 }
 
 impl ExportContext {

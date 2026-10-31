@@ -15,9 +15,9 @@ use serde::Serialize;
 use walkdir::WalkDir;
 
 use super::{DescriptorContext, compile_descriptor};
-use crate::parallel;
 use ibcmd_metadata_blob::parse_simple_metadata_xml_properties;
 use ibcmd_module_blob::inflate_raw;
+use ibcmd_parallel as parallel;
 
 #[derive(Debug, Clone)]
 pub struct DescriptorAuditOptions {
@@ -219,7 +219,7 @@ fn measure_one(
     let Ok(properties) = parse_simple_metadata_xml_properties(&xml) else {
         return Ok(None);
     };
-    if !options.kinds.is_empty() && !options.kinds.iter().any(|kind| *kind == properties.kind) {
+    if !options.kinds.is_empty() && !options.kinds.contains(&properties.kind) {
         return Ok(None);
     }
     let outcome = match read_stored_row(rows, &properties.uuid)? {

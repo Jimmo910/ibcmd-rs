@@ -282,7 +282,7 @@ pub fn stores_layout_8_5_1(context: &DescriptorContext) -> bool {
 /// `root` in the 8.5.1 layout (forms, styles, the `{76,...}` Configuration
 /// tuple) rather than the 8.3.27 one: its `CompatibilityMode` is 8.5 or
 /// later, or one of its managed forms can only be held by the 8.5.1 layout
-/// ([`form_needs_layout_8_5_1`]).
+/// (`form_needs_layout_8_5_1`).
 ///
 /// The layout is the configuration's, not the XML dialect's, and not its
 /// compatibility alone. The BSP 8.5 clone (`Version8_5_1`) stores every form
@@ -1023,7 +1023,8 @@ pub fn up_convert_primitives_8_5_1(node: &mut Brace) {
 // ---------------------------------------------------------------------------
 
 /// `ButtonRepresentation`.
-pub(crate) const REPRESENTATIONS: &[(&str, i64)] = &[
+#[doc(hidden)]
+pub const REPRESENTATIONS: &[(&str, i64)] = &[
     ("Text", 0),
     ("Picture", 1),
     ("PictureAndText", 2),
@@ -1079,9 +1080,11 @@ impl CommandGroup {
 /// The class a common command's `{2,<uuid>,<class>}` identity names.
 const COMMAND_CLASS: &str = "078a6af8-d22c-4248-9c33-7e90075a3d2c";
 
-pub(crate) const PARAMETER_USE_MODES: &[(&str, i64)] = &[("Single", 0), ("Multiple", 1)];
+#[doc(hidden)]
+pub const PARAMETER_USE_MODES: &[(&str, i64)] = &[("Single", 0), ("Multiple", 1)];
 
-pub(crate) const MAIN_SERVER_UNAVAILABLE_BEHAVIORS: &[(&str, i64)] = &[("Auto", 0)];
+#[doc(hidden)]
+pub const MAIN_SERVER_UNAVAILABLE_BEHAVIORS: &[(&str, i64)] = &[("Auto", 0)];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommonCommand {

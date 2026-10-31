@@ -280,7 +280,7 @@ pub mod corpus {
     use super::super::brace::{Brace, parse_row, serialize};
     use super::super::xml::{Element, MetadataXml};
     use super::attribute_body;
-    use crate::parallel;
+    use ibcmd_parallel as parallel;
 
     #[derive(Debug, Default, Serialize)]
     pub struct BodyAuditReport {

@@ -103,7 +103,8 @@ pub(crate) fn localized_element(qname: &str, node: &Brace) -> Result<Element> {
 /// permissive fallback without losing its meaning. Keep this distinct from
 /// an unimplemented model layout, which may still have a legacy writer.
 #[derive(Debug)]
-pub(crate) enum UnsupportedDescriptorValue {
+#[doc(hidden)]
+pub enum UnsupportedDescriptorValue {
     Boolean(String),
     Enumeration(i64),
     NonNumericEnumeration(String),

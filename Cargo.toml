@@ -37,6 +37,7 @@ members = [
     "crates/ibcmd-form-writer",
     "crates/ibcmd-metadata-source",
     "crates/ibcmd-dump-readers",
+    "crates/ibcmd-metadata-model",
 ]
 resolver = "3"
 exclude = ["crates/ibcmd-edt/vendor/morph1c"]
@@ -85,6 +86,7 @@ ibcmd-metadata-blob = { path = "crates/ibcmd-metadata-blob" }
 ibcmd-form-writer = { path = "crates/ibcmd-form-writer" }
 ibcmd-metadata-source = { path = "crates/ibcmd-metadata-source" }
 ibcmd-dump-readers = { path = "crates/ibcmd-dump-readers" }
+ibcmd-metadata-model = { path = "crates/ibcmd-metadata-model" }
 # The process allocator, installed in main.rs.
 mimalloc = "0.1.52"
 quick-xml = "0.38"

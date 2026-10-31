@@ -246,7 +246,7 @@ impl<'a> Field<'a> {
         self.properties.child_text(name).unwrap_or_default().trim()
     }
     fn flag(&self, name: &str) -> Result<Brace> {
-        if crate::metadata_model::absent_on_adopted(&self.properties, name) {
+        if crate::metadata_model::absent_on_adopted(self.properties, name) {
             return Ok(Brace::flag(false));
         }
         let text = self.properties.child_text(name).ok_or_else(|| {
@@ -259,7 +259,7 @@ impl<'a> Field<'a> {
         Ok(Brace::flag(parse_bool(text.trim())?))
     }
     fn code(&self, name: &str, table: &[(&str, i64)]) -> Result<Brace> {
-        if crate::metadata_model::absent_on_adopted(&self.properties, name) {
+        if crate::metadata_model::absent_on_adopted(self.properties, name) {
             return table
                 .first()
                 .map(|(_, v)| Brace::num(*v))
@@ -323,13 +323,13 @@ impl<'o, 'a> Props<'o, 'a> {
         })
     }
     fn flag(&self, name: &str) -> Result<Brace> {
-        if crate::metadata_model::absent_on_adopted(&self.properties, name) {
+        if crate::metadata_model::absent_on_adopted(self.properties, name) {
             return Ok(Brace::flag(false));
         }
         Ok(Brace::flag(self.object.prop_bool(name)?))
     }
     fn code(&self, name: &str, table: &[(&str, i64)]) -> Result<Brace> {
-        if crate::metadata_model::absent_on_adopted(&self.properties, name) {
+        if crate::metadata_model::absent_on_adopted(self.properties, name) {
             return table
                 .first()
                 .map(|(_, v)| Brace::num(*v))
@@ -338,7 +338,7 @@ impl<'o, 'a> Props<'o, 'a> {
         code(name, self.object.prop_text(name)?.trim(), table)
     }
     fn number(&self, name: &str) -> Result<i64> {
-        if crate::metadata_model::absent_on_adopted(&self.properties, name) {
+        if crate::metadata_model::absent_on_adopted(self.properties, name) {
             return Ok(0);
         }
         self.object
@@ -513,6 +513,7 @@ impl InformationRegister {
     /// DenyIncompleteValues,Indexing,MainFilter,FullTextSearch,DataHistory,
     /// TypeReductionMode}`; the legacy generation writes 7/4/9 without the
     /// tail and without TypeReductionMode.
+    #[allow(clippy::wrong_self_convention)]
     fn to_brace(self) -> Result<Brace> {
         let mut fields = vec![Brace::num(33)];
         fields.extend(self.generated);
@@ -664,6 +665,7 @@ impl AccumulationRegister {
     /// Resource `{5,<body>,FullTextSearch}`, attribute `{4,<body>,Indexing,
     /// FullTextSearch,0,{1,<nil>}}`, dimension `{8,<body>,
     /// DenyIncompleteValues,Indexing,FullTextSearch,UseInTotals}`.
+    #[allow(clippy::wrong_self_convention)]
     fn to_brace(self) -> Result<Brace> {
         let mut fields = vec![Brace::num(28)];
         fields.extend(self.generated);
@@ -818,6 +820,7 @@ impl AccountingRegister {
     /// AccountingFlag,ExtDimensionAccountingFlag,FullTextSearch}`, attribute
     /// `{3,<body>,Indexing,FullTextSearch,0,{1,<nil>}}` (legacy `{2,...}`
     /// without the tail).
+    #[allow(clippy::wrong_self_convention)]
     fn to_brace(self) -> Result<Brace> {
         let mut fields = if self.period_adjustment_length > 0 {
             vec![Brace::num(22), Brace::num(22)]
@@ -981,6 +984,7 @@ impl CalculationRegister {
     /// {1,<nil>}}`, resource `{4,<body>,FullTextSearch}`, dimension
     /// `{5,<body>,DenyIncompleteValues,BaseDimension,ScheduleLink,Indexing,
     /// FullTextSearch}`.
+    #[allow(clippy::wrong_self_convention)]
     fn to_brace(self) -> Result<Brace> {
         let mut fields = vec![Brace::num(21)];
         fields.extend(self.generated);
@@ -1046,6 +1050,7 @@ impl Recalculation {
     /// `{1,{4,<3 generated pairs>,{0,<md base>},DataLockControlMode},1,
     /// dimensions}`; a dimension is `{1,<md base>,RegisterDimension,
     /// LeadingRegisterData}`.
+    #[allow(clippy::wrong_self_convention)]
     fn to_brace(self) -> Result<Brace> {
         let mut fields = vec![Brace::num(4)];
         fields.extend(self.generated);
@@ -1130,6 +1135,7 @@ impl DocumentJournal {
     /// ListPresentation,ExtendedListPresentation,Explanation},4,templates,
     /// columns,commands,forms}`; a column is `{4,<md base>,References,
     /// Indexing}`.
+    #[allow(clippy::wrong_self_convention)]
     fn to_brace(self) -> Result<Brace> {
         let mut fields = vec![Brace::num(26)];
         fields.extend(self.list);
@@ -1197,6 +1203,7 @@ impl Sequence {
     /// `{1,{6,<3 generated pairs>,{0,<md base>},Documents,RegisterRecords,
     /// MoveBoundaryOnPosting,DataLockControlMode},1,dimensions}`; a dimension
     /// is `{0,{2,<md base>,<type>},DocumentMap,RegisterRecordsMap}`.
+    #[allow(clippy::wrong_self_convention)]
     fn to_brace(self) -> Result<Brace> {
         let mut fields = vec![Brace::num(6)];
         fields.extend(self.generated);
@@ -1243,6 +1250,7 @@ impl DocumentNumerator {
 
     /// `{1,{3,<md base>,NumberType,NumberLength,NumberPeriodicity,
     /// CheckUnique,NumberAllowedLength},0}`
+    #[allow(clippy::wrong_self_convention)]
     fn to_brace(self) -> Result<Brace> {
         Ok(brace_list![
             Brace::num(1),

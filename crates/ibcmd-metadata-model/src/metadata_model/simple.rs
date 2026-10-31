@@ -6,7 +6,8 @@
 //! `{1,<payload>,<collection count>,<collection>...}`).
 
 #[path = "simple_export.rs"]
-pub(crate) mod export;
+#[doc(hidden)]
+pub mod export;
 
 use anyhow::{Result, anyhow, bail};
 

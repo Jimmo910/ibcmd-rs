@@ -280,3 +280,21 @@ and the `"2.20"` and `"2.21"` arms of `build_entry` (the
 `platform.xml_format` values). `tests.rs` is a test-only module. The root's
 `src/platform/mod.rs` stays outside the slice. No fingerprint changes.
 Every other record, the two stale ones included, is unchanged.
+
+`crates/ibcmd-metadata-model/src/` also belongs to the slice (#559, the
+metadata model). Its `metadata_model/` holds the model formerly under
+`src/metadata_model/`, which was outside the slice; the 34 production files
+join it with their 1 312 records (1 344 occurrences: 350 `uuid-literal`, 902
+`name-special-case`, 92 `xml-policy`). The largest are `export.rs` (153
+records), `objects_parts.rs` (125), `common.rs` (105), `export_names.rs` (84),
+`root.rs` (81), `registers.rs` (76), `registers_parts.rs` (74) and
+`common_export.rs` (62); `lib.rs`, `metadata_model/brace.rs` and
+`metadata_model/objects.rs` have none. `metadata_model/slot_evidence_tests.rs`
+and `test_scratch.rs` are test-only modules. The root's facade
+(`src/metadata_model.rs`) and the tests that stay in the root
+(`src/metadata_model/{collection_tests,external_data_source}.rs`) are outside
+the slice. Each record equals the one a scan of the same file as it stood
+under `src/metadata_model/` gives: the move's edits (the `ibcmd_parallel`
+import, rebased `include_str!` paths, `#[doc(hidden)] pub` items) and the
+clippy fixes that follow change no fingerprint. Every other record, the two
+stale ones included, is unchanged.

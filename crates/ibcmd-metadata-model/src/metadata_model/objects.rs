@@ -19,7 +19,8 @@
 #[path = "objects_export.rs"]
 pub(crate) mod export;
 #[path = "objects_parts.rs"]
-pub(crate) mod parts;
+#[doc(hidden)]
+pub mod parts;
 
 use anyhow::{Result, anyhow};
 
@@ -38,7 +39,8 @@ pub fn compile(object: &ObjectXml<'_>, context: &DescriptorContext) -> Result<Br
 
 /// Body-owning collection identities from the existing typed layouts.
 /// This reader does not alter encoding or admit a new dynamic body family.
-pub(crate) fn owned_body_classes(kind: &str) -> Option<Vec<(&'static str, &'static str)>> {
+#[doc(hidden)]
+pub fn owned_body_classes(kind: &str) -> Option<Vec<(&'static str, &'static str)>> {
     if let Some(layout) = layout(kind) {
         return Some(
             layout

@@ -48,12 +48,14 @@ fn identity_of(node: &Brace) -> Result<String> {
 
 /// The stored shape of a Configuration row's properties tuple: `{76,...}`
 /// for a configuration kept in compatibility 8.5 or later.
-pub(crate) fn stored_shape(row: &Brace) -> Result<ConfigurationShape> {
+#[doc(hidden)]
+pub fn stored_shape(row: &Brace) -> Result<ConfigurationShape> {
     Ok(read_row(row)?.shape)
 }
 
 /// The configuration uuid the `root` row names: `{2,<uuid>,...}`.
-pub(crate) fn root_configuration_uuid(row: &Brace) -> Result<String> {
+#[doc(hidden)]
+pub fn root_configuration_uuid(row: &Brace) -> Result<String> {
     let items = list(row)?;
     if atom(item(items, 0)?)? != "2" {
         bail!("the root row does not open with 2");
@@ -208,7 +210,8 @@ fn read_row(row: &Brace) -> Result<RootRow<'_>> {
 /// the shape is another, the row is not a Configuration row): [`decode`] then
 /// speaks for it. The comparison of a stage with a tree calls this to read the
 /// row as the tree's `{67}`-shaped twin; the export reads the split row itself.
-pub(crate) fn fold_split_compatibility(row: &Brace) -> Option<(Brace, u32)> {
+#[doc(hidden)]
+pub fn fold_split_compatibility(row: &Brace) -> Option<(Brace, u32)> {
     let parsed = read_row(row).ok()?;
     if parsed.shape != ConfigurationShape::V68 {
         return None;
@@ -323,7 +326,8 @@ fn code(tuple: &[Brace], index: usize, table: &[(&'static str, &str)]) -> Result
 }
 
 /// `80324` -> `Version8_3_24`.
-pub(crate) fn version_text(value: u32) -> String {
+#[doc(hidden)]
+pub fn version_text(value: u32) -> String {
     format!(
         "Version{}_{}_{}",
         value / 10000,

@@ -11,7 +11,8 @@ use super::xml::Element;
 use super::{ObjectXml, parse_bool};
 use ibcmd_restructure::brace_list;
 
-pub(crate) struct Interface {
+#[doc(hidden)]
+pub struct Interface {
     head: Header,
     switchable: bool,
 }
@@ -179,7 +180,8 @@ impl Interface {
         Ok(())
     }
 
-    pub(crate) fn from_brace(row: &Brace) -> Result<Self> {
+    #[doc(hidden)]
+    pub fn from_brace(row: &Brace) -> Result<Self> {
         (|| {
             let outer = list(row)?;
             ensure!(
@@ -233,7 +235,8 @@ impl Interface {
         ]
     }
 
-    pub(crate) fn to_xml(&self) -> Result<Element> {
+    #[doc(hidden)]
+    pub fn to_xml(&self) -> Result<Element> {
         let decoded = header(&self.head.to_brace())?;
         let p = el("Properties")
             .children(header_elements(&decoded)?)
