@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::metadata_model::brace::parse_row;
-use crate::module_blob::inflate_raw;
+use ibcmd_module_blob::inflate_raw;
 use crate::sql::{SqlBackend, SqlClient, SqlExec};
 
 use super::check::{Inputs, RowProvider, check};
