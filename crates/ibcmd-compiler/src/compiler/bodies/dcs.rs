@@ -223,6 +223,10 @@ pub(crate) fn compile_evidenced_dcs_with_resolvers(
 /// compiled schema body back: exactly the entries the writer resolved.
 type SchemaReadBackIndexes = (DcsTypeIndex, BTreeMap<String, String>);
 
+/// A compiled schema's framed plaintext, with the type index and object
+/// references the writer resolved for it.
+type CompiledSchemaPlain = (Vec<u8>, DcsTypeIndex, BTreeMap<String, String>);
+
 /// Proves the compiled body reads back as the source: the exporter's own
 /// normalizer, given the body and the resolutions the writer made, has to
 /// reproduce the source document after its BOM and XML declaration.
@@ -345,6 +349,10 @@ pub fn decode_dcs_with_references(
 /// three-document header. Both remain readable, but only the latter is emitted
 /// and accepted by the strict profile codec.
 #[doc(hidden)]
+#[allow(
+    clippy::single_range_in_vec_init,
+    reason = "a direct-XML body's document list holds its one document"
+)]
 pub fn decode_compatible_dcs(kind: DcsTemplateKind, blob: &[u8]) -> Result<DcsBody, DcsCodecError> {
     let plain = inflate(blob)?;
     match kind {
@@ -379,6 +387,10 @@ fn decode_strict_with_references(
     }
 }
 
+#[allow(
+    clippy::single_range_in_vec_init,
+    reason = "a direct-XML body's document list holds its one document"
+)]
 fn decode_appearance_plain(plain: Vec<u8>) -> Result<DcsBody, DcsCodecError> {
     validate_xml_document(&plain, "AppearanceTemplate", Some(APPEARANCE_NS))?;
     let document_len = plain.len();
@@ -401,7 +413,7 @@ fn compile_schema_plain(
     xml: &[u8],
     style_reference_types: &BTreeMap<String, String>,
     types: &dyn DcsStorageTypeResolver,
-) -> Result<(Vec<u8>, DcsTypeIndex, BTreeMap<String, String>), DcsCodecError> {
+) -> Result<CompiledSchemaPlain, DcsCodecError> {
     validate_xml_document(xml, "DataCompositionSchema", Some(SCHEMA_NS))?;
 
     let style_items = style_reference_types

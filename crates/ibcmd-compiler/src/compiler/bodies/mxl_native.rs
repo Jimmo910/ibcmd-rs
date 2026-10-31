@@ -971,12 +971,16 @@ impl<'a, 'd> BodyWriter<'a, 'd> {
 
     fn header_footer_records(&mut self) -> Result<Vec<String>> {
         let mut records = Vec::with_capacity(6);
-        for slot in 0..6 {
-            let Some(node) = self.document.headers_footers[slot] else {
+        for (node, tag) in self
+            .document
+            .headers_footers
+            .into_iter()
+            .zip(HEADER_FOOTER_BLOCK)
+        {
+            let Some(node) = node else {
                 records.push("{0,0}".to_string());
                 continue;
             };
-            let tag = HEADER_FOOTER_BLOCK[slot];
             node.only_children(&["f", "tl", "tfl"], tag)?;
             let format = optional_usize(node, "f", tag)?.unwrap_or(0);
             let format = self.format_ref(format, tag)?;
@@ -2436,10 +2440,7 @@ impl<'a, 'd> BodyWriter<'a, 'd> {
         let kind = node
             .attribute("kind")
             .ok_or_else(|| anyhow!("a <font> has no kind"))?;
-        let height = node
-            .attribute("height")
-            .map(|height| font_height(height))
-            .transpose()?;
+        let height = node.attribute("height").map(font_height).transpose()?;
         let weight = node
             .attribute("bold")
             .map(|bold| parse_bool(bold, "font bold").map(|bold| if bold { 700 } else { 400 }))
