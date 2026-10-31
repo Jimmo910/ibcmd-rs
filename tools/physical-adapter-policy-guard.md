@@ -323,3 +323,30 @@ to `e3e923154d2b4d5f7c65fd510342f4bc6bee1900cff91eec54e148c16527b63b`. The
 root's facades and the managed worker's command glue
 (`src/mssql_managed_worker/cli.rs`) stay outside the slice. Every other
 record, the two stale ones included, is unchanged.
+
+The body codecs of #559 join `crates/ibcmd-compiler/src/`, which is already
+in the slice. `compiler/bodies/{dcs,mxl,mxl_native,predefined,rights,support,template}.rs`,
+formerly under `src/compiler/bodies/`, were outside the slice and join it
+with 452 records (464 occurrences):
+- `compiler/bodies/mxl_native.rs` (the spreadsheet writer): 424 records,
+  431 occurrences (13 `uuid-literal`; 321 `name-special-case`, 326
+  occurrences; 90 `xml-policy`, 92 occurrences);
+- `compiler/bodies/rights.rs`: 1 `uuid-literal`, 9 `name-special-case`
+  (10 occurrences);
+- `compiler/bodies/dcs.rs`: 4 `name-special-case` (5 occurrences), 2
+  `xml-policy` (3 occurrences);
+- `compiler/bodies/predefined.rs`: 2 `uuid-literal`, 4 `name-special-case`;
+- `compiler/bodies/mxl.rs`: 4 `name-special-case`;
+- `compiler/bodies/template.rs`: 2 `name-special-case`;
+- `compiler/bodies/support.rs`: none.
+`compiler/bodies/dcs_2_21.rs`, formerly `src/mssql_dump/dcs_2_21.rs`, keeps
+its 4 `xml-policy` records unchanged at the new path. Each record equals the
+one a scan of the same file as it stood under `src/` gives: the edits that
+prepared the move (crate paths, the rights codec's extension parameter,
+`#[doc(hidden)] pub` items), the move's own (rebased fixture paths, the
+spreadsheet profile fixture's `test-fixtures` gate, the split-out root
+tests) and the clippy fixes that follow change no fingerprint. The root's
+facades and the tests that stay in the root
+(`src/compiler/bodies/{mxl_native_root_tests,mxl_root_tests}.rs`) are
+outside the slice. Every other record, the two stale ones included, is
+unchanged.
