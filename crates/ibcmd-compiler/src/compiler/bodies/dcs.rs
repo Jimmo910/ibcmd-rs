@@ -1295,8 +1295,9 @@ mod tests {
     /// its indentation differs by nesting depth -- the same pre-existing
     /// settings-document formatting gap (the shared settings serializer
     /// does not reproduce a source's own indentation), unrelated to the
-    /// query-cohort widening under test. The genuine-bytes companion test
-    /// `mssql_dump::dcs::tests::platform_query_union_link_typeid_body_exports_byte_exact_through_common_codec`
+    /// query-cohort widening under test. The genuine-bytes companion test,
+    /// the root's
+    /// `mssql_dump::dcs::tests::platform_query_union_link_typeid_body_exports_byte_exact_through_common_codec`,
     /// independently proves byte-exact re-emission against
     /// `native-template.xml`, starting from the platform's own packed
     /// bytes rather than this compiler's blind-passthrough primary/settings
@@ -2048,8 +2049,8 @@ mod tests {
     /// resolver is on hand -- so the envelope, which now admits any terminal of
     /// that frame so real configurations' area templates can be transliterated,
     /// answers yes either way. What must still fail closed without the
-    /// resolver is producing source bytes, and
-    /// `crate::mssql_dump::dcs::tests::platform_area_style_item_uuid_exports_byte_exact_through_common_codec`
+    /// resolver is producing source bytes, and the root's
+    /// `mssql_dump::dcs::tests::platform_area_style_item_uuid_exports_byte_exact_through_common_codec`
     /// is where that is now asserted: a `0:<uuid>` the object-reference index
     /// cannot name is refused rather than written in its storage spelling.
     #[test]
