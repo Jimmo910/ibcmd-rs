@@ -520,7 +520,6 @@ fn actual_cold_orchestration_refuses_before_backend_and_never_retries_unknown_co
             assert!(plan.verify_completed(&mut cold, &unused).is_err());
             assert!(unused.calls.lock().unwrap().is_empty());
         }
-        drop(cold);
         drop(worker);
         let records = std::fs::read_to_string(&path).unwrap();
         if mode == "lost_commit" {

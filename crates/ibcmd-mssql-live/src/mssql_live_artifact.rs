@@ -107,16 +107,17 @@ fn envelope(artifact: &LiveArtifact, recovery_file_sha256: String) -> Result<Env
 
 /// Publishes complete pack, recovery sidecar, then LIVE manifest; no SQL is run.
 /// An interrupted publication can leave complete unreferenced sidecars.
-pub(crate) fn write(path: &Path, artifact: &LiveArtifact) -> Result<()> {
+#[doc(hidden)]
+pub fn write(path: &Path, artifact: &LiveArtifact) -> Result<()> {
     artifact.validate()?;
     // Check envelope size/path collisions before any file publication.
     let candidate = envelope(artifact, "0".repeat(64))?;
     let sidecar = sibling(path, &candidate.recovery_file)?;
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     ensure!(
-        !name.eq_ignore_ascii_case(&candidate.recovery_file)
-            && !(name.to_ascii_lowercase().starts_with("ibcmd-recovery-")
-                && name.to_ascii_lowercase().ends_with(".pack")),
+        !(name.eq_ignore_ascii_case(&candidate.recovery_file)
+            || (name.to_ascii_lowercase().starts_with("ibcmd-recovery-")
+                && name.to_ascii_lowercase().ends_with(".pack"))),
         "LIVE manifest cannot use a recovery sidecar or pack filename"
     );
     encode(candidate)?;

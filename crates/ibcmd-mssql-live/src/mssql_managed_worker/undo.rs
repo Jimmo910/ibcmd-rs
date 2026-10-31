@@ -498,7 +498,7 @@ impl GuardedUndoPlan {
             sql,
             "DECLARE @Witness sql_variant=(SELECT value FROM sys.extended_properties WHERE class=0 AND name=N'{property}'); DECLARE @Executed int=0;"
         )?;
-        for (i, table) in TABLES.iter().enumerate() {
+        for (i, _) in TABLES.iter().enumerate() {
             expected_rows(sql, &format!("After{i}"), &self.after.tables[i])?;
             expected_rows(sql, &format!("Desired{i}"), &self.desired.tables[i])?;
         }

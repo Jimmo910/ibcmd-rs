@@ -298,3 +298,28 @@ under `src/metadata_model/` gives: the move's edits (the `ibcmd_parallel`
 import, rebased `include_str!` paths, `#[doc(hidden)] pub` items) and the
 clippy fixes that follow change no fingerprint. Every other record, the two
 stale ones included, is unchanged.
+
+`crates/ibcmd-mssql-live/src/` also belongs to the slice (#559, the MSSQL
+main activation and its live track). It holds the modules formerly at
+`src/{mssql_platform_profile,profile_process,rac_process,mssql_main_activation,mssql_live_continue,mssql_live_gate,mssql_recovery_artifact,mssql_live_artifact,mssql_artifact,mssql_worker_switch}.rs`
+and the managed worker's lifetime authority formerly under
+`src/mssql_managed_worker{.rs,/}` (`child`, `command`, `identity`, `native`,
+`native/authentication`, `undo`), all outside the slice. Its 18 production
+files join it with 36 `name-special-case` records (37 occurrences):
+`mssql_main_activation.rs` 13, `mssql_platform_profile.rs` 8,
+`mssql_live_continue.rs` 5, `mssql_recovery_artifact.rs` 3,
+`mssql_live_artifact.rs` 2, `mssql_live_gate.rs` 2,
+`mssql_managed_worker/native.rs` 2 (3 occurrences) and
+`mssql_managed_worker/undo.rs` 1; the other ten have none. The test files
+(`mssql_managed_worker/{tests,undo/tests,native/census_observer_tests,native/authentication/tests}.rs`,
+`test_scratch.rs`) are test-only modules. Each record equals the one a scan
+of the same file as it stood under `src/` gives, except two whose statement
+a clippy fix rewrote around unchanged literals in `mssql_live_artifact.rs`
+(`name-special-case`, count one each): `"ibcmd-recovery-"`
+`f66333428b825d39464b92a66eb98c887e622b26973f9b5b280ecdd7d758cc77` to
+`c767f1c57d7ecc242aa56303c259fdb52d8535cd46d4257f1b5ec588fcd38fab`, and
+`".pack"` `3aed7d93c8326c1cd357da9d39bb2a72a3d544c8b58e8a256604ae748b2ca2f4`
+to `e3e923154d2b4d5f7c65fd510342f4bc6bee1900cff91eec54e148c16527b63b`. The
+root's facades and the managed worker's command glue
+(`src/mssql_managed_worker/cli.rs`) stay outside the slice. Every other
+record, the two stale ones included, is unchanged.
