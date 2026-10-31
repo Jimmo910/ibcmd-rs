@@ -698,6 +698,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-cancel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "ibcmd-cf"
 version = "0.1.0"
 dependencies = [
@@ -1021,6 +1028,7 @@ dependencies = [
  "ibcmd-1c-text",
  "ibcmd-1c-vocab",
  "ibcmd-apply-check",
+ "ibcmd-cancel",
  "ibcmd-cf",
  "ibcmd-compiler",
  "ibcmd-compiler-families",
