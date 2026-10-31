@@ -664,6 +664,35 @@ mod tests {
         assert_eq!(raw_deflate(&decoded.native).unwrap(), blob);
     }
 
+    /// A configuration extension's role stores the `false` of a defaulted
+    /// root flag as `2`. It reads as `false` only when the caller says an
+    /// extension's export is running; otherwise it is refused, as it was
+    /// while the codec read the root's extension state itself.
+    #[test]
+    fn a_root_flag_of_2_reads_as_false_only_for_an_extension() {
+        const EXTENSION_FLAGS: &[u8] = b"\xef\xbb\xbf{10,\r\n{0},\r\n{0},2,1,2,4294967295}";
+        let profile = RightsCodecProfile::fixture();
+        let blob = deflate_bytes(EXTENSION_FLAGS).unwrap();
+        for decoded in [
+            decode_role_rights_with(&profile, &blob, true).unwrap(),
+            decode_compatible_role_rights(&blob, true).unwrap(),
+        ] {
+            assert!(!decoded.summary().set_for_new_objects);
+            assert!(decoded.summary().set_for_attributes_by_default);
+            assert!(!decoded.summary().independent_rights_of_child_objects);
+            assert_eq!(decoded.plaintext().unwrap(), EXTENSION_FLAGS);
+        }
+        for refused in [
+            decode_role_rights_with(&profile, &blob, false),
+            decode_compatible_role_rights(&blob, false),
+        ] {
+            assert_eq!(
+                refused,
+                Err(RightsCodecError::InvalidShape("setForNewObjects"))
+            );
+        }
+    }
+
     #[test]
     fn base_free_model_matches_evidenced_one_object_layout() {
         let profile = RightsCodecProfile::fixture();
