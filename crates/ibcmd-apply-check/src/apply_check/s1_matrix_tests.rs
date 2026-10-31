@@ -651,7 +651,7 @@ fn escape(text: &str) -> String {
 /// `probe_auto_a`: one top-level property of one object, 159 times.
 fn auto_probes() -> Vec<Case> {
     const TABLE: &str =
-        include_str!("../../docs/apply/evidence/restructuring-check/probes-auto-a.tsv");
+        include_str!("../../../../docs/apply/evidence/restructuring-check/probes-auto-a.tsv");
     TABLE
         .lines()
         .skip(1)
@@ -845,8 +845,8 @@ fn the_matrix_can_be_written_out() {
     let mut out = String::from(concat!(
         "# The refusal matrix of S1 (#404)\n\n",
         "Every case of the probe runs of `restructuring-check.md` (6.1, 6.2) through the check and ",
-        "`apply_check::s1::classify`. Written by `IBCMD_RS_S1_MATRIX_OUT=<file> cargo test -p ibcmd-rs ",
-        "--lib --no-default-features apply_check::s1_matrix_tests::the_matrix_can_be_written_out`.\n\n",
+        "`apply_check::s1::classify`. Written by `IBCMD_RS_S1_MATRIX_OUT=<file> cargo test -p ibcmd-apply-check ",
+        "apply_check::s1_matrix_tests::the_matrix_can_be_written_out`.\n\n",
         "| case | platform acted | S1 | reasons (rule) |\n|---|---|---|---|\n",
     ));
     for case in all_focused().into_iter().chain(auto_probes()) {

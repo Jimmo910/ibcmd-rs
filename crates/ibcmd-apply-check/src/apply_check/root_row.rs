@@ -9,7 +9,7 @@
 //! configuration it names, what the payload encrypts) would show in the header or in those blocks; the final
 //! block alone is the platform's stamp.
 
-use crate::module_blob::decode_base64_mime;
+use ibcmd_1c_text::decode_base64_mime_lenient as decode_base64_mime;
 
 /// The size of one encrypted block of the payload.
 const BLOCK: usize = 16;

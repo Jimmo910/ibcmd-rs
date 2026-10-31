@@ -2,7 +2,7 @@
 //! import` of a tree with one attribute added, 9 842 ConfigSave rows) against
 //! the corpus it was made from. Ignored by default: the rows live in the lab
 //! folder (`fixtures/nat_a2`, `fixtures/nat_a2_base`). Run with
-//! `cargo test -p ibcmd-rs --lib --no-default-features apply_check::s1h -- --ignored --nocapture`.
+//! `cargo test -p ibcmd-apply-check apply_check::s1h -- --ignored --nocapture`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
