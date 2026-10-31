@@ -36,6 +36,7 @@ $GuardedCrateDirectories = @(
     'crates/ibcmd-metadata-blob/src',
     'crates/ibcmd-form-writer/src',
     'crates/ibcmd-metadata-source/src',
+    'crates/ibcmd-metadata-model/src',
     'crates/ibcmd-module-blob/src',
     'crates/ibcmd-moxel/src/root_helpers'
 )

@@ -857,6 +857,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-metadata-model"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ibcmd-1c-text",
+ "ibcmd-1c-vocab",
+ "ibcmd-compiler-families",
+ "ibcmd-core",
+ "ibcmd-form-native",
+ "ibcmd-metadata-blob",
+ "ibcmd-module-blob",
+ "ibcmd-parallel",
+ "ibcmd-platform",
+ "ibcmd-restructure",
+ "ibcmd-schema",
+ "ibcmd-xml",
+ "rayon",
+ "serde",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
 name = "ibcmd-metadata-source"
 version = "0.1.0"
 dependencies = [
@@ -968,6 +991,7 @@ dependencies = [
  "ibcmd-form-schema",
  "ibcmd-form-writer",
  "ibcmd-metadata-blob",
+ "ibcmd-metadata-model",
  "ibcmd-metadata-source",
  "ibcmd-module-blob",
  "ibcmd-moxel",
