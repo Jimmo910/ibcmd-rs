@@ -6,7 +6,9 @@ The model has 25,692 Rust lines in 36 files. Direct root paths, including tests 
 Since then the platform seam is closed: the portable platform registry is
 `crates/ibcmd-platform`, and `DescriptorContext::platform` /
 `ExportContext::platform` return its `Platform` (see "Platform contract"
-below). The tables keep the inventory as it was prepared.
+below). The model itself is now the crate `crates/ibcmd-metadata-model`
+(see "Extraction" below). The tables keep the inventory as it was prepared,
+with the paths of the time.
 
 ## Root dependency inventory
 
@@ -105,3 +107,25 @@ registry of builds and releases the bundled profiles declare; the root's
 and the MSSQL capabilities, and `PlatformSpec::from(context.platform())`
 gives a caller the root's spec. Production code in the model now reaches the
 root only through `crate::parallel`, a facade over `ibcmd-parallel`.
+
+## Extraction
+
+`src/metadata_model/**` moved to `crates/ibcmd-metadata-model/src/metadata_model/`
+(`git mv`); the crate mirrors the root's tree, so the moved code keeps its
+`crate::metadata_model::…` paths. Its only production edit beyond the move
+is `crate::parallel` -> `ibcmd_parallel` (the pools' single owner, so their
+state is not duplicated); the items the root still names went from
+`pub(crate)` to `#[doc(hidden)] pub`. The root's `src/metadata_model.rs`
+glob-re-exports the crate and names each widened item crate-visibly, so the
+root's paths and public API stay as they were; `src/lib.rs` re-exports
+`brace_list!`.
+
+Test ownership:
+- the five `TestScratch` users moved with their modules and read a
+  crate-private `#[cfg(test)]` copy of `ibcmd-filedb`'s `test_scratch.rs`;
+- `collection_tests.rs` stays a root test: it checks the exporter's
+  `mssql_dump::root_family_folder` against the model's table;
+- the ExternalDataSource tests and their `generated` fixture stay root tests
+  in `src/metadata_model/external_data_source.rs`: the fixture
+  (`tests/common/eds_generated.rs`) builds a configuration with the root's
+  compiler and profile registry.
