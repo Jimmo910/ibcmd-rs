@@ -36,7 +36,9 @@ use quick_xml::Reader;
 use quick_xml::escape::{resolve_xml_entity, unescape};
 use quick_xml::events::{BytesStart, Event};
 
+use ibcmd_metadata_blob::{MetadataSourceContext, SpreadsheetNumberFormatHint};
 use ibcmd_metadata_source::MetadataSource;
+use ibcmd_module_blob::{PackedRawDeflatedBlob, deflate_raw, hex_sha256};
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 const CELL_LINE_KIND: &str = "f527dc88-1d39-40b3-bcbb-d98b690ead68";
@@ -54,10 +56,8 @@ const SYSTEM_FONTS_NS: &str = "http://v8.1c.ru/8.1/data/ui/fonts/system";
 /// The stored body of a `Template.xml`, from `{8,` to the closing brace, with
 /// the platform's line layout (CRLF before every `{` but the first and before
 /// a `}` that closes right behind another).
-pub(crate) fn write_native_moxel_body(
-    xml: &[u8],
-    source: Option<&dyn MetadataSource>,
-) -> Result<String> {
+#[doc(hidden)]
+pub fn write_native_moxel_body(xml: &[u8], source: Option<&dyn MetadataSource>) -> Result<String> {
     // Element spans index the text behind the byte-order mark.
     let xml = xml.strip_prefix(b"\xef\xbb\xbf").unwrap_or(xml);
     let root = parse_dom(xml)?;
@@ -74,9 +74,41 @@ pub(crate) fn write_native_moxel_body(
     Ok(layout(&body).replace('\n', "\r\n"))
 }
 
+pub fn pack_moxel_spreadsheet_blob_from_xml(xml: &[u8]) -> Result<PackedRawDeflatedBlob> {
+    pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint(xml, None, None)
+}
+
+pub fn pack_moxel_spreadsheet_blob_from_xml_with_source(
+    xml: &[u8],
+    source: Option<&MetadataSourceContext>,
+) -> Result<PackedRawDeflatedBlob> {
+    pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint(xml, source, None)
+}
+
+/// The spreadsheet template body the platform stores for a `Template.xml`
+/// (see `compiler::bodies::mxl_native`). The number-format hint is not needed:
+/// the body's number-format table is read off the XML itself.
+pub fn pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint(
+    xml: &[u8],
+    source: Option<&MetadataSourceContext>,
+    _number_format_hint: Option<&SpreadsheetNumberFormatHint>,
+) -> Result<PackedRawDeflatedBlob> {
+    let source = source.map(|source| source as &dyn MetadataSource);
+    let body = crate::compiler::bodies::mxl_native::write_native_moxel_body(xml, source)?;
+    let plain = format!("MOXCEL\0\u{8}\0\u{1}\0\u{c}\0\u{feff}{body}");
+    let blob = deflate_raw(plain.as_bytes())?;
+    let output_sha256 = hex_sha256(&blob);
+    Ok(PackedRawDeflatedBlob {
+        blob,
+        plain_bytes: plain.len(),
+        output_sha256,
+    })
+}
+
 /// A target-aware template patch must validate the complete compressed row,
 /// including an unchanged companion, before retaining any of its bytes.
-pub(crate) fn inflate_template_patch(blob: &[u8]) -> Result<Vec<u8>> {
+#[doc(hidden)]
+pub fn inflate_template_patch(blob: &[u8]) -> Result<Vec<u8>> {
     const LIMIT: usize = 8 * 1024 * 1024;
     ensure!(blob.len() <= LIMIT, "template compressed row exceeds 8 MiB");
     let mut decoder = flate2::Decompress::new(false);
@@ -108,7 +140,8 @@ pub(crate) fn inflate_template_patch(blob: &[u8]) -> Result<Vec<u8>> {
     }
 }
 
-pub(crate) fn preserve_identical_template_blob(base: &[u8], compiled: &[u8]) -> Result<Vec<u8>> {
+#[doc(hidden)]
+pub fn preserve_identical_template_blob(base: &[u8], compiled: &[u8]) -> Result<Vec<u8>> {
     let base_plain = inflate_template_patch(base)?;
     let compiled_plain = inflate_template_patch(compiled)?;
     Ok(if base_plain == compiled_plain {
@@ -123,9 +156,10 @@ pub(crate) fn preserve_identical_template_blob(base: &[u8], compiled: &[u8]) -> 
 /// the XML does not publish. A base-free XML import still uses the writer's
 /// evidenced defaults. Only an exactly equal decoded language setting can
 /// inherit the old record; an intentional language edit keeps the new record.
-pub(crate) fn preserve_spreadsheet_language(base: &[u8], compiled: &[u8]) -> Result<Vec<u8>> {
+#[doc(hidden)]
+pub fn preserve_spreadsheet_language(base: &[u8], compiled: &[u8]) -> Result<Vec<u8>> {
     use crate::compiler::families::native::{outline, required_list, required_token};
-    use crate::module_blob::scan_braced_fields;
+    use ibcmd_form_body::record_text::scan_braced_fields;
     const HEADER: &[u8] = b"MOXCEL\0\x08\0\x01\0\x0c\0";
     const BOM: &[u8] = b"\xef\xbb\xbf";
     fn language(
@@ -198,7 +232,7 @@ pub(crate) fn preserve_spreadsheet_language(base: &[u8], compiled: &[u8]) -> Res
         patched.len() <= 8 * 1024 * 1024,
         "template patched row exceeds 8 MiB"
     );
-    crate::module_blob::deflate_raw(&patched)
+    ibcmd_module_blob::deflate_raw(&patched)
 }
 
 // ---------------------------------------------------------------------------
@@ -1484,11 +1518,8 @@ impl<'a, 'd> BodyWriter<'a, 'd> {
             Some(source) => source.moxel_object_refs()?,
             None => std::collections::BTreeMap::new(),
         };
-        let rendered =
-            crate::mssql_dump::render_moxel_chart_object_xml(&field, gantt, &object_refs)
-                .ok_or_else(|| {
-                    anyhow!("the exporter cannot read back the chart the writer built")
-                })?;
+        let rendered = ibcmd_moxel::render_moxel_chart_object_xml(&field, gantt, &object_refs)
+            .ok_or_else(|| anyhow!("the exporter cannot read back the chart the writer built"))?;
         let significant = |text: &str| {
             text.lines()
                 .map(|line| {
@@ -3140,7 +3171,7 @@ mod tests {
             let base = patch_fixture(&format!("{id}.baseline.bin"));
             let old_own = patch_fixture(&format!("{id}.OWN.bin"));
             let xml = patch_fixture(&format!("{id}.xml"));
-            let packed = crate::module_blob::pack_simple_metadata_blob_from_xml_with_source(
+            let packed = ibcmd_metadata_blob::pack_simple_metadata_blob_from_xml_with_source(
                 &base, &xml, None,
             )
             .unwrap();
@@ -3158,7 +3189,7 @@ mod tests {
             let changed = String::from_utf8(xml)
                 .unwrap()
                 .replace("<Comment/>", "<Comment>edited</Comment>");
-            let packed = crate::module_blob::pack_simple_metadata_blob_from_xml_with_source(
+            let packed = ibcmd_metadata_blob::pack_simple_metadata_blob_from_xml_with_source(
                 &base,
                 changed.as_bytes(),
                 None,
@@ -3207,13 +3238,13 @@ mod tests {
         let text = String::from_utf8(inflate_template_patch(&own).unwrap()).unwrap();
         let changed = text.replacen("{\"ru\",\"ru\",1,1,", "{\"en\",\"ru\",1,1,", 1);
         assert_ne!(changed, text);
-        let changed = crate::module_blob::deflate_raw(changed.as_bytes()).unwrap();
+        let changed = ibcmd_module_blob::deflate_raw(changed.as_bytes()).unwrap();
         assert_eq!(
             preserve_spreadsheet_language(&base, &changed).unwrap(),
             changed
         );
         let malformed = text.replacen("{\"ru\",\"ru\",1,1,", "{\"ru\",\"ru\",2,1,", 1);
-        let malformed = crate::module_blob::deflate_raw(malformed.as_bytes()).unwrap();
+        let malformed = ibcmd_module_blob::deflate_raw(malformed.as_bytes()).unwrap();
         assert!(preserve_spreadsheet_language(&base, &malformed).is_err());
         assert!(preserve_spreadsheet_language(&malformed, &own).is_err());
     }
@@ -3228,7 +3259,7 @@ mod tests {
         encoder.flush().unwrap();
         let unfinished = encoder.get_ref().clone();
         // The complete MOXCEL plaintext has already been emitted, without StreamEnd.
-        assert_eq!(crate::module_blob::inflate_raw(&unfinished).unwrap(), plain);
+        assert_eq!(ibcmd_module_blob::inflate_raw(&unfinished).unwrap(), plain);
         assert!(preserve_identical_template_blob(&unfinished, &unfinished).is_err());
         assert!(preserve_spreadsheet_language(&unfinished, &unfinished).is_err());
         let complete = encoder.finish().unwrap();
@@ -3240,11 +3271,11 @@ mod tests {
         trailing.push(0);
         assert!(preserve_identical_template_blob(&trailing, &trailing).is_err());
         assert!(preserve_spreadsheet_language(&complete, &trailing).is_err());
-        let oversize = crate::module_blob::deflate_raw(&vec![b'a'; 8 * 1024 * 1024 + 1]).unwrap();
+        let oversize = ibcmd_module_blob::deflate_raw(&vec![b'a'; 8 * 1024 * 1024 + 1]).unwrap();
         assert!(preserve_identical_template_blob(&oversize, &oversize).is_err());
         assert!(preserve_spreadsheet_language(&oversize, &complete).is_err());
         assert!(inflate_template_patch(&vec![0; 8 * 1024 * 1024 + 1]).is_err());
-        let unknown = crate::module_blob::deflate_raw(b"not a spreadsheet").unwrap();
+        let unknown = ibcmd_module_blob::deflate_raw(b"not a spreadsheet").unwrap();
         assert!(preserve_spreadsheet_language(&unknown, &complete).is_err());
     }
 

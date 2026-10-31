@@ -3,9 +3,11 @@
 //! (`crate::module_blob::…`, the public ones included) and the entry points
 //! that read the rest of the root: the command-line wrappers, the form
 //! compiler's 8.5 and adopted-form routes and the form readiness audit (the
-//! exporter's 2.21 converters), the moxel template writer, the role-rights
-//! packer's read-back through the exporter, the command-interface packer
-//! that patches a base blob, and the help-page packer with its submodule.
+//! exporter's 2.21 converters), the role-rights packer's read-back through
+//! the exporter, the command-interface packer that patches a base blob, and
+//! the help-page packer with its submodule. The moxel template packers live
+//! beside their writer (`compiler::bodies::mxl_native`) and keep their paths
+//! here.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -46,7 +48,7 @@ pub use ibcmd_metadata_blob::{
 
 // The rest of the root reaches these by their `module_blob` paths.
 pub(crate) use ibcmd_1c_text::decode_base64_mime_lenient as decode_base64_mime;
-pub(crate) use ibcmd_1c_text::{encode_base64, platform_base64_token};
+pub(crate) use ibcmd_1c_text::encode_base64;
 // The module blob codec, the raw deflate helpers and digests, the
 // raw-deflated packer and the versions-blob patcher are the
 // `ibcmd-module-blob` crate's; the root reaches them by these paths.
@@ -135,36 +137,12 @@ pub fn pack_module_blob(args: &ModuleBlobPackArgs) -> Result<ModuleBlobPackRepor
     })
 }
 
-pub fn pack_moxel_spreadsheet_blob_from_xml(xml: &[u8]) -> Result<PackedRawDeflatedBlob> {
-    pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint(xml, None, None)
-}
-
-pub fn pack_moxel_spreadsheet_blob_from_xml_with_source(
-    xml: &[u8],
-    source: Option<&MetadataSourceContext>,
-) -> Result<PackedRawDeflatedBlob> {
-    pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint(xml, source, None)
-}
-
-/// The spreadsheet template body the platform stores for a `Template.xml`
-/// (see `compiler::bodies::mxl_native`). The number-format hint is not needed:
-/// the body's number-format table is read off the XML itself.
-pub fn pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint(
-    xml: &[u8],
-    source: Option<&MetadataSourceContext>,
-    _number_format_hint: Option<&SpreadsheetNumberFormatHint>,
-) -> Result<PackedRawDeflatedBlob> {
-    let source = source.map(|source| source as &dyn MetadataSource);
-    let body = crate::compiler::bodies::mxl_native::write_native_moxel_body(xml, source)?;
-    let plain = format!("MOXCEL\0\u{8}\0\u{1}\0\u{c}\0\u{feff}{body}");
-    let blob = deflate_raw(plain.as_bytes())?;
-    let output_sha256 = hex_sha256(&blob);
-    Ok(PackedRawDeflatedBlob {
-        blob,
-        plain_bytes: plain.len(),
-        output_sha256,
-    })
-}
+// The stored MOXCEL blob of a `Template.xml`: its writer's wrappers, beside
+// the writer in `compiler::bodies::mxl_native`.
+pub use crate::compiler::bodies::mxl_native::{
+    pack_moxel_spreadsheet_blob_from_xml, pack_moxel_spreadsheet_blob_from_xml_with_source,
+    pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint,
+};
 
 pub fn compile_native_form_body(
     form_xml: &[u8],

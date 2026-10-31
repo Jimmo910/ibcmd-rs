@@ -17,7 +17,7 @@ use quick_xml::name::ResolveResult;
 
 use super::{BodyProfileError, SelectedBodyProfile};
 use crate::compiler::families::native::{NativeError, deflate_bytes, inflate};
-use crate::mssql_dump::{DcsTypeIndex, DcsTypeResolution};
+use ibcmd_form_body::{DcsTypeIndex, DcsTypeResolution};
 
 const LAYOUT_KEY: &str = "bootstrap.body.dcs.layout";
 const LAYOUT: &str = "dcs-schema-three-document-v1";
@@ -187,7 +187,7 @@ pub(crate) fn compile_evidenced_dcs_with_resolvers(
             // ours, writes them back as 8.5 spells them).
             let stored = std::str::from_utf8(xml)
                 .ok()
-                .map(crate::mssql_dump::with_stored_picture_values)
+                .map(super::dcs_2_21::with_stored_picture_values)
                 .transpose()
                 .map_err(|error| DcsCodecError::RoundTrip(format!("{error:#}")))?
                 .flatten();
@@ -200,7 +200,7 @@ pub(crate) fn compile_evidenced_dcs_with_resolvers(
                         "2.21 picture references require configuration picture context".to_owned(),
                     )
                 })?;
-                let restored = crate::mssql_dump::with_8_5_picture_values(stored, refs)
+                let restored = super::dcs_2_21::with_8_5_picture_values(stored, refs)
                     .map_err(|error| DcsCodecError::RoundTrip(format!("{error:#}")))?;
                 if document_without_shell(restored.as_bytes()) != document_without_shell(xml) {
                     return Err(DcsCodecError::RoundTrip(
@@ -233,7 +233,7 @@ fn verify_schema_round_trip(
     object_refs: &BTreeMap<String, String>,
 ) -> Result<(), DcsCodecError> {
     let export = |dialect: &str| {
-        crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+        ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
             &body.documents(),
             type_index,
             object_refs,
@@ -255,7 +255,7 @@ fn verify_schema_round_trip(
     // A platform 8.5 source is written in dialect 2.21, which declares the
     // palette namespace beside the style one; it reads back under 2.21.
     let exported_xml_2_21 =
-        crate::mssql_dump::declare_palette_namespace_beside_style(export("xml-2.21")?);
+        ibcmd_1c_text::declare_palette_namespace_beside_style(export("xml-2.21")?);
     let actual_xml_2_21 = document_without_shell(&exported_xml_2_21);
     if expected == actual_xml_2_21 {
         return Ok(());
@@ -344,10 +344,8 @@ pub fn decode_dcs_with_references(
 /// XML stream for schemas; retained platform rows use the evidenced
 /// three-document header. Both remain readable, but only the latter is emitted
 /// and accepted by the strict profile codec.
-pub(crate) fn decode_compatible_dcs(
-    kind: DcsTemplateKind,
-    blob: &[u8],
-) -> Result<DcsBody, DcsCodecError> {
+#[doc(hidden)]
+pub fn decode_compatible_dcs(kind: DcsTemplateKind, blob: &[u8]) -> Result<DcsBody, DcsCodecError> {
     let plain = inflate(blob)?;
     match kind {
         DcsTemplateKind::Appearance => decode_appearance_plain(plain),
@@ -929,7 +927,7 @@ mod tests {
         object_refs: &BTreeMap<String, String>,
     ) -> Vec<u8> {
         let decoded = decode_compatible_dcs(DcsTemplateKind::Schema, blob).unwrap();
-        crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+        ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
             &decoded.documents(),
             type_index,
             object_refs,
@@ -1148,7 +1146,7 @@ mod tests {
         .unwrap();
         assert_eq!(decoded.documents().len(), 4);
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1184,12 +1182,12 @@ mod tests {
         let mut type_index = BTreeMap::new();
         type_index.insert(
             "488c0ffa-ef24-480c-a420-3bd2736317f9".to_owned(),
-            crate::mssql_dump::DcsTypeResolution::Type {
+            ibcmd_form_body::DcsTypeResolution::Type {
                 qname: "cfg:CatalogRef.FilterProbe".to_owned(),
             },
         );
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &type_index,
                 &BTreeMap::new(),
@@ -1233,7 +1231,7 @@ mod tests {
         )
         .unwrap();
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1332,12 +1330,12 @@ mod tests {
         let mut type_index = BTreeMap::new();
         type_index.insert(
             "488c0ffa-ef24-480c-a420-3bd2736317f9".to_owned(),
-            crate::mssql_dump::DcsTypeResolution::Type {
+            ibcmd_form_body::DcsTypeResolution::Type {
                 qname: "cfg:CatalogRef.FilterProbe".to_owned(),
             },
         );
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &type_index,
                 &BTreeMap::new(),
@@ -1392,7 +1390,7 @@ mod tests {
         )
         .unwrap();
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1435,7 +1433,7 @@ mod tests {
         )
         .unwrap();
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1591,7 +1589,7 @@ mod tests {
             .expect("platform-attested source-owned template must compile");
         let decoded = decode_dcs(&profile, DcsTemplateKind::Schema, &blob).unwrap();
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1643,7 +1641,7 @@ mod tests {
             Some(expected_area.as_slice())
         );
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1692,7 +1690,7 @@ mod tests {
             Some(expected_area.as_slice())
         );
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1759,7 +1757,7 @@ mod tests {
         // body -> XML: re-exporting the compiled body must reproduce the
         // evidenced color appearance verbatim.
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1809,7 +1807,7 @@ mod tests {
         let decoded = decode_dcs(&profile, DcsTemplateKind::Schema, &packed)
             .expect("genuine platform-packed body must decode");
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1894,7 +1892,7 @@ mod tests {
         // body -> XML: re-exporting the compiled body must reproduce the
         // evidenced style reference verbatim.
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1947,7 +1945,7 @@ mod tests {
         let decoded = decode_dcs(&profile, DcsTemplateKind::Schema, &packed)
             .expect("genuine platform-packed body must decode");
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2221,7 +2219,7 @@ mod tests {
             object_refs
         };
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &object_refs,
@@ -2302,7 +2300,7 @@ mod tests {
             object_refs
         };
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &object_refs,
@@ -2384,7 +2382,7 @@ mod tests {
         // body -> XML: re-exporting the compiled body must reproduce the
         // evidenced shared-row appearance verbatim.
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2436,7 +2434,7 @@ mod tests {
         let decoded = decode_dcs(&profile, DcsTemplateKind::Schema, &packed)
             .expect("genuine platform-packed body must decode");
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2493,7 +2491,7 @@ mod tests {
         let decoded = decode_dcs(&profile, DcsTemplateKind::Schema, &packed)
             .expect("genuine platform-packed body must decode");
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2537,7 +2535,7 @@ mod tests {
         let decoded = decode_dcs(&profile, DcsTemplateKind::Schema, &packed)
             .expect("genuine platform-packed body must decode");
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2573,7 +2571,7 @@ mod tests {
         // typed decode/export path parses the source spelling directly and
         // there is nothing to canonicalize.
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2603,7 +2601,7 @@ mod tests {
         let recompiled_blob = compile_dcs(&profile, DcsTemplateKind::Schema, &exported).unwrap();
         let recompiled = decode_dcs(&profile, DcsTemplateKind::Schema, &recompiled_blob).unwrap();
         let reexported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &recompiled.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2645,7 +2643,7 @@ mod tests {
         // AreaTemplate's. The genuine-bytes test above proves byte-exact
         // whole-document equality instead.)
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2686,7 +2684,7 @@ mod tests {
         let recompiled_blob = compile_dcs(&profile, DcsTemplateKind::Schema, &exported).unwrap();
         let recompiled = decode_dcs(&profile, DcsTemplateKind::Schema, &recompiled_blob).unwrap();
         let reexported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &recompiled.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),

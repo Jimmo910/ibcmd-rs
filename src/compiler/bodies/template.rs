@@ -19,9 +19,9 @@ use crate::compiler::families::native::{
     deflate_bytes, exact_list, exact_token, inflate, parse_optional_bom, required_list,
     required_text, required_token,
 };
-use crate::module_blob::{
-    MetadataSourceContext, SpreadsheetNumberFormatHint, decode_base64_mime,
-    pack_help_blob_from_parts,
+use ibcmd_1c_text::decode_base64_mime_lenient as decode_base64_mime;
+use ibcmd_metadata_blob::{
+    MetadataSourceContext, SpreadsheetNumberFormatHint, pack_help_blob_from_parts,
 };
 use ibcmd_xml::DcsStorageTypeResolver;
 
@@ -184,7 +184,8 @@ pub fn compile_template_with_references(
     compile_evidenced_template_with_references(kind, source, style_reference_types)
 }
 
-pub(crate) fn compile_evidenced_template(
+#[doc(hidden)]
+pub fn compile_evidenced_template(
     kind: TemplateKind,
     source: TemplateSource<'_>,
 ) -> Result<Vec<u8>, TemplateCodecError> {
@@ -212,7 +213,8 @@ pub(crate) fn compile_evidenced_template_with_references(
 /// [`super::dcs::compile_evidenced_dcs_with_resolvers`]). A 2.21 schema's
 /// picture references require the configuration picture index as well; a
 /// missing index refuses their normalization.
-pub(crate) fn compile_evidenced_template_with_resolvers(
+#[doc(hidden)]
+pub fn compile_evidenced_template_with_resolvers(
     kind: TemplateKind,
     source: TemplateSource<'_>,
     style_reference_types: &BTreeMap<String, String>,
@@ -353,7 +355,7 @@ fn decode_evidenced_template(
 fn compile_binary_template(bytes: &[u8]) -> Result<Vec<u8>, TemplateCodecError> {
     let plain = format!(
         "\u{feff}{{1,\r\n{}\r\n}}",
-        crate::module_blob::platform_base64_token(bytes)
+        ibcmd_1c_text::platform_base64_token(bytes)
     );
     deflate_bytes(plain.as_bytes()).map_err(Into::into)
 }

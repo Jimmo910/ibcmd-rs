@@ -16,6 +16,8 @@ pub mod command_interface {
     };
 }
 pub mod dcs;
+// The 8.5 picture-value rewrite the DCS codec reads.
+use crate::mssql_dump::dcs_2_21;
 // The dynamic-list, chart and planner writers are `ibcmd-form-writer`'s,
 // with the form writer that calls them, and the role-rights writer is
 // `ibcmd-metadata-blob`'s, with its packer; `ibcmd-metadata-blob` re-exports

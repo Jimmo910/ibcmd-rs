@@ -100,10 +100,13 @@ pub(super) fn parse_role_rights_blob(
     object_refs: &BTreeMap<String, String>,
     field_refs: &BTreeMap<String, String>,
 ) -> Option<RoleRights> {
-    let inflated = crate::compiler::bodies::rights::decode_compatible_role_rights(bytes)
-        .ok()?
-        .plaintext()
-        .ok()?;
+    let inflated = crate::compiler::bodies::rights::decode_compatible_role_rights(
+        bytes,
+        super::extension::active().is_some(),
+    )
+    .ok()?
+    .plaintext()
+    .ok()?;
     let text = String::from_utf8(inflated).ok()?;
     let fields = split_1c_braced_fields(text.trim_start_matches('\u{feff}'), 0)?;
     if fields.first()?.trim() != "10" {

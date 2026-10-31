@@ -46,7 +46,9 @@ pub struct RoleRightsBody {
 impl RoleRightsBody {
     pub fn from_model(model: &RoleRightsModel) -> Result<Self, RightsCodecError> {
         let native = native_from_model(model)?;
-        let summary = validate_native(&native)?;
+        // The model writes its root flags as `0`, `1` or `4294967295`, never
+        // the `2` an extension's role stores, so no extension state applies.
+        let summary = validate_native(&native, false)?;
         Ok(Self { native, summary })
     }
 
@@ -162,24 +164,44 @@ pub fn decode_role_rights(
     profile: &RightsCodecProfile,
     blob: &[u8],
 ) -> Result<RoleRightsBody, RightsCodecError> {
+    decode_role_rights_with(
+        profile,
+        blob,
+        crate::mssql_dump::extension::active().is_some(),
+    )
+}
+
+/// Decodes a stored role rights body. `extension_active` says whether a
+/// configuration extension's export is running: an extension's role stores
+/// the `false` of a defaulted root flag as `2`, which reads as `false` only
+/// then.
+pub fn decode_role_rights_with(
+    profile: &RightsCodecProfile,
+    blob: &[u8],
+    extension_active: bool,
+) -> Result<RoleRightsBody, RightsCodecError> {
     let _ = profile;
-    decode_evidenced_role_rights(blob)
+    decode_evidenced_role_rights(blob, extension_active)
 }
 
 pub(crate) fn decode_evidenced_role_rights(
     blob: &[u8],
+    extension_active: bool,
 ) -> Result<RoleRightsBody, RightsCodecError> {
     let native = inflate_and_parse(blob).map_err(RightsCodecError::from)?;
-    let summary = validate_native(&native)?;
+    let summary = validate_native(&native, extension_active)?;
     Ok(RoleRightsBody { native, summary })
 }
 
 /// Transitional reader for historical dump fixtures that omitted the BOM.
 /// New profile-gated compilation remains strict; this exists only so the
 /// legacy export adapter can consume its previously accepted cohort while it
-/// delegates structural validation to this codec.
-pub(crate) fn decode_compatible_role_rights(
+/// delegates structural validation to this codec. `extension_active` is
+/// [`decode_role_rights_with`]'s.
+#[doc(hidden)]
+pub fn decode_compatible_role_rights(
     blob: &[u8],
+    extension_active: bool,
 ) -> Result<RoleRightsBody, RightsCodecError> {
     let plain = inflate(blob)?;
     let native = if plain.starts_with(b"\xef\xbb\xbf") {
@@ -187,7 +209,7 @@ pub(crate) fn decode_compatible_role_rights(
     } else {
         parse_without_bom(&plain)?
     };
-    let summary = validate_native(&native)?;
+    let summary = validate_native(&native, extension_active)?;
     Ok(RoleRightsBody { native, summary })
 }
 
@@ -305,7 +327,10 @@ fn native_rights(rights: &[RoleRightModel]) -> Result<NativeValue, RightsCodecEr
     })
 }
 
-fn validate_native(root: &NativeValue) -> Result<RoleRightsSummary, RightsCodecError> {
+fn validate_native(
+    root: &NativeValue,
+    extension_active: bool,
+) -> Result<RoleRightsSummary, RightsCodecError> {
     let fields = exact_list(root, 7, "Role Rights root")?;
     exact_token(&fields[0], "10", "Role Rights marker")?;
     let objects = required_list(&fields[1], "Role Rights object table")?;
@@ -333,16 +358,19 @@ fn validate_native(root: &NativeValue) -> Result<RoleRightsSummary, RightsCodecE
         required_text(&template[0], "Role Rights restriction template name")?;
         required_text(&template[1], "Role Rights restriction template condition")?;
     }
-    let set_for_new_objects = parse_root_bool(&fields[3], "setForNewObjects")?;
+    let set_for_new_objects = parse_root_bool(&fields[3], "setForNewObjects", extension_active)?;
     // An extension's adopted role stores `2` (fixture `adopted/role`;
     // 8.3.27.2214 dumps `false`).
     let set_for_attributes_by_default =
         match required_token(&fields[4], "setForAttributesByDefault")? {
             "2" => false,
-            _ => parse_root_bool(&fields[4], "setForAttributesByDefault")?,
+            _ => parse_root_bool(&fields[4], "setForAttributesByDefault", extension_active)?,
         };
-    let independent_rights_of_child_objects =
-        parse_root_bool(&fields[5], "independentRightsOfChildObjects")?;
+    let independent_rights_of_child_objects = parse_root_bool(
+        &fields[5],
+        "independentRightsOfChildObjects",
+        extension_active,
+    )?;
     exact_token(&fields[6], "4294967295", "Role Rights trailing marker")?;
     Ok(RoleRightsSummary {
         object_count,
@@ -538,13 +566,17 @@ fn parse_count(
         .map_err(|_| RightsCodecError::InvalidShape(field))
 }
 
-fn parse_root_bool(value: &NativeValue, field: &'static str) -> Result<bool, RightsCodecError> {
+fn parse_root_bool(
+    value: &NativeValue,
+    field: &'static str,
+    extension_active: bool,
+) -> Result<bool, RightsCodecError> {
     match required_token(value, field)? {
         "0" | "4294967295" => Ok(false),
         "1" => Ok(true),
         // A configuration extension's role stores `false` of a defaulted flag
         // as 2.
-        "2" if crate::mssql_dump::extension::active().is_some() => Ok(false),
+        "2" if extension_active => Ok(false),
         _ => Err(RightsCodecError::InvalidShape(field)),
     }
 }
@@ -637,7 +669,7 @@ mod tests {
     fn minimal_fixture_decodes_and_reencodes_byte_exact() {
         let profile = RightsCodecProfile::fixture();
         let blob = deflate_bytes(MINIMAL).unwrap();
-        let decoded = decode_role_rights(&profile, &blob).unwrap();
+        let decoded = decode_role_rights_with(&profile, &blob, false).unwrap();
         assert_eq!(decoded.plaintext().unwrap(), MINIMAL);
         assert_eq!(decoded.summary().object_count, 0);
         assert_eq!(raw_deflate(&decoded.native).unwrap(), blob);
@@ -660,7 +692,7 @@ mod tests {
             ..RoleRightsModel::default()
         };
         let blob = compile_role_rights(&profile, &model).unwrap();
-        let decoded = decode_role_rights(&profile, &blob).unwrap();
+        let decoded = decode_role_rights_with(&profile, &blob, false).unwrap();
         assert_eq!(decoded.plaintext().unwrap(), ONE_OBJECT);
         assert_eq!(decoded.summary().object_count, 1);
     }
@@ -686,7 +718,7 @@ mod tests {
             ..RoleRightsModel::default()
         };
         let first = compile_role_rights(&profile, &model).unwrap();
-        let decoded = decode_role_rights(&profile, &first).unwrap();
+        let decoded = decode_role_rights_with(&profile, &first, false).unwrap();
         let second = raw_deflate(&decoded.native).unwrap();
         assert_eq!(first, second);
         assert_eq!(decoded.summary().restriction_template_count, 1);
@@ -711,7 +743,7 @@ mod tests {
             ..RoleRightsModel::default()
         };
         let blob = compile_role_rights(&profile, &model).unwrap();
-        let decoded = decode_role_rights(&profile, &blob).unwrap();
+        let decoded = decode_role_rights_with(&profile, &blob, false).unwrap();
         let plain = String::from_utf8(decoded.plaintext().unwrap()).unwrap();
         assert!(plain.contains(
             "{1,aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa,1,{-13,03f171e8-326f-41c6-9fa5-932a0b12cddf},1}"

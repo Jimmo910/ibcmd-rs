@@ -6,14 +6,12 @@ use std::fmt::{self, Display, Formatter};
 use ibcmd_core::artifact::ProfileId;
 use ibcmd_core::profile::EffectiveProfile;
 
+use super::mxl_native::pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint;
 use super::{BodyProfileError, SelectedBodyProfile};
 use crate::compiler::families::native::{
     NativeError, exact_token, inflate, outline, outline_without_bom, required_list, required_token,
 };
-use crate::module_blob::{
-    MetadataSourceContext, SpreadsheetNumberFormatHint,
-    pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint,
-};
+use ibcmd_metadata_blob::{MetadataSourceContext, SpreadsheetNumberFormatHint};
 
 const LAYOUT_KEY: &str = "bootstrap.body.mxl.layout";
 const LAYOUT: &str = "moxel-v8-raw-deflate-v1";
@@ -96,14 +94,16 @@ pub fn decode_mxl(profile: &MxlCodecProfile, blob: &[u8]) -> Result<MxlBody, Mxl
 /// Bounded reader for retained native rows and older unit fixtures. The
 /// standalone profile decoder above additionally requires the exact evidenced
 /// binary header and canonical trailer.
-pub(crate) fn decode_compatible_mxl(blob: &[u8]) -> Result<MxlBody, MxlCodecError> {
+#[doc(hidden)]
+pub fn decode_compatible_mxl(blob: &[u8]) -> Result<MxlBody, MxlCodecError> {
     decode(blob, false)
 }
 
 /// Decode a retained `Config_inflated` MOXCEL payload.  It shares the exact
 /// signature, framing and body-shape checks of the compatible blob decoder;
 /// only the outer deflate layer has already been removed by the dump reader.
-pub(crate) fn decode_inflated_compatible_mxl(plain: &[u8]) -> Result<MxlBody, MxlCodecError> {
+#[doc(hidden)]
+pub fn decode_inflated_compatible_mxl(plain: &[u8]) -> Result<MxlBody, MxlCodecError> {
     decode_plain(plain.to_vec(), false, true)
 }
 

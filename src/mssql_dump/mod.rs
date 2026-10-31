@@ -1033,8 +1033,9 @@ mod config_rows;
 pub mod config_save;
 use ibcmd_dump_readers::configuration_properties_evidence;
 mod dcs;
-mod dcs_2_21;
-pub(crate) use dcs_2_21::{with_8_5_picture_values, with_stored_picture_values};
+// The 8.5 picture-value rewrite of a schema template, which the DCS codec
+// (`compiler::bodies::dcs`) reads.
+pub(crate) mod dcs_2_21;
 mod dynamic_generation;
 mod empty_configuration;
 pub(crate) mod extension;
@@ -1204,7 +1205,7 @@ pub use moxel_entry::try_extract_moxel_spreadsheet_xml;
 pub(crate) use moxel_entry::{
     MoxelLineTraceEvent, MoxelLineTraceSink,
     extract_inflated_moxel_spreadsheet_xml_with_line_trace, extract_moxel_spreadsheet_xml,
-    extract_moxel_spreadsheet_xml_with_line_trace, render_moxel_chart_object_xml,
+    extract_moxel_spreadsheet_xml_with_line_trace,
     try_extract_moxel_spreadsheet_xml_with_generated_types,
 };
 #[cfg(all(test, feature = "mssql-live-tests"))]
