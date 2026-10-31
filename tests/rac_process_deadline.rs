@@ -3,9 +3,9 @@
 //! holders expire naturally; tests never signal or adopt a descendant by PID.
 
 mod common;
-#[path = "../src/profile_process.rs"]
+#[path = "../crates/ibcmd-mssql-live/src/profile_process.rs"]
 mod profile_process;
-#[path = "../src/rac_process.rs"]
+#[path = "../crates/ibcmd-mssql-live/src/rac_process.rs"]
 mod rac_process;
 
 use std::io::Write;

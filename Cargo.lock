@@ -909,6 +909,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ibcmd-mssql-live"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "flate2",
+ "ibcmd-1c-text",
+ "ibcmd-compiler-families",
+ "ibcmd-core",
+ "ibcmd-sql",
+ "serde",
+ "serde_json",
+ "sha2",
+ "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ibcmd-number-format"
 version = "0.1.0"
 
@@ -995,6 +1013,7 @@ dependencies = [
  "ibcmd-metadata-source",
  "ibcmd-module-blob",
  "ibcmd-moxel",
+ "ibcmd-mssql-live",
  "ibcmd-parallel",
  "ibcmd-platform",
  "ibcmd-postgres",

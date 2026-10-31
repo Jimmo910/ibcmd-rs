@@ -3,9 +3,9 @@
 //! platform, SQL, PID lookup, signals, waits or joins.
 
 mod common;
-#[path = "../src/profile_process.rs"]
+#[path = "../crates/ibcmd-mssql-live/src/profile_process.rs"]
 mod profile_process;
-#[path = "../src/rac_process.rs"]
+#[path = "../crates/ibcmd-mssql-live/src/rac_process.rs"]
 mod rac_process;
 
 use std::io::Write;

@@ -38,6 +38,7 @@ members = [
     "crates/ibcmd-metadata-source",
     "crates/ibcmd-dump-readers",
     "crates/ibcmd-metadata-model",
+    "crates/ibcmd-mssql-live",
 ]
 resolver = "3"
 exclude = ["crates/ibcmd-edt/vendor/morph1c"]
@@ -87,6 +88,7 @@ ibcmd-form-writer = { path = "crates/ibcmd-form-writer" }
 ibcmd-metadata-source = { path = "crates/ibcmd-metadata-source" }
 ibcmd-dump-readers = { path = "crates/ibcmd-dump-readers" }
 ibcmd-metadata-model = { path = "crates/ibcmd-metadata-model" }
+ibcmd-mssql-live = { path = "crates/ibcmd-mssql-live" }
 # The process allocator, installed in main.rs.
 mimalloc = "0.1.52"
 quick-xml = "0.38"

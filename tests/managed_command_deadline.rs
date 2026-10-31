@@ -3,14 +3,14 @@
 #![allow(dead_code)] // Shared private child also contains unrelated shutdown owners.
 
 mod common;
-#[path = "../src/mssql_managed_worker/identity.rs"]
+#[path = "../crates/ibcmd-mssql-live/src/mssql_managed_worker/identity.rs"]
 mod identity;
 use identity::ProcessIdentity;
-#[path = "../src/mssql_managed_worker/child.rs"]
+#[path = "../crates/ibcmd-mssql-live/src/mssql_managed_worker/child.rs"]
 mod child;
-#[path = "../src/mssql_managed_worker/command.rs"]
+#[path = "../crates/ibcmd-mssql-live/src/mssql_managed_worker/command.rs"]
 mod managed_command;
-#[path = "../src/rac_process.rs"]
+#[path = "../crates/ibcmd-mssql-live/src/rac_process.rs"]
 mod rac_process;
 
 use std::io::Write;
