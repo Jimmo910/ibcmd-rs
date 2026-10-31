@@ -381,3 +381,9 @@ scan of the same file as it stood under `src/apply_check/` gives: the move's
 edits (the crate paths of two `module_blob` imports, a rebased
 `include_str!` path) and the clippy fixes that follow change no
 fingerprint. Every other record, the two stale ones included, is unchanged.
+
+`crates/ibcmd-cancel/src/` also belongs to the slice (#559). Its `lib.rs`
+is the process-wide cancellation flag formerly `src/cancel.rs`, which was
+outside the slice; the root's `cancel` module re-exports it, so the flag
+keeps one owner. The file joins the slice with no occurrence. Every other
+record, the two stale ones included, is unchanged.
