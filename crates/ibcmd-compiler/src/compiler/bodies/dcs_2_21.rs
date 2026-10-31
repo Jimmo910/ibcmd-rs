@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use anyhow::{Result, bail};
 use quick_xml::{Reader, events::Event};
 
-use super::form::xml_2_21_writer::XmlEdits;
+use ibcmd_form_writer::form::xml_2_21_writer::XmlEdits;
 
 const VALUE_TAG: &str = "dcscor:value";
 const PICTURE_TYPE: &str = "xsi:type=\"v8ui:Picture\"";
@@ -85,7 +85,8 @@ fn require_picture_lines(
 
 /// `xml` (a written schema template) with every picture value spelled the
 /// 8.5 way.
-pub(crate) fn with_8_5_picture_values(
+#[doc(hidden)]
+pub fn with_8_5_picture_values(
     xml: &str,
     object_refs: &BTreeMap<String, String>,
 ) -> Result<String> {

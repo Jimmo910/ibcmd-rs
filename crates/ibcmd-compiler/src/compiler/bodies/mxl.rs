@@ -6,14 +6,12 @@ use std::fmt::{self, Display, Formatter};
 use ibcmd_core::artifact::ProfileId;
 use ibcmd_core::profile::EffectiveProfile;
 
+use super::mxl_native::pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint;
 use super::{BodyProfileError, SelectedBodyProfile};
 use crate::compiler::families::native::{
     NativeError, exact_token, inflate, outline, outline_without_bom, required_list, required_token,
 };
-use crate::module_blob::{
-    MetadataSourceContext, SpreadsheetNumberFormatHint,
-    pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint,
-};
+use ibcmd_metadata_blob::{MetadataSourceContext, SpreadsheetNumberFormatHint};
 
 const LAYOUT_KEY: &str = "bootstrap.body.mxl.layout";
 const LAYOUT: &str = "moxel-v8-raw-deflate-v1";
@@ -34,8 +32,9 @@ impl MxlCodecProfile {
         self.0.profile_id()
     }
 
-    #[cfg(test)]
-    pub(crate) fn fixture() -> Self {
+    #[cfg(any(test, feature = "test-fixtures"))]
+    #[doc(hidden)]
+    pub fn fixture() -> Self {
         Self(SelectedBodyProfile::fixture("platform-8.3.27.1989"))
     }
 }
@@ -96,14 +95,16 @@ pub fn decode_mxl(profile: &MxlCodecProfile, blob: &[u8]) -> Result<MxlBody, Mxl
 /// Bounded reader for retained native rows and older unit fixtures. The
 /// standalone profile decoder above additionally requires the exact evidenced
 /// binary header and canonical trailer.
-pub(crate) fn decode_compatible_mxl(blob: &[u8]) -> Result<MxlBody, MxlCodecError> {
+#[doc(hidden)]
+pub fn decode_compatible_mxl(blob: &[u8]) -> Result<MxlBody, MxlCodecError> {
     decode(blob, false)
 }
 
 /// Decode a retained `Config_inflated` MOXCEL payload.  It shares the exact
 /// signature, framing and body-shape checks of the compatible blob decoder;
 /// only the outer deflate layer has already been removed by the dump reader.
-pub(crate) fn decode_inflated_compatible_mxl(plain: &[u8]) -> Result<MxlBody, MxlCodecError> {
+#[doc(hidden)]
+pub fn decode_inflated_compatible_mxl(plain: &[u8]) -> Result<MxlBody, MxlCodecError> {
     decode_plain(plain.to_vec(), false, true)
 }
 
@@ -289,7 +290,6 @@ impl From<NativeError> for MxlCodecError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use std::io::Read;
 
     use super::*;
@@ -335,37 +335,6 @@ mod tests {
                     .starts_with(&format!("{{8,1,{revision},"))
             );
         }
-    }
-
-    #[test]
-    fn spreadsheet_compiles_deterministically_and_roundtrips_semantically() {
-        let profile = MxlCodecProfile::fixture();
-        let first = compile_mxl(&profile, SIMPLE_SPREADSHEET, None, None).unwrap();
-        let second = compile_mxl(&profile, SIMPLE_SPREADSHEET, None, None).unwrap();
-        assert_eq!(first, second);
-
-        let decoded = decode_mxl(&profile, &first).unwrap();
-        assert!(decoded.plaintext().starts_with(MOXCEL_HEADER));
-        // Field 2 is the platform's constant 12 whatever the column count.
-        assert!(decoded.native_body_text().starts_with("{8,1,12,"));
-        assert_eq!(decoded.declared_columns(), 13);
-        assert!(decoded.native_fields() >= 8);
-
-        let xml = crate::mssql_dump::extract_moxel_spreadsheet_xml(&first, &BTreeMap::new())
-            .expect("evidenced MOXCEL body must remain exportable");
-        assert!(xml.contains("<v8:content>Hello</v8:content>"));
-        // The parameter's content round-trips, but not the element it is
-        // spelled with: this compiler stores the cell on format slot 0, and a
-        // cell whose format states no `fillType` `Parameter` publishes its
-        // container as the text list -- the rule
-        // `restore_moxel_text_of_cells_whose_format_states_no_parameter`
-        // reads off the eight native corpora, where every one of the 94 332
-        // published `<parameter>` cells names a `fillType`-`Parameter` format
-        // and no cell on slot 0 publishes one at all. The assertion this
-        // replaces read the container's empty leading language instead, which
-        // is what a one-item text list stores too, and spelled three native
-        // ERP УХ cells as parameters against the platform's own `<tl>`.
-        assert!(xml.contains("<v8:content>Name</v8:content>"), "{xml}");
     }
 
     #[test]

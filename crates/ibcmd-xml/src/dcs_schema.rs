@@ -5708,7 +5708,8 @@ mod tests {
         // 66061d435748072b14f3bbc9a55e54d91b1e016831d574fc2732dd2cd53e99f6
         // (verified against this exact slice outside this crate, which has
         // no sha2 dependency; pinned sha256 checks for this corpus live in
-        // src/compiler/bodies/dcs.rs and src/mssql_dump/dcs.rs instead).
+        // crates/ibcmd-compiler/src/compiler/bodies/dcs.rs and
+        // src/mssql_dump/dcs.rs instead).
         assert_eq!(primary.len(), 4743);
 
         let schema = parse_dcs_inner_schema_storage_document(

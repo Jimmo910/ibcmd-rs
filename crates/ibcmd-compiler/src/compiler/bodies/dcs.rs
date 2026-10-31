@@ -17,7 +17,7 @@ use quick_xml::name::ResolveResult;
 
 use super::{BodyProfileError, SelectedBodyProfile};
 use crate::compiler::families::native::{NativeError, deflate_bytes, inflate};
-use crate::mssql_dump::{DcsTypeIndex, DcsTypeResolution};
+use ibcmd_form_body::{DcsTypeIndex, DcsTypeResolution};
 
 const LAYOUT_KEY: &str = "bootstrap.body.dcs.layout";
 const LAYOUT: &str = "dcs-schema-three-document-v1";
@@ -187,7 +187,7 @@ pub(crate) fn compile_evidenced_dcs_with_resolvers(
             // ours, writes them back as 8.5 spells them).
             let stored = std::str::from_utf8(xml)
                 .ok()
-                .map(crate::mssql_dump::with_stored_picture_values)
+                .map(super::dcs_2_21::with_stored_picture_values)
                 .transpose()
                 .map_err(|error| DcsCodecError::RoundTrip(format!("{error:#}")))?
                 .flatten();
@@ -200,7 +200,7 @@ pub(crate) fn compile_evidenced_dcs_with_resolvers(
                         "2.21 picture references require configuration picture context".to_owned(),
                     )
                 })?;
-                let restored = crate::mssql_dump::with_8_5_picture_values(stored, refs)
+                let restored = super::dcs_2_21::with_8_5_picture_values(stored, refs)
                     .map_err(|error| DcsCodecError::RoundTrip(format!("{error:#}")))?;
                 if document_without_shell(restored.as_bytes()) != document_without_shell(xml) {
                     return Err(DcsCodecError::RoundTrip(
@@ -223,6 +223,10 @@ pub(crate) fn compile_evidenced_dcs_with_resolvers(
 /// compiled schema body back: exactly the entries the writer resolved.
 type SchemaReadBackIndexes = (DcsTypeIndex, BTreeMap<String, String>);
 
+/// A compiled schema's framed plaintext, with the type index and object
+/// references the writer resolved for it.
+type CompiledSchemaPlain = (Vec<u8>, DcsTypeIndex, BTreeMap<String, String>);
+
 /// Proves the compiled body reads back as the source: the exporter's own
 /// normalizer, given the body and the resolutions the writer made, has to
 /// reproduce the source document after its BOM and XML declaration.
@@ -233,7 +237,7 @@ fn verify_schema_round_trip(
     object_refs: &BTreeMap<String, String>,
 ) -> Result<(), DcsCodecError> {
     let export = |dialect: &str| {
-        crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+        ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
             &body.documents(),
             type_index,
             object_refs,
@@ -255,7 +259,7 @@ fn verify_schema_round_trip(
     // A platform 8.5 source is written in dialect 2.21, which declares the
     // palette namespace beside the style one; it reads back under 2.21.
     let exported_xml_2_21 =
-        crate::mssql_dump::declare_palette_namespace_beside_style(export("xml-2.21")?);
+        ibcmd_1c_text::declare_palette_namespace_beside_style(export("xml-2.21")?);
     let actual_xml_2_21 = document_without_shell(&exported_xml_2_21);
     if expected == actual_xml_2_21 {
         return Ok(());
@@ -344,10 +348,12 @@ pub fn decode_dcs_with_references(
 /// XML stream for schemas; retained platform rows use the evidenced
 /// three-document header. Both remain readable, but only the latter is emitted
 /// and accepted by the strict profile codec.
-pub(crate) fn decode_compatible_dcs(
-    kind: DcsTemplateKind,
-    blob: &[u8],
-) -> Result<DcsBody, DcsCodecError> {
+#[doc(hidden)]
+#[allow(
+    clippy::single_range_in_vec_init,
+    reason = "a direct-XML body's document list holds its one document"
+)]
+pub fn decode_compatible_dcs(kind: DcsTemplateKind, blob: &[u8]) -> Result<DcsBody, DcsCodecError> {
     let plain = inflate(blob)?;
     match kind {
         DcsTemplateKind::Appearance => decode_appearance_plain(plain),
@@ -381,6 +387,10 @@ fn decode_strict_with_references(
     }
 }
 
+#[allow(
+    clippy::single_range_in_vec_init,
+    reason = "a direct-XML body's document list holds its one document"
+)]
 fn decode_appearance_plain(plain: Vec<u8>) -> Result<DcsBody, DcsCodecError> {
     validate_xml_document(&plain, "AppearanceTemplate", Some(APPEARANCE_NS))?;
     let document_len = plain.len();
@@ -403,7 +413,7 @@ fn compile_schema_plain(
     xml: &[u8],
     style_reference_types: &BTreeMap<String, String>,
     types: &dyn DcsStorageTypeResolver,
-) -> Result<(Vec<u8>, DcsTypeIndex, BTreeMap<String, String>), DcsCodecError> {
+) -> Result<CompiledSchemaPlain, DcsCodecError> {
     validate_xml_document(xml, "DataCompositionSchema", Some(SCHEMA_NS))?;
 
     let style_items = style_reference_types
@@ -929,7 +939,7 @@ mod tests {
         object_refs: &BTreeMap<String, String>,
     ) -> Vec<u8> {
         let decoded = decode_compatible_dcs(DcsTemplateKind::Schema, blob).unwrap();
-        crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+        ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
             &decoded.documents(),
             type_index,
             object_refs,
@@ -995,7 +1005,7 @@ mod tests {
     #[test]
     fn common_document_builder_preserves_platform_accepted_compiler_body() {
         let source = include_bytes!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-core/native/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-core/native/",
             "Reports/DcsCorpus/Templates/MainSchema/Ext/Template.xml"
         ));
         // manifest.json template.raw_entry.unpacked: the platform's own
@@ -1010,7 +1020,7 @@ mod tests {
         // byte-identical to genuine platform storage too, not just
         // VM-accepted.
         let genuine_unpacked = include_bytes!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-core/raw/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/dcs-core/raw/",
             "f4db0f6c-34f4-4449-995d-6265516e5fa8.0.bin"
         ));
         assert_eq!(genuine_unpacked.len(), 4_458);
@@ -1088,7 +1098,7 @@ mod tests {
     #[test]
     fn platform_multi_variant_body_exposes_framed_document_roles_without_rescanning() {
         let packed = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-multi-variant-envelope/raw/",
             "f4db0f6c-34f4-4449-995d-6265516e5fa8.0.deflate.b64"
         )));
@@ -1131,7 +1141,7 @@ mod tests {
     #[test]
     fn platform_multi_variant_source_compiles_and_materializes_both_settings() {
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-multi-variant-envelope/native-template.xml.b64"
         )));
         let compiled = compile_dcs(
@@ -1148,7 +1158,7 @@ mod tests {
         .unwrap();
         assert_eq!(decoded.documents().len(), 4);
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1166,7 +1176,7 @@ mod tests {
     #[test]
     fn platform_type_id_reference_source_compiles_and_exports_through_common_codec() {
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-typeid-reference/native-template.xml.b64"
         )));
         let compiled = compile_dcs(
@@ -1184,12 +1194,12 @@ mod tests {
         let mut type_index = BTreeMap::new();
         type_index.insert(
             "488c0ffa-ef24-480c-a420-3bd2736317f9".to_owned(),
-            crate::mssql_dump::DcsTypeResolution::Type {
+            ibcmd_form_body::DcsTypeResolution::Type {
                 qname: "cfg:CatalogRef.FilterProbe".to_owned(),
             },
         );
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &type_index,
                 &BTreeMap::new(),
@@ -1217,7 +1227,7 @@ mod tests {
     #[test]
     fn platform_query_union_link_source_compiles_and_exports_through_common_codec() {
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-query-union-link/native-template.xml.b64"
         )));
         let compiled = compile_dcs(
@@ -1233,7 +1243,7 @@ mod tests {
         )
         .unwrap();
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1285,8 +1295,9 @@ mod tests {
     /// its indentation differs by nesting depth -- the same pre-existing
     /// settings-document formatting gap (the shared settings serializer
     /// does not reproduce a source's own indentation), unrelated to the
-    /// query-cohort widening under test. The genuine-bytes companion test
-    /// `mssql_dump::dcs::tests::platform_query_union_link_typeid_body_exports_byte_exact_through_common_codec`
+    /// query-cohort widening under test. The genuine-bytes companion test,
+    /// the root's
+    /// `mssql_dump::dcs::tests::platform_query_union_link_typeid_body_exports_byte_exact_through_common_codec`,
     /// independently proves byte-exact re-emission against
     /// `native-template.xml`, starting from the platform's own packed
     /// bytes rather than this compiler's blind-passthrough primary/settings
@@ -1294,11 +1305,11 @@ mod tests {
     #[test]
     fn platform_query_union_link_typeid_compiles_and_decodes_byte_exact_both_directions() {
         let seed = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-query-union-link-typeid/native-template.xml.b64"
         )));
         let unpacked = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-query-union-link-typeid/raw-unpacked.bin.b64"
         )));
         // manifest.json: retained.native_template.sha256 / retained.unpacked_body.sha256
@@ -1332,12 +1343,12 @@ mod tests {
         let mut type_index = BTreeMap::new();
         type_index.insert(
             "488c0ffa-ef24-480c-a420-3bd2736317f9".to_owned(),
-            crate::mssql_dump::DcsTypeResolution::Type {
+            ibcmd_form_body::DcsTypeResolution::Type {
                 qname: "cfg:CatalogRef.FilterProbe".to_owned(),
             },
         );
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &type_index,
                 &BTreeMap::new(),
@@ -1371,7 +1382,7 @@ mod tests {
     #[test]
     fn platform_link_parameter_source_compiles_and_exports_through_common_codec() {
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-link-parameter/native-template.xml.b64"
         )));
         // manifest.json: retained.native_template.sha256
@@ -1392,7 +1403,7 @@ mod tests {
         )
         .unwrap();
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1414,7 +1425,7 @@ mod tests {
     #[test]
     fn platform_link_expressions_source_compiles_and_exports_through_common_codec() {
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-link-expressions/native-template.xml.b64"
         )));
         // manifest.json: retained.native_template.sha256
@@ -1435,7 +1446,7 @@ mod tests {
         )
         .unwrap();
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1584,14 +1595,14 @@ mod tests {
     fn platform_data_parameters_source_owned_template_compiles_without_a_second_serializer() {
         let profile = DcsCodecProfile::fixture();
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-data-parameters-source-owned/native-template.xml.b64"
         )));
         let blob = compile_dcs(&profile, DcsTemplateKind::Schema, &source)
             .expect("platform-attested source-owned template must compile");
         let decoded = decode_dcs(&profile, DcsTemplateKind::Schema, &blob).unwrap();
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1615,15 +1626,15 @@ mod tests {
     fn platform_style_free_area_template_compiles_to_exact_terminal_document() {
         let profile = DcsCodecProfile::fixture();
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-template/native-template.xml.b64"
         )));
         let expected_area = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-template/area-schema-file.xml.b64"
         )));
         let unpacked = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-template/raw-unpacked.bin.b64"
         )));
         assert_eq!(
@@ -1643,7 +1654,7 @@ mod tests {
             Some(expected_area.as_slice())
         );
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1662,15 +1673,15 @@ mod tests {
     fn platform_area_appearance_compiles_to_exact_app_index_side_table() {
         let profile = DcsCodecProfile::fixture();
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-template-appearance/native-template.xml.b64"
         )));
         let expected_area = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-template-appearance/area-schema-file.xml.b64"
         )));
         let unpacked = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-template-appearance/raw-unpacked.bin.b64"
         )));
         assert_eq!(
@@ -1692,7 +1703,7 @@ mod tests {
             Some(expected_area.as_slice())
         );
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1711,11 +1722,11 @@ mod tests {
     fn platform_area_appearance_web_color_compiles_to_exact_side_table() {
         let profile = DcsCodecProfile::fixture();
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-appearance-web-color/native-template.xml.b64"
         )));
         let unpacked = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-appearance-web-color/raw-unpacked.bin.b64"
         )));
         assert_eq!(
@@ -1759,7 +1770,7 @@ mod tests {
         // body -> XML: re-exporting the compiled body must reproduce the
         // evidenced color appearance verbatim.
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1790,11 +1801,11 @@ mod tests {
     fn platform_area_appearance_web_color_native_packed_body_exports_exact_native_template() {
         let profile = DcsCodecProfile::fixture();
         let packed = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-appearance-web-color/raw-packed.bin.b64"
         )));
         let native_template = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-appearance-web-color/native-template.xml.b64"
         )));
         assert_eq!(
@@ -1809,7 +1820,7 @@ mod tests {
         let decoded = decode_dcs(&profile, DcsTemplateKind::Schema, &packed)
             .expect("genuine platform-packed body must decode");
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1824,7 +1835,7 @@ mod tests {
     fn area_appearance_web_color_seed_order_is_kept_as_written() {
         let profile = DcsCodecProfile::fixture();
         let seed = include_bytes!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-appearance-web-color/seed/Template.xml"
         ));
         // The seed is explicitly non-authoritative (manifest:
@@ -1845,11 +1856,11 @@ mod tests {
     fn platform_area_style_color_reference_compiles_to_exact_side_table() {
         let profile = DcsCodecProfile::fixture();
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-style-color-reference/native-template.xml.b64"
         )));
         let unpacked = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-style-color-reference/raw-unpacked.bin.b64"
         )));
         assert_eq!(
@@ -1894,7 +1905,7 @@ mod tests {
         // body -> XML: re-exporting the compiled body must reproduce the
         // evidenced style reference verbatim.
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1928,11 +1939,11 @@ mod tests {
     fn platform_area_style_color_reference_native_packed_body_exports_exact_native_template() {
         let profile = DcsCodecProfile::fixture();
         let packed = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-style-color-reference/raw-packed.bin.b64"
         )));
         let native_template = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-style-color-reference/native-template.xml.b64"
         )));
         assert_eq!(
@@ -1947,7 +1958,7 @@ mod tests {
         let decoded = decode_dcs(&profile, DcsTemplateKind::Schema, &packed)
             .expect("genuine platform-packed body must decode");
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -1967,7 +1978,7 @@ mod tests {
     fn area_style_item_uuid_compile_direction_gates_resolver() {
         let profile = DcsCodecProfile::fixture();
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-style-item-uuid/native-template.xml.b64"
         )));
         let stored_by_uuid = |blob: &[u8]| {
@@ -2038,15 +2049,15 @@ mod tests {
     /// resolver is on hand -- so the envelope, which now admits any terminal of
     /// that frame so real configurations' area templates can be transliterated,
     /// answers yes either way. What must still fail closed without the
-    /// resolver is producing source bytes, and
-    /// `crate::mssql_dump::dcs::tests::platform_area_style_item_uuid_exports_byte_exact_through_common_codec`
+    /// resolver is producing source bytes, and the root's
+    /// `mssql_dump::dcs::tests::platform_area_style_item_uuid_exports_byte_exact_through_common_codec`
     /// is where that is now asserted: a `0:<uuid>` the object-reference index
     /// cannot name is refused rather than written in its storage spelling.
     #[test]
     fn area_style_item_uuid_strict_decode_admits_the_frame_without_a_resolver() {
         let profile = DcsCodecProfile::fixture();
         let packed = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-style-item-uuid/raw-packed.bin.b64"
         )));
         assert_eq!(
@@ -2138,11 +2149,11 @@ mod tests {
     fn platform_area_style_item_uuid_compiles_base_free_with_resolver_full_cycle() {
         let profile = DcsCodecProfile::fixture();
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-style-item-uuid/native-template.xml.b64"
         )));
         let unpacked = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-style-item-uuid/raw-unpacked.bin.b64"
         )));
         // manifest.json: retained.native_template.sha256 / retained.unpacked_body.sha256
@@ -2221,7 +2232,7 @@ mod tests {
             object_refs
         };
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &object_refs,
@@ -2269,11 +2280,11 @@ mod tests {
     fn platform_area_style_item_uuid_native_packed_body_exports_exact_native_template() {
         let profile = DcsCodecProfile::fixture();
         let packed = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-style-item-uuid/raw-packed.bin.b64"
         )));
         let native_template = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-style-item-uuid/native-template.xml.b64"
         )));
         assert_eq!(
@@ -2302,7 +2313,7 @@ mod tests {
             object_refs
         };
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &object_refs,
@@ -2317,7 +2328,7 @@ mod tests {
     fn area_style_color_reference_seed_order_is_kept_as_written() {
         let profile = DcsCodecProfile::fixture();
         let seed = include_bytes!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-style-color-reference/seed/Template.xml"
         ));
         // The seed is explicitly non-authoritative (manifest:
@@ -2336,11 +2347,11 @@ mod tests {
     fn platform_multi_cell_appearance_compiles_to_exact_side_table() {
         let profile = DcsCodecProfile::fixture();
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-multi-cell-appearance/native-template.xml.b64"
         )));
         let unpacked = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-multi-cell-appearance/raw-unpacked.bin.b64"
         )));
         assert_eq!(
@@ -2384,7 +2395,7 @@ mod tests {
         // body -> XML: re-exporting the compiled body must reproduce the
         // evidenced shared-row appearance verbatim.
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2416,11 +2427,11 @@ mod tests {
     fn platform_multi_cell_appearance_native_packed_body_exports_exact_native_template() {
         let profile = DcsCodecProfile::fixture();
         let packed = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-multi-cell-appearance/raw-packed.bin.b64"
         )));
         let native_template = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-multi-cell-appearance/native-template.xml.b64"
         )));
         assert_eq!(
@@ -2436,7 +2447,7 @@ mod tests {
         let decoded = decode_dcs(&profile, DcsTemplateKind::Schema, &packed)
             .expect("genuine platform-packed body must decode");
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2451,7 +2462,7 @@ mod tests {
     fn area_multi_cell_appearance_seed_order_is_rejected_fail_closed() {
         let profile = DcsCodecProfile::fixture();
         let seed = include_bytes!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-area-multi-cell-appearance/seed/Template.xml"
         ));
         // The seed is explicitly non-authoritative (manifest:
@@ -2469,11 +2480,11 @@ mod tests {
     fn platform_output_parameters_native_packed_body_exports_exact_native_template() {
         let profile = DcsCodecProfile::fixture();
         let packed = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-output-parameters/raw-packed.bin.b64"
         )));
         let native_template = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-output-parameters/native-template.xml.b64"
         )));
         // manifest.json: rounds.packed_body_sha256 / rounds.native_template_sha256
@@ -2493,7 +2504,7 @@ mod tests {
         let decoded = decode_dcs(&profile, DcsTemplateKind::Schema, &packed)
             .expect("genuine platform-packed body must decode");
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2514,11 +2525,11 @@ mod tests {
     fn platform_parameter_scalar_types_native_packed_body_exports_exact_native_template() {
         let profile = DcsCodecProfile::fixture();
         let packed = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-parameter-scalar-types/raw-packed.bin.b64"
         )));
         let native_template = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-parameter-scalar-types/native-template.xml.b64"
         )));
         assert_eq!(
@@ -2537,7 +2548,7 @@ mod tests {
         let decoded = decode_dcs(&profile, DcsTemplateKind::Schema, &packed)
             .expect("genuine platform-packed body must decode");
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2552,7 +2563,7 @@ mod tests {
     fn platform_output_parameters_source_compiles_and_round_trips() {
         let profile = DcsCodecProfile::fixture();
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-output-parameters/native-template.xml.b64"
         )));
 
@@ -2573,7 +2584,7 @@ mod tests {
         // typed decode/export path parses the source spelling directly and
         // there is nothing to canonicalize.
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2603,7 +2614,7 @@ mod tests {
         let recompiled_blob = compile_dcs(&profile, DcsTemplateKind::Schema, &exported).unwrap();
         let recompiled = decode_dcs(&profile, DcsTemplateKind::Schema, &recompiled_blob).unwrap();
         let reexported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &recompiled.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2623,7 +2634,7 @@ mod tests {
     fn platform_parameter_scalar_types_source_compiles_and_round_trips() {
         let profile = DcsCodecProfile::fixture();
         let source = decode_base64_fixture(include_str!(concat!(
-            "../../../tests/fixtures/native-evidence/8.3.27.2214/",
+            "../../../../../tests/fixtures/native-evidence/8.3.27.2214/",
             "dcs-parameter-scalar-types/native-template.xml.b64"
         )));
 
@@ -2645,7 +2656,7 @@ mod tests {
         // AreaTemplate's. The genuine-bytes test above proves byte-exact
         // whole-document equality instead.)
         let exported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &decoded.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
@@ -2686,7 +2697,7 @@ mod tests {
         let recompiled_blob = compile_dcs(&profile, DcsTemplateKind::Schema, &exported).unwrap();
         let recompiled = decode_dcs(&profile, DcsTemplateKind::Schema, &recompiled_blob).unwrap();
         let reexported =
-            crate::mssql_dump::normalize_data_composition_schema_template_documents_with_profiles(
+            ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles(
                 &recompiled.documents(),
                 &BTreeMap::new(),
                 &BTreeMap::new(),
