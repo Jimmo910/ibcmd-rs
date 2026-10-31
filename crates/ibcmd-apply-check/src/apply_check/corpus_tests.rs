@@ -2,7 +2,7 @@
 //! a tree against itself, and against a copy written differently, must need
 //! no restructuring and give no reason. Ignored by default: the exports live
 //! under the lab folders. Run with
-//! `cargo test -p ibcmd-rs --lib --no-default-features apply_check::corpus -- --ignored --nocapture`.
+//! `cargo test -p ibcmd-apply-check apply_check::corpus -- --ignored --nocapture`.
 //!
 //! `IBCMD_RS_APPLY_CHECK_DB` (a database restored from the БСП 8.3.27 corpus
 //! backup) also enables the check of the БСП export against that database.
@@ -88,7 +88,7 @@ fn write_sample_pair(root: &Path, scratch: &Path, stride: usize) -> usize {
         // Only every stride-th XML file is opened: reading all of them is
         // minutes of first-read time on a corpus.
         seen += 1;
-        if seen % stride != 0 {
+        if !seen.is_multiple_of(stride) {
             continue;
         }
         let bytes = fs::read(entry.path()).unwrap();
