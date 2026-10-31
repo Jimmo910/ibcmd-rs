@@ -353,6 +353,10 @@ pub fn check_trees(old_root: &Path, new_root: &Path) -> Result<Verdict> {
 
 /// The items of an exchange plan's `Content.xml` (`Metadata`, `AutoRecord`),
 /// order aside; `None` when the file is not one.
+#[allow(
+    clippy::type_complexity,
+    reason = "the two item lists of the file, each a pair of names"
+)]
 fn content_items(bytes: &[u8]) -> Option<(Vec<(String, String)>, Vec<(String, String)>)> {
     let root = parse_element_tree(bytes).ok()?;
     if root.name != "ExchangePlanContent" {

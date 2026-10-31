@@ -229,6 +229,10 @@ impl Export for Decoder {
 }
 
 /// What comparing one metadata file with the database found.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one short-lived outcome per compared file; the two trees of a change are its point"
+)]
 enum Outcome {
     Same,
     Added,
