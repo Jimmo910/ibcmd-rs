@@ -282,7 +282,7 @@ pub fn stores_layout_8_5_1(context: &DescriptorContext) -> bool {
 /// `root` in the 8.5.1 layout (forms, styles, the `{76,...}` Configuration
 /// tuple) rather than the 8.3.27 one: its `CompatibilityMode` is 8.5 or
 /// later, or one of its managed forms can only be held by the 8.5.1 layout
-/// ([`form_needs_layout_8_5_1`]).
+/// (`form_needs_layout_8_5_1`).
 ///
 /// The layout is the configuration's, not the XML dialect's, and not its
 /// compatibility alone. The BSP 8.5 clone (`Version8_5_1`) stores every form
