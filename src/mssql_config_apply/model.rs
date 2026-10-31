@@ -4,6 +4,8 @@ use std::fmt::Write as _;
 
 use serde::Serialize;
 
+pub use ibcmd_restructure_engine::text::{hex_upper, is_uuid_text, quote_ident};
+
 /// The metadata of one row of a configuration storage table (`Config`,
 /// `ConfigSave`): everything but the bytes, which never leave the server
 /// unless a check needs them.
@@ -34,41 +36,12 @@ pub fn quote_string(value: &str) -> String {
     value.replace('\'', "''")
 }
 
-/// `[name]` for a database, refusing what cannot be one.
-pub fn quote_ident(value: &str) -> anyhow::Result<String> {
-    if value.is_empty()
-        || value.encode_utf16().count() > 128
-        || value.chars().any(|ch| ch == '\0' || ch.is_control())
-    {
-        anyhow::bail!("invalid database identifier {value:?}");
-    }
-    Ok(format!("[{}]", value.replace(']', "]]")))
-}
-
-pub fn hex_upper(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(out, "{byte:02X}").expect("writing to a String cannot fail");
-    }
-    out
-}
-
 pub fn hex_lower(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
         write!(out, "{byte:02x}").expect("writing to a String cannot fail");
     }
     out
-}
-
-/// `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (any case).
-pub fn is_uuid_text(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 36
-        && bytes.iter().enumerate().all(|(index, byte)| match index {
-            8 | 13 | 18 | 23 => *byte == b'-',
-            _ => byte.is_ascii_hexdigit(),
-        })
 }
 
 /// What a `Config` row name is, by its shape.

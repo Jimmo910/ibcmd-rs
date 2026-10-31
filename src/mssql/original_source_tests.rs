@@ -117,3 +117,55 @@ fn actual_module_encoder_does_not_use_new_unadmitted_file_or_another_context() {
     );
     assert!(pack_module_body_source_with_source(&late, key, &axes, Some(&source)).is_err());
 }
+
+/// A context on a held tree answers what the tree answers: its canonical
+/// root, the very bytes the tree captured, and the tree's own errors, read
+/// errors as the tree's message and the change check as the tree's
+/// `SourceChangeError` itself.
+#[test]
+fn a_context_on_a_held_tree_answers_with_the_trees_own_bytes_and_errors() {
+    use crate::module_blob::SourceBytes;
+    use crate::mssql_source_change::SourceChangeError;
+
+    let fixture = Fixture::new();
+    let path = fixture.write("CommonModules/M/Ext/Module.bsl", b"// ORIGINAL\r\n");
+    let held = Arc::new(HeldSourceRoot::open_compiler_operation(&fixture.0).unwrap());
+    let source = MetadataSourceContext::with_original_source(held.clone());
+
+    let held_root = held.canonical_root().to_owned();
+    assert_eq!(
+        source
+            .read_source(&held_root.join("CommonModules/M/Ext/Module.bsl"))
+            .unwrap()
+            .into_vec(),
+        b"// ORIGINAL\r\n"
+    );
+    let SourceBytes::Shared(bytes) = source.read_source(&path).unwrap() else {
+        panic!("a held tree's file is read from the tree");
+    };
+    assert!(Arc::ptr_eq(
+        &bytes,
+        &held.read_original_path(&path).unwrap()
+    ));
+
+    for missing in [
+        fixture.0.join("late.bsl"),
+        std::env::temp_dir().join("elsewhere.bsl"),
+    ] {
+        let expected = held.read_original_path(&missing).unwrap_err();
+        let error = match source.read_source(&missing) {
+            Err(error) => error,
+            Ok(_) => panic!("{} is not in the held tree", missing.display()),
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert_eq!(error.to_string(), expected.to_string());
+    }
+
+    source.require_original_unchanged().unwrap();
+    fs::write(&path, b"// CHANGED\r\n").unwrap();
+    let expected = held.require_unchanged().unwrap_err();
+    let error = source.require_original_unchanged().unwrap_err();
+    assert_eq!(error.downcast_ref::<SourceChangeError>(), Some(&expected));
+    assert_eq!(error.chain().count(), 1);
+    assert_eq!(format!("{error:#}"), expected.to_string());
+}

@@ -1,7 +1,41 @@
-use super::*;
+pub(crate) use super::additional_indexes::AdditionalIndexesOwner;
+use super::{
+    BTreeMap, BTreeSet, BusinessProcessFlowchart, ConfigRow, ConstantValueType, DeclaredFormType,
+    DetailedFormBodyExtraction, DumpRowContext, FamilyId, FormParseContext,
+    FormSourceAssetDiagnostic, FormSourceReference, InfobaseConfigSourceVersion, Instant,
+    MetadataCommandReference, MetadataSourceFailureClass, MetadataTextRow,
+    MoxelChartSeriesAutomaticName, MssqlDumpTimingReport, MssqlLegacyAdapter, OutputWriter,
+    ParsedFormBodyBlob, Path, PathBuf, ProfileId, Result, SubsystemSourceReference,
+    TemplateSourceReference, anyhow, bail, build_metadata_text_rows,
+    build_role_rights_object_reference_index, decode_base64_mime, dedup_form_item_assets,
+    elapsed_ms, escape_xml_element_text, escape_xml_text, ext_picture_file_name,
+    extract_base64_payload, extract_form_body_xml_from_body_detailed_timed,
+    extract_form_item_assets, extract_form_item_assets_from_text, extract_style_body_xml,
+    form_help_asset_paths, form_owner_reference_name, format_business_process_flowchart_xml,
+    format_client_application_interface_xml, format_command_interface_xml,
+    format_exchange_plan_content_xml_with_extension, format_home_page_work_area_xml,
+    format_role_rights_xml, fs, inflate_raw_deflate, is_configuration_module_group,
+    is_direct_code14_form_metadata_text, is_form_metadata_text, is_uuid_text,
+    looks_like_graphical_scheme_blob_text, metadata_owner_value_reference_key,
+    metadata_owner_value_reference_key_parts, metadata_text_row_from_blob, metadata_type_xml_name,
+    module_owner_route, number_allowed_sign_xml, parallel, parse_1c_bool_flag,
+    parse_1c_quoted_string, parse_1c_quoted_string_with_len, parse_business_process_flowchart_blob,
+    parse_business_process_flowchart_text_with_types, parse_client_application_interface_blob,
+    parse_command_interface_blob, parse_command_interface_blob_with_subsystem_refs,
+    parse_declared_form_type, parse_exchange_plan_content_blob,
+    parse_exchange_plan_content_extension, parse_form_body_blob, parse_home_page_work_area_blob,
+    parse_metadata_type_pattern, parse_non_zero_uuid, parse_role_rights_blob, parse_uuid_field,
+    sanitize_source_path_segment, scan_1c_braced_value, skip_ascii_ws_at, split_1c_braced_fields,
+    standard_picture_name, try_extract_moxel_spreadsheet_xml_with_generated_types_and_policy,
+    unpack_module_blob_text, xml_bool,
+};
+#[cfg(test)]
+use super::{MxlDiagnostic, MxlDiagnosticStage};
 use crate::compiler::families::assets::{
     ConfigRowId, SourceAssetRelationError, SourceAssetRole, SourceAssetRoute,
 };
+use anyhow::Context;
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 #[derive(Debug, Clone)]
 pub(super) struct BodyOwnerSourceReference {
@@ -691,18 +725,6 @@ pub(crate) struct PredefinedDataSourceModel {
     rowset_layout: PredefinedDataRowsetLayout,
     unwrap_single_root: bool,
     item_layout: PredefinedItemLayout,
-}
-
-/// Owner identity an `Ext/AdditionalIndexes.xml` body needs to be readable.
-///
-/// The stored body is a serialized 1C value whose records name their table by
-/// uuid, so the owner has to travel with the asset: only it turns that uuid into
-/// a source table name.
-#[derive(Clone)]
-pub(crate) struct AdditionalIndexesOwner {
-    pub(crate) kind: String,
-    pub(crate) name: String,
-    pub(crate) uuid: String,
 }
 
 #[derive(Clone)]
@@ -2202,74 +2224,9 @@ fn self_close_empty_languages(xml: Vec<u8>) -> Vec<u8> {
     out
 }
 
-const STYLE_NAMESPACE_DECLARATION: &str = " xmlns:style=\"http://v8.1c.ru/8.1/data/ui/style\"";
-const PALETTE_NAMESPACE_DECLARATION: &str =
-    " xmlns:pal=\"http://v8.1c.ru/8.1/data/ui/colors/palette\"";
-
-/// Dialect 2.21 declares the palette colour namespace on exactly the elements
-/// that declare the style namespace, and nowhere else.
-///
-/// 8.5.1.1150 BSP native tree: of 6 299 start tags carrying namespace
-/// declarations, every one of the 6 298 that declares `xmlns:style` also
-/// declares `xmlns:pal` (`MetaDataObject`, `Form`, `document`,
-/// `dcsset:settings`, `settings`, `GraphicalSchema`, `AppearanceTemplate`) and
-/// none of the others does. The platform lists declarations alphabetically by
-/// prefix, so `pal` goes before the first prefixed declaration that sorts after
-/// it -- `style` on most roots, `sch` on a graphical schema. A tag that already
-/// declares the prefix is left as it is.
-pub(crate) fn declare_palette_namespace_beside_style(bytes: Vec<u8>) -> Vec<u8> {
-    let Ok(text) = std::str::from_utf8(&bytes) else {
-        return bytes;
-    };
-    if !text.contains(STYLE_NAMESPACE_DECLARATION) {
-        return bytes;
-    }
-    let mut out = String::with_capacity(text.len() + 256);
-    let mut cursor = 0;
-    let mut search_from = 0;
-    while let Some(relative) = text[search_from..].find(STYLE_NAMESPACE_DECLARATION) {
-        let style_at = search_from + relative;
-        search_from = style_at + STYLE_NAMESPACE_DECLARATION.len();
-        let Some(tag_start) = text[..style_at].rfind('<') else {
-            continue;
-        };
-        if tag_start < cursor || text[tag_start..style_at].contains('>') {
-            continue;
-        }
-        let tag_end = text[style_at..]
-            .find('>')
-            .map_or(text.len(), |offset| style_at + offset);
-        let tag = &text[tag_start..tag_end];
-        if tag.contains(" xmlns:pal=") {
-            continue;
-        }
-        // A value that declares the style namespace alone for its own `ref`
-        // (a DCS font `dcscor:value`) gets no palette beside it: 23 of 23 in
-        // the 8.5.1.1150 ERP УХ export, against every tag that declares more.
-        if tag.matches(" xmlns:").count() == 1 {
-            continue;
-        }
-        let mut insert_at = style_at;
-        let mut scan = tag_start;
-        while let Some(offset) = text[scan..style_at].find(" xmlns:") {
-            let declaration = scan + offset;
-            let prefix_start = declaration + " xmlns:".len();
-            let prefix_end = text[prefix_start..style_at]
-                .find('=')
-                .map_or(style_at, |end| prefix_start + end);
-            if &text[prefix_start..prefix_end] > "pal" {
-                insert_at = declaration;
-                break;
-            }
-            scan = prefix_end;
-        }
-        out.push_str(&text[cursor..insert_at]);
-        out.push_str(PALETTE_NAMESPACE_DECLARATION);
-        cursor = insert_at;
-    }
-    out.push_str(&text[cursor..]);
-    out.into_bytes()
-}
+// The 2.21 palette namespace rule is the `ibcmd-1c-text` crate's, which the
+// 2.21 form loader reads too; the root reaches it by this path.
+pub(crate) use ibcmd_1c_text::declare_palette_namespace_beside_style;
 
 /// Preserves historical MSSQL source-asset output behavior only.
 ///
@@ -2569,7 +2526,7 @@ fn write_source_asset_inner(
                         || context.source_version == InfobaseConfigSourceVersion::V2_20;
                     let (xml, item_assets_8_5_1) = match &facts_8_5_1 {
                         _ if xml_2_21_pass_off => (xml, Vec::new()),
-                        Some(facts) => super::form::xml_2_21_writer::apply_form_facts_8_5_1(
+                        Some(facts) => super::form::apply_form_facts_8_5_1_for_export(
                             xml,
                             facts,
                             context.object_refs,
@@ -3465,8 +3422,6 @@ pub(super) struct HelpContent {
     pub(super) pages: Vec<HelpPage>,
     pub(super) files: Vec<HelpFile>,
 }
-
-pub(super) use ibcmd_form_body::FormItemAsset;
 
 #[derive(Clone)]
 pub(super) struct PredefinedItem {

@@ -6,7 +6,7 @@
 
 // The tests below read `mssql_dump`'s names, as when this file held the code.
 #[cfg(test)]
-use super::*;
+use super::{BTreeMap, MetadataSourceFailureClass, ProfileId};
 
 pub(super) use ibcmd_form_body::ANY_IB_REF_TYPE_ID;
 pub(crate) use ibcmd_form_body::normalize_data_composition_schema_template_documents_with_profiles;
@@ -1222,8 +1222,8 @@ mod tests {
         // area templates be transliterated at all -- so the typed coordinate
         // refuses for want of the name and the fragment transliteration,
         // reached next, refuses for exactly the same reason rather than
-        // guessing one. See
-        // `crate::compiler::bodies::dcs::tests::area_style_item_uuid_strict_decode_admits_the_frame_without_a_resolver`.
+        // guessing one. See ibcmd-compiler's
+        // `compiler::bodies::dcs::tests::area_style_item_uuid_strict_decode_admits_the_frame_without_a_resolver`.
         for resolver in [
             BTreeMap::new(),
             BTreeMap::from([(

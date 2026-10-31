@@ -68,7 +68,9 @@ supported platform profile declares, as constants,
 - `platform.feature.<name>`: a feature a configuration saved by the build may
   list in its `version` row, with its fixed uuid (`palette-colors` on 8.5.1).
 
-`src/platform/` reads these declarations (it does not repeat them) and answers
+`crates/ibcmd-platform` reads these declarations (it does not repeat them),
+and `src/platform/` adds the command line's XML selector and the MSSQL
+capabilities to what it answers for
 `--platform 8.3.27 | 8.5.1 | 8.3.27.2214 | 8.5.1.1150`: an exact build, or a
 release standing for every known build of it while they agree. A build whose
 profile declares no XML format (`8.3.24.1819`) is known but refused, and so is

@@ -18,8 +18,9 @@
 //! ([`FormAdoption::mark`]), and the base form, written as a document of its
 //! own by the same writer ([`form_adoption`]), closes the adopted form's
 //! document as `<BaseForm>`. The model is the `ibcmd-form-body` crate's, with
-//! the form reader; its constructors, which read `module_blob` and the 2.21
-//! writer, are here.
+//! the form reader and the constructor of an adopted form that keeps no base
+//! form record (`adoption_without_base_form`); the constructors that read
+//! `module_blob` and the 2.21 writer are here.
 
 use std::collections::BTreeMap;
 
@@ -27,13 +28,15 @@ use anyhow::{Context, Result};
 
 use super::*;
 
-// The event block reader, the base form record's slot and the adoption
-// model the form writer spells are the `ibcmd-form-body` crate's; the
-// 2.21 writer and the extension's form check reach them here, as before.
-// The constructors below read the root (`module_blob`, the 2.21 writer).
-pub(super) use ibcmd_form_body::parse_form_event_block;
-use ibcmd_form_body::{CALL_TYPES, adopted_base_record_slot, adoption_event_name};
-pub(super) use ibcmd_form_body::{FormAdoption, FormBaseForm, form_event_call_types};
+// The base form record's slot, the adoption model the form writer spells
+// and its constructor for a form without a base form record are the
+// `ibcmd-form-body` crate's; the extension's form check reaches them here,
+// as before. The constructors below read the root (`module_blob`, the 2.21
+// writer).
+use ibcmd_form_body::{CALL_TYPES, adopted_base_record_slot};
+pub(super) use ibcmd_form_body::{
+    FormAdoption, FormBaseForm, adoption_without_base_form, form_event_call_types,
+};
 
 /// `FormBaseForm::from_document`, the root's: the base form's document is
 /// read with the 2.21 writer's `XmlEdits`.
@@ -109,7 +112,7 @@ pub(super) fn form_adoption(
     let base_xml = match (v85, &facts) {
         (false, _) => base_xml,
         (true, Some(facts)) => {
-            super::form::xml_2_21_writer::apply_form_facts_8_5_1(
+            super::form::apply_form_facts_8_5_1_for_export(
                 base_xml,
                 facts,
                 object_refs,
@@ -125,41 +128,6 @@ pub(super) fn form_adoption(
         command_call_type: Some(CALL_TYPES[0]),
         base_form: Some(FormBaseForm::from_document(source_version, &base_xml)?),
     }))
-}
-
-/// The adoption facts of an adopted form that keeps no base form record
-/// (ServiceDesk's adopted `CommonForm.СвязанныеДокументы`, fixture
-/// `native-evidence/extension-form-interceptors`): the call types its event
-/// blocks store, `Before` on its commands, no `<BaseForm>`. An event block
-/// whose head is recognized but whose tail is not is refused rather than
-/// read as `Before`.
-pub(super) fn adoption_without_base_form(layout: &str) -> Result<FormAdoption> {
-    for (start, _) in layout.match_indices('{') {
-        let Some(end) = scan_1c_braced_value(layout, start) else {
-            continue;
-        };
-        let block = &layout[start..end];
-        let Some(fields) = split_1c_braced_fields(block, 0) else {
-            continue;
-        };
-        let Some(identifier) = fields.get(1) else {
-            continue;
-        };
-        if adoption_event_name(identifier.trim().trim_matches('"')).is_some()
-            && fields
-                .first()
-                .is_some_and(|count| count.trim().parse::<usize>().is_ok())
-            && parse_form_event_block(block).is_none()
-        {
-            anyhow::bail!("unsupported or malformed adopted form event block for {identifier}");
-        }
-    }
-    Ok(FormAdoption {
-        call_types: form_event_call_types(layout),
-        // `Before`.
-        command_call_type: Some(CALL_TYPES[0]),
-        base_form: None,
-    })
 }
 
 #[cfg(test)]

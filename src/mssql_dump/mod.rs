@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -29,6 +29,7 @@ use ibcmd_1c_text::{
 // are wrappers further down (`parse_metadata_type_pattern_element_with_builtin`,
 // and `parse_form_metadata_type_pattern`, kept for tests: the form reader
 // passes the state it was built with).
+pub(crate) use ibcmd_1c_vocab::style_web_color_name;
 use ibcmd_1c_vocab::{
     ACCUMULATION_REGISTER_BALANCE_STANDARD_ATTRIBUTES,
     ACCUMULATION_REGISTER_TURNOVERS_STANDARD_ATTRIBUTES,
@@ -54,9 +55,8 @@ pub(super) use ibcmd_1c_vocab::{
 use ibcmd_1c_vocab::{
     DATA_COMPOSITION_SETTINGS_NAMESPACE_ATTRIBUTE, ShortcutModifierStyle,
     format_form_metadata_types_xml, format_form_metadata_types_xml_with_indent,
-    parse_common_command_shortcut_value_with_style,
+    parse_common_command_shortcut_value_with_style, role_right_name, role_right_uuid,
 };
-pub(crate) use ibcmd_1c_vocab::{standard_style_item_code_for_name, style_web_color_name};
 use ibcmd_cf::archive::PackedCfArchive;
 use ibcmd_cf::export::{StorageExportEntryReport, StorageExportPlan, StorageExportReport};
 use ibcmd_core::artifact::ProfileId;
@@ -1023,7 +1023,7 @@ mod characteristics {
         )
     }
 }
-mod additional_indexes;
+use ibcmd_dump_readers::additional_indexes;
 pub mod cas;
 mod command_interface;
 pub use config_dump_info::read_config_dump_info;
@@ -1031,10 +1031,11 @@ pub(crate) use config_dump_info::read_config_dump_info_with_sql;
 mod config_dump_info;
 mod config_rows;
 pub mod config_save;
-mod configuration_properties_evidence;
+use ibcmd_dump_readers::configuration_properties_evidence;
 mod dcs;
-mod dcs_2_21;
-pub(crate) use dcs_2_21::{with_8_5_picture_values, with_stored_picture_values};
+// The 8.5 picture-value rewrite of a schema template: `ibcmd-compiler`'s,
+// beside the DCS codec that reads it.
+use ibcmd_compiler::compiler::bodies::dcs_2_21;
 mod dynamic_generation;
 mod empty_configuration;
 pub(crate) mod extension;
@@ -1058,7 +1059,6 @@ mod form_extension;
 #[cfg(test)]
 mod revision_mix_tests;
 pub(crate) use form::load_8_5_1::{
-    compile_native_form_body_8_5_1, compile_xml_2_21_form_body_in_layout_8_3,
     down_convert_xml_2_21_form, is_xml_2_21_form, up_convert_chart_records_8_5_1,
     up_convert_primitives_8_5_1_in_place,
 };
@@ -1079,13 +1079,7 @@ mod offline_rows;
 mod output_writer;
 mod refs;
 mod role_rights;
-pub(crate) use role_rights::{
-    CONFIGURATION_MODE_RIGHT_NAMES, ROLE_RIGHTS_EXT_DIMENSION_FAMILY,
-    ROLE_RIGHTS_EXT_DIMENSION_TYPE_FAMILY, ROLE_RIGHTS_STANDARD_ATTRIBUTE_FAMILY,
-    ROLE_RIGHTS_STANDARD_TABULAR_SECTION_FAMILY, role_right_name, role_right_uuid,
-    role_rights_xml_from_blob, role_standard_attribute_slot,
-    role_standard_tabular_section_attribute_slot, role_standard_tabular_section_slot,
-};
+pub(crate) use role_rights::role_rights_xml_from_blob;
 mod selected;
 mod source_asset_diagnostics;
 mod source_assets;
@@ -1134,10 +1128,6 @@ pub(crate) fn fetch_extension_activation_rows(
 pub(crate) use fetch::fetch_config_part0_rows;
 
 use command_interface::*;
-pub(crate) use command_interface::{
-    COMMAND_INTERFACE_PLACEMENTS, HOME_PAGE_WORK_AREA_TEMPLATES,
-    client_application_panel_def_is_standard, command_interface_standard_command_for_code,
-};
 pub use config_dump_info::stored_config_versions;
 use config_dump_info::*;
 use config_rows::*;
@@ -1168,24 +1158,7 @@ pub(crate) use source_assets::{
     help_link_marker_is_anchor, help_standard_picture_negative_index, rewrite_help_links,
 };
 
-pub(crate) fn resolve_form_item_picture_owner(
-    text: &str,
-    marker_start: usize,
-) -> Option<(String, &'static str)> {
-    form_body::form_item_picture_owner_at(text, marker_start)
-}
-
-pub(crate) use form_body::form_dynamic_list_std_attribute_pairs;
-/// The one table that names a form standard command uuid, shared with the
-/// source compiler so both directions read the same fact.
-pub(crate) use form_body::form_standard_command_suffix;
 pub(crate) use form_body::{FormItemSchemaTraceEvent, FormItemTraceEvent, FormItemTraceSink};
-/// The exporter's reading of a chart attribute's member 14, which the form
-/// writer's chart codec checks every value it builds against.
-pub(crate) use form_body::{
-    render_form_chart_settings_value, render_form_flowchart_settings_value,
-    render_form_gantt_chart_settings_value, render_form_planner_settings_value,
-};
 #[cfg(test)]
 pub(crate) use form_body_entry::render_form_body_xml_offline;
 pub(crate) use form_body_entry::trace_form_body_with_context;
@@ -1235,7 +1208,7 @@ pub use moxel_entry::{MoxelChartSeriesAutomaticName, try_extract_moxel_spreadshe
 pub(crate) use moxel_entry::{
     MoxelLineTraceEvent, MoxelLineTraceSink,
     extract_inflated_moxel_spreadsheet_xml_with_line_trace, extract_moxel_spreadsheet_xml,
-    extract_moxel_spreadsheet_xml_with_line_trace, render_moxel_chart_object_xml,
+    extract_moxel_spreadsheet_xml_with_line_trace,
     try_extract_moxel_spreadsheet_xml_with_generated_types,
     try_extract_moxel_spreadsheet_xml_with_generated_types_and_policy,
 };
@@ -36121,9 +36094,12 @@ fn parse_command_group_picture_value(
 
 /// The platform's standard pictures, named and stored through the one table
 /// of the crate (`metadata_model::standard_pictures`).
-pub(crate) use crate::metadata_model::standard_pictures::{
-    standard_picture_name, standard_picture_uuid,
-};
+pub(crate) use crate::metadata_model::standard_pictures::standard_picture_name;
+#[expect(
+    unused_imports,
+    reason = "Retain the original crate-internal standard-picture compatibility path"
+)]
+pub(crate) use crate::metadata_model::standard_pictures::standard_picture_uuid;
 
 fn parse_common_command_group_value(
     value: &str,
@@ -36207,49 +36183,7 @@ fn parse_common_command_parameter_types(
         .collect()
 }
 
-/// Platform standard command group UUIDs and the names the platform exports
-/// them under; these are not configuration-specific ids. The command-interface
-/// writer reads the same table backwards.
-pub(crate) const COMMON_COMMAND_GROUPS: [(&str, &str); 11] = [
-    (
-        "77ea1b8f-dd79-4717-9dba-5628e7f348cf",
-        "NavigationPanelOrdinary",
-    ),
-    (
-        "bc80566a-86a5-4e87-acd4-872239385a2e",
-        "NavigationPanelSeeAlso",
-    ),
-    (
-        "1af6d528-0b86-4fba-ab95-bd7475db03ba",
-        "NavigationPanelImportant",
-    ),
-    ("4f499c31-050b-47c5-aa84-d0366c0a0da8", "ActionsPanelCreate"),
-    (
-        "5b360bff-01a1-49b6-93d2-26e7e8e3a038",
-        "ActionsPanelReports",
-    ),
-    ("aabb34e1-98c1-4bd0-bf7f-243f95437b44", "ActionsPanelTools"),
-    (
-        "dc2ade0f-383e-4c78-85f2-c0dabc0e2dc0",
-        "FormCommandBarCreateBasedOn",
-    ),
-    (
-        "cb50f5c0-8013-4262-93a2-f0db379d6b6b",
-        "FormCommandBarImportant",
-    ),
-    (
-        "eacad741-96b9-4b3a-bf79-dde9ecead1a1",
-        "FormNavigationPanelGoTo",
-    ),
-    (
-        "8ab1540c-0bfa-4fa6-a1e1-5d5069efc7d8",
-        "FormNavigationPanelSeeAlso",
-    ),
-    (
-        "dc11a6be-de1f-4b64-a7a5-9b17bf4ec9f2",
-        "FormNavigationPanelImportant",
-    ),
-];
+pub(crate) use ibcmd_1c_vocab::COMMON_COMMAND_GROUPS;
 
 fn common_command_group_name(uuid: &str) -> Option<&'static str> {
     let uuid = uuid.to_ascii_lowercase();
@@ -44606,21 +44540,9 @@ fn return_values_reuse_xml(value: ReturnValuesReuseValue) -> &'static str {
     }
 }
 
-pub(crate) fn sanitize_source_path_segment(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
-            output.push('_');
-        } else {
-            output.push(ch);
-        }
-    }
-    if output.trim().is_empty() {
-        "Unnamed".to_string()
-    } else {
-        output
-    }
-}
+// The file-name segment the source tree writes for a name is
+// `ibcmd-1c-text`'s; the root reaches it by this path.
+pub(crate) use ibcmd_1c_text::sanitize_source_path_segment;
 
 fn selected_file_names_from_args(
     file_names: &[String],

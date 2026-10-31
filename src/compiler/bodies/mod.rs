@@ -1,17 +1,52 @@
 //! Profile-gated codecs for native bodies that are not metadata-family rows.
 
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
+// The body-profile selection is `ibcmd-compiler-families`'s; the root keeps
+// naming its error from this module.
+pub use ibcmd_compiler_families::compiler::bodies::BodyProfileError;
 
-use ibcmd_core::artifact::{ProfileId, StorageProfileId};
-use ibcmd_core::profile::EffectiveProfile;
-use ibcmd_core::version::PlatformBuild;
-
-pub mod command_interface;
-pub mod dcs;
-pub mod dynamic_list;
-pub mod form;
-pub mod form_chart;
+/// Profile-gated base-free codec for `Ext/CommandInterface.xml` native bodies:
+/// `ibcmd-compiler-families`' `compiler::bodies::command_interface`.
+pub mod command_interface {
+    pub use ibcmd_compiler_families::compiler::bodies::command_interface::{
+        CommandInterfaceBody, CommandInterfaceCodecError, CommandInterfaceCodecProfile,
+        CommandInterfaceModel, CommandOrder, CommandPlacement, CommandPlacementMode,
+        CommandReference, CommandVisibility, SubsystemVisibility, VisibilityValue,
+        compile_command_interface, decode_command_interface,
+    };
+}
+/// Profile-gated codecs for data-composition template bodies:
+/// `ibcmd-compiler`'s `compiler::bodies::dcs`.
+pub mod dcs {
+    pub use ibcmd_compiler::compiler::bodies::dcs::{
+        DcsBody, DcsBodyLayout, DcsCodecError, DcsCodecProfile, DcsTemplateKind, compile_dcs,
+        compile_dcs_with_references, decode_dcs, decode_dcs_with_references,
+    };
+    // The transitional reader of historic fixtures, for the export adapter
+    // and the template audit.
+    pub(crate) use ibcmd_compiler::compiler::bodies::dcs::decode_compatible_dcs;
+}
+// The dynamic-list, chart and planner writers are `ibcmd-form-writer`'s,
+// with the form writer that calls them, and the role-rights writer is
+// `ibcmd-metadata-blob`'s, with its packer; `ibcmd-metadata-blob` re-exports
+// the former, and they keep their paths here.
+pub use ibcmd_metadata_blob::dynamic_list;
+/// Profile-gated base-free codec for managed `Form.xml` native bodies:
+/// `ibcmd-compiler`'s `compiler::bodies::form`.
+pub mod form {
+    pub use ibcmd_compiler::compiler::bodies::form::{
+        ManagedFormBody, ManagedFormCodecError, ManagedFormCodecProfile, compile_managed_form,
+        decode_managed_form,
+    };
+    // The transitional reader of historic fixtures, for the export and apply
+    // adapters.
+    pub(crate) use ibcmd_compiler::compiler::bodies::form::decode_compatible_managed_form;
+}
+pub mod form_chart {
+    //! The chart writers are `ibcmd-form-writer`'s (re-exported by
+    //! `ibcmd-metadata-blob`). The moxel writer that read them through this
+    //! module is `ibcmd-compiler`'s now and names them there; the module
+    //! keeps its public path.
+}
 /// Writer for the managed-form item records a native 8.3.27 body stores.
 ///
 /// The code is the `ibcmd-form-native` crate; this module keeps its
@@ -19,152 +54,114 @@ pub mod form_chart;
 pub mod form_native {
     pub(crate) use ibcmd_form_native::*;
 }
-pub mod form_planner;
-pub mod interface_assets;
-pub mod mxl;
-pub(crate) mod mxl_native;
-pub mod predefined;
-pub mod rights;
-pub mod role_rights_writer;
-pub mod support;
-pub mod template;
-
-const SUPPORTED_STORAGE_PROFILE: &str = "storage:mssql-config-configsave";
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SelectedBodyProfile {
-    profile_id: ProfileId,
-    #[allow(dead_code)]
-    platform_build: PlatformBuild,
-    #[allow(dead_code)]
-    storage_profile: StorageProfileId,
+pub use ibcmd_metadata_blob::form_planner;
+/// Base-free serializers for the interface assets beside the command
+/// interfaces: `ibcmd-compiler-families`' `compiler::bodies::interface_assets`.
+pub mod interface_assets {
+    pub use ibcmd_compiler_families::compiler::bodies::interface_assets::{
+        ClientApplicationInterfaceModel, ClientApplicationNode, ClientApplicationPanelDef,
+        HomePageWorkAreaItem, HomePageWorkAreaModel, StandaloneContentExtended,
+        StandaloneContentModel,
+    };
 }
-
-impl SelectedBodyProfile {
-    pub(crate) fn from_effective(
-        profile: &EffectiveProfile,
-        key: &'static str,
-        expected: &'static str,
-    ) -> Result<Self, BodyProfileError> {
-        let platform_build = profile
-            .platform_build
-            .as_ref()
-            .map(|value| value.value.clone())
-            .ok_or_else(|| BodyProfileError::MissingCoordinate {
-                profile: profile.id.clone(),
-                coordinate: "platform_build",
-            })?;
-        let storage_profile = profile
-            .storage_profile
-            .as_ref()
-            .map(|value| value.value.clone())
-            .ok_or_else(|| BodyProfileError::MissingCoordinate {
-                profile: profile.id.clone(),
-                coordinate: "storage_profile",
-            })?;
-        if storage_profile.as_str() != SUPPORTED_STORAGE_PROFILE {
-            return Err(BodyProfileError::UnsupportedCoordinate {
-                profile: profile.id.clone(),
-                coordinate: "storage_profile",
-                value: storage_profile.to_string(),
-            });
-        }
-        let actual =
-            profile
-                .constants
-                .get(key)
-                .ok_or_else(|| BodyProfileError::MissingConstant {
-                    profile: profile.id.clone(),
-                    key,
-                })?;
-        if actual.value != expected {
-            return Err(BodyProfileError::UnsupportedLayout {
-                profile: profile.id.clone(),
-                key,
-                value: actual.value.clone(),
-            });
-        }
-        Ok(Self {
-            profile_id: profile.id.clone(),
-            platform_build,
-            storage_profile,
-        })
-    }
-
-    pub(crate) const fn profile_id(&self) -> &ProfileId {
-        &self.profile_id
-    }
-
+/// Profile-gated codec for SpreadsheetDocument (MOXCEL/MXL) bodies:
+/// `ibcmd-compiler`'s `compiler::bodies::mxl`.
+pub mod mxl {
+    pub use ibcmd_compiler::compiler::bodies::mxl::{
+        MxlBody, MxlCodecError, MxlCodecProfile, compile_mxl, decode_mxl,
+    };
+    // The transitional readers the MOXCEL exporter decodes through.
+    pub(crate) use ibcmd_compiler::compiler::bodies::mxl::{
+        decode_compatible_mxl, decode_inflated_compatible_mxl,
+    };
+}
+/// The spreadsheet template writer and its stored blob:
+/// `ibcmd-compiler`'s `compiler::bodies::mxl_native`.
+pub(crate) mod mxl_native {
+    // `module_blob` re-exports the packers at their public paths.
+    pub use ibcmd_compiler::compiler::bodies::mxl_native::{
+        pack_moxel_spreadsheet_blob_from_xml, pack_moxel_spreadsheet_blob_from_xml_with_source,
+        pack_moxel_spreadsheet_blob_from_xml_with_source_and_hint,
+    };
+    // The partial-import patches of the SQL adapter.
     #[cfg(test)]
-    pub(crate) fn fixture(profile_id: &str) -> Self {
-        Self {
-            profile_id: ProfileId::parse(profile_id).unwrap(),
-            platform_build: PlatformBuild::parse("8.3.27.1989").unwrap(),
-            storage_profile: StorageProfileId::parse(SUPPORTED_STORAGE_PROFILE).unwrap(),
-        }
+    pub(crate) use ibcmd_compiler::compiler::bodies::mxl_native::write_native_moxel_body;
+    pub(crate) use ibcmd_compiler::compiler::bodies::mxl_native::{
+        inflate_template_patch, preserve_identical_template_blob, preserve_spreadsheet_language,
+    };
+}
+/// Profile-gated codec for predefined-data bodies:
+/// `ibcmd-compiler`'s `compiler::bodies::predefined`.
+pub mod predefined {
+    pub use ibcmd_compiler::compiler::bodies::predefined::{
+        CatalogPredefinedData, CatalogPredefinedItem, CatalogPredefinedLayout, PredefinedBody,
+        PredefinedCodecError, PredefinedCodecProfile, PredefinedFamily, compile_catalog_predefined,
+        decode_catalog_predefined, decode_predefined, encode_predefined,
+    };
+}
+/// Profile-gated codec for role rights bodies:
+/// `ibcmd-compiler`'s `compiler::bodies::rights`, read with the root's
+/// extension-export state.
+pub mod rights {
+    pub use ibcmd_compiler::compiler::bodies::rights::{
+        RightsCodecError, RightsCodecProfile, RoleObjectReference, RoleObjectReferenceField,
+        RoleObjectRightsModel, RoleRestrictionTemplateModel, RoleRightModel, RoleRightsBody,
+        RoleRightsModel, RoleRightsSummary, compile_role_rights,
+    };
+    // The transitional reader of the export adapter, which passes it the
+    // extension-export state.
+    pub(crate) use ibcmd_compiler::compiler::bodies::rights::decode_compatible_role_rights;
+    use ibcmd_compiler::compiler::bodies::rights::decode_role_rights_with;
+
+    pub fn decode_role_rights(
+        profile: &RightsCodecProfile,
+        blob: &[u8],
+    ) -> Result<RoleRightsBody, RightsCodecError> {
+        decode_role_rights_with(
+            profile,
+            blob,
+            crate::mssql_dump::extension::active().is_some(),
+        )
     }
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum BodyProfileError {
-    MissingCoordinate {
-        profile: ProfileId,
-        coordinate: &'static str,
-    },
-    MissingConstant {
-        profile: ProfileId,
-        key: &'static str,
-    },
-    UnsupportedCoordinate {
-        profile: ProfileId,
-        coordinate: &'static str,
-        value: String,
-    },
-    UnsupportedLayout {
-        profile: ProfileId,
-        key: &'static str,
-        value: String,
-    },
+pub use ibcmd_metadata_blob::role_rights_writer;
+/// Support-policy transfer of observed support data:
+/// `ibcmd-compiler`'s `compiler::bodies::support`.
+pub mod support {
+    pub use ibcmd_compiler::compiler::bodies::support::{
+        ObservedSupportData, SupportDataError, SupportDataKind, SupportLossReport,
+        SupportPolicyProfile, SupportTransferOutcome, SupportTransferPolicy, transfer_support_data,
+    };
+}
+/// Typed dispatch for base-free template bodies:
+/// `ibcmd-compiler`'s `compiler::bodies::template`.
+pub mod template {
+    pub use ibcmd_compiler::compiler::bodies::template::{
+        HtmlTemplateBody, TemplateBody, TemplateCodecError, TemplateCodecProfile,
+        TemplateEmbeddedFile, TemplateKind, TemplateSource, compile_template,
+        compile_template_with_references, decode_compatible_template, decode_template,
+    };
+    // The evidenced compilers of the SQL adapter and the source audit.
+    pub(crate) use ibcmd_compiler::compiler::bodies::template::{
+        compile_evidenced_template, compile_evidenced_template_with_resolvers,
+    };
 }
 
-impl Display for BodyProfileError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingCoordinate {
-                profile,
-                coordinate,
-            } => write!(
-                formatter,
-                "profile `{profile}` has no `{coordinate}` coordinate"
-            ),
-            Self::MissingConstant { profile, key } => {
-                write!(formatter, "profile `{profile}` has no `{key}` constant")
-            }
-            Self::UnsupportedCoordinate {
-                profile,
-                coordinate,
-                value,
-            } => write!(
-                formatter,
-                "profile `{profile}` declares unsupported `{coordinate}` value `{value}`"
-            ),
-            Self::UnsupportedLayout {
-                profile,
-                key,
-                value,
-            } => write!(
-                formatter,
-                "profile `{profile}` declares unsupported body layout `{key}={value}`"
-            ),
-        }
-    }
-}
-
-impl Error for BodyProfileError {}
+// The writers' and codecs' tests that read the root (its exporter, its test
+// scratch).
+#[cfg(test)]
+mod form_chart_root_tests;
+#[cfg(test)]
+mod form_root_tests;
+#[cfg(test)]
+mod mxl_native_root_tests;
+#[cfg(test)]
+mod mxl_root_tests;
+#[cfg(test)]
+mod role_rights_writer_root_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::compiler::bodies::command_interface::CommandInterfaceCodecProfile;
     use crate::compiler::bodies::dcs::DcsCodecProfile;
     use crate::compiler::bodies::form::ManagedFormCodecProfile;
@@ -173,6 +170,7 @@ mod tests {
     use crate::compiler::bodies::rights::RightsCodecProfile;
     use crate::compiler::bodies::support::SupportPolicyProfile;
     use crate::compiler::bodies::template::TemplateCodecProfile;
+    use ibcmd_core::artifact::ProfileId;
 
     #[test]
     fn bundled_profile_selects_only_the_evidenced_body_cohort() {

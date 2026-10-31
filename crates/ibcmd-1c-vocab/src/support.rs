@@ -2,24 +2,14 @@
 //! timing report, raw-deflate payloads, the file name of a picture payload and
 //! whether a payload is SVG.
 
-use std::io::Read;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use flate2::read::DeflateDecoder;
+// The raw inflater is the module blob codec's.
+use ibcmd_module_blob::inflate_raw;
 
 pub fn elapsed_ms(started: Instant) -> u64 {
     started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
-}
-
-/// A raw deflate stream inflated; a stream that does not inflate is the
-/// decoder's I/O error alone, which callers name in their own context
-/// (`module_blob`'s readers).
-pub fn inflate_raw(input: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = DeflateDecoder::new(input);
-    let mut output = Vec::new();
-    decoder.read_to_end(&mut output)?;
-    Ok(output)
 }
 
 /// [`inflate_raw`], its error named `failed to inflate raw deflate blob` (the
