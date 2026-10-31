@@ -9,7 +9,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 
 use super::{
-    Creation, CreatorOptions, Journal, ManagedOutcome, NativeManagedWorker, PublicationState,
+    Creation, CreatorOptions, Journal, ManagedOutcome, ManagedTarget, NativeManagedWorker,
+    NativeRuntime, PublicationState,
 };
 use crate::cli::{
     ManagedWorkerCliArgs, MssqlActivateStagedMainArgs, MssqlApplySourceChangeArgs,
@@ -344,7 +345,7 @@ fn drive<O, R, T>(
 }
 
 struct CreatorRetained {
-    _runtime: super::native::NativeRuntime,
+    _runtime: NativeRuntime,
     journal: Journal,
     _diagnostic: String,
 }
@@ -581,6 +582,43 @@ pub(crate) fn activate(
         },
         cold,
     ))
+}
+
+impl MssqlApplySourceChangeArgs {
+    /// The managed target this source change names.
+    pub(crate) fn managed_target(&self) -> ManagedTarget<'_> {
+        ManagedTarget {
+            worker_mode: self.mode == MssqlMainActivationModeArg::Worker,
+            sqlcmd: self.sqlcmd.is_some(),
+            bcp_executable: self.bcp_executable.is_some(),
+            extension: self.extension.is_some(),
+            database: &self.database,
+            cluster_id: self.cluster_id,
+            infobase_id: self.infobase_id,
+            rac: &self.rac,
+            ras_endpoint: &self.ras_endpoint,
+            server: &self.server,
+        }
+    }
+}
+
+impl MssqlActivateStagedMainArgs {
+    /// The managed target this activation names. An activation names no
+    /// extension.
+    pub(crate) fn managed_target(&self) -> ManagedTarget<'_> {
+        ManagedTarget {
+            worker_mode: self.mode == MssqlMainActivationModeArg::Worker,
+            sqlcmd: self.sqlcmd.is_some(),
+            bcp_executable: self.bcp_executable.is_some(),
+            extension: false,
+            database: &self.database,
+            cluster_id: self.cluster_id,
+            infobase_id: self.infobase_id,
+            rac: &self.rac,
+            ras_endpoint: &self.ras_endpoint,
+            server: &self.server,
+        }
+    }
 }
 
 #[cfg(test)]

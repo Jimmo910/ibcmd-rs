@@ -60,7 +60,7 @@ impl MssqlNativePlatformProfile {
 
     /// Resolves the bundled declaration that owns this build's policy.
     pub fn effective_profile(self) -> Result<EffectiveProfile> {
-        let registry = crate::profile_registry::load_bundled_profile_registry()?;
+        let registry = ibcmd_compiler_families::profile_registry::load_bundled_profile_registry()?;
         let id = ProfileId::parse(self.id())
             .map_err(|error| anyhow!("invalid platform profile id `{}`: {error}", self.id()))?;
         registry
@@ -144,12 +144,12 @@ impl MssqlNativePlatformProfile {
             {
                 return None;
             }
-            let payload = crate::module_blob::decode_base64_mime(encoded)?;
+            let payload = ibcmd_1c_text::decode_base64_mime_lenient(encoded)?;
             let canonical: String = encoded
                 .chars()
                 .filter(|c| !matches!(c, '\r' | '\n'))
                 .collect();
-            (payload.len() == 128 && crate::module_blob::encode_base64(&payload) == canonical)
+            (payload.len() == 128 && ibcmd_1c_text::encode_base64(&payload) == canonical)
                 .then_some((uuid, payload))
         }
         match (parts(stored), parts(staged)) {
@@ -1224,11 +1224,11 @@ pub(crate) mod tests {
             new.replacen("PiyN", "QiyN", 1),
             format!(
                 "{{2,66193438-abc5-410b-a1f1-a204102d1a62,{}}}",
-                crate::module_blob::encode_base64(&[0; 112])
+                ibcmd_1c_text::encode_base64(&[0; 112])
             ),
             format!(
                 "{{2,66193438-abc5-410b-a1f1-a204102d1a62,{}}}",
-                crate::module_blob::encode_base64(&[0; 144])
+                ibcmd_1c_text::encode_base64(&[0; 144])
             ),
             format!(
                 "{{2,66193438-abc5-410b-a1f1-a204102d1a62,{}}}",

@@ -369,7 +369,7 @@ fn apply_source_change_inner(
     }
     if let Some(session) = managed.as_deref_mut() {
         if !args.dry_run {
-            session.require_source_target(args)?;
+            session.require_source_target(&args.managed_target())?;
         }
     } else {
         preflight_classified_worker_source(args.mode, args.dry_run, &classified)?;

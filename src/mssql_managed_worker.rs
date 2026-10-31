@@ -21,7 +21,7 @@ mod identity;
 pub(crate) use identity::ProcessIdentity;
 mod native;
 pub(crate) mod undo;
-pub(crate) use native::{Creation, CreatorOptions, create};
+pub(crate) use native::{Creation, CreatorOptions, NativeRuntime, create};
 pub(crate) type NativeManagedWorker = ManagedWorker<native::NativeRuntime>;
 #[cfg(test)]
 mod tests;
@@ -514,23 +514,41 @@ impl<R: OwnedRuntime> ColdSession<'_, R> {
     }
 }
 
+/// The target a managed command names, as plain values. The command's
+/// arguments are the root CLI's; its glue (`cli.rs`) builds this from them,
+/// so the lifetime authority checks a target without reading CLI types.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ManagedTarget<'a> {
+    /// The command's activation mode is `worker`.
+    pub worker_mode: bool,
+    /// The command names a `sqlcmd` executable.
+    pub sqlcmd: bool,
+    /// The command names a `bcp` executable.
+    pub bcp_executable: bool,
+    /// The command names an extension (a source change only).
+    pub extension: bool,
+    pub database: &'a str,
+    pub cluster_id: Option<Uuid>,
+    pub infobase_id: Option<Uuid>,
+    pub rac: &'a Path,
+    pub ras_endpoint: &'a str,
+    pub server: &'a str,
+}
+
 impl NativeManagedWorker {
-    pub(crate) fn require_source_target(
-        &mut self,
-        args: &crate::cli::MssqlApplySourceChangeArgs,
-    ) -> Result<()> {
-        if args.mode != crate::cli::MssqlMainActivationModeArg::Worker
-            || args.sqlcmd.is_some()
-            || args.bcp_executable.is_some()
-            || args.extension.is_some()
-            || args.database != self.binding.database
-            || args.cluster_id != Some(self.binding.cluster)
-            || args.infobase_id != Some(self.binding.infobase)
+    pub(crate) fn require_source_target(&mut self, target: &ManagedTarget<'_>) -> Result<()> {
+        if !target.worker_mode
+            || target.sqlcmd
+            || target.bcp_executable
+            || target.extension
+            || target.database != self.binding.database
+            || target.cluster_id != Some(self.binding.cluster)
+            || target.infobase_id != Some(self.binding.infobase)
         {
             bail!("managed source target differs from internally created lifetime");
         }
         self.runtime
-            .require_endpoint(&args.rac, &args.ras_endpoint, &args.server)?;
+            .require_endpoint(target.rac, target.ras_endpoint, target.server)?;
         self.prepare()?;
         Ok(())
     }
@@ -543,21 +561,20 @@ impl NativeManagedWorker {
         self.runtime.verify_target_profile(claimed, options)
     }
 
-    pub(crate) fn require_activation_target(
-        &mut self,
-        args: &crate::cli::MssqlActivateStagedMainArgs,
-    ) -> Result<()> {
-        if args.mode != crate::cli::MssqlMainActivationModeArg::Worker
-            || args.sqlcmd.is_some()
-            || args.bcp_executable.is_some()
-            || args.database != self.binding.database
-            || args.cluster_id != Some(self.binding.cluster)
-            || args.infobase_id != Some(self.binding.infobase)
+    /// Reads every field of `target` but `extension`, which an activation does
+    /// not name.
+    pub(crate) fn require_activation_target(&mut self, target: &ManagedTarget<'_>) -> Result<()> {
+        if !target.worker_mode
+            || target.sqlcmd
+            || target.bcp_executable
+            || target.database != self.binding.database
+            || target.cluster_id != Some(self.binding.cluster)
+            || target.infobase_id != Some(self.binding.infobase)
         {
             bail!("managed activation target differs from internally created lifetime");
         }
         self.runtime
-            .require_endpoint(&args.rac, &args.ras_endpoint, &args.server)?;
+            .require_endpoint(target.rac, target.ras_endpoint, target.server)?;
         self.prepare()?;
         Ok(())
     }

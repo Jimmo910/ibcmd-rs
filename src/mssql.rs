@@ -1032,7 +1032,7 @@ pub(crate) fn activate_staged_main_managed(
     args: &MssqlActivateStagedMainArgs,
     session: &mut crate::mssql_managed_worker::NativeManagedWorker,
 ) -> Result<MssqlActivateStagedMainReport> {
-    session.require_activation_target(args)?;
+    session.require_activation_target(&args.managed_target())?;
     let profile = session.verify_target_profile(
         args.platform_profile,
         crate::mssql_platform_profile::MssqlNativeProfileVerificationOptions {
@@ -1141,7 +1141,7 @@ fn activate_staged_main_verified_inner(
     }
     if let Some(session) = managed.as_deref_mut() {
         if !args.dry_run && !plan.is_no_op() {
-            session.require_activation_target(args)?;
+            session.require_activation_target(&args.managed_target())?;
         }
     } else {
         crate::mssql_worker_switch::preflight_worker_execution(
@@ -1413,7 +1413,7 @@ pub(crate) fn activate_staged_main_managed_verified(
     profile: crate::mssql_platform_profile::MssqlNativeProfileVerification,
     session: &mut crate::mssql_managed_worker::NativeManagedWorker,
 ) -> Result<MssqlActivateStagedMainReport> {
-    session.require_activation_target(args)?;
+    session.require_activation_target(&args.managed_target())?;
     activate_staged_main_verified_inner(args, profile, Some(session), None)
 }
 
