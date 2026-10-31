@@ -744,9 +744,9 @@ ibcmd-rs mssql-apply-check --database ibcmd_rs_04_rcheck_bsp_b2 --tree F:\path\t
 ibcmd-rs apply-check-trees --old F:\path\to\export --new F:\path\to\edited --json
 ```
 
-Tests: `cargo test -p ibcmd-apply-check` (115 tests: every rule with synthetic XML, the
-row check with fake rows, the modes on synthetic trees, the upgrade proof, the S1 classification and its matrix);
-`... apply_check::corpus_tests -- --ignored` for the reference exports (6.4); `... apply_check::s1h -- --ignored`
+Tests: `cargo test -p ibcmd-apply-check` (129 tests: every rule with synthetic XML, the
+row check with fake rows, the modes on synthetic trees, the upgrade proof, the S1 classification and its matrix; 6 more
+are the ignored lab-corpus tests below); `... apply_check::corpus_tests -- --ignored` for the reference exports (6.4); `... apply_check::s1h -- --ignored`
 for the a2 image (3.6; the rows are the lab's `fixtures/nat_a2` and `fixtures/nat_a2_base`).
 
 ## 10. What the own restructuring takes of a verdict (S1, #404)
